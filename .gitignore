@@ -27,3 +27,4 @@ Manifest.toml
 .DS_Store
 .vscode
 .ipynb_checkpoints
+*.swp

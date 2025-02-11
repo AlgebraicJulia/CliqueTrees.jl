@@ -1,0 +1,9 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CliqueTrees = "60701a23-6482-424a-84db-faee86b9b1f8"
+MatrixMarket = "4d4711f2-db25-561a-b6b3-d35e7d4047d3"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+SuiteSparseMatrixCollection = "ac199af8-68bc-55b8-82c4-7abd6f96ed98"
+
+[sources]
+CliqueTrees = {path = ".."}

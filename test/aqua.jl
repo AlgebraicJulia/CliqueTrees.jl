@@ -1,3 +1,4 @@
-using Aqua, CliqueTrees 
+using Aqua
+using CliqueTrees
 
-Aqua.test_all(CliqueTrees, ambiguities=false,)
+Aqua.test_all(CliqueTrees)

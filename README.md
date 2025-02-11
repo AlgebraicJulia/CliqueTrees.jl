@@ -1,65 +1,163 @@
-# CliqueTrees.jl
+<div align="center">
+    <img src="logo.png" alt="CliqueTrees.jl" width="200">
+</div>
+<h1 align="center">
+    CliqueTrees.jl
+    <p align="center">
+        <a href="https://algebraicjulia.github.io/CliqueTrees.jl/stable">
+            <img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="documentation (stable)">
+        </a>
+        <a href="https://algebraicjulia.github.io/CliqueTrees.jl/dev">
+            <img src="https://img.shields.io/badge/docs-dev-blue.svg" alt="documentation (development)">
+        </a>
+        <a href="https://github.com/AlgebraicJulia/CliqueTrees.jl/actions/workflows/julia_ci.yml">
+            <img src="https://github.com/AlgebraicJulia/CliqueTrees.jl/actions/workflows/julia_ci.yml/badge.svg" alt="build status">
+        </a>
+        <a href="https://codecov.io/gh/AlgebraicJulia/CliqueTrees.jl">
+            <img src="https://codecov.io/gh/AlgebraicJulia/CliqueTrees.jl/branch/main/graph/badge.svg" alt="code coverage">
+        </a>
+        <a href="https://github.com/invenia/BlueStyle">
+            <img src="https://img.shields.io/badge/code%20style-blue-4495d1.svg" alt="Blue">
+        </a>
+        <a href="https://github.com/JuliaTesting/Aqua.jl">
+            <img src="https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg" alt="Aqua">
+        </a>
+        <a href="https://github.com/aviatesk/JET.jl">
+            <img src="https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a" alt="JET">
+        </a>
+        <a href="https://opensource.org/licenses/MIT">
+            <img src="https://img.shields.io/badge/License-MIT-yelllow" alt="license">
+        </a>
+    </p>
+</h2>
+CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs.
 
-[![Stable Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://AlgebraicJulia.github.io/CliqueTrees.jl/stable)
-[![Development Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://AlgebraicJulia.github.io/CliqueTrees.jl/dev)
-[![Code Coverage](https://codecov.io/gh/AlgebraicJulia/CliqueTrees.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/AlgebraicJulia/CliqueTrees.jl)
-[![CI/CD](https://github.com/AlgebraicJulia/CliqueTrees.jl/actions/workflows/julia_ci.yml/badge.svg)](https://github.com/AlgebraicJulia/CliqueTrees.jl/actions/workflows/julia_ci.yml)
+## Installation
 
-A template repository for making a new AlgebraicJulia package.
+To install CliqueTrees.jl, enter the Pkg REPL by typing `]` and run the following command.
 
-## 🛠️ Usage
+```julia
+pkg> add CliqueTrees
+```
 
-1. Use the "Use this template" dropdown to select "Create a new repository"
-2. In the new page select "AlgebraicJulia" as the owner, give the repository a name, and create a new repository from the template
-3. Set up Codecov credentials for code coverage (If you have trouble, reach out to an AlgebraicJulia organization owner to help with this)
+## Basic Usage
 
-   1. Log into [Codecov](https://codecov.io) with your GitHub account (this requires that you are a member of the AlgebraicJulia organization)
-   2. Navigate to the [AlgebraicJulia organization](https://app.codecov.io/gh/AlgebraicJulia)
-   3. Select your new repository from the list (e.x. "AlgebraicX")
-   4. Note down the `CODECOV_TOKEN` value (It may be in the "Settings" tab if it doesn't show up immediately)
-   5. Navigate back to your new GitHub repository and go to the Settings tab
-   6. Go to "Security", "Secrets and variables", and "Actions" and click the "New repository secret" button
-   7. Give the secret name `CODECOV_TOKEN` and the Secret value is the value you noted from the Codecov settings
-   8. Click "Add secret"
+### Tree Decompositions
 
-4. Clone the new repository, for example in the terminal:
-   ```sh
-   git clone https://github.com/AlgebraicJulia/AlgebraicX.jl.git
-   cd AlgebraicX.jl
-   ```
-5. Inspect for yourself and run `init.sh` with the new repository name and (optional) UUID are parameters. This script will substitute all instances of `AlgebraicX` with your new repository name and the default UUID with a new one or, if available, the UUID provided.
-6. Go back to your repository and wait until the tests have passed, you can check the status by going to the "Actions" tab in the repository
+The function `cliquetree` computes tree decompositions.
 
-### Buildkite
+```julia
+julia> using CliqueTrees
 
-AlgebraicJulia uses [Buildkite](https://buildkite.com/) to submit resource-intensive processes such as building documentation and executing tests to the [HiPerGator](https://www.rc.ufl.edu/about/hipergator/) computing cluster.
+julia> graph = [
+           0 1 1 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           1 1 0 1 1 0 0 0
+           0 0 1 0 1 0 0 0
+           0 0 1 1 0 0 1 1
+           0 1 0 0 0 0 1 0
+           0 0 0 0 1 1 0 1
+           0 0 0 0 1 0 1 0
+       ];
 
-While this template comes with a preconfigured `.buildkite/pipeline.yml` file, this repository is not integrated with Buildkite by default. If you would like your repository to use Buildkite to run processes on HiPerGator, tag an issue with @AlgebraicJulia/SysAdmins. 
+julia> label, tree = cliquetree(graph);
 
-### 📔 Set Up GitHub Pages (Public Repos Only)
+julia> tree
+6-element CliqueTree{Int64, Int64}:
+ [6, 7, 8]
+ ├─ [1, 6, 7]
+ ├─ [4, 6, 8]
+ │  └─ [3, 4, 6]
+ │     └─ [2, 3, 6]
+ └─ [5, 7, 8]
+```
 
-1. Follow the Usage steps above to set up a new template, make sure all initial GitHub Actions have passed
-2. Navigate to the repository settings and go to "Code and automation", "Pages"
-3. Make sure the "Source" dropdown is set to "Deploy from a branch"
-4. Set the "Branch" dropdown to "gh-pages", make sure the folder is set to "/ (root)", and click "Save"
-5. Go back to the main page of your repository and click the gear to the right of the "About" section in the right side column
-6. Under "Website" check the checkbox that says "Use your GitHub Pages website" and click "Save changes"
-7. You will now see a URL in the "About" section that will link to your package's documentation
+The clique tree `tree` is a tree decomposition of the permuted graph `graph[label, label]`.
+A clique tree is a vector of cliques, so you can retrieve the clique at node 3 by typing `tree[3]`.
 
-### 🛡️ Set Up Branch Protection (Public Repos Only)
+```julia
+julia> tree[3]
+3-element Clique{Int64, Int64}:
+ 3
+ 4
+ 6
+```
 
-1. Follow the Usage steps above to set up a new template, make sure all initial GitHub Actions have passed
-2. Navigate to the repository settings and go to "Code and automation", "Branches"
-3. Click "Add branch protection rule" to start adding branch protection
-4. Under "Branch name pattern" put `main`, this will add protection to the main branch
-5. Make sure to set the following options:
-   - Check the "Require a pull request before merging"
-   - Check the "Request status checks to pass before merging" and make sure the following status checks are added to the required list:
-     - CI / Documentation
-     - CI / Julia 1 - ubuntu-latest - x64 - push
-     - CI / Julia 1 - ubuntu-latest - x86 - push
-     - CI / Julia 1 - windows-latest - x64 - push
-     - CI / Julia 1 - windows-latest - x86 - push
-     - CI / Julia 1 - macOS-latest - x64 - push
-   - Check the "Restrict who can push to matching branches" and add `algebraicjuliabot` to the list of people with push access
-6. Click "Save changes" to enable the branch protection
+The width of a clique tree is computed by the function `treewidth`.
+
+```julia
+julia> treewidth(tree)
+2
+```
+
+### Chordal Completions
+
+The function `eliminationgraph` computes elimination graphs.
+
+```julia
+julia> using CliqueTrees, LinearAlgebra, SparseArrays
+
+julia> graph = [
+           0 1 1 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           1 1 0 1 1 0 0 0
+           0 0 1 0 1 0 0 0
+           0 0 1 1 0 0 1 1
+           0 1 0 0 0 0 1 0
+           0 0 0 0 1 1 0 1
+           0 0 0 0 1 0 1 0
+       ];
+
+julia> label, filledgraph = eliminationgraph(graph);
+
+julia> sparse(filledgraph)
+8×8 SparseMatrixCSC{Bool, Int64} with 13 stored entries:
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ 1  1  1  1  ⋅  ⋅  ⋅  ⋅
+ 1  ⋅  ⋅  ⋅  1  1  ⋅  ⋅
+ ⋅  ⋅  ⋅  1  1  1  1  ⋅
+```
+
+The graph `filledgraph` is ordered: its edges are directed from lower to higher vertices. The underlying undirected graph is a chordal completion of the permuted graph `graph[label, label]`.
+
+```julia
+julia> chordalgraph = Symmetric(sparse(filledgraph), :L)
+8×8 Symmetric{Bool, SparseMatrixCSC{Bool, Int64}}:
+ ⋅  ⋅  ⋅  ⋅  ⋅  1  1  ⋅
+ ⋅  ⋅  1  ⋅  ⋅  1  ⋅  ⋅
+ ⋅  1  ⋅  1  ⋅  1  ⋅  ⋅
+ ⋅  ⋅  1  ⋅  ⋅  1  ⋅  1
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  1  1
+ 1  1  1  1  ⋅  ⋅  1  1
+ 1  ⋅  ⋅  ⋅  1  1  ⋅  1
+ ⋅  ⋅  ⋅  1  1  1  1  ⋅
+
+julia> ischordal(graph)
+false
+
+julia> ischordal(chordalgraph)
+true
+
+julia> all(graph[label, label] .<= chordalgraph)
+true
+```
+
+## Graphs
+
+Users can input graphs as adjacency matrices. Additionally, CliqueTrees.jl supports the `HasGraph` type from [Catlab.jl](https://github.com/AlgebraicJulia/Catlab.jl) and the `AbstractGraph` type from [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl). Instances of the latter should implement the following subset of the [abstract graph interface](https://juliagraphs.org/Graphs.jl/stable/core_functions/interface/).
+
+  - `is_directed`
+  - `ne`
+  - `nv`
+  - `outneighbors`
+  - `vertices`
+
+Weights and self-edges are always ignored.
+
+## References
+
+CliqueTrees.jl was inspired by the book [Chordal Graphs and Semidefinite Optimization](https://www.nowpublishers.com/article/Details/OPT-006) by Vandenberghe and Andersen.
