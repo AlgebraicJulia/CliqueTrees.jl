@@ -1,3 +1,3 @@
-using Aqua, AlgebraicTemplate 
+using Aqua, CliqueTrees 
 
-Aqua.test_all(AlgebraicTemplate, ambiguities=false,)
+Aqua.test_all(CliqueTrees, ambiguities=false,)

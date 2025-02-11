@@ -4,7 +4,7 @@
 #
 # First we want to load our package with `using`
 
-using AlgebraicTemplate
+using CliqueTrees
 
 # ## Using `hello()`
 #

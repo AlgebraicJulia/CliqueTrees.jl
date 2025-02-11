@@ -4,8 +4,8 @@ using Literate
 const literate_dir = joinpath(@__DIR__, "literate")
 const generated_dir = joinpath(@__DIR__, "src", "generated")
 
-@info "Loading AlgebraicTemplate"
-using AlgebraicTemplate
+@info "Loading CliqueTrees"
+using CliqueTrees
 
 const no_literate = "--no-literate" in ARGS
 if !no_literate
@@ -14,8 +14,8 @@ if !no_literate
   # Set Literate.jl config if not being compiled on recognized service.
   config = Dict{String,String}()
   if !(haskey(ENV, "GITHUB_ACTIONS") || haskey(ENV, "GITLAB_CI"))
-    config["nbviewer_root_url"] = "https://nbviewer.jupyter.org/github/AlgebraicJulia/AlgebraicTemplate.jl/blob/gh-pages/dev"
-    config["repo_root_url"] = "https://github.com/AlgebraicJulia/AlgebraicTemplate.jl/blob/main/docs"
+    config["nbviewer_root_url"] = "https://nbviewer.jupyter.org/github/AlgebraicJulia/CliqueTrees.jl/blob/gh-pages/dev"
+    config["repo_root_url"] = "https://github.com/AlgebraicJulia/CliqueTrees.jl/blob/main/docs"
   end
 
   for (root, dirs, files) in walkdir(literate_dir)
@@ -34,13 +34,13 @@ end
 
 @info "Building Documenter.jl docs"
 makedocs(
-  modules=[AlgebraicTemplate],
+  modules=[CliqueTrees],
   format=Documenter.HTML(),
-  sitename="AlgebraicTemplate.jl",
+  sitename="CliqueTrees.jl",
   doctest=false,
   checkdocs=:none,
   pages=Any[
-    "AlgebraicTemplate.jl"=>"index.md",
+    "CliqueTrees.jl"=>"index.md",
     "Examples"=>Any[
       "generated/literate_example.md",
     ],
@@ -51,6 +51,6 @@ makedocs(
 @info "Deploying docs"
 deploydocs(
   target="build",
-  repo="github.com/AlgebraicJulia/AlgebraicTemplate.jl.git",
+  repo="github.com/AlgebraicJulia/CliqueTrees.jl.git",
   branch="gh-pages"
 )

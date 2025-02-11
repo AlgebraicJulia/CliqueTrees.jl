@@ -1,7 +1,7 @@
-# AlgebraicTemplate.jl
+# CliqueTrees.jl
 
 ```@meta
-CurrentModule = AlgebraicTemplate
+CurrentModule = CliqueTrees
 ```
 
-`AlgebraicTemplate.jl` is a Julia library for...
+`CliqueTrees.jl` is a Julia library for...

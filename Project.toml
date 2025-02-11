@@ -1,5 +1,5 @@
-name = "AlgebraicTemplate"
-uuid = "b66562e1-fa90-4e8b-9505-c909188fab76"
+name = "CliqueTrees"
+uuid = "60701a23-6482-424a-84db-faee86b9b1f8"
 license = "MIT"
 authors = ["AlgebraicJulia Developer <email@algebraicjulia.org>"]
 version = "0.0.1"

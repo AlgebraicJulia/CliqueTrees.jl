@@ -1,4 +1,4 @@
 [deps]
-AlgebraicTemplate = "b66562e1-fa90-4e8b-9505-c909188fab76"
+CliqueTrees = "60701a23-6482-424a-84db-faee86b9b1f8"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
