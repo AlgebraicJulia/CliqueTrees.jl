@@ -1,5 +1,5 @@
 """
-    Tree{V <: Signed} <: AbstractUnitRange{V}
+    Tree{V} <: AbstractUnitRange{V}
 
     Tree(tree::AbstractTree)
 
