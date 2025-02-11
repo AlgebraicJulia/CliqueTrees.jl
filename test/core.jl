@@ -233,6 +233,7 @@ end
     @test isa(repr("text/plain", SymAMD()), String)
     @test isa(repr("text/plain", MMD()), String)
     @test isa(repr("text/plain", NodeND()), String)
+    @test isa(repr("text/plain", Spectral()), String)
     @test isa(repr("text/plain", BT()), String)
 
     list = SinglyLinkedList(ones(Int), [2, 3, 4, 5, 6, 0])
