@@ -25,11 +25,9 @@
         <a href="https://github.com/aviatesk/JET.jl">
             <img src="https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a" alt="JET">
         </a>
-        <a href="https://opensource.org/licenses/MIT">
-            <img src="https://img.shields.io/badge/License-MIT-yelllow" alt="license">
-        </a>
     </p>
 </h2>
+
 CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs.
 
 ## Installation

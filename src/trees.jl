@@ -21,49 +21,10 @@ struct Tree{V<:Signed} <: AbstractUnitRange{V}
         tree = new{V}(parent, root, child, brother)
         return lcrs!(tree)
     end
-
-    function Tree{V}(
-        parent::AbstractVector,
-        root::AbstractScalar,
-        child::AbstractVector,
-        brother::AbstractVector,
-    ) where {V}
-        # validate arguments
-        eachindex(parent) != eachindex(child) &&
-            throw(ArgumentError("eachindex(parent) != eachindex(child)"))
-        eachindex(parent) != eachindex(brother) &&
-            throw(ArgumentError("eachindex(parent) != eachindex(brother)"))
-        isempty(parent) &&
-            !iszero(root[]) &&
-            throw(ArgumentError("isempty(parent) && !iszero(root[])"))
-        !isempty(parent) &&
-            root[] ∉ eachindex(parent) &&
-            throw(ArgumentError("!isempty(parent) && root[] ∉ eachindex(parent)"))
-
-        # construct tree
-        return new{V}(parent, root, child, brother)
-    end
 end
 
 function Tree(parent::AbstractVector{V}) where {V}
     return Tree{V}(parent)
-end
-
-function Tree(
-    parent::AbstractVector{V},
-    root::AbstractScalar{V},
-    child::AbstractVector{V},
-    brother::AbstractVector{V},
-) where {V}
-    return Tree{V}(parent, root, child, brother)
-end
-
-function Tree(tree::Tree)
-    return Tree(tree.parent, tree.root, tree.child, tree.brother)
-end
-
-function Tree{V}(tree::Tree) where {V}
-    return Tree{V}(tree.parent, tree.root, tree.child, tree.brother)
 end
 
 """

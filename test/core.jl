@@ -11,6 +11,48 @@ using LinearAlgebra
 using SparseArrays
 using Test
 
+@testset "trees" begin
+    @testset "interface" begin
+        tree = Tree(Int8[2, 5, 4, 5, 0])
+        @test rootindex(tree) === Int8(5)
+        setrootindex!(tree, 1)
+        @test rootindex(tree) === Int8(1)
+
+        node = IndexNode(tree)
+        @test ParentLinks(node) === StoredParents()
+        @test SiblingLinks(node) === StoredSiblings()
+        @test NodeType(node) === HasNodeType()
+        @test nodetype(node) === typeof(node)
+    end
+
+    @testset "construction" begin
+        graph = BipartiteGraph{Int8,Int16}(
+            [
+                0 1 1 0 0 0 0 0
+                1 0 1 0 0 1 0 0
+                1 1 0 1 1 0 0 0
+                0 0 1 0 1 0 0 0
+                0 0 1 1 0 0 1 1
+                0 1 0 0 0 0 1 0
+                0 0 0 0 1 1 0 1
+                0 0 0 0 1 0 1 0
+            ],
+        )
+
+        label, tree = eliminationtree(graph; alg=1:8)
+        @test isa(Tree(tree), Tree{Int8})
+        @test isa(Tree{Int32}(tree), Tree{Int32})
+
+        label, tree = supernodetree(graph; alg=1:8)
+        @test isa(Tree(tree), Tree{Int8})
+        @test isa(Tree{Int32}(tree), Tree{Int32})
+
+        label, tree = cliquetree(graph; alg=1:8)
+        @test isa(Tree(tree), Tree{Int8})
+        @test isa(Tree{Int32}(tree), Tree{Int32})
+    end
+end
+
 @testset "bipartite graphs" begin
     graph = BipartiteGraph{Int8,Int16}(
         [
@@ -25,7 +67,23 @@ using Test
         ],
     )
 
+    @testset "conversion" begin
+        @test isa(
+            convert(BipartiteGraph{Int32,Int64,Vector{Int64},Vector{Int32}}, graph),
+            BipartiteGraph{Int32,Int64,Vector{Int64},Vector{Int32}},
+        )
+        @test convert(BipartiteGraph{Int8,Int16,Vector{Int16},Vector{Int8}}, graph) ===
+            graph
+    end
+
     @testset "construction" begin
+        @test allequal((
+            graph,
+            BipartiteGraph(graph),
+            BipartiteGraph{Int32}(graph),
+            BipartiteGraph{Int32,Int64}(graph),
+        ))
+
         @test allequal((
             graph,
             BipartiteGraph(Matrix(graph)),
@@ -177,21 +235,30 @@ end
     @test isa(repr("text/plain", NodeND()), String)
     @test isa(repr("text/plain", BT()), String)
 
-    list = SinglyLinkedList(ones(Int), [2, 0])
+    list = SinglyLinkedList(ones(Int), [2, 3, 4, 5, 6, 0])
     @test isa(repr("text/plain", list), String)
-    list = DoublyLinkedList(ones(Int), [2, 0], [0, 1])
+    list = DoublyLinkedList(ones(Int), [2, 3, 4, 5, 6, 0], [0, 1, 2, 3, 4, 5])
     @test isa(repr("text/plain", list), String)
 
-    graph = spzeros(2, 2)
+    graph = BipartiteGraph(
+        [
+            1 0 0 0 0 0
+            0 1 0 0 0 0
+            0 0 1 0 0 0
+            0 0 0 1 0 0
+            0 0 0 0 1 0
+            0 0 0 0 0 1
+        ]
+    )
+
+    @test isa(repr("text/plain", graph), String)
+    @test isa(repr("text/plain", edges(graph)), String)
     label, tree = eliminationtree(graph)
     @test isa(repr("text/plain", tree), String)
     label, tree = supernodetree(graph)
     @test isa(repr("text/plain", tree), String)
     label, tree = cliquetree(graph)
     @test isa(repr("text/plain", tree), String)
-    label, graph = eliminationgraph(graph)
-    @test isa(repr("text/plain", graph), String)
-    @test isa(repr("text/plain", edges(graph)), String)
 end
 
 @testset "null graph" begin

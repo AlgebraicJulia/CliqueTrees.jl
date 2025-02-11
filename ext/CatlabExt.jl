@@ -33,7 +33,7 @@ function CliqueTrees.sympermute(
     return sympermute(CatlabGraph(graph), index, order)
 end
 
-function CliqueTrees.bfs(graph::Catlab.HasGraph, clique::AbstractVector)
+function CliqueTrees.bfs(graph::Catlab.HasGraph)
     return bfs(CatlabGraph(graph))
 end
 
