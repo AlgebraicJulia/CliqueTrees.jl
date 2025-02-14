@@ -170,7 +170,7 @@ function sympermute(graph::AbstractGraph, index::AbstractVector, order::Ordering
 end
 
 function sympermute(
-    ::Type{E}, graph::AbstractGraph{V}, index::AbstractVector{V}, order::Ordering
+    ::Type{E}, graph::AbstractGraph{V}, index::AbstractVector, order::Ordering
 ) where {V,E}
     # validate arguments
     vertices(graph) != eachindex(index) &&
@@ -223,8 +223,8 @@ end
 
 function sympermute!(
     result::BipartiteGraph{V,E},
-    graph::AbstractGraph{V},
-    index::AbstractVector{V},
+    graph::AbstractGraph,
+    index::AbstractVector,
     order::Ordering,
 ) where {V,E}
     # validate arguments
@@ -323,10 +323,6 @@ function targets(graph::BipartiteGraph)
     return graph.tgt
 end
 
-function Base.:(==)(left::BipartiteGraph, right::BipartiteGraph)
-    return pointers(left) == pointers(right) && targets(left) == targets(right)
-end
-
 function Base.convert(::Type{BipartiteGraph{V,E,Ptr,Tgt}}, graph) where {V,E,Ptr,Tgt}
     return BipartiteGraph{V,E,Ptr,Tgt}(graph)
 end
@@ -341,6 +337,12 @@ function Base.show(io::IO, ::MIME"text/plain", graph::G) where {G<:BipartiteGrap
     m = ne(graph)
     n = nv(graph)
     return println(io, "{$n, $m} $G")
+end
+
+function Base.:(==)(left::BipartiteGraph, right::BipartiteGraph)
+    return nov(left) == nov(right) &&
+           pointers(left) == pointers(right) &&
+           targets(left) == targets(right)
 end
 
 #############################
@@ -372,7 +374,7 @@ end
 ############################
 
 function Base.zero(::Type{BipartiteGraph{V,E,Ptr,Tgt}}) where {V,E,Ptr,Tgt}
-    return BipartiteGraph{V,E,Ptr,Tgt}(oneto(1), oneto(0))
+    return BipartiteGraph{V,E,Ptr,Tgt}(0, oneto(1), oneto(0))
 end
 
 function Graphs.is_directed(::Type{<:BipartiteGraph})

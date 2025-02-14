@@ -13,18 +13,26 @@ struct Tree{V<:Signed} <: AbstractUnitRange{V}
     root::Scalar{V}    # root
     child::Vector{V}   # vector of left-children
     brother::Vector{V} # vector of right-siblings
+end
 
-    function Tree{V}(parent::AbstractVector) where {V}
-        root = Scalar{V}(undef)
-        child = Vector{V}(undef, length(parent))
-        brother = Vector{V}(undef, length(parent))
-        tree = new{V}(parent, root, child, brother)
-        return lcrs!(tree)
-    end
+function Tree{V}(parent::AbstractVector) where {V}
+    root = Scalar{V}(undef)
+    child = Vector{V}(undef, length(parent))
+    brother = Vector{V}(undef, length(parent))
+    tree = Tree{V}(parent, root, child, brother)
+    return lcrs!(tree)
 end
 
 function Tree(parent::AbstractVector{V}) where {V}
     return Tree{V}(parent)
+end
+
+function Tree{V}(tree::Tree) where {V}
+    return Tree{V}(tree.parent, tree.root, tree.child, tree.brother)
+end
+
+function Tree(tree::Tree)
+    return Tree(tree.parent, tree.root, tree.child, tree.brother)
 end
 
 """
@@ -68,7 +76,7 @@ end
 
 function eliminationtree(graph, alg::PermutationOrAlgorithm)
     label, index = permutation(graph, alg)
-    upper = sympermute(graph, index, ForwardOrdering())
+    upper = sympermute(graph, index, Forward)
     return label, etree(upper), upper
 end
 
@@ -117,7 +125,7 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
 
     # find postordering, first descendants, and levels
     index = postorder(tree)
-    order = Perm(ForwardOrdering(), index)
+    order = Perm(Forward, index)
     fdesc = firstdescendants(tree, order)
     level = levels(tree)
 
@@ -250,7 +258,7 @@ function levels(tree::Tree{V}) where {V}
 end
 
 # Get the first descendant of every vertex in a topologically ordered forest.
-function firstdescendants(tree::Tree{V}, order::Ordering=ForwardOrdering()) where {V}
+function firstdescendants(tree::Tree{V}, order::Ordering=Forward) where {V}
     fdesc = Vector{V}(undef, length(tree))
 
     for j in tree
@@ -301,6 +309,13 @@ function Base.invpermute!(tree::Tree{V}, index::AbstractVector{V}) where {V}
     end
 
     return lcrs!(tree)
+end
+
+function Base.isequal(left::Tree, right::Tree)
+    return isequal(left.parent, right.parent) &&
+           isequal(left.root, right.root) &&
+           isequal(left.child, right.child) &&
+           isequal(left.brother, right.brother)
 end
 
 ##########################

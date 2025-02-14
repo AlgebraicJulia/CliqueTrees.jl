@@ -76,7 +76,7 @@ end
 @views function cliquetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
     # construct supernodal elimination tree
     label, tree, index, ptr, lower, upper = supernodetree(graph, alg, snd)
-    lower = sympermute!(upper, lower, index, ReverseOrdering())
+    lower = sympermute!(upper, lower, index, Reverse)
 
     # compute separators
     function diff(col, res)

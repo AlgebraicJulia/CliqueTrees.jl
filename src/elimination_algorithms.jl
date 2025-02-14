@@ -3,18 +3,18 @@
 
 A graph elimination algorithm. The options are
 
-| type               | name                               | complexity | exact |
-|:------------------ |:---------------------------------- |:---------- |:----- |
-| [`BFS`](@ref)      | breadth-first search               | O(m)       | false |
-| [`MCS`](@ref)      | maximum cardinality search         | O(m + n)   | false |
-| [`LexBFS`](@ref)   | lexicographic breadth-first search | O(m + n)   | false |
-| [`RCM`](@ref)      | reverse Cuthill-Mckee              | O(mΔ)      | false |
-| [`AAMD`](@ref)     | approximate minimum degree         | O(mn)      | false |
-| [`SymAMD`](@ref)   | column approximate minimum degree  | O(mn)      | false |
-| [`MMD`](@ref)      | multiple minimum degree            | O(mn²)     | false |
-| [`NodeND`](@ref)   | nested dissection                  |            | false |
-| [`Spectral`](@ref) | spectral ordering                  |            | false |
-| [`BT`](@ref)       | Bouchitte-Todinca                  | O(2.6183ⁿ) | true  |
+| type               | name                               | time     | space    |
+|:------------------ |:---------------------------------- |:-------- |:-------- |
+| [`BFS`](@ref)      | breadth-first search               | O(m + n) | O(m + n) |
+| [`MCS`](@ref)      | maximum cardinality search         | O(m + n) | O(m + n) |
+| [`LexBFS`](@ref)   | lexicographic breadth-first search | O(m + n) | O(m + n) |
+| [`RCM`](@ref)      | reverse Cuthill-Mckee              | O(m + n) | O(m + n) |
+| [`AAMD`](@ref)     | approximate minimum degree         | O(mn)    | O(m + n) |
+| [`SymAMD`](@ref)   | column approximate minimum degree  | O(mn)    | O(m + n) |
+| [`MMD`](@ref)      | multiple minimum degree            | O(mn²)   | O(m + n) |
+| [`NodeND`](@ref)   | nested dissection                  |          |          |
+| [`Spectral`](@ref) | spectral ordering                  |          |          |
+| [`BT`](@ref)       | Bouchitte-Todinca                  |          |          |
 
 for a graph with m edges, n vertices, and maximum degree Δ. The algorithm [`Spectral`](@ref) only works on connected graphs.
 """
@@ -58,8 +58,25 @@ struct LexBFS <: EliminationAlgorithm end
     RCM <: EliminationAlgorithm
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
+An initial vertex is selected using the minimum degree heuristic.
 """
 struct RCM <: EliminationAlgorithm end
+
+"""
+    RCMGL <: EliminationAlgorithm
+
+The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
+An initial vertex is selected using George and Liu's variant of the GPS algorithm.
+This is the version implemented in MATLAB.
+"""
+struct RCMGL <: EliminationAlgorithm end
+
+"""
+    LexM <: EliminationAlgorithm
+
+The minimal [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
+"""
+struct LexM <: EliminationAlgorithm end
 
 """
     AAMD <: EliminationAlgorithm
@@ -209,6 +226,11 @@ function permutation(graph, alg::RCM)
     return order, invperm(order)
 end
 
+function permutation(graph, alg::RCMGL)
+    order = rcmgl(graph)
+    return order, invperm(order)
+end
+
 function permutation(graph::BipartiteGraph{V}, alg::Union{AAMD,SymAMD,NodeND}) where {V}
     order::Vector{V}, index::Vector{V} = permutation(SparseMatrixCSC{Bool}(graph), alg)
     return order, index
@@ -226,6 +248,11 @@ function permutation(matrix::SparseMatrixCSC{T,I}, alg::Union{AAMD,SymAMD}) wher
     # run algorithm
     order::Vector{I}, index::Vector{I} = permutation(converted, alg)
     return order, index
+end
+
+function permutation(graph, alg::LexM)
+    index = lexm(graph)
+    return invperm(index), index
 end
 
 function permutation(
@@ -295,21 +322,54 @@ function bfs(graph)
 end
 
 function bfs(graph::AbstractGraph{V}) where {V}
-    label = fill(false, nv(graph))
+    level = zeros(V, nv(graph))
     order = Vector{V}(undef, nv(graph))
 
-    if !iszero(nv(graph))
-        root = one(V)
-        component, queue = bfs!(label, order, graph, root)
+    # initialize queue
+    queue = @view order[begin:end]
 
-        for j in vertices(graph)
-            if !label[j]
-                component, queue = bfs!(label, queue, graph, j)
-            end
+    @inbounds for v in vertices(graph)
+        if iszero(level[v])
+            queue = last(bfs!(level, queue, graph, v))
         end
     end
 
+    # reverse ordering
     return reverse!(order)
+end
+
+# Algorithmic Aspects of Vertex Elimination on Graphs
+# Rose, Tarjan, and Lueker
+# BFS
+#
+# Perform a breadth-first search of a simple graph.
+# The complexity is O(m), where m = |E|.
+function bfs!(
+    level::AbstractVector{V},
+    queue::AbstractVector{V},
+    graph::AbstractGraph{V},
+    root::Integer,
+) where {V}
+    i = j = firstindex(queue)
+    level[root] = 1
+    queue[j] = root
+
+    @inbounds while i <= j
+        v = queue[i]
+        l = level[v]
+
+        for w in neighbors(graph, v)
+            if iszero(level[w])
+                j += 1
+                queue[j] = w
+                level[w] = l + 1
+            end
+        end
+
+        i += 1
+    end
+
+    @views return queue[begin:j], queue[i:end]
 end
 
 """
@@ -340,22 +400,19 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
 
     # run algorithm
     alpha = Vector{V}(undef, nv(graph))
-    size = Vector{V}(undef, nv(graph))
-
-    @inbounds for v in reverse(vertices(graph))
-        size[v] = 1
-        pushfirst!(set(1), v)
-    end
+    size = ones(V, nv(graph))
+    prepend!(set(1), vertices(graph))
 
     j::V = 1
     k::V = lastindex(clique)
 
-    @inbounds for i in reverse(vertices(graph))
+    @inbounds for i in reverse(oneto(nv(graph)))
         v::V = 0
 
         if k in eachindex(clique)
             v = clique[k]
             k -= 1
+            delete!(set(j), v)
         else
             v = popfirst!(set(j))
         end
@@ -385,13 +442,36 @@ end
     rcm(graph)
 
 The [reverse Cuthill-Mckee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
+An initial vertex is selected using the mininum degree heuristic.
 """
 function rcm(graph)
-    return rcm(BipartiteGraph(graph))
+    rcm(graph) do level, queue, graph, root
+        component = first(bfs!(level, queue, graph, root))
+        level[component] .= 0
+
+        argmin(component) do v
+            outdegree(graph, v)
+        end
+    end
 end
 
-function rcm(graph::Union{BipartiteGraph,Graph,DiGraph})
-    return rcm!(copy(graph))
+"""
+    rcmgl(graph)
+
+The [reverse Cuthill-Mckee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
+An initial vertex is selected using George and Liu's variant of the GPS algorithm.
+This is the algorithm used by MATLAB.
+"""
+function rcmgl(graph)
+    return rcm(fnroot!, graph)
+end
+
+function rcm(f::Function, graph)
+    return rcm(f, BipartiteGraph(graph))
+end
+
+function rcm(f::Function, graph::Union{BipartiteGraph,Graph,DiGraph})
+    return rcm!(f, copy(graph))
 end
 
 # Algorithms for Sparse Linear Systems
@@ -399,43 +479,28 @@ end
 # Algorithm 8.3: CM and RCM algorithms for band and profile reduction
 #
 # Apply the reverse Cuthill-Mckee algorithm to each connected component of a graph.
-# The complexity is O(mΔ), where m = |E|.
-function rcm!(graph::AbstractGraph{V}) where {V}
-    label = fill(false, nv(graph))
+# The complexity is O(m + n), where m = |E| and n = |V|.
+function rcm!(f::Function, graph::AbstractGraph{V}) where {V}
+    level = zeros(V, nv(graph))
     order = Vector{V}(undef, nv(graph))
 
     # sort neighbors
     scratch = Vector{V}(undef, Δout(graph))
 
-    for j in vertices(graph)
-        sort!(neighbors(graph, j); by=i -> outdegree(graph, i), scratch)
+    @inbounds for v in vertices(graph)
+        sort!(neighbors(graph, v); by=u -> outdegree(graph, u), scratch)
     end
 
-    if !iszero(nv(graph))
-        # find pseudo-peripheral vertex
-        root = argmin(vertices(graph)) do i
-            outdegree(graph, i)
-        end
+    # initialize queue
+    queue = @view order[begin:end]
 
-        # compute Cuthill-Mckee ordering
-        component, queue = bfs!(label, order, graph, root)
+    @inbounds for v in vertices(graph)
+        if iszero(level[v])
+            # find pseudo-peripheral vertex
+            root = f(level, queue, graph, v)
 
-        for j in vertices(graph)
-            if !label[j]
-                # compute connected component
-                component, queue = bfs!(label, queue, graph, j)
-
-                # find pseudo-peripheral vertex
-                root = argmin(component) do i
-                    outdegree(graph, i)
-                end
-
-                # reset labels
-                label[component] .= false
-
-                # compute Cuthill-Mckee ordering
-                bfs!(label, component, graph, root)
-            end
+            # compute Cuthill-Mckee ordering
+            queue = last(bfs!(level, queue, graph, root))
         end
     end
 
@@ -443,37 +508,42 @@ function rcm!(graph::AbstractGraph{V}) where {V}
     return reverse!(order)
 end
 
-# Algorithmic Aspects of Vertex Elimination on Graphs
-# Rose, Tarjan, and Lueker
-# BFS
+# Computer Solution of Sparse Linear Systems
+# George, Liu, and Ng
+# FNROOT (FiNd ROOT)
 #
-# Perform a breadth-first search of a simple graph.
-# The complexity is O(m), where m = |E|.
-@views function bfs!(
-    label::AbstractVector{Bool},
-    queue::AbstractVector{V},
-    graph::AbstractGraph{V},
-    root::Integer,
+# Find a pseudo-peripheral vertex.
+function fnroot!(
+    level::AbstractVector{V}, queue::AbstractVector{V}, graph::AbstractGraph{V}, root::V
 ) where {V}
-    i = j = firstindex(queue)
-    label[root] = true
-    queue[j] = root
+    component = first(bfs!(level, queue, graph, root))
+    v = zero(V)
 
-    @inbounds while i <= j
-        v = queue[i]
+    @inbounds while root != v
+        i = lastindex(component)
+        v = component[i]
+        eccentricity = level[v]
 
-        for w in neighbors(graph, v)
-            if !label[w]
-                j += 1
-                label[w] = true
-                queue[j] = w
+        while i > firstindex(component) && eccentricity == level[component[i]]
+            w = component[i]
+
+            if outdegree(graph, v) > outdegree(graph, w)
+                v = w
             end
+
+            i -= 1
         end
 
-        i += 1
+        level[component] .= 0
+        component = first(bfs!(level, queue, graph, v))
+
+        if level[component[end]] <= eccentricity
+            root = v
+        end
     end
 
-    return queue[begin:j], queue[i:end]
+    level[component] .= 0
+    return root
 end
 
 """
@@ -503,7 +573,8 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
     alpha = Vector{V}(undef, nv(graph))
     cell = Vector{V}(undef, nv(graph))
 
-    fixlist = I[]
+    fixlist = Vector{I}(undef, Δout(graph))
+    f::V = 0
 
     # (implicitly) assign label ∅ to all vertices
     head[1] = 2
@@ -523,7 +594,7 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
 
     next[c - 1] = 0
 
-    @inbounds for i in reverse(vertices(graph))
+    @inbounds for i in reverse(oneto(nv(graph)))
         # skip empty sets
         while iszero(next[head[1]])
             head[1] = head[head[1]]
@@ -548,7 +619,7 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
 
         # assign v the number i
         alpha[v] = i
-        empty!(fixlist)
+        f = 0
 
         ###########
         # update2 #
@@ -573,7 +644,8 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
                     back[c] = h
                     flag[c] = 1
                     next[c] = 0
-                    push!(fixlist, c)
+                    f += 1
+                    fixlist[f] = c
                     h = c
                     c += 1
                 end
@@ -588,8 +660,118 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
                 flag[cell[w]] = back[cell[w]] = h
                 next[h] = cell[w]
             end
+        end
 
-            flag[fixlist] .= 0
+        @views flag[fixlist[1:f]] .= 0
+    end
+
+    return alpha
+end
+
+# Perform a minimal lexicographic breadth-first search of a simple graph.
+function lexm(graph)
+    return lexm(BipartiteGraph(graph))
+end
+
+# Algorithmic Aspects of Vertex Elimination on Graphs
+# Rose, Tarjan, and Lueker
+# LEX M
+#
+# Perform a minimal lexicographic breadth-first search of a simple graph.
+# The complexity is O(mn), where m = |E| and n = |V|.
+function lexm(graph::AbstractGraph{V}) where {V}
+    unnumbered = Vector{V}(undef, nv(graph))
+    alpha = Vector{V}(undef, nv(graph))
+    scratch = Vector{V}(undef, nv(graph))
+    isreached = Vector{Bool}(undef, nv(graph))
+    label = Vector{Int}(undef, nv(graph))
+
+    # construct disjoint sets data structure
+    head = Vector{V}(undef, nv(graph))
+    prev = Vector{V}(undef, nv(graph))
+    next = Vector{V}(undef, nv(graph))
+
+    function reach(j)
+        return DoublyLinkedList(view(head, j), prev, next)
+    end
+
+    # run algorithm
+    unnumbered .= vertices(graph)
+    alpha .= 0
+    label .= 2
+    p::Int = 0
+    n::Int = 0
+    k::V = 1
+
+    ########
+    # loop #
+    ########
+
+    for i in reverse(oneto(nv(graph)))
+        ##########
+        # select #
+        ##########
+
+        # assign v the number i
+        v = pop!(unnumbered)
+        isreached[v] = 1
+        alpha[v] = i
+
+        for j in oneto(k)
+            empty!(reach(j))
+        end
+
+        isreached[unnumbered] .= 0
+
+        for w in neighbors(graph, v)
+            if iszero(alpha[w])
+                pushfirst!(reach(div(label[w], 2)), w)
+                isreached[w] = 1
+                label[w] += 1
+            end
+        end
+
+        ##########
+        # search #
+        ##########
+
+        for j in oneto(k)
+            while !isempty(reach(j))
+                w = popfirst!(reach(j))
+
+                for z in neighbors(graph, w)
+                    if !isreached[z]
+                        isreached[z] = 1
+
+                        if label[z] > 2j
+                            pushfirst!(reach(div(label[z], 2)), z)
+                            label[z] += 1
+                        else
+                            pushfirst!(reach(j), z)
+                        end
+                    end
+                end
+            end
+        end
+
+        ########
+        # sort #
+        ########
+
+        sort!(unnumbered; scratch, by=w -> label[w])
+
+        p = 0
+        k = 0
+
+        for w in unnumbered
+            n = label[w]
+
+            if p < n
+                k += 1
+                p = n
+            end
+
+            label[w] = 2k
         end
     end
 

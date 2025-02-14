@@ -2,7 +2,7 @@ using AbstractTrees
 using Base.Order
 using Catlab: Catlab
 using CliqueTrees
-using CliqueTrees: DoublyLinkedList, sympermute
+using CliqueTrees: DoublyLinkedList, RCMGL, LexM, rcmgl, lexm, sympermute
 using Graphs
 using Graphs: SimpleEdge
 using JET
@@ -29,27 +29,27 @@ using Test
         graph = BipartiteGraph{Int8,Int16}(
             [
                 0 1 1 0 0 0 0 0
-                1 0 1 0 0 1 0 0
+                1 0 1 0 1 1 1 0
                 1 1 0 1 1 0 0 0
                 0 0 1 0 1 0 0 0
-                0 0 1 1 0 0 1 1
+                0 1 1 1 0 0 1 1
                 0 1 0 0 0 0 1 0
-                0 0 0 0 1 1 0 1
+                0 1 0 0 1 1 0 1
                 0 0 0 0 1 0 1 0
             ],
         )
 
         label, tree = eliminationtree(graph; alg=1:8)
-        @test isa(Tree(tree), Tree{Int8})
-        @test isa(Tree{Int32}(tree), Tree{Int32})
+        @test isequal(Tree(tree), tree)
+        @test isequal(Tree{Int32}(tree), tree)
 
         label, tree = supernodetree(graph; alg=1:8)
-        @test isa(Tree(tree), Tree{Int8})
-        @test isa(Tree{Int32}(tree), Tree{Int32})
+        @test isequal(Tree(tree), tree.tree)
+        @test isequal(Tree{Int32}(tree), tree.tree)
 
         label, tree = cliquetree(graph; alg=1:8)
-        @test isa(Tree(tree), Tree{Int8})
-        @test isa(Tree{Int32}(tree), Tree{Int32})
+        @test isequal(Tree(tree), tree.tree.tree)
+        @test isequal(Tree{Int32}(tree), tree.tree.tree)
     end
 end
 
@@ -57,12 +57,12 @@ end
     graph = BipartiteGraph{Int8,Int16}(
         [
             0 1 1 0 0 0 0 0
-            1 0 1 0 0 1 0 0
+            1 0 1 0 1 1 1 0
             1 1 0 1 1 0 0 0
             0 0 1 0 1 0 0 0
-            0 0 1 1 0 0 1 1
+            0 1 1 1 0 0 1 1
             0 1 0 0 0 0 1 0
-            0 0 0 0 1 1 0 1
+            0 1 0 0 1 1 0 1
             0 0 0 0 1 0 1 0
         ],
     )
@@ -135,8 +135,12 @@ end
     end
 
     @testset "interface" begin
+        nullgraph = zero(BipartiteGraph{Int8,Int16,Vector{Int16},Vector{Int8}})
+        @test nv(nullgraph) === zero(Int8)
+        @test ne(nullgraph) === zero(Int16)
+
         @test nv(graph) === Int8(8)
-        @test ne(graph) === Int16(22)
+        @test ne(graph) === Int16(26)
         @test eltype(graph) === Int8
         @test edgetype(graph) === SimpleEdge{Int8}
 
@@ -148,9 +152,9 @@ end
 
         @test vertices(graph) == 1:8
         @test src.(edges(graph)) ==
-            [1, 1, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 5, 5, 6, 6, 7, 7, 7, 8, 8]
+            [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 5, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8]
         @test dst.(edges(graph)) ==
-            [2, 3, 1, 3, 6, 1, 2, 4, 5, 3, 5, 3, 4, 7, 8, 2, 7, 5, 6, 8, 5, 7]
+            [2, 3, 1, 3, 5, 6, 7, 1, 2, 4, 5, 3, 5, 2, 3, 4, 7, 8, 2, 7, 2, 5, 6, 8, 5, 7]
 
         @test outneighbors(graph, 1) == [2, 3]
         @test collect(inneighbors(graph, 1)) == [2, 3]
@@ -164,7 +168,7 @@ end
 
 @testset "linked lists" begin
     @testset "singly linked list" begin
-        list = SinglyLinkedList(zeros(Int), Vector{Int}(undef, 3))
+        list = SinglyLinkedList{Int}(3)
         @test isempty(list)
         @test collect(list) == []
 
@@ -194,7 +198,7 @@ end
     end
 
     @testset "doubly linked list" begin
-        list = DoublyLinkedList(zeros(Int), Vector{Int}(undef, 3), Vector{Int}(undef, 3))
+        list = DoublyLinkedList{Int}(3)
         @test isempty(list)
         @test collect(list) == []
 
@@ -225,21 +229,13 @@ end
 end
 
 @testset "representation" begin
-    @test isa(repr("text/plain", BFS()), String)
-    @test isa(repr("text/plain", MCS()), String)
-    @test isa(repr("text/plain", LexBFS()), String)
-    @test isa(repr("text/plain", RCM()), String)
-    @test isa(repr("text/plain", AAMD()), String)
-    @test isa(repr("text/plain", SymAMD()), String)
-    @test isa(repr("text/plain", MMD()), String)
-    @test isa(repr("text/plain", NodeND()), String)
-    @test isa(repr("text/plain", Spectral()), String)
-    @test isa(repr("text/plain", BT()), String)
+    for A in (BFS, MCS, LexBFS, RCM, RCMGL, LexM, AAMD, SymAMD, MMD, NodeND, Spectral, BT)
+        @test isa(repr("text/plain", A()), String)
+    end
 
-    list = SinglyLinkedList(ones(Int), [2, 3, 4, 5, 6, 0])
-    @test isa(repr("text/plain", list), String)
-    list = DoublyLinkedList(ones(Int), [2, 3, 4, 5, 6, 0], [0, 1, 2, 3, 4, 5])
-    @test isa(repr("text/plain", list), String)
+    for L in (SinglyLinkedList, DoublyLinkedList)
+        @test isa(repr("text/plain", L([1, 2, 3, 4, 5, 6])), String)
+    end
 
     graph = BipartiteGraph(
         [
@@ -272,6 +268,8 @@ end
     @test permutation(graph; alg=MCS()) == ([], [])
     @test permutation(graph; alg=LexBFS()) == ([], [])
     @test permutation(graph; alg=RCM()) == ([], [])
+    @test permutation(graph; alg=RCMGL()) == ([], [])
+    @test permutation(graph; alg=LexM()) == ([], [])
     @test permutation(graph; alg=AAMD()) == ([], [])
     @test permutation(graph; alg=SymAMD()) == ([], [])
     @test permutation(graph; alg=MMD()) == ([], []) skip = true
@@ -308,8 +306,10 @@ end
 
     @test permutation(graph; alg=BFS()) == ([1], [1])
     @test permutation(graph; alg=MCS()) == ([1], [1])
-    @test permutation(graph; alg=RCM()) == ([1], [1])
     @test permutation(graph; alg=LexBFS()) == ([1], [1])
+    @test permutation(graph; alg=RCM()) == ([1], [1])
+    @test permutation(graph; alg=RCMGL()) == ([1], [1])
+    @test permutation(graph; alg=LexM()) == ([1], [1])
     @test permutation(graph; alg=AAMD()) == ([1], [1])
     @test permutation(graph; alg=SymAMD()) == ([1], [1])
     @test permutation(graph; alg=MMD()) == ([1], [1])
@@ -394,35 +394,32 @@ end
     )
 
     # Figure 4.2
-    __filledgraph = BipartiteGraph(
+    __completion = BipartiteGraph(
         [
-            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            1 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 1 1 1 1 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 1 1 1 0 0 0 0 0
-            0 0 0 0 0 0 0 0 0 1 1 1 1 0 0 0 0
-            1 0 1 1 1 0 1 1 1 0 0 0 0 0 0 0 0
-            0 0 0 0 1 1 0 0 1 0 0 1 1 1 1 0 0
+            0 0 1 1 1 0 0 0 0 0 0 0 0 0 1 0 0
+            0 0 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0
+            1 1 0 1 1 0 0 0 0 0 0 0 0 0 1 0 0
+            1 1 1 0 1 0 0 0 0 0 0 0 0 0 1 0 0
+            1 0 1 1 0 0 0 0 1 0 0 0 0 0 1 1 0
+            0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 1 0
+            0 0 0 0 0 0 0 1 1 0 0 0 0 0 1 0 0
+            0 0 0 0 0 0 1 0 1 0 0 0 0 0 1 0 0
+            0 0 0 0 1 1 1 1 0 0 0 0 0 0 1 1 0
+            0 0 0 0 0 0 0 0 0 0 1 0 1 1 0 0 1
+            0 0 0 0 0 0 0 0 0 1 0 0 1 1 0 0 1
+            0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 1 1
+            0 0 0 0 0 0 0 0 0 1 1 1 0 1 0 1 1
+            0 0 0 0 0 0 0 0 0 1 1 1 1 0 0 1 1
+            1 0 1 1 1 0 1 1 1 0 0 0 0 0 0 1 1
+            0 0 0 0 1 1 0 0 1 0 0 1 1 1 1 0 1
             0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 0
         ],
     )
 
-    __chordalgraph = BipartiteGraph(Symmetric(sparse(__filledgraph), :L))
-
     for (G, V, E) in types
         @testset "$(nameof(G))" begin
             graph = G(__graph)
-            filledgraph = G(__filledgraph)
-            chordalgraph = G(__chordalgraph)
+            completion = G(__completion)
 
             @testset "inference" begin
                 @inferred ischordal(graph)
@@ -430,8 +427,10 @@ end
                 @inferred bfs(graph)
                 @inferred mcs(graph)
                 @inferred mcs(graph, V[1, 3])
-                @inferred rcm(graph)
                 @inferred lexbfs(graph)
+                @inferred rcm(graph)
+                @inferred rcmgl(graph)
+                @inferred lexm(graph)
                 @inferred treewidth(graph; alg=1:17)
                 @inferred eliminationtree(graph; alg=1:17)
                 @inferred supernodetree(graph; alg=1:17, snd=Nodal())
@@ -455,8 +454,10 @@ end
                 @test_call bfs(graph)
                 @test_call mcs(graph)
                 @test_call mcs(graph, V[1, 3])
-                @test_call rcm(graph)
                 @test_call lexbfs(graph)
+                @test_call rcm(graph)
+                @test_call rcmgl(graph)
+                @test_call lexm(graph)
                 @test_call treewidth(graph; alg=1:17)
                 @test_call eliminationtree(graph; alg=1:17)
                 @test_call supernodetree(graph; alg=1:17, snd=Nodal())
@@ -479,80 +480,42 @@ end
                 @test !isfilled(graph)
                 @test !isperfect(graph, permutation(graph, MCS())...)
                 @test !isperfect(graph, permutation(graph, LexBFS())...)
+                @test !isperfect(graph, permutation(graph, LexM())...)
                 @test treewidth(graph; alg=1:17) === V(4)
 
-                @test isfilled(chordalgraph)
-                @test ischordal(chordalgraph)
-                @test isperfect(chordalgraph, permutation(chordalgraph, MCS())...)
-                @test isperfect(chordalgraph, permutation(chordalgraph, LexBFS())...)
-                @test treewidth(chordalgraph; alg=1:17) === V(4)
+                @test isfilled(completion)
+                @test ischordal(completion)
+                @test isperfect(completion, permutation(completion, MCS())...)
+                @test isperfect(completion, permutation(completion, LexBFS())...)
+                @test isperfect(completion, permutation(completion, LexM())...)
+                @test treewidth(completion; alg=1:17) === V(4)
 
-                label, _filledgraph = eliminationgraph(graph; alg=1:17)
-                @test isfilled(_filledgraph)
-                @test sparse(sympermute(_filledgraph, label, ReverseOrdering())) ==
-                    sparse(__filledgraph)
+                label, _completion = eliminationgraph(graph; alg=1:17)
+                @test _completion ==
+                    reverse(sympermute(__completion, invperm(label), Forward))
             end
 
             @testset "permutations" begin
-                order, index = permutation(graph; alg=BFS())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=MCS())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=LexBFS())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=RCM())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=AAMD())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=SymAMD())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=MMD())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=NodeND())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=Spectral())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
-
-                order, index = permutation(graph; alg=BT())
-                @test isa(order, Vector{V})
-                @test isa(index, Vector{V})
-                @test length(order) == 17
-                @test order[index] == 1:17
+                for A in (
+                    BFS,
+                    MCS,
+                    LexBFS,
+                    RCM,
+                    RCMGL,
+                    LexM,
+                    AAMD,
+                    SymAMD,
+                    MMD,
+                    NodeND,
+                    Spectral,
+                    BT,
+                )
+                    order, index = permutation(graph; alg=A())
+                    @test isa(order, Vector{V})
+                    @test isa(index, Vector{V})
+                    @test length(order) == 17
+                    @test order[index] == 1:17
+                end
             end
 
             @testset "clique trees" begin
@@ -566,9 +529,8 @@ end
                     @test treewidth(tree) === V(4)
                     @test nv(tree) === V(17)
                     @test ne(tree) === E(42)
-                    @test sparse(
-                        sympermute(eliminationgraph(tree), label, ReverseOrdering())
-                    ) == sparse(__filledgraph)
+                    @test eliminationgraph(tree) ==
+                        reverse(sympermute(__completion, invperm(label), Forward))
 
                     @test map(i -> parentindex(tree, i), 1:17) ==
                         [2, 4, 4, 5, 16, 8, 8, 9, 10, 14, 14, 13, 14, 15, 16, 17, nothing]
@@ -658,9 +620,8 @@ end
                     @test treewidth(tree) === V(4)
                     @test nv(tree) === V(17)
                     @test ne(tree) === E(42)
-                    @test sparse(
-                        sympermute(eliminationgraph(tree), label, ReverseOrdering())
-                    ) == sparse(__filledgraph)
+                    @test eliminationgraph(tree) ==
+                        reverse(sympermute(__completion, invperm(label), Forward))
 
                     @test map(i -> parentindex(tree, i), 1:8) ==
                         [8, 3, 6, 6, 6, 7, 8, nothing]
@@ -715,9 +676,8 @@ end
                     @test treewidth(tree) === V(4)
                     @test nv(tree) === V(17)
                     @test ne(tree) === E(42)
-                    @test sparse(
-                        sympermute(eliminationgraph(tree), label, ReverseOrdering())
-                    ) == sparse(__filledgraph)
+                    @test eliminationgraph(tree) ==
+                        reverse(sympermute(__completion, invperm(label), Forward))
 
                     @test map(i -> parentindex(tree, i), 1:12) ==
                         [3, 3, 12, 6, 6, 7, 10, 10, 10, 11, 12, nothing]

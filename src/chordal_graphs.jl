@@ -149,6 +149,7 @@ end
 # Test for Zero Fill-In.
 #
 # Determine whether a fill-reducing permutation is perfect.
+# The complexity is O(m + n), where m = |E| and n = |V|.
 function isperfect(
     graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}
 ) where {V}

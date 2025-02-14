@@ -4,7 +4,7 @@ function mergesorted!(
     target::AbstractVector{I},
     source1::AbstractVector{I},
     source2::AbstractVector{I},
-    order::Ordering=ForwardOrdering(),
+    order::Ordering=Forward,
 ) where {I}
     s1 = firstindex(source1)
     s2 = firstindex(source2)
@@ -48,7 +48,7 @@ function indexinsorted!(
     target::AbstractVector{I},
     source1::AbstractVector{I},
     source2::AbstractVector{I},
-    order::Ordering=ForwardOrdering(),
+    order::Ordering=Forward,
 ) where {I}
     s1 = firstindex(source1)
     s2 = firstindex(source2)

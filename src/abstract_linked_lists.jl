@@ -12,6 +12,11 @@ function Base.show(io::IO, ::MIME"text/plain", list::L) where {L<:AbstractLinked
     end
 end
 
+function Base.empty!(list::AbstractLinkedList)
+    list.head[] = 0
+    return list
+end
+
 function Base.isempty(list::AbstractLinkedList)
     return iszero(list.head[])
 end
