@@ -14,6 +14,9 @@ BFS
 MCS
 LexBFS
 RCM
+RCMGL
+LexM
+MCSM
 AAMD
 SymAMD
 MMD
@@ -25,6 +28,9 @@ bfs
 mcs
 lexbfs
 rcm
+rcmgl
+lexm
+mcsm
 ```
 
 ## Supernodes

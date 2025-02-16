@@ -2,7 +2,7 @@ using AbstractTrees
 using Base.Order
 using Catlab: Catlab
 using CliqueTrees
-using CliqueTrees: DoublyLinkedList, RCMGL, LexM, rcmgl, lexm, sympermute
+using CliqueTrees: DoublyLinkedList, sympermute
 using Graphs
 using Graphs: SimpleEdge
 using JET
@@ -229,7 +229,8 @@ end
 end
 
 @testset "representation" begin
-    for A in (BFS, MCS, LexBFS, RCM, RCMGL, LexM, AAMD, SymAMD, MMD, NodeND, Spectral, BT)
+    for A in
+        (BFS, MCS, LexBFS, RCM, RCMGL, LexM, MCSM, AAMD, SymAMD, MMD, NodeND, Spectral, BT)
         @test isa(repr("text/plain", A()), String)
     end
 
@@ -431,6 +432,7 @@ end
                 @inferred rcm(graph)
                 @inferred rcmgl(graph)
                 @inferred lexm(graph)
+                @inferred mcsm(graph)
                 @inferred treewidth(graph; alg=1:17)
                 @inferred eliminationtree(graph; alg=1:17)
                 @inferred supernodetree(graph; alg=1:17, snd=Nodal())
@@ -458,6 +460,7 @@ end
                 @test_call rcm(graph)
                 @test_call rcmgl(graph)
                 @test_call lexm(graph)
+                @test_call mcsm(graph)
                 @test_call treewidth(graph; alg=1:17)
                 @test_call eliminationtree(graph; alg=1:17)
                 @test_call supernodetree(graph; alg=1:17, snd=Nodal())
@@ -481,6 +484,7 @@ end
                 @test !isperfect(graph, permutation(graph, MCS())...)
                 @test !isperfect(graph, permutation(graph, LexBFS())...)
                 @test !isperfect(graph, permutation(graph, LexM())...)
+                @test !isperfect(graph, permutation(graph, MCSM())...)
                 @test treewidth(graph; alg=1:17) === V(4)
 
                 @test isfilled(completion)
@@ -488,6 +492,7 @@ end
                 @test isperfect(completion, permutation(completion, MCS())...)
                 @test isperfect(completion, permutation(completion, LexBFS())...)
                 @test isperfect(completion, permutation(completion, LexM())...)
+                @test isperfect(completion, permutation(completion, MCSM())...)
                 @test treewidth(completion; alg=1:17) === V(4)
 
                 label, _completion = eliminationgraph(graph; alg=1:17)
@@ -503,6 +508,7 @@ end
                     RCM,
                     RCMGL,
                     LexM,
+                    MCSM,
                     AAMD,
                     SymAMD,
                     MMD,

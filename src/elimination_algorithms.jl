@@ -3,18 +3,21 @@
 
 A graph elimination algorithm. The options are
 
-| type               | name                               | time     | space    |
-|:------------------ |:---------------------------------- |:-------- |:-------- |
-| [`BFS`](@ref)      | breadth-first search               | O(m + n) | O(m + n) |
-| [`MCS`](@ref)      | maximum cardinality search         | O(m + n) | O(m + n) |
-| [`LexBFS`](@ref)   | lexicographic breadth-first search | O(m + n) | O(m + n) |
-| [`RCM`](@ref)      | reverse Cuthill-Mckee              | O(m + n) | O(m + n) |
-| [`AAMD`](@ref)     | approximate minimum degree         | O(mn)    | O(m + n) |
-| [`SymAMD`](@ref)   | column approximate minimum degree  | O(mn)    | O(m + n) |
-| [`MMD`](@ref)      | multiple minimum degree            | O(mn²)   | O(m + n) |
-| [`NodeND`](@ref)   | nested dissection                  |          |          |
-| [`Spectral`](@ref) | spectral ordering                  |          |          |
-| [`BT`](@ref)       | Bouchitte-Todinca                  |          |          |
+| type               | name                                         | time     | space    |
+|:------------------ |:-------------------------------------------- |:-------- |:-------- |
+| [`BFS`](@ref)      | breadth-first search                         | O(m + n) | O(n)     |
+| [`MCS`](@ref)      | maximum cardinality search                   | O(m + n) | O(n)     |
+| [`LexBFS`](@ref)   | lexicographic breadth-first search           | O(m + n) | O(m + n) |
+| [`RCM`](@ref)      | reverse Cuthill-Mckee                        | O(m + n) | O(m + n) |
+| [`RCMGL`](@ref)    | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
+| [`MCSM`](@ref)     | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
+| [`LexM`](@ref)     | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
+| [`AAMD`](@ref)     | approximate minimum degree                   | O(mn)    | O(m + n) |
+| [`SymAMD`](@ref)   | column approximate minimum degree            | O(mn)    | O(m + n) |
+| [`MMD`](@ref)      | multiple minimum degree                      | O(mn²)   | O(m + n) |
+| [`NodeND`](@ref)   | nested dissection                            |          |          |
+| [`Spectral`](@ref) | spectral ordering                            |          |          |
+| [`BT`](@ref)       | Bouchitte-Todinca                            |          |          |
 
 for a graph with m edges, n vertices, and maximum degree Δ. The algorithm [`Spectral`](@ref) only works on connected graphs.
 """
@@ -67,16 +70,23 @@ struct RCM <: EliminationAlgorithm end
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using George and Liu's variant of the GPS algorithm.
-This is the version implemented in MATLAB.
+This is the version of RCM implemented in MATLAB.
 """
 struct RCMGL <: EliminationAlgorithm end
 
 """
     LexM <: EliminationAlgorithm
 
-The minimal [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
+A minimal variant of the [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
 """
 struct LexM <: EliminationAlgorithm end
+
+"""
+    MCSM <: EliminationAlgorithm
+
+A minimal variant of the maximal cardinality search algorithm.
+"""
+struct MCSM <: EliminationAlgorithm end
 
 """
     AAMD <: EliminationAlgorithm
@@ -252,6 +262,11 @@ end
 
 function permutation(graph, alg::LexM)
     index = lexm(graph)
+    return invperm(index), index
+end
+
+function permutation(graph, alg::MCSM)
+    index = mcsm(graph)
     return invperm(index), index
 end
 
@@ -668,7 +683,12 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
     return alpha
 end
 
-# Perform a minimal lexicographic breadth-first search of a simple graph.
+"""
+    lexm(graph)
+
+A minimal variant of the [lexicographic breadth-first search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
+Returns the inverse permutation.
+"""
 function lexm(graph)
     return lexm(BipartiteGraph(graph))
 end
@@ -677,7 +697,8 @@ end
 # Rose, Tarjan, and Lueker
 # LEX M
 #
-# Perform a minimal lexicographic breadth-first search of a simple graph.
+# Perform a lexicographic breadth-first search of a simple graph.
+# Returns a minimal ordering.
 # The complexity is O(mn), where m = |E| and n = |V|.
 function lexm(graph::AbstractGraph{V}) where {V}
     unnumbered = Vector{V}(undef, nv(graph))
@@ -692,7 +713,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
     next = Vector{V}(undef, nv(graph))
 
     function reach(j)
-        return DoublyLinkedList(view(head, j), prev, next)
+        @inbounds return DoublyLinkedList(view(head, j), prev, next)
     end
 
     # run algorithm
@@ -707,7 +728,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
     # loop #
     ########
 
-    for i in reverse(oneto(nv(graph)))
+    @inbounds for i in reverse(oneto(nv(graph)))
         ##########
         # select #
         ##########
@@ -772,6 +793,93 @@ function lexm(graph::AbstractGraph{V}) where {V}
             end
 
             label[w] = 2k
+        end
+    end
+
+    return alpha
+end
+
+"""
+    mcsm(graph)
+
+A minimal variant of the maximum cardinality search algorithm. Returns the inverse permutation.
+"""
+function mcsm(graph)
+    return mcsm(BipartiteGraph(graph))
+end
+
+# Maximum Cardinality Search for Computing Minimal Triangulations
+# Berry, Blair, and Heggernes
+# MCS-M
+#
+# Perform a maximum cardinality search of a simple graph.
+# Returns a minimal ordering.
+# The complexity is O(mn), where m = |E| and n = |V|.
+function mcsm(graph::AbstractGraph{V}) where {V}
+    alpha = Vector{V}(undef, nv(graph))
+    isreached = Vector{Bool}(undef, nv(graph))
+    label = Vector{Int}(undef, nv(graph))
+
+    # construct disjoint sets data structure
+    head = Vector{V}(undef, nv(graph))
+    prev = Vector{V}(undef, nv(graph))
+    next = Vector{V}(undef, nv(graph))
+
+    function reach(j)
+        @inbounds return DoublyLinkedList(view(head, j), prev, next)
+    end
+
+    # run algorithm
+    alpha .= 0
+    label .= 1
+    k::V = 0
+    v::V = 0
+
+    @inbounds for i in reverse(oneto(nv(graph)))
+        v = k = 0
+
+        for w in vertices(graph)
+            if iszero(alpha[w])
+                isreached[w] = 0
+
+                if label[w] > k
+                    v, k = w, label[w]
+                end
+            end
+        end
+
+        isreached[v] = 1
+        alpha[v] = i
+
+        for j in oneto(k)
+            empty!(reach(j))
+        end
+
+        for w in neighbors(graph, v)
+            if iszero(alpha[w])
+                isreached[w] = 1
+                pushfirst!(reach(label[w]), w)
+                label[w] += 1
+            end
+        end
+
+        for j in oneto(k)
+            while !isempty(reach(j))
+                w = popfirst!(reach(j))
+
+                for z in neighbors(graph, w)
+                    if !isreached[z]
+                        isreached[z] = 1
+
+                        if label[z] > j
+                            pushfirst!(reach(label[z]), z)
+                            label[z] += 1
+                        else
+                            pushfirst!(reach(j), z)
+                        end
+                    end
+                end
+            end
         end
     end
 

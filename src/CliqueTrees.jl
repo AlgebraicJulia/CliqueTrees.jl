@@ -2,7 +2,7 @@ module CliqueTrees
 
 using AbstractTrees
 using AMD: AMD
-using Base: OneTo, oneto, @propagate_inbounds
+using Base: OneTo, oneto, @kwdef, @propagate_inbounds
 using Base.Order
 using Base.Iterators: take, takewhile
 using DataStructures: IntDisjointSets, find_root!, root_union!
@@ -30,6 +30,9 @@ export BFS,
     MCS,
     LexBFS,
     RCM,
+    RCMGL,
+    LexM,
+    MCSM,
     AAMD,
     SymAMD,
     MMD,
@@ -40,7 +43,10 @@ export BFS,
     bfs,
     mcs,
     lexbfs,
-    rcm
+    rcm,
+    rcmgl,
+    lexm,
+    mcsm
 
 # Trees
 export Tree, eliminationtree, setrootindex!
