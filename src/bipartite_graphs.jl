@@ -426,10 +426,7 @@ end
 
 # slow
 function Graphs.indegree(graph::BipartiteGraph{V}, i::Integer) where {V}
-    n::V = sum(vertices(graph)) do j
-        has_edge(graph, j, i)
-    end
-
+    n::V = sum(j -> has_edge(graph, j, i), vertices(graph))
     return n
 end
 

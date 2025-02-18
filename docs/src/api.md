@@ -43,13 +43,11 @@ Maximal
 Fundamental
 ```
 
-## Chordal Graphs
+## Filled Graphs
 
 ```@docs
-eliminationgraph
-eliminationgraph!
+FilledGraph
 ischordal
-isfilled
 isperfect
 ```
 

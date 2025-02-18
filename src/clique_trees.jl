@@ -6,20 +6,28 @@ This type implements the [indexed tree interface](https://juliacollections.githu
 """
 struct CliqueTree{V,E} <: AbstractVector{Clique{V,E}}
     tree::SupernodeTree{V}
+    count::Vector{V}
     sep::BipartiteGraph{V,E,Vector{E},Vector{V}}
 
-    function CliqueTree{V,E}(tree::SupernodeTree, sep::BipartiteGraph) where {V,E}
+    function CliqueTree{V,E}(
+        tree::SupernodeTree, count::AbstractVector, sep::BipartiteGraph
+    ) where {V,E}
         # validate arguments
+        oneto(pointers(residuals(tree))[end] - 1) != eachindex(count) && throw(
+            ArgumentError("oneto(pointers(residuals(tree))[end] - 1) != eachindex(count)"),
+        )
         eachindex(tree) != vertices(sep) &&
             throw(ArgumentError("eachindex(tree) != vertices(sep)"))
 
         # construct tree
-        return tree = new{V,E}(tree, sep)
+        return new{V,E}(tree, count, sep)
     end
 end
 
-function CliqueTree(tree::SupernodeTree{V}, sep::BipartiteGraph{V,E}) where {V,E}
-    return CliqueTree{V,E}(tree, sep)
+function CliqueTree(
+    tree::SupernodeTree{V}, count::AbstractVector{V}, sep::BipartiteGraph{V,E}
+) where {V,E}
+    return CliqueTree{V,E}(tree, count, sep)
 end
 
 function Tree(tree::CliqueTree)
@@ -75,7 +83,7 @@ end
 
 @views function cliquetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
     # construct supernodal elimination tree
-    label, tree, index, ptr, lower, upper = supernodetree(graph, alg, snd)
+    label, tree, count, index, ptr, lower, upper = supernodetree(graph, alg, snd)
     lower = sympermute!(upper, lower, index, Reverse)
 
     # compute separators
@@ -120,7 +128,7 @@ end
     end
 
     # construct clique tree
-    return label, CliqueTree(tree, sep)
+    return label, CliqueTree(tree, count, sep)
 end
 
 """
@@ -192,15 +200,17 @@ end
 Compute the relative indices of a clique tree.
 """
 function relatives(tree::CliqueTree{V}) where {V}
-    rel = BipartiteGraph{V}(nv(tree), pointers(tree.sep), ne(tree.sep))
+    graph = BipartiteGraph{V}(
+        pointers(residuals(tree))[end] - 1, pointers(separators(tree)), ne(separators(tree))
+    )
 
-    for (j, bag) in enumerate(tree)
+    for (j, clique) in enumerate(tree)
         for i in childindices(tree, j)
-            indexinsorted!(neighbors(rel, i), separator(tree, i), bag)
+            indexinsorted!(neighbors(graph, i), separator(tree, i), clique)
         end
     end
 
-    return rel
+    return graph
 end
 
 ##########################

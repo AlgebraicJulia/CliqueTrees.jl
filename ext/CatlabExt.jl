@@ -45,18 +45,26 @@ function CliqueTrees.rcm(graph::Catlab.HasGraph)
     return rcm(CatlabGraph(graph))
 end
 
+function CliqueTrees.rcmgl(graph::Catlab.HasGraph)
+    return rcmgl(CatlabGraph(graph))
+end
+
 function CliqueTrees.lexbfs(graph::Catlab.HasGraph)
     return lexbfs(CatlabGraph(graph))
+end
+
+function CliqueTrees.lexm(graph::Catlab.HasGraph)
+    return lexm(CatlabGraph(graph))
+end
+
+function CliqueTrees.mcsm(graph::Catlab.HasGraph)
+    return lexm(CatlabGraph(graph))
 end
 
 function CliqueTrees.permutation(
     graph::Catlab.HasGraph, alg::Union{AbstractVector,AAMD,SymAMD,NodeND,Spectral,BT}
 )
     return permutation(CatlabGraph(graph), alg)
-end
-
-function CliqueTrees.isfilled(graph::Catlab.HasGraph)
-    return isfilled(CatlabGraph(graph))
 end
 
 function CliqueTrees.isperfect(

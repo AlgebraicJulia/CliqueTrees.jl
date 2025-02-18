@@ -71,7 +71,7 @@ function supernodetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
 
     invpermute!(label, eindex)
     sndtree = SupernodeTree(tree, BipartiteGraph(nv(lower), sndptr, vertices(lower)))
-    return label, sndtree, eindex, sepptr, lower, upper
+    return label, sndtree, rowcount, eindex, sepptr, lower, upper
 end
 
 function supernodetree(graph, alg::PermutationOrAlgorithm, snd::Nodal)
@@ -93,7 +93,7 @@ function supernodetree(graph, alg::PermutationOrAlgorithm, snd::Nodal)
 
     invpermute!(label, eindex)
     sndtree = SupernodeTree(etree, BipartiteGraph(nv(lower), sndptr, vertices(lower)))
-    return label, sndtree, eindex, sepptr, lower, upper
+    return label, sndtree, rowcount, eindex, sepptr, lower, upper
 end
 
 """

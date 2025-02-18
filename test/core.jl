@@ -1,4 +1,5 @@
 using AbstractTrees
+using Base: oneto
 using Base.Order
 using Catlab: Catlab
 using CliqueTrees
@@ -139,6 +140,7 @@ end
         @test nv(nullgraph) === zero(Int8)
         @test ne(nullgraph) === zero(Int16)
 
+        @test is_directed(graph)
         @test nv(graph) === Int8(8)
         @test ne(graph) === Int16(26)
         @test eltype(graph) === Int8
@@ -146,23 +148,80 @@ end
 
         @test has_edge(graph, 1, 2)
         @test !has_edge(graph, 1, 4)
-
         @test SimpleEdge(1, 2) ∈ edges(graph)
         @test SimpleEdge(1, 4) ∉ edges(graph)
 
-        @test vertices(graph) == 1:8
+        @test vertices(graph) === oneto(Int8(8))
         @test src.(edges(graph)) ==
             [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 5, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8]
         @test dst.(edges(graph)) ==
             [2, 3, 1, 3, 5, 6, 7, 1, 2, 4, 5, 3, 5, 2, 3, 4, 7, 8, 2, 7, 2, 5, 6, 8, 5, 7]
 
-        @test outneighbors(graph, 1) == [2, 3]
+        @test neighbors(graph, 1) == [2, 3]
         @test collect(inneighbors(graph, 1)) == [2, 3]
         @test all_neighbors(graph, 1) == [2, 3]
 
-        @test outdegree(graph, 1) == 2
-        @test indegree(graph, 1) == 2
-        @test degree(graph, 1) == 4
+        @test outdegree(graph, 1) === Int8(2)
+        @test indegree(graph, 1) === Int8(2)
+        @test degree(graph, 1) === Int8(4)
+    end
+end
+
+@testset "filled graphs" begin
+    graph = BipartiteGraph{Int8,Int16}(
+        [
+            0 1 1 0 0 0 0 0
+            1 0 1 0 1 1 1 0
+            1 1 0 1 1 0 0 0
+            0 0 1 0 1 0 0 0
+            0 1 1 1 0 0 1 1
+            0 1 0 0 0 0 1 0
+            0 1 0 0 1 1 0 1
+            0 0 0 0 1 0 1 0
+        ],
+    )
+
+    label, tree = cliquetree(graph; alg=[1, 4, 6, 8, 3, 7, 2, 5])
+    filledgraph = FilledGraph(tree)
+
+    @testset "construction" begin
+        @test allequal((
+            BipartiteGraph(filledgraph),
+            BipartiteGraph{Int8}(filledgraph),
+            BipartiteGraph{Int8,Int16}(filledgraph),
+            BipartiteGraph(SparseMatrixCSC(filledgraph)),
+            BipartiteGraph(SparseMatrixCSC{Float64}(filledgraph)),
+            BipartiteGraph(SparseMatrixCSC{Float64,Int32}(filledgraph)),
+            BipartiteGraph(sparse(filledgraph)),
+            BipartiteGraph(sparse(Float64, filledgraph)),
+            BipartiteGraph(sparse(Float64, Int16, filledgraph)),
+        ))
+    end
+
+    @testset "interface" begin
+        @test is_directed(filledgraph)
+        @test nv(filledgraph) === Int8(8)
+        @test ne(filledgraph) === 13
+        @test eltype(filledgraph) === Int8
+        @test edgetype(filledgraph) === SimpleEdge{Int8}
+
+        @test has_edge(filledgraph, 1, 7)
+        @test !has_edge(filledgraph, 7, 1)
+        @test SimpleEdge(1, 7) ∈ edges(filledgraph)
+        @test SimpleEdge(7, 1) ∉ edges(filledgraph)
+        @test Base.hasfastin(edges(filledgraph))
+
+        @test vertices(filledgraph) === oneto(Int8(8))
+        @test src.(edges(filledgraph)) == [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7]
+        @test dst.(edges(filledgraph)) == [6, 7, 6, 8, 5, 7, 5, 8, 7, 8, 7, 8, 8]
+
+        @test neighbors(filledgraph, 5) == [7, 8]
+        @test collect(inneighbors(filledgraph, 5)) == [3, 4]
+        @test collect(all_neighbors(filledgraph, 5)) == [3, 4, 7, 8]
+
+        @test outdegree(filledgraph, 5) === Int8(2)
+        @test indegree(filledgraph, 5) === Int8(2)
+        @test degree(filledgraph, 5) === Int8(4)
     end
 end
 
@@ -262,101 +321,75 @@ end
 @testset "null graph" begin
     graph = spzeros(0, 0)
     @test ischordal(graph)
-    @test isfilled(graph)
     @test iszero(treewidth(graph))
 
-    @test permutation(graph; alg=BFS()) == ([], [])
-    @test permutation(graph; alg=MCS()) == ([], [])
-    @test permutation(graph; alg=LexBFS()) == ([], [])
-    @test permutation(graph; alg=RCM()) == ([], [])
-    @test permutation(graph; alg=RCMGL()) == ([], [])
-    @test permutation(graph; alg=LexM()) == ([], [])
-    @test permutation(graph; alg=AAMD()) == ([], [])
-    @test permutation(graph; alg=SymAMD()) == ([], [])
-    @test permutation(graph; alg=MMD()) == ([], []) skip = true
-    @test permutation(graph; alg=NodeND()) == ([], []) skip = true
-    @test permutation(graph; alg=BT()) == ([], [])
+    for A in (
+        BFS,
+        MCS,
+        LexBFS,
+        RCM,
+        RCMGL,
+        LexM,
+        MCSM,
+        AAMD,
+        SymAMD,
+        # MMD,
+        # NodeND,
+        # Spectral,
+        BT,
+    )
+        @test permutation(graph; alg=BFS()) == ([], [])
+    end
 
-    label, tree = cliquetree(graph; snd=Nodal())
-    @test iszero(length(tree))
-    @test isnothing(rootindex(tree))
-    @test iszero(treewidth(tree))
-    @test iszero(nv(tree))
-    @test iszero(ne(tree))
-
-    label, tree = cliquetree(graph; snd=Maximal())
-    @test iszero(length(tree))
-    @test isnothing(rootindex(tree))
-    @test iszero(treewidth(tree))
-    @test iszero(nv(tree))
-    @test iszero(ne(tree))
-
-    label, tree = cliquetree(graph; snd=Fundamental())
-    @test iszero(length(tree))
-    @test isnothing(rootindex(tree))
-    @test iszero(treewidth(tree))
-    @test iszero(nv(tree))
-    @test iszero(ne(tree))
+    for S in (Nodal, Maximal, Fundamental)
+        label, tree = cliquetree(graph; snd=S())
+        filledgraph = FilledGraph(tree)
+        @test iszero(length(tree))
+        @test isnothing(rootindex(tree))
+        @test iszero(treewidth(tree))
+        @test iszero(nv(filledgraph))
+        @test iszero(ne(filledgraph))
+    end
 end
 
 @testset "singleton graph" begin
     graph = spzeros(1, 1)
     @test ischordal(graph)
-    @test isfilled(graph)
     @test iszero(treewidth(graph))
 
-    @test permutation(graph; alg=BFS()) == ([1], [1])
-    @test permutation(graph; alg=MCS()) == ([1], [1])
-    @test permutation(graph; alg=LexBFS()) == ([1], [1])
-    @test permutation(graph; alg=RCM()) == ([1], [1])
-    @test permutation(graph; alg=RCMGL()) == ([1], [1])
-    @test permutation(graph; alg=LexM()) == ([1], [1])
-    @test permutation(graph; alg=AAMD()) == ([1], [1])
-    @test permutation(graph; alg=SymAMD()) == ([1], [1])
-    @test permutation(graph; alg=MMD()) == ([1], [1])
-    @test permutation(graph; alg=NodeND()) == ([1], [1])
-    @test permutation(graph; alg=Spectral()) == ([1], [1]) skip = true
-    @test permutation(graph; alg=BT()) == ([1], [1])
+    for A in (
+        BFS,
+        MCS,
+        LexBFS,
+        RCM,
+        RCMGL,
+        LexM,
+        MCSM,
+        AAMD,
+        SymAMD,
+        MMD,
+        NodeND,
+        # Spectral,
+        BT,
+    )
+        @test permutation(graph; alg=BFS()) == ([1], [1])
+    end
 
-    label, tree = cliquetree(graph; snd=Nodal())
-    @test isone(length(tree))
-    @test isone(rootindex(tree))
-    @test iszero(treewidth(tree))
-    @test isone(nv(tree))
-    @test iszero(ne(tree))
-    @test isnothing(parentindex(tree, 1))
-    @test isempty(childindices(tree, 1))
-    @test isempty(separator(tree, 1))
-    @test isempty(neighbors(relatives(tree), 1))
-    @test isone(only(residual(tree, 1)))
-    @test isone(only(tree[1]))
-
-    label, tree = cliquetree(graph; snd=Maximal())
-    @test isone(length(tree))
-    @test isone(length(tree))
-    @test isone(rootindex(tree))
-    @test iszero(treewidth(tree))
-    @test isone(nv(tree))
-    @test iszero(ne(tree))
-    @test isnothing(parentindex(tree, 1))
-    @test isempty(childindices(tree, 1))
-    @test isempty(separator(tree, 1))
-    @test isempty(neighbors(relatives(tree), 1))
-    @test isone(only(residual(tree, 1)))
-    @test isone(only(tree[1]))
-
-    label, tree = cliquetree(graph; snd=Fundamental())
-    @test isone(length(tree))
-    @test isone(rootindex(tree))
-    @test iszero(treewidth(tree))
-    @test isone(nv(tree))
-    @test iszero(ne(tree))
-    @test isnothing(parentindex(tree, 1))
-    @test isempty(childindices(tree, 1))
-    @test isempty(separator(tree, 1))
-    @test isempty(neighbors(relatives(tree), 1))
-    @test isone(only(residual(tree, 1)))
-    @test isone(only(tree[1]))
+    for S in (Nodal, Maximal, Fundamental)
+        label, tree = cliquetree(graph; snd=S())
+        filledgraph = FilledGraph(tree)
+        @test isone(length(tree))
+        @test isone(rootindex(tree))
+        @test iszero(treewidth(tree))
+        @test isone(nv(filledgraph))
+        @test iszero(ne(filledgraph))
+        @test isnothing(parentindex(tree, 1))
+        @test isempty(childindices(tree, 1))
+        @test isempty(separator(tree, 1))
+        @test isempty(neighbors(relatives(tree), 1))
+        @test isone(only(residual(tree, 1)))
+        @test isone(only(tree[1]))
+    end
 end
 
 # Chordal Graphs and Semidefinite Optimization
@@ -424,7 +457,6 @@ end
 
             @testset "inference" begin
                 @inferred ischordal(graph)
-                @inferred isfilled(graph)
                 @inferred bfs(graph)
                 @inferred mcs(graph)
                 @inferred mcs(graph, V[1, 3])
@@ -441,18 +473,13 @@ end
                 @inferred cliquetree(graph; alg=1:17, snd=Nodal())
                 @inferred cliquetree(graph; alg=1:17, snd=Maximal())
                 @inferred cliquetree(graph; alg=1:17, snd=Fundamental())
-                @inferred eliminationgraph(graph; alg=1:17, snd=Nodal())
-                @inferred eliminationgraph(graph; alg=1:17, snd=Maximal())
-                @inferred eliminationgraph(graph; alg=1:17, snd=Fundamental())
 
                 label, tree = cliquetree(graph; alg=1:17)
                 @inferred treewidth(tree)
-                @inferred eliminationgraph(tree)
             end
 
             @testset "JET" begin
                 @test_call ischordal(graph)
-                @test_call isfilled(graph)
                 @test_call bfs(graph)
                 @test_call mcs(graph)
                 @test_call mcs(graph, V[1, 3])
@@ -469,35 +496,25 @@ end
                 @test_call cliquetree(graph; alg=1:17, snd=Nodal())
                 @test_call cliquetree(graph; alg=1:17, snd=Maximal())
                 @test_call cliquetree(graph; alg=1:17, snd=Fundamental())
-                @test_call eliminationgraph(graph; alg=1:17, snd=Nodal())
-                @test_call eliminationgraph(graph; alg=1:17, snd=Maximal())
-                @test_call eliminationgraph(graph; alg=1:17, snd=Fundamental())
 
                 label, tree = cliquetree(graph; alg=1:17)
                 @test_call treewidth(tree)
-                @test_call eliminationgraph(tree)
             end
 
             @testset "chordality" begin
                 @test !ischordal(graph)
-                @test !isfilled(graph)
                 @test !isperfect(graph, permutation(graph, MCS())...)
                 @test !isperfect(graph, permutation(graph, LexBFS())...)
                 @test !isperfect(graph, permutation(graph, LexM())...)
                 @test !isperfect(graph, permutation(graph, MCSM())...)
                 @test treewidth(graph; alg=1:17) === V(4)
 
-                @test isfilled(completion)
                 @test ischordal(completion)
                 @test isperfect(completion, permutation(completion, MCS())...)
                 @test isperfect(completion, permutation(completion, LexBFS())...)
                 @test isperfect(completion, permutation(completion, LexM())...)
                 @test isperfect(completion, permutation(completion, MCSM())...)
                 @test treewidth(completion; alg=1:17) === V(4)
-
-                label, _completion = eliminationgraph(graph; alg=1:17)
-                @test _completion ==
-                    reverse(sympermute(__completion, invperm(label), Forward))
             end
 
             @testset "permutations" begin
@@ -528,15 +545,17 @@ end
                 @testset "nodal" begin
                     # Figure 4.3
                     label, tree = cliquetree(graph; alg=1:17, snd=Nodal())
+                    filledgraph = FilledGraph(tree)
                     @test isa(label, Vector{V})
                     @test isa(tree, CliqueTree{V,E})
+                    @test isa(filledgraph, FilledGraph{V,E})
                     @test length(tree) == 17
                     @test rootindex(tree) === V(17)
                     @test treewidth(tree) === V(4)
-                    @test nv(tree) === V(17)
-                    @test ne(tree) === E(42)
-                    @test eliminationgraph(tree) ==
-                        reverse(sympermute(__completion, invperm(label), Forward))
+                    @test nv(filledgraph) === V(17)
+                    @test ne(filledgraph) === 42
+                    @test Symmetric(sparse(filledgraph), :L) ==
+                        sparse(__completion)[label, label]
 
                     @test map(i -> parentindex(tree, i), 1:17) ==
                         [2, 4, 4, 5, 16, 8, 8, 9, 10, 14, 14, 13, 14, 15, 16, 17, nothing]
@@ -619,15 +638,17 @@ end
                 @testset "maximal" begin
                     # Figure 4.7 (left)
                     label, tree = cliquetree(graph; alg=1:17, snd=Maximal())
+                    filledgraph = FilledGraph(tree)
                     @test isa(label, Vector{V})
                     @test isa(tree, CliqueTree{V,E})
+                    @test isa(filledgraph, FilledGraph{V,E})
                     @test length(tree) == 8
                     @test rootindex(tree) === V(8)
                     @test treewidth(tree) === V(4)
-                    @test nv(tree) === V(17)
-                    @test ne(tree) === E(42)
-                    @test eliminationgraph(tree) ==
-                        reverse(sympermute(__completion, invperm(label), Forward))
+                    @test nv(filledgraph) === V(17)
+                    @test ne(filledgraph) === 42
+                    @test Symmetric(sparse(filledgraph), :L) ==
+                        sparse(__completion)[label, label]
 
                     @test map(i -> parentindex(tree, i), 1:8) ==
                         [8, 3, 6, 6, 6, 7, 8, nothing]
@@ -675,15 +696,17 @@ end
                 @testset "fundamental" begin
                     # Figure 4.9
                     label, tree = cliquetree(graph; alg=1:17, snd=Fundamental())
+                    filledgraph = FilledGraph(tree)
                     @test isa(label, Vector{V})
                     @test isa(tree, CliqueTree{V,E})
+                    @test isa(filledgraph, FilledGraph{V,E})
                     @test length(tree) == 12
                     @test rootindex(tree) === V(12)
                     @test treewidth(tree) === V(4)
-                    @test nv(tree) === V(17)
-                    @test ne(tree) === E(42)
-                    @test eliminationgraph(tree) ==
-                        reverse(sympermute(__completion, invperm(label), Forward))
+                    @test nv(filledgraph) === V(17)
+                    @test ne(filledgraph) === 42
+                    @test Symmetric(sparse(filledgraph), :L) ==
+                        sparse(__completion)[label, label]
 
                     @test map(i -> parentindex(tree, i), 1:12) ==
                         [3, 3, 12, 6, 6, 7, 10, 10, 10, 11, 12, nothing]
