@@ -41,7 +41,8 @@ function supernodetree(
     alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
     snd::SupernodeType=DEFAULT_SUPERNODE_TYPE,
 )
-    return supernodetree(graph, alg, snd)
+    label, tree, count, index, ptr, lower, upper = supernodetree(graph, alg, snd)
+    return label, tree
 end
 
 function supernodetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)

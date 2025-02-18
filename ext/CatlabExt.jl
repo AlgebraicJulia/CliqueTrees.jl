@@ -58,7 +58,7 @@ function CliqueTrees.lexm(graph::Catlab.HasGraph)
 end
 
 function CliqueTrees.mcsm(graph::Catlab.HasGraph)
-    return lexm(CatlabGraph(graph))
+    return mcsm(CatlabGraph(graph))
 end
 
 function CliqueTrees.permutation(

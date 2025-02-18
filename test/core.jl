@@ -195,6 +195,8 @@ end
             BipartiteGraph(sparse(filledgraph)),
             BipartiteGraph(sparse(Float64, filledgraph)),
             BipartiteGraph(sparse(Float64, Int16, filledgraph)),
+            BipartiteGraph(Matrix(filledgraph)),
+            BipartiteGraph(Matrix{Float64}(filledgraph)),
         ))
     end
 
@@ -299,12 +301,18 @@ end
 
     graph = BipartiteGraph(
         [
-            1 0 0 0 0 0
-            0 1 0 0 0 0
-            0 0 1 0 0 0
-            0 0 0 1 0 0
-            0 0 0 0 1 0
-            0 0 0 0 0 1
+            0 0 0 0 0 0 0 0 0 0 0 0
+            0 0 0 0 0 0 0 0 0 0 0 0
+            0 0 0 0 0 0 0 0 0 0 0 0
+            0 0 0 0 0 0 0 0 0 0 0 0
+            0 0 0 0 0 0 0 0 0 0 0 0
+            0 0 0 0 0 0 1 0 0 0 0 0
+            0 0 0 0 0 1 0 1 0 0 0 0
+            0 0 0 0 0 0 1 0 1 0 0 0
+            0 0 0 0 0 0 0 1 0 1 0 0
+            0 0 0 0 0 0 0 0 1 0 1 0
+            0 0 0 0 0 0 0 0 0 1 0 1
+            0 0 0 0 0 0 0 0 0 0 1 0
         ]
     )
 
@@ -316,6 +324,10 @@ end
     @test isa(repr("text/plain", tree), String)
     label, tree = cliquetree(graph)
     @test isa(repr("text/plain", tree), String)
+
+    filledgraph = FilledGraph(tree)
+    @test isa(repr("text/plain", filledgraph), String)
+    @test isa(repr("text/plain", edges(filledgraph)), String)
 end
 
 @testset "null graph" begin

@@ -216,7 +216,3 @@ end
     n::V = graph.tree.count[i] - 1
     return n
 end
-
-function Graphs.degree(graph::FilledGraph)
-    return indegree(graph) + outdegree(graph)
-end
