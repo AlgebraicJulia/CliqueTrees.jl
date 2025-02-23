@@ -20,7 +20,7 @@ function spectralorder(graph::BipartiteGraph{V}; tol::Float64=0.0) where {V}
     matrix = SparseMatrixCSC{Float64}(graph)
     fill!(nonzeros(fkeep!((i, j, v) -> i != j, matrix)), 1)
     value, vector = fiedler(matrix; tol)
-    return sortperm!(order, reshape(vector, nv(graph)))
+    return sortperm!(order, reshape(vector, size(matrix, 2)))
 end
 
 end

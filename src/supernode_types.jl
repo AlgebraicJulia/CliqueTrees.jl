@@ -52,7 +52,7 @@ function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Maximal) where {
         u = nothing
 
         for s in childindices(tree, v)
-            if colcount[s] == colcount[v] + 1
+            if colcount[s] == colcount[v] + one(V)
                 u = s
                 break
             end
@@ -69,8 +69,8 @@ function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Maximal) where {
             end
         else
             push!(new, v)
-            push!(parent, 0)
-            push!(ancestor, 0)
+            push!(parent, zero(V))
+            push!(ancestor, zero(V))
             new_in_clique[v] = length(new)
 
             for s in childindices(tree, v)
@@ -99,13 +99,13 @@ function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Fundamental) whe
         u = firstchildindex(tree, v)
 
         if !isnothing(u) &&
-            colcount[u] == colcount[v] + 1 &&
+            colcount[u] == colcount[v] + one(V) &&
             isnothing(nextsiblingindex(tree, u))
             new_in_clique[v] = new_in_clique[u]
         else
             push!(new, v)
-            push!(parent, 0)
-            push!(ancestor, 0)
+            push!(parent, zero(V))
+            push!(ancestor, zero(V))
             new_in_clique[v] = length(new)
 
             for s in childindices(tree, v)

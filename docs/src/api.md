@@ -13,24 +13,29 @@ DEFAULT_ELIMINATION_ALGORITHM
 BFS
 MCS
 LexBFS
-RCM
+RCMMD
 RCMGL
+RCM
 LexM
 MCSM
-AAMD
+AMD
 SymAMD
+MF
 MMD
-NodeND
+METIS
 Spectral
 BT
 permutation
 bfs
 mcs
 lexbfs
-rcm
+rcmmd
 rcmgl
+rcm
 lexm
 mcsm
+mf
+mmd
 ```
 
 ## Supernodes

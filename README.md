@@ -45,7 +45,7 @@ pkg> add CliqueTrees
 The function `cliquetree` computes tree decompositions.
 
 ```julia
-julia> using CliqueTrees
+julia> using CliqueTrees, LinearAlgebra, SparseArrays
 
 julia> graph = [
            0 1 1 0 0 0 0 0
@@ -90,23 +90,11 @@ julia> treewidth(tree)
 
 ### Chordal Completions
 
-The function `eliminationgraph` computes elimination graphs.
+Clique trees can be used to construct chordal completions.
 
 ```julia
-julia> using CliqueTrees, LinearAlgebra, SparseArrays
-
-julia> graph = [
-           0 1 1 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           1 1 0 1 1 0 0 0
-           0 0 1 0 1 0 0 0
-           0 0 1 1 0 0 1 1
-           0 1 0 0 0 0 1 0
-           0 0 0 0 1 1 0 1
-           0 0 0 0 1 0 1 0
-       ];
-
-julia> label, filledgraph = eliminationgraph(graph);
+julia> filledgraph = FilledGraph(tree)
+{8, 13} FilledGraph{Int64, Int64}
 
 julia> sparse(filledgraph)
 8×8 SparseMatrixCSC{Bool, Int64} with 13 stored entries:

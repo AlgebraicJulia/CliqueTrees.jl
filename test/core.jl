@@ -290,8 +290,22 @@ end
 end
 
 @testset "representation" begin
-    for A in
-        (BFS, MCS, LexBFS, RCM, RCMGL, LexM, MCSM, AAMD, SymAMD, MMD, NodeND, Spectral, BT)
+    for A in (
+        BFS,
+        MCS,
+        LexBFS,
+        RCMMD,
+        RCMGL,
+        LexM,
+        MCSM,
+        AMD,
+        SymAMD,
+        MF,
+        MMD,
+        METIS,
+        Spectral,
+        BT,
+    )
         @test isa(repr("text/plain", A()), String)
     end
 
@@ -313,7 +327,7 @@ end
             0 0 0 0 0 0 0 0 1 0 1 0
             0 0 0 0 0 0 0 0 0 1 0 1
             0 0 0 0 0 0 0 0 0 0 1 0
-        ]
+        ],
     )
 
     @test isa(repr("text/plain", graph), String)
@@ -339,14 +353,15 @@ end
         BFS,
         MCS,
         LexBFS,
-        RCM,
+        RCMMD,
         RCMGL,
         LexM,
         MCSM,
-        AAMD,
+        AMD,
         SymAMD,
-        # MMD,
-        # NodeND,
+        MF,
+        MMD,
+        # METIS,
         # Spectral,
         BT,
     )
@@ -373,14 +388,15 @@ end
         BFS,
         MCS,
         LexBFS,
-        RCM,
+        RCMMD,
         RCMGL,
         LexM,
         MCSM,
-        AAMD,
+        AMD,
         SymAMD,
+        MF,
         MMD,
-        NodeND,
+        METIS,
         # Spectral,
         BT,
     )
@@ -473,7 +489,7 @@ end
                 @inferred mcs(graph)
                 @inferred mcs(graph, V[1, 3])
                 @inferred lexbfs(graph)
-                @inferred rcm(graph)
+                @inferred rcmmd(graph)
                 @inferred rcmgl(graph)
                 @inferred lexm(graph)
                 @inferred mcsm(graph)
@@ -496,7 +512,7 @@ end
                 @test_call mcs(graph)
                 @test_call mcs(graph, V[1, 3])
                 @test_call lexbfs(graph)
-                @test_call rcm(graph)
+                @test_call rcmmd(graph)
                 @test_call rcmgl(graph)
                 @test_call lexm(graph)
                 @test_call mcsm(graph)
@@ -519,6 +535,7 @@ end
                 @test !isperfect(graph, permutation(graph, LexBFS())...)
                 @test !isperfect(graph, permutation(graph, LexM())...)
                 @test !isperfect(graph, permutation(graph, MCSM())...)
+                @test !isperfect(graph, permutation(graph, MF())...)
                 @test treewidth(graph; alg=1:17) === V(4)
 
                 @test ischordal(completion)
@@ -526,6 +543,7 @@ end
                 @test isperfect(completion, permutation(completion, LexBFS())...)
                 @test isperfect(completion, permutation(completion, LexM())...)
                 @test isperfect(completion, permutation(completion, MCSM())...)
+                @test isperfect(completion, permutation(completion, MF())...)
                 @test treewidth(completion; alg=1:17) === V(4)
             end
 
@@ -534,14 +552,15 @@ end
                     BFS,
                     MCS,
                     LexBFS,
-                    RCM,
+                    RCMMD,
                     RCMGL,
                     LexM,
                     MCSM,
-                    AAMD,
+                    AMD,
                     SymAMD,
+                    MF,
                     MMD,
-                    NodeND,
+                    METIS,
                     Spectral,
                     BT,
                 )

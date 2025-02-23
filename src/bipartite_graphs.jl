@@ -177,10 +177,10 @@ function sympermute(
         throw(ArgumentError("vertices(graph) != eachindex(index)"))
 
     # compute column counts
-    total::E = 0
-    count = Vector{E}(undef, nv(graph) + 1)
-    count[begin] = 1
-    count[2:end] .= 0
+    total = zero(E)
+    count = Vector{E}(undef, nv(graph) + one(V))
+    count[one(V)] = one(E)
+    count[two(V):(nv(graph) + one(V))] .= zero(E)
 
     @inbounds for j in vertices(graph)
         for i in neighbors(graph, j)
@@ -192,8 +192,8 @@ function sympermute(
                     u, v = v, u
                 end
 
-                total += 1
-                count[v + 1] += 1
+                total += one(E)
+                count[v + one(V)] += one(E)
             end
         end
     end
@@ -213,7 +213,7 @@ function sympermute(
                 end
 
                 targets(result)[count[v]] = u
-                count[v] += 1
+                count[v] += one(E)
             end
         end
     end
@@ -234,9 +234,9 @@ function sympermute!(
         throw(ArgumentError("vertices(graph) != eachindex(index)"))
 
     # compute column counts
-    count = Vector{E}(undef, nv(graph) + 1)
-    count[begin] = 1
-    count[2:end] .= 0
+    count = Vector{E}(undef, nv(graph) + one(V))
+    count[one(V)] = one(E)
+    count[two(V):(nv(graph) + one(V))] .= zero(E)
 
     @inbounds for j in vertices(graph)
         for i in neighbors(graph, j)
@@ -248,7 +248,7 @@ function sympermute!(
                     u, v = v, u
                 end
 
-                count[v + 1] += 1
+                count[v + one(V)] += one(E)
             end
         end
     end
@@ -267,7 +267,7 @@ function sympermute!(
                 end
 
                 targets(result)[count[v]] = u
-                count[v] += 1
+                count[v] += one(E)
             end
         end
     end
@@ -288,13 +288,13 @@ function Base.reverse!(result::BipartiteGraph{V,E}, graph::AbstractGraph{V}) whe
     nov(graph) != nv(result) && throw(ArgumentError("nov(graph) != niv(result)"))
 
     # compute column counts
-    count = Vector{E}(undef, nov(graph) + 1)
-    count[begin] = 1
-    count[2:end] .= 0
+    count = Vector{E}(undef, nov(graph) + one(V))
+    count[one(V)] = one(E)
+    count[two(V):(nov(graph) + one(V))] .= zero(E)
 
     @inbounds for j in vertices(graph)
         for i in neighbors(graph, j)
-            count[i + 1] += 1
+            count[i + one(V)] += one(E)
         end
     end
 
@@ -304,7 +304,7 @@ function Base.reverse!(result::BipartiteGraph{V,E}, graph::AbstractGraph{V}) whe
     @inbounds for j in vertices(graph)
         for i in neighbors(graph, j)
             targets(result)[count[i]] = j
-            count[i] += 1
+            count[i] += one(E)
         end
     end
 

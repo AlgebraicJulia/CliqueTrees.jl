@@ -8,18 +8,19 @@ A graph elimination algorithm. The options are
 | [`BFS`](@ref)      | breadth-first search                         | O(m + n) | O(n)     |
 | [`MCS`](@ref)      | maximum cardinality search                   | O(m + n) | O(n)     |
 | [`LexBFS`](@ref)   | lexicographic breadth-first search           | O(m + n) | O(m + n) |
-| [`RCM`](@ref)      | reverse Cuthill-Mckee                        | O(m + n) | O(m + n) |
+| [`RCMMD`](@ref)    | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
 | [`RCMGL`](@ref)    | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
 | [`MCSM`](@ref)     | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
 | [`LexM`](@ref)     | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
-| [`AAMD`](@ref)     | approximate minimum degree                   | O(mn)    | O(m + n) |
+| [`AMD`](@ref)      | approximate minimum degree                   | O(mn)    | O(m + n) |
 | [`SymAMD`](@ref)   | column approximate minimum degree            | O(mn)    | O(m + n) |
+| [`MF`](@ref)       | minimum fill                                 | O(mn²)   | O(n)     |
 | [`MMD`](@ref)      | multiple minimum degree                      | O(mn²)   | O(m + n) |
-| [`NodeND`](@ref)   | nested dissection                            |          |          |
+| [`METIS`](@ref)    | multilevel nested dissection                 |          |          |
 | [`Spectral`](@ref) | spectral ordering                            |          |          |
 | [`BT`](@ref)       | Bouchitte-Todinca                            |          |          |
 
-for a graph with m edges, n vertices, and maximum degree Δ. The algorithm [`Spectral`](@ref) only works on connected graphs.
+for a graph with m edges and n vertices. The algorithm [`Spectral`](@ref) only works on connected graphs.
 """
 abstract type EliminationAlgorithm end
 
@@ -45,6 +46,10 @@ struct BFS <: EliminationAlgorithm end
     MCS()
 
 The maximum cardinality search algorithm.
+
+### Reference
+
+Tarjan, Robert E., and Mihalis Yannakakis. "Simple linear-time algorithms to test chordality of graphs, test acyclicity of hypergraphs, and selectively reduce acyclic hypergraphs." *SIAM Journal on Computing* 13.3 (1984): 566-579.
 """
 struct MCS <: EliminationAlgorithm end
 
@@ -54,23 +59,34 @@ struct MCS <: EliminationAlgorithm end
     LexBFS()
 
 The [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
+
+### Reference
+
+Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
 """
 struct LexBFS <: EliminationAlgorithm end
 
 """
-    RCM <: EliminationAlgorithm
+    RCMMD <: EliminationAlgorithm
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using the minimum degree heuristic.
+
+### Reference
+
+Cuthill, Elizabeth, and James McKee. "Reducing the bandwidth of sparse symmetric matrices." *Proceedings of the 1969 24th National Conference.* 1969.
 """
-struct RCM <: EliminationAlgorithm end
+struct RCMMD <: EliminationAlgorithm end
 
 """
     RCMGL <: EliminationAlgorithm
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using George and Liu's variant of the GPS algorithm.
-This is the version of RCM implemented in MATLAB.
+
+### Reference
+
+George, Alan, and Joseph WH Liu. "An implementation of a pseudoperipheral node finder." *ACM Transactions on Mathematical Software (TOMS)* 5.3 (1979): 284-295.
 """
 struct RCMGL <: EliminationAlgorithm end
 
@@ -78,6 +94,10 @@ struct RCMGL <: EliminationAlgorithm end
     LexM <: EliminationAlgorithm
 
 A minimal variant of the [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
+
+### Reference
+
+Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
 """
 struct LexM <: EliminationAlgorithm end
 
@@ -85,20 +105,30 @@ struct LexM <: EliminationAlgorithm end
     MCSM <: EliminationAlgorithm
 
 A minimal variant of the maximal cardinality search algorithm.
+
+### Reference
+
+Berry, Anne, et al. "Maximum cardinality search for computing minimal triangulations of graphs." *Algorithmica* 39 (2004): 287-298.
 """
 struct MCSM <: EliminationAlgorithm end
 
 """
-    AAMD <: EliminationAlgorithm
+    AMD <: EliminationAlgorithm
 
-    AAMD(; dense=10.0, aggressive=1.0)
+    AMD(; dense=10.0, aggressive=1.0)
 
 The approximate minimum degree algorithm.
 
+### Parameters
+
   - `dense`: dense row parameter
   - `aggressive`: aggressive absorption
+
+### Reference
+
+Amestoy, Patrick R., Timothy A. Davis, and Iain S. Duff. "An approximate minimum degree ordering algorithm." *SIAM Journal on Matrix Analysis and Applications* 17.4 (1996): 886-905.
 """
-@kwdef struct AAMD <: EliminationAlgorithm
+@kwdef struct AMD <: EliminationAlgorithm
     dense::Float64 = 10.0
     aggressive::Float64 = 1.0
 end
@@ -110,9 +140,15 @@ end
 
 The column approximate minimum degree algorithm.
 
+### Parameters
+
   - `dense_row`: dense row parameter
   - `dense_column`: dense column parameter
   - `aggressive`: aggressive absorption
+
+### Reference
+
+Davis, Timothy A., et al. "A column approximate minimum degree ordering algorithm." *ACM Transactions on Mathematical Software* (TOMS) 30.3 (2004): 353-376.
 """
 @kwdef struct SymAMD <: EliminationAlgorithm
     dense_row::Float64 = 10.0
@@ -121,22 +157,70 @@ The column approximate minimum degree algorithm.
 end
 
 """
+    MF <: EliminationAlgorithm
+
+The greedy minimum fill algorithm.
+
+### Reference
+
+Tinney, William F., and John W. Walker. "Direct solutions of sparse network equations by optimally ordered triangular factorization." *Proceedings of the IEEE* 55.11 (1967): 1801-1809.
+"""
+struct MF <: EliminationAlgorithm end
+
+"""
     MMD <: EliminationAlgorithm
 
-    MMD()
+    MMD(; delta=0)
 
 The [multiple minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+
+### Parameters
+
+  - `delta`: tolerance for multiple elimination
+
+### Reference
+
+Liu, Joseph WH. "Modification of the minimum-degree algorithm by multiple elimination." *ACM Transactions on Mathematical Software (TOMS)* 11.2 (1985): 141-153.
 """
-struct MMD <: EliminationAlgorithm end
+@kwdef struct MMD <: EliminationAlgorithm
+    delta::Int = 0
+end
 
 """
-    NodeND <: EliminationAlgorithm
+    METIS <: EliminationAlgorithm
 
-    NodeND()
+    METIS(; ctype=-1, rtype=-1, nseps=-1, niter=-1, seed=-1,
+            compress=-1, ccorder=-1, pfactor=-1, ufactor=-1)
 
-The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
+The multilevel [nested dissection](https://en.wikipedia.org/wiki/Nested_dissection) algorithm implemented in METIS.
+
+### Parameters
+
+  - `ctype`: matching scheme to be used during coarsening
+  - `rtype`: algorithm used for refinement
+  - `nseps`: number of different separators computed at each level of nested dissection
+  - `niter`: number of iterations for refinement algorithm at each stage of the uncoarsening process
+  - `seed`: random seed
+  - `compress`: whether to combine vertices with identical adjacency lists
+  - `ccorder`: whether to order connected components separately
+  - `pfactor`: minimum degree of vertices that will be ordered last
+  - `ufactor`: maximum allowed load imbalance partitions
+
+### Reference
+
+Karypis, George, and Vipin Kumar. "A fast and high quality multilevel scheme for partitioning irregular graphs." *SIAM Journal on Scientific Computing* 20.1 (1998): 359-392.
 """
-struct NodeND <: EliminationAlgorithm end
+@kwdef struct METIS <: EliminationAlgorithm
+    ctype::Int = -1
+    rtype::Int = -1
+    nseps::Int = -1
+    niter::Int = -1
+    seed::Int = -1
+    compress::Int = -1
+    ccorder::Int = -1
+    pfactor::Int = -1
+    ufactor::Int = -1
+end
 
 """
     Spectral <: EliminationAlgorithm
@@ -146,7 +230,13 @@ struct NodeND <: EliminationAlgorithm end
 The spectral ordering algorithm only works on connected graphs.
 In order to use it, import the package [Laplacians](https://github.com/danspielman/Laplacians.jl).
 
+### Parameters
+
   - `tol`: tolerance for convergence
+
+### Reference
+
+Barnard, Stephen T., Alex Pothen, and Horst D. Simon. "A spectral algorithm for envelope reduction of sparse matrices." *Proceedings of the 1993 ACM/IEEE Conference on Supercomputing.* 1993.
 """
 @kwdef struct Spectral <: EliminationAlgorithm
     tol::Float64 = 0.0
@@ -158,6 +248,10 @@ end
     BT()
 
 The Bouchitte-Todinca algorithm.
+
+### Reference
+
+Korhonen, Tuukka, Jeremias Berg, and Matti Järvisalo. "Solving Graph Problems via Potential Maximal Cliques: An Experimental Evaluation of the Bouchitté-Todinca Algorithm." *Journal of Experimental Algorithmics (JEA)* 24 (2019): 1-19.
 """
 struct BT <: EliminationAlgorithm end
 
@@ -231,8 +325,8 @@ function permutation(graph, alg::LexBFS)
     return invperm(index), index
 end
 
-function permutation(graph, alg::RCM)
-    order = rcm(graph)
+function permutation(graph, alg::RCMMD)
+    order = rcmmd(graph)
     return order, invperm(order)
 end
 
@@ -241,7 +335,7 @@ function permutation(graph, alg::RCMGL)
     return order, invperm(order)
 end
 
-function permutation(graph::BipartiteGraph{V}, alg::Union{AAMD,SymAMD,NodeND}) where {V}
+function permutation(graph::BipartiteGraph{V}, alg::Union{AMD,SymAMD,METIS}) where {V}
     order::Vector{V}, index::Vector{V} = permutation(SparseMatrixCSC{Bool}(graph), alg)
     return order, index
 end
@@ -251,7 +345,7 @@ function permutation(graph::BipartiteGraph{V}, alg::BT) where {V}
     return order, index
 end
 
-function permutation(matrix::SparseMatrixCSC{T,I}, alg::Union{AAMD,SymAMD}) where {T,I}
+function permutation(matrix::SparseMatrixCSC{T,I}, alg::Union{AMD,SymAMD}) where {T,I}
     # convert matrix
     converted::SparseMatrixCSC{T,Int} = matrix
 
@@ -271,15 +365,15 @@ function permutation(graph, alg::MCSM)
 end
 
 function permutation(
-    matrix::SparseMatrixCSC{<:Any,I}, alg::AAMD
+    matrix::SparseMatrixCSC{<:Any,I}, alg::AMD
 ) where {I<:Union{Int32,Int64}}
     # set parameters
-    meta = AMD.Amd()
-    meta.control[AMD.AMD_DENSE] = alg.dense
-    meta.control[AMD.AMD_AGGRESSIVE] = alg.aggressive
+    meta = AMDJL.Amd()
+    meta.control[AMDJL.AMD_DENSE] = alg.dense
+    meta.control[AMDJL.AMD_AGGRESSIVE] = alg.aggressive
 
     # run algorithm
-    order::Vector{I} = AMD.amd(matrix, meta)
+    order::Vector{I} = AMDJL.amd(matrix, meta)
     return order, invperm(order)
 end
 
@@ -287,36 +381,57 @@ function permutation(
     matrix::SparseMatrixCSC{<:Any,I}, alg::SymAMD
 ) where {I<:Union{Int32,Int64}}
     # set parameters
-    meta = AMD.Colamd{I}()
-    meta.knobs[AMD.COLAMD_DENSE_ROW] = alg.dense_row
-    meta.knobs[AMD.COLAMD_DENSE_COL] = alg.dense_col
-    meta.knobs[AMD.COLAMD_AGGRESSIVE] = alg.aggressive
+    meta = AMDJL.Colamd{I}()
+    meta.knobs[AMDJL.COLAMD_DENSE_ROW] = alg.dense_row
+    meta.knobs[AMDJL.COLAMD_DENSE_COL] = alg.dense_col
+    meta.knobs[AMDJL.COLAMD_AGGRESSIVE] = alg.aggressive
 
     # run algorithm
-    order::Vector{I} = AMD.symamd(matrix, meta)
+    order::Vector{I} = AMDJL.symamd(matrix, meta)
     return order, invperm(order)
 end
 
-function permutation(graph::BipartiteGraph{V,E}, alg::MMD) where {V,E}
-    # convert graph
-    I = promote_type(V, E)
-    converted::BipartiteGraph{I,I,Vector{I},Vector{I}} = graph
-
-    # run algorithm
-    order::Vector{V}, index::Vector{V} = permutation(converted, alg)
-    return order, index
+function permutation(graph, alg::MF)
+    return mf(graph)
 end
 
-function permutation(graph::BipartiteGraph{I,I,Vector{I},Vector{I}}, alg::MMD) where {I}
-    order = Vector{I}(undef, nv(graph))
-    index = Vector{I}(undef, nv(graph))
-    SpkMmd._generalmmd(nv(graph), pointers(graph), targets(graph), order, index)
-    return order, index
+function permutation(graph, alg::MMD)
+    index = mmd(graph; delta=alg.delta)
+    return invperm(index), index
 end
 
-function permutation(matrix::SparseMatrixCSC{T,I}, alg::NodeND) where {T,I}
+function permutation(matrix::SparseMatrixCSC{T,I}, alg::METIS) where {T,I}
+    # set options
+    options = Vector{Metis.idx_t}(undef, Metis.METIS_NOPTIONS)
+    options .= -1
+    options[Metis.METIS_OPTION_CTYPE + 1] = alg.ctype
+    options[Metis.METIS_OPTION_RTYPE + 1] = alg.rtype
+    options[Metis.METIS_OPTION_NSEPS + 1] = alg.nseps
+    options[Metis.METIS_OPTION_NUMBERING + 1] = 1
+    options[Metis.METIS_OPTION_NITER + 1] = alg.niter
+    options[Metis.METIS_OPTION_SEED + 1] = alg.seed
+    options[Metis.METIS_OPTION_COMPRESS + 1] = alg.compress
+    options[Metis.METIS_OPTION_CCORDER + 1] = alg.ccorder
+    options[Metis.METIS_OPTION_PFACTOR + 1] = alg.pfactor
+    options[Metis.METIS_OPTION_UFACTOR + 1] = alg.ufactor
+
+    # construct permutation
     graph = Metis.graph(matrix; check_hermitian=false)
-    order::Vector{I}, index::Vector{I} = Metis.permutation(graph)
+    perm = Vector{Metis.idx_t}(undef, graph.nvtxs)
+    iperm = Vector{Metis.idx_t}(undef, graph.nvtxs)
+    Metis.@check Metis.METIS_NodeND(
+        Ref{Metis.idx_t}(graph.nvtxs),
+        graph.xadj,
+        graph.adjncy,
+        graph.vwgt,
+        options,
+        perm,
+        iperm,
+    )
+
+    # restore types
+    order::Vector{I} = perm
+    index::Vector{I} = iperm
     return order, index
 end
 
@@ -341,7 +456,7 @@ function bfs(graph::AbstractGraph{V}) where {V}
     order = Vector{V}(undef, nv(graph))
 
     # initialize queue
-    queue = @view order[begin:end]
+    queue = @view order[one(V):nv(graph)]
 
     @inbounds for v in vertices(graph)
         if iszero(level[v])
@@ -365,8 +480,8 @@ function bfs!(
     graph::AbstractGraph{V},
     root::Integer,
 ) where {V}
-    i = j = firstindex(queue)
-    level[root] = 1
+    i = j = one(V)
+    level[root] = one(V)
     queue[j] = root
 
     @inbounds while i <= j
@@ -375,16 +490,17 @@ function bfs!(
 
         for w in neighbors(graph, v)
             if iszero(level[w])
-                j += 1
+                j += one(V)
                 queue[j] = w
-                level[w] = l + 1
+                level[w] = l + one(V)
             end
         end
 
-        i += 1
+        i += one(V)
     end
 
-    @views return queue[begin:j], queue[i:end]
+    n = convert(V, length(queue))
+    @views return queue[one(V):j], queue[i:n]
 end
 
 """
@@ -405,9 +521,9 @@ end
 # The complexity is O(m + n), where m = |E| and n = |V|.
 function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
     # construct disjoint sets data structure
-    head = zeros(V, nv(graph) + 1)
-    prev = Vector{V}(undef, nv(graph) + 1)
-    next = Vector{V}(undef, nv(graph) + 1)
+    head = zeros(V, nv(graph) + one(V))
+    prev = Vector{V}(undef, nv(graph) + one(V))
+    next = Vector{V}(undef, nv(graph) + one(V))
 
     function set(i)
         @inbounds DoublyLinkedList(view(head, i), prev, next)
@@ -416,37 +532,37 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
     # run algorithm
     alpha = Vector{V}(undef, nv(graph))
     size = ones(V, nv(graph))
-    prepend!(set(1), vertices(graph))
+    prepend!(set(one(V)), vertices(graph))
 
-    j::V = 1
-    k::V = lastindex(clique)
+    j = one(V)
+    k = convert(V, lastindex(clique))
 
     @inbounds for i in reverse(oneto(nv(graph)))
-        v::V = 0
+        v = zero(V)
 
         if k in eachindex(clique)
-            v = clique[k]
-            k -= 1
+            v = convert(V, clique[k])
+            k -= one(V)
             delete!(set(j), v)
         else
             v = popfirst!(set(j))
         end
 
         alpha[v] = i
-        size[v] = 1 - size[v]
+        size[v] = one(V) - size[v]
 
         for w in neighbors(graph, v)
-            if size[w] >= 1
+            if size[w] >= one(V)
                 delete!(set(size[w]), w)
-                size[w] += 1
+                size[w] += one(V)
                 pushfirst!(set(size[w]), w)
             end
         end
 
-        j += 1
+        j += one(V)
 
-        while j >= 1 && isempty(set(j))
-            j -= 1
+        while j >= one(V) && isempty(set(j))
+            j -= one(V)
         end
     end
 
@@ -454,15 +570,15 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
 end
 
 """
-    rcm(graph)
+    rcmmd(graph)
 
 The [reverse Cuthill-Mckee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using the mininum degree heuristic.
 """
-function rcm(graph)
-    rcm(graph) do level, queue, graph, root
+function rcmmd(graph)
+    genrcm(graph) do level, queue, graph, root
         component = first(bfs!(level, queue, graph, root))
-        level[component] .= 0
+        level[component] .= zero(eltype(level))
 
         argmin(component) do v
             outdegree(graph, v)
@@ -478,15 +594,15 @@ An initial vertex is selected using George and Liu's variant of the GPS algorith
 This is the algorithm used by MATLAB.
 """
 function rcmgl(graph)
-    return rcm(fnroot!, graph)
+    return genrcm(fnroot!, graph)
 end
 
-function rcm(f::Function, graph)
-    return rcm(f, BipartiteGraph(graph))
+function genrcm(f::Function, graph)
+    return genrcm(f, BipartiteGraph(graph))
 end
 
-function rcm(f::Function, graph::Union{BipartiteGraph,Graph,DiGraph})
-    return rcm!(f, copy(graph))
+function genrcm(f::Function, graph::Union{BipartiteGraph,AbstractSimpleGraph})
+    return genrcm!(f, copy(graph))
 end
 
 # Algorithms for Sparse Linear Systems
@@ -495,7 +611,7 @@ end
 #
 # Apply the reverse Cuthill-Mckee algorithm to each connected component of a graph.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function rcm!(f::Function, graph::AbstractGraph{V}) where {V}
+function genrcm!(f::Function, graph::AbstractGraph{V}) where {V}
     level = zeros(V, nv(graph))
     order = Vector{V}(undef, nv(graph))
 
@@ -507,7 +623,7 @@ function rcm!(f::Function, graph::AbstractGraph{V}) where {V}
     end
 
     # initialize queue
-    queue = @view order[begin:end]
+    queue = @view order[one(V):nv(graph)]
 
     @inbounds for v in vertices(graph)
         if iszero(level[v])
@@ -535,7 +651,7 @@ function fnroot!(
     v = zero(V)
 
     @inbounds while root != v
-        i = lastindex(component)
+        i = convert(V, length(component))
         v = component[i]
         eccentricity = level[v]
 
@@ -546,10 +662,10 @@ function fnroot!(
                 v = w
             end
 
-            i -= 1
+            i -= one(V)
         end
 
-        level[component] .= 0
+        level[component] .= zero(V)
         component = first(bfs!(level, queue, graph, v))
 
         if level[component[end]] <= eccentricity
@@ -557,7 +673,7 @@ function fnroot!(
         end
     end
 
-    level[component] .= 0
+    level[component] .= zero(V)
     return root
 end
 
@@ -578,7 +694,7 @@ end
 # Perform a lexicographic breadth-first search of a simple graph.
 function lexbfs(graph::AbstractGraph{V}) where {V}
     I = promote_type(V, etype(graph))
-    n = max(ne(graph) * (2 - is_directed(graph)), nv(graph)) + 2
+    n = convert(I, max(ne(graph) * (2 - is_directed(graph)), nv(graph)) + 2)
 
     flag = Vector{I}(undef, n)
     head = Vector{I}(undef, n)
@@ -589,31 +705,30 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
     cell = Vector{V}(undef, nv(graph))
 
     fixlist = Vector{I}(undef, Δout(graph))
-    f::V = 0
 
     # (implicitly) assign label ∅ to all vertices
-    head[1] = 2
-    back[2] = 1
-    head[2] = back[1] = next[1] = flag[1] = flag[2] = 0
-    c::I = 3
+    head[one(I)] = two(I)
+    back[two(I)] = one(I)
+    head[two(I)] = back[one(I)] = next[one(I)] = flag[one(I)] = flag[two(I)] = zero(I)
+    c = three(I)
 
     # c is the number of the first empty cell
     @inbounds for v in vertices(graph)
         head[c] = v
-        cell[v] = next[c - 1] = c
-        flag[c] = 2
-        back[c] = c - 1
-        c += 1
-        alpha[v] = 0
+        cell[v] = next[c - one(I)] = c
+        flag[c] = two(I)
+        back[c] = c - one(I)
+        c += one(I)
+        alpha[v] = zero(V)
     end
 
-    next[c - 1] = 0
+    next[c - one(I)] = zero(I)
 
     @inbounds for i in reverse(oneto(nv(graph)))
         # skip empty sets
-        while iszero(next[head[1]])
-            head[1] = head[head[1]]
-            back[head[1]] = 1
+        while iszero(next[head[one(I)]])
+            head[one(I)] = head[head[one(I)]]
+            back[head[one(I)]] = one(I)
         end
 
         ##########
@@ -621,20 +736,20 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
         ##########
 
         # pick next vertex to number
-        p = next[head[1]]
+        p = next[head[one(I)]]
 
         # delete cell of vertex from set
-        next[head[1]] = next[p]
+        next[head[one(I)]] = next[p]
 
-        if !iszero(next[head[1]])
-            back[next[head[1]]] = head[1]
+        if !iszero(next[head[one(I)]])
+            back[next[head[one(I)]]] = head[one(I)]
         end
 
         v = head[p]
 
         # assign v the number i
         alpha[v] = i
-        f = 0
+        f = zero(V)
 
         ###########
         # update2 #
@@ -657,12 +772,12 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
                     head[h] = c
                     back[head[c]] = c
                     back[c] = h
-                    flag[c] = 1
-                    next[c] = 0
-                    f += 1
+                    flag[c] = one(I)
+                    next[c] = zero(I)
+                    f += one(V)
                     fixlist[f] = c
                     h = c
-                    c += 1
+                    c += one(I)
                 end
 
                 # add cell of w to new set
@@ -677,7 +792,7 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
             end
         end
 
-        @views flag[fixlist[1:f]] .= 0
+        @views flag[fixlist[one(V):f]] .= zero(I)
     end
 
     return alpha
@@ -718,11 +833,11 @@ function lexm(graph::AbstractGraph{V}) where {V}
 
     # run algorithm
     unnumbered .= vertices(graph)
-    alpha .= 0
+    alpha .= zero(V)
     label .= 2
-    p::Int = 0
-    n::Int = 0
-    k::V = 1
+    p = 0
+    n = 0
+    k = one(V)
 
     ########
     # loop #
@@ -735,19 +850,19 @@ function lexm(graph::AbstractGraph{V}) where {V}
 
         # assign v the number i
         v = pop!(unnumbered)
-        isreached[v] = 1
+        isreached[v] = true
         alpha[v] = i
 
         for j in oneto(k)
             empty!(reach(j))
         end
 
-        isreached[unnumbered] .= 0
+        isreached[unnumbered] .= false
 
         for w in neighbors(graph, v)
             if iszero(alpha[w])
                 pushfirst!(reach(div(label[w], 2)), w)
-                isreached[w] = 1
+                isreached[w] = true
                 label[w] += 1
             end
         end
@@ -762,7 +877,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
 
                 for z in neighbors(graph, w)
                     if !isreached[z]
-                        isreached[z] = 1
+                        isreached[z] = true
 
                         if label[z] > 2j
                             pushfirst!(reach(div(label[z], 2)), z)
@@ -782,13 +897,13 @@ function lexm(graph::AbstractGraph{V}) where {V}
         sort!(unnumbered; scratch, by=w -> label[w])
 
         p = 0
-        k = 0
+        k = zero(V)
 
         for w in unnumbered
             n = label[w]
 
             if p < n
-                k += 1
+                k += one(V)
                 p = n
             end
 
@@ -818,7 +933,7 @@ end
 function mcsm(graph::AbstractGraph{V}) where {V}
     alpha = Vector{V}(undef, nv(graph))
     isreached = Vector{Bool}(undef, nv(graph))
-    label = Vector{Int}(undef, nv(graph))
+    label = Vector{V}(undef, nv(graph))
 
     # construct disjoint sets data structure
     head = Vector{V}(undef, nv(graph))
@@ -830,17 +945,15 @@ function mcsm(graph::AbstractGraph{V}) where {V}
     end
 
     # run algorithm
-    alpha .= 0
-    label .= 1
-    k::V = 0
-    v::V = 0
+    alpha .= zero(V)
+    label .= one(V)
 
     @inbounds for i in reverse(oneto(nv(graph)))
-        v = k = 0
+        v = k = zero(V)
 
         for w in vertices(graph)
             if iszero(alpha[w])
-                isreached[w] = 0
+                isreached[w] = false
 
                 if label[w] > k
                     v, k = w, label[w]
@@ -848,7 +961,7 @@ function mcsm(graph::AbstractGraph{V}) where {V}
             end
         end
 
-        isreached[v] = 1
+        isreached[v] = true
         alpha[v] = i
 
         for j in oneto(k)
@@ -857,9 +970,9 @@ function mcsm(graph::AbstractGraph{V}) where {V}
 
         for w in neighbors(graph, v)
             if iszero(alpha[w])
-                isreached[w] = 1
+                isreached[w] = true
                 pushfirst!(reach(label[w]), w)
-                label[w] += 1
+                label[w] += one(V)
             end
         end
 
@@ -869,11 +982,11 @@ function mcsm(graph::AbstractGraph{V}) where {V}
 
                 for z in neighbors(graph, w)
                     if !isreached[z]
-                        isreached[z] = 1
+                        isreached[z] = true
 
                         if label[z] > j
                             pushfirst!(reach(label[z]), z)
-                            label[z] += 1
+                            label[z] += one(V)
                         else
                             pushfirst!(reach(j), z)
                         end
@@ -886,8 +999,256 @@ function mcsm(graph::AbstractGraph{V}) where {V}
     return alpha
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::AAMD)
-    println(io, "AAMD:")
+"""
+    mf(graph)
+
+Compute the greedy minimum-fill ordering of a simple graph.
+Returns the permutation and its inverse.
+"""
+function mf(graph, issorted::Val=Val(false))
+    return mf(BipartiteGraph(graph), issorted)
+end
+
+function mf(graph::SparseMatrixCSC)
+    return mf(BipartiteGraph(graph), Val(true))
+end
+
+function mf(graph::AbstractSimpleGraph)
+    return mf(graph, Val(true))
+end
+
+function mf(graph::AbstractGraph{V}, ::Val{false}) where {V}
+    degrees = Vector{V}(undef, nv(graph))
+    scratch = Vector{V}(undef, Δout(graph))
+    lists = Vector{Vector{V}}(undef, nv(graph))
+
+    for v in vertices(graph)
+        i = zero(V)
+        list = Vector{V}(undef, outdegree(graph, v))
+
+        for w in outneighbors(graph, v)
+            if v != w
+                i += one(V)
+                list[i] = w
+            end
+        end
+
+        degrees[v] = i
+        lists[v] = sort!(resize!(list, i); scratch)
+    end
+
+    return mf!(nv(graph), degrees, lists)
+end
+
+function mf(graph::AbstractGraph{V}, ::Val{true}) where {V}
+    degrees = Vector{V}(undef, nv(graph))
+    lists = Vector{Vector{V}}(undef, nv(graph))
+
+    for v in vertices(graph)
+        i = zero(V)
+        list = Vector{V}(undef, outdegree(graph, v))
+
+        for w in outneighbors(graph, v)
+            if v != w
+                i += one(V)
+                list[i] = w
+            end
+        end
+
+        degrees[v] = i
+        lists[v] = resize!(list, i)
+    end
+
+    return mf!(nv(graph), degrees, lists)
+end
+
+function mf!(
+    nv::V, degrees::AbstractVector{V}, lists::AbstractVector{<:AbstractVector{V}}
+) where {V}
+    order = zeros(V, nv)
+    index = zeros(V, nv)
+    label = zeros(Int, nv)
+    tag = 0
+
+    # construct stack data structure
+    snum = zero(V) # size of stack
+    stack = Vector{V}(undef, nv)
+
+    # construct min-heap data structure
+    hnum = nv # size of heap
+    hkey = Vector{V}(undef, nv)
+    heap = Vector{V}(undef, nv)
+    hinv = Vector{V}(undef, nv)
+
+    @inbounds for v in oneto(nv)
+        count = zero(V)
+        degree = degrees[v]
+        list = lists[v]
+
+        for j in oneto(degree)
+            w = list[j]
+            label[lists[w]] .= tag += 1
+
+            for jj in (j + 1):degree
+                ww = list[jj]
+
+                if label[ww] != tag
+                    count += one(V)
+                end
+            end
+        end
+
+        hkey[v] = count
+        heap[v] = hinv[v] = v
+    end
+
+    @inbounds for v in reverse(oneto(nv))
+        hfall!(hnum, hkey, hinv, heap, v)
+    end
+
+    # run algorithm
+    i = one(V)
+
+    @inbounds while i <= nv
+        # select vertex from heap
+        v = first(heap)
+        order[i] = v
+        index[v] = i
+        list = lists[v]
+        index[list] .= i
+        degree = degrees[v]
+
+        # append distinguishable neighbors to the stack
+        snum = zero(V)
+        ii = i + one(V)
+
+        for w in list
+            if degrees[w] == degree
+                flag = true
+
+                for x in lists[w]
+                    if index[x] < i
+                        flag = false
+                        break
+                    end
+                end
+
+                if flag
+                    order[ii] = w
+                    index[w] = ii
+                    ii += one(V)
+                else
+                    snum += one(V)
+                    stack[snum] = w
+                end
+            else
+                snum += one(V)
+                stack[snum] = w
+            end
+        end
+
+        # remove vertex from graph
+        for w in take(stack, snum)
+            list = lists[w]
+            degrees[w] -= one(V)
+            deleteat!(list, searchsortedfirst(list, v))
+        end
+
+        # remove indistinguishable neighbors from graph
+        if ii > i + one(V)
+            for w in take(stack, snum)
+                list = lists[w]
+                count = zero(V)
+
+                for j in oneto(degrees[w])
+                    x = list[j]
+
+                    if index[x] > i
+                        count += one(V)
+                    else
+                        list[j - count] = x
+                    end
+                end
+
+                resize!(list, degrees[w] -= count)
+            end
+        end
+
+        # remove vertex and indistinguishable neighbors from heap
+        for j in i:(ii - one(V))
+            k = hinv[order[j]]
+            key = hkey[heap[k]]
+            heap[k] = heap[hnum]
+            hinv[heap[k]] = k
+            hnum -= one(V)
+
+            if key < hkey[heap[k]]
+                hfall!(hnum, hkey, hinv, heap, k)
+            else
+                hrise!(hkey, hinv, heap, k)
+            end
+        end
+
+        # update deficiencies
+        if hkey[order[i]] > zero(V)
+            for j in oneto(snum)
+                w = stack[j]
+                label[lists[w]] .= tag += 1
+
+                for jj in (j + one(V)):snum
+                    ww = stack[jj]
+
+                    if label[ww] != tag
+                        count = zero(V)
+
+                        for xx in lists[ww]
+                            if label[xx] == tag
+                                hkey[xx] -= one(V)
+                                hrise!(hkey, hinv, heap, hinv[xx])
+                                count += one(V)
+                            end
+                        end
+
+                        hkey[w] += degrees[w] - count
+                        hkey[ww] += degrees[ww] - count
+                        insert!(lists[w], searchsortedfirst(lists[w], ww), ww)
+                        insert!(lists[ww], searchsortedfirst(lists[ww], w), w)
+                        degrees[w] += one(V)
+                        degrees[ww] += one(V)
+                        label[ww] = tag
+                    end
+                end
+            end
+        end
+
+        # update heap
+        for w in take(stack, snum)
+            hkey[w] -= (ii - i) * (degrees[w] - snum + one(V))
+            hrise!(hkey, hinv, heap, hinv[w])
+            hfall!(hnum, hkey, hinv, heap, hinv[w])
+        end
+
+        i = ii
+    end
+
+    return order, index
+end
+
+"""
+    mmd(graph; delta::Integer=0)
+
+Compute the multiple minimum degree ordering of a simple graph. Returns the inverse permutation.
+"""
+function mmd(graph; kwargs...)
+    return mmd(BipartiteGraph(graph); kwargs...)
+end
+
+function mmd(graph::BipartiteGraph{V}; delta::Integer=0) where {V}
+    return genmmd(nv(graph), pointers(graph), targets(graph), V(delta), typemax(V))
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::AMD)
+    println(io, "AMD:")
     println(io, "   dense: $(alg.dense)")
     println(io, "   aggressive: $(alg.aggressive)")
     return nothing
@@ -908,8 +1269,22 @@ function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
 end
 
 """
-    DEFAULT_ELIMINATION_ALGORITHM = AAMD()
+    DEFAULT_ELIMINATION_ALGORITHM = AMD()
 
 The default algorithm.
 """
-const DEFAULT_ELIMINATION_ALGORITHM = AAMD()
+const DEFAULT_ELIMINATION_ALGORITHM = AMD()
+
+"""
+    RCM = RCMGL
+
+The default variant of the reverse Cuthill-Mckee algorithm.
+"""
+const RCM = RCMGL
+
+"""
+    rcm = rcmgl
+
+The default variant of the reverse Cuthill-Mckee algorithm.
+"""
+const rcm = rcmgl

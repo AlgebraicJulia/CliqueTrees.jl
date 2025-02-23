@@ -41,8 +41,8 @@ function CliqueTrees.mcs(graph::Catlab.HasGraph, clique::AbstractVector)
     return mcs(CatlabGraph(graph), clique)
 end
 
-function CliqueTrees.rcm(graph::Catlab.HasGraph)
-    return rcm(CatlabGraph(graph))
+function CliqueTrees.rcmmd(graph::Catlab.HasGraph)
+    return rcmmd(CatlabGraph(graph))
 end
 
 function CliqueTrees.rcmgl(graph::Catlab.HasGraph)
@@ -62,7 +62,7 @@ function CliqueTrees.mcsm(graph::Catlab.HasGraph)
 end
 
 function CliqueTrees.permutation(
-    graph::Catlab.HasGraph, alg::Union{AbstractVector,AAMD,SymAMD,NodeND,Spectral,BT}
+    graph::Catlab.HasGraph, alg::Union{AbstractVector,AMD,SymAMD,METIS,Spectral,BT}
 )
     return permutation(CatlabGraph(graph), alg)
 end

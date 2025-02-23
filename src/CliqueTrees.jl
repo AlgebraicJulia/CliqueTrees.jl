@@ -1,18 +1,17 @@
 module CliqueTrees
 
 using AbstractTrees
-using AMD: AMD
+using AMD: AMD as AMDJL
 using Base: OneTo, oneto, @kwdef, @propagate_inbounds
 using Base.Order
 using Base.Iterators: take, takewhile
 using DataStructures: IntDisjointSets, find_root!, root_union!
 using Graphs
-using Graphs: SimpleEdge
+using Graphs: AbstractSimpleGraph, SimpleEdge
 using LinearAlgebra
 using Metis: Metis
 using SparseArrays
 using SparseArrays: getcolptr
-using Sparspak: SpkMmd
 using TreeWidthSolver: TreeWidthSolver
 
 const AbstractScalar{T} = AbstractArray{T,0}
@@ -29,24 +28,29 @@ export BipartiteGraph, BipartiteEdgeIter, pointers, targets
 export BFS,
     MCS,
     LexBFS,
-    RCM,
+    RCMMD,
     RCMGL,
+    RCM,
     LexM,
     MCSM,
-    AAMD,
+    AMD,
     SymAMD,
+    MF,
     MMD,
-    NodeND,
+    METIS,
     Spectral,
     BT,
     permutation,
     bfs,
     mcs,
     lexbfs,
-    rcm,
+    rcmmd,
     rcmgl,
+    rcm,
     lexm,
-    mcsm
+    mcsm,
+    mf,
+    mmd
 
 # Trees
 export Tree, eliminationtree, setrootindex!
@@ -74,6 +78,7 @@ include("singly_linked_lists.jl")
 include("doubly_linked_lists.jl")
 include("bipartite_graphs.jl")
 include("bipartite_edge_iter.jl")
+include("mmd.jl")
 include("elimination_algorithms.jl")
 include("trees.jl")
 include("supernode_types.jl")

@@ -91,8 +91,8 @@ function etree(upper::AbstractGraph{V}) where {V}
     ancestor = Vector{V}(undef, nv(upper))
 
     @inbounds for i in vertices(upper)
-        parent[i] = 0
-        ancestor[i] = 0
+        parent[i] = zero(V)
+        ancestor[i] = zero(V)
 
         for k in neighbors(upper, i)
             r = k
@@ -131,8 +131,8 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
 
     # construct disjoint set forest
     sets = IntDisjointSets{V}(length(tree))
-    root::Vector{V} = tree
-    repr::Vector{V} = tree
+    root = Vector{V}(tree)
+    repr = Vector{V}(tree)
 
     function find(u)
         v = @inbounds repr[find_root!(sets, u)]
@@ -155,7 +155,7 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
         r = parentindex(tree, p)
 
         if !isnothing(r)
-            wt[r] = 0
+            wt[r] = zero(V)
         end
     end
 
@@ -164,7 +164,7 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
 
         for u in neighbors(lower, p)
             if iszero(prev_nbr[u]) || lt(order, prev_nbr[u], fdesc[p])
-                wt[p] += 1
+                wt[p] += one(V)
                 pp = prev_p[u]
 
                 if iszero(pp)
@@ -172,7 +172,7 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
                 else
                     q = find(pp)
                     rc[u] += level[p] - level[q]
-                    wt[q] -= 1
+                    wt[q] -= one(V)
                 end
 
                 prev_p[u] = p
@@ -182,7 +182,7 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
         end
 
         if !isnothing(r)
-            wt[r] -= 1
+            wt[r] -= one(V)
             union(p, r)
         end
     end
@@ -213,21 +213,21 @@ function postorder(tree::Tree{V}) where {V}
     end
 
     # construct stack data structure 
-    n::V = 0
+    n = zero(V)
     stack = Vector{V}(undef, length(tree))
 
     # run algorithm
     for j in rootindices(tree)
-        n += 1
+        n += one(V)
         stack[n] = j
     end
 
     for i in tree
         j = stack[n]
-        n -= 1
+        n -= one(V)
 
         while !isempty(set(j))
-            n += 1
+            n += one(V)
             stack[n] = j
             j = popfirst!(set(j))
         end
@@ -251,7 +251,7 @@ function levels(tree::Tree{V}) where {V}
 
     for i in reverse(tree)
         j = parentindex(tree, i)
-        level[i] = isnothing(j) ? 0 : level[j] + 1
+        level[i] = isnothing(j) ? zero(V) : level[j] + one(V)
     end
 
     return level
@@ -280,8 +280,8 @@ end
 
 # Compute the `root`, `child`, and `brother` fields of a forest.
 function lcrs!(tree::Tree{V}) where {V}
-    fill!(tree.root, 0)
-    fill!(tree.child, 0)
+    fill!(tree.root, zero(V))
+    fill!(tree.child, zero(V))
 
     for i in reverse(tree)
         j = parentindex(tree, i)
@@ -378,8 +378,8 @@ function setrootindex!(tree::Tree{V}, i::Integer) where {V}
     i ∉ tree && throw(ArgumentError("i ∉ tree"))
 
     # run algorithm
-    j::V = 0
-    k::V = i
+    j = zero(V)
+    k = convert(V, i)
 
     for l in ancestorindices(tree, k)
         tree.parent[k] = j

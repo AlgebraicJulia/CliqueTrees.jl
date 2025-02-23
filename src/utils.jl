@@ -1,3 +1,11 @@
+function three(::Type{V}) where {V}
+    return one(V) + two(V)
+end
+
+function two(::Type{V}) where {V}
+    return one(V) + one(V)
+end
+
 # Compute the union of sorted sets `source1` and `source2`.
 # The result is written to `target`.
 function mergesorted!(
@@ -66,4 +74,59 @@ function indexinsorted!(
     end
 
     return target
+end
+
+@propagate_inbounds function swap!(vector::AbstractVector, i::Integer, j::Integer)
+    @boundscheck checkbounds(vector, i)
+    @boundscheck checkbounds(vector, j)
+
+    @inbounds begin
+        v = vector[i]
+        vector[i] = vector[j]
+        vector[j] = v
+    end
+
+    return nothing
+end
+
+function hfall!(
+    hnum::V, hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
+) where {V}
+    j = i * two(V)
+
+    @inbounds while j <= hnum
+        if j < hnum && hkey[heap[j + one(V)]] < hkey[heap[j]]
+            j += one(V)
+        end
+
+        if hkey[heap[i]] > hkey[heap[j]]
+            swap!(heap, i, j)
+            swap!(hinv, heap[i], heap[j])
+            i = j
+            j = i * two(V)
+        else
+            break
+        end
+    end
+
+    return nothing
+end
+
+function hrise!(
+    hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
+) where {V}
+    j = i ÷ two(V)
+
+    @inbounds while j > zero(V)
+        if hkey[heap[j]] > hkey[heap[i]]
+            swap!(heap, i, j)
+            swap!(hinv, heap[i], heap[j])
+            i = j
+            j = i ÷ two(V)
+        else
+            break
+        end
+    end
+
+    return nothing
 end
