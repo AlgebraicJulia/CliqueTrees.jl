@@ -2,7 +2,7 @@ name = "CliqueTrees"
 uuid = "60701a23-6482-424a-84db-faee86b9b1f8"
 license = "MIT"
 authors = ["Richard Samuelson <rsamuelson@ufl.edu>"]
-version = "0.3.0"
+version = "0.4.0"
 
 [deps]
 AMD = "14f7f29c-3bd6-536c-9a0b-7339e30b5a3e"

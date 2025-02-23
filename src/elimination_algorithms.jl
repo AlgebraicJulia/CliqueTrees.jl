@@ -1111,12 +1111,10 @@ function mf!(
 
     @inbounds while i <= nv
         # select vertex from heap
-        v = first(heap)
-        order[i] = v
-        index[v] = i
+        v = order[i] = first(heap)
         list = lists[v]
-        index[list] .= i
         degree = degrees[v]
+        index[list] .= index[v] = i
 
         # append distinguishable neighbors to the stack
         snum = zero(V)
