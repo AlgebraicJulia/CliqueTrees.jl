@@ -92,6 +92,9 @@ end
         ],
     )
 
+    label, tree = cliquetree(graph)
+    filledgraph = FilledGraph(tree)
+
     @testset "conversion" begin
         @test isa(
             convert(BipartiteGraph{Int32,Int64,Vector{Int64},Vector{Int32}}, graph),
@@ -157,6 +160,9 @@ end
             BipartiteGraph{Int8}(Catlab.SymmetricGraph(graph)),
             BipartiteGraph{Int8,Int16}(Catlab.SymmetricGraph(graph)),
         ))
+
+        @test DiGraph(filledgraph) == DiGraph(BipartiteGraph(filledgraph))
+        @test Graph(filledgraph) == Graph(BipartiteGraph(filledgraph))
     end
 
     @testset "interface" begin
