@@ -173,8 +173,7 @@ function sympermute(
     ::Type{E}, graph::AbstractGraph{V}, index::AbstractVector, order::Ordering
 ) where {V,E}
     # validate arguments
-    vertices(graph) != eachindex(index) &&
-        throw(ArgumentError("vertices(graph) != eachindex(index)"))
+    @argcheck vertices(graph) == eachindex(index)
 
     # compute column counts
     total = zero(E)
@@ -228,10 +227,8 @@ function sympermute!(
     order::Ordering,
 ) where {V,E}
     # validate arguments
-    vertices(graph) != vertices(result) &&
-        throw(ArgumentError("vertices(graph) != vertices(result)"))
-    vertices(graph) != eachindex(index) &&
-        throw(ArgumentError("vertices(graph) != eachindex(index)"))
+    @argcheck vertices(graph) == vertices(result)
+    @argcheck vertices(graph) == eachindex(index)
 
     # compute column counts
     count = Vector{E}(undef, nv(graph) + one(V))

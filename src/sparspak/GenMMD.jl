@@ -1,7 +1,9 @@
-####################################################
-# Original implementation:                         #
-#    https://github.com/PetrKryslUCSD/Sparspak.jl  #
-####################################################
+module GenMMD
+
+using Base: oneto
+using SparseArrays
+
+export genmmd
 
 function genmmd(
     neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, delta::V, maxint::V
@@ -48,7 +50,7 @@ function genmmd!(
     # Initialization for the minimum degree algorithm.
     # ------------------------------------------------
     invp = zeros(V, neqns)
-    deghead = zeros(V, neqns)
+    deghead = zeros(V, neqns + one(V))
     marker = zeros(V, neqns)
     mergeparent = zeros(V, neqns)
     needsupdate = zeros(V, neqns)
@@ -614,7 +616,7 @@ function mmdupdate!(
                     end
                 end
 
-                deg, mindeg = mmdupdateexternaldegree!(
+                deg, mindeg = updateexternaldegree!(
                     deg, mindeg, enode, supersize, deghead, degnext, degprev, needsupdate
                 )
             end
@@ -689,7 +691,7 @@ function mmdupdate!(
                 # Update external degree of enode in degree
                 # structure, and mdeg (min deg) if necessary.
                 # -------------------------------------------
-                deg, mindeg = mmdupdateexternaldegree!(
+                deg, mindeg = updateexternaldegree!(
                     deg, mindeg, enode, supersize, deghead, degnext, degprev, needsupdate
                 )
             end
@@ -710,7 +712,7 @@ function mmdupdate!(
     return mindeg, tag
 end
 
-function mmdupdateexternaldegree!(
+function updateexternaldegree!(
     deg::V,
     mindeg::V,
     enode::V,
@@ -793,4 +795,10 @@ function mmdnumber!(neqns::V, invp::Vector{V}, mergeparent::Vector{V}) where {V}
             end
         end
     end
+end
+
+function two(::Type{V}) where {V}
+    return one(V) + one(V)
+end
+
 end

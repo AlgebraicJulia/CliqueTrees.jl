@@ -18,6 +18,7 @@ RCMGL
 RCM
 LexM
 MCSM
+MinimalChordal
 AMD
 SymAMD
 MF
@@ -26,16 +27,7 @@ METIS
 Spectral
 BT
 permutation
-bfs
 mcs
-lexbfs
-rcmmd
-rcmgl
-rcm
-lexm
-mcsm
-mf
-mmd
 ```
 
 ## Supernodes

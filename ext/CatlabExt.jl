@@ -1,10 +1,12 @@
 module CatlabExt
 
 using Base.Order
+using Base.Sort: Algorithm as SortingAlgorithm
 using Catlab: Catlab
 using CliqueTrees
-using CliqueTrees: PermutationOrAlgorithm, sympermute
+using CliqueTrees: sympermute, bfs, mcs, lexbfs, rcmmd, rcmgl, mcsm, lexm
 using Graphs
+using SparseArrays
 
 struct CatlabGraph{G<:Catlab.HasGraph} <: AbstractGraph{Int}
     graph::G
@@ -41,11 +43,11 @@ function CliqueTrees.mcs(graph::Catlab.HasGraph, clique::AbstractVector)
     return mcs(CatlabGraph(graph), clique)
 end
 
-function CliqueTrees.rcmmd(graph::Catlab.HasGraph)
+function CliqueTrees.rcmmd(graph::Catlab.HasGraph, alg::SortingAlgorithm)
     return rcmmd(CatlabGraph(graph))
 end
 
-function CliqueTrees.rcmgl(graph::Catlab.HasGraph)
+function CliqueTrees.rcmgl(graph::Catlab.HasGraph, alg::SortingAlgorithm)
     return rcmgl(CatlabGraph(graph))
 end
 
@@ -61,9 +63,23 @@ function CliqueTrees.mcsm(graph::Catlab.HasGraph)
     return mcsm(CatlabGraph(graph))
 end
 
-function CliqueTrees.permutation(
-    graph::Catlab.HasGraph, alg::Union{AbstractVector,AMD,SymAMD,METIS,Spectral,BT}
-)
+function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::AbstractVector)
+    return permutation(CatlabGraph(graph), alg)
+end
+
+function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::Union{AMD,SymAMD})
+    return permutation(CatlabGraph(graph), alg)
+end
+
+function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::METIS)
+    return permutation(CatlabGraph(graph), alg)
+end
+
+function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::Spectral)
+    return permutation(CatlabGraph(graph), alg)
+end
+
+function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::BT)
     return permutation(CatlabGraph(graph), alg)
 end
 
@@ -88,6 +104,10 @@ end
 ############################
 # Abstract Graph Interface #
 ############################
+
+function SparseArrays.sparse(graph::CatlabGraph)
+    return sparse(BipartiteGraph(graph))
+end
 
 function Graphs.is_directed(graph::CatlabGraph)
     return true

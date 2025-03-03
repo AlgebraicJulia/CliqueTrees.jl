@@ -3,24 +3,29 @@
 
 A graph elimination algorithm. The options are
 
-| type               | name                                         | time     | space    |
-|:------------------ |:-------------------------------------------- |:-------- |:-------- |
-| [`BFS`](@ref)      | breadth-first search                         | O(m + n) | O(n)     |
-| [`MCS`](@ref)      | maximum cardinality search                   | O(m + n) | O(n)     |
-| [`LexBFS`](@ref)   | lexicographic breadth-first search           | O(m + n) | O(m + n) |
-| [`RCMMD`](@ref)    | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
-| [`RCMGL`](@ref)    | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
-| [`MCSM`](@ref)     | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
-| [`LexM`](@ref)     | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
-| [`AMD`](@ref)      | approximate minimum degree                   | O(mn)    | O(m + n) |
-| [`SymAMD`](@ref)   | column approximate minimum degree            | O(mn)    | O(m + n) |
-| [`MF`](@ref)       | minimum fill                                 | O(mn²)   | O(n)     |
-| [`MMD`](@ref)      | multiple minimum degree                      | O(mn²)   | O(m + n) |
-| [`METIS`](@ref)    | multilevel nested dissection                 |          |          |
-| [`Spectral`](@ref) | spectral ordering                            |          |          |
-| [`BT`](@ref)       | Bouchitte-Todinca                            |          |          |
+| type             | name                                         | time     | space    |
+|:---------------- |:-------------------------------------------- |:-------- |:-------- |
+| [`BFS`](@ref)    | breadth-first search                         | O(m + n) | O(n)     |
+| [`MCS`](@ref)    | maximum cardinality search                   | O(m + n) | O(n)     |
+| [`LexBFS`](@ref) | lexicographic breadth-first search           | O(m + n) | O(m + n) |
+| [`RCMMD`](@ref)  | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
+| [`RCMGL`](@ref)  | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
+| [`MCSM`](@ref)   | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
+| [`LexM`](@ref)   | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
+| [`MF`](@ref)     | minimum fill                                 | O(mn²)   | O(m + n) |
+| [`MMD`](@ref)    | multiple minimum degree                      | O(mn²)   | O(m + n) |
 
-for a graph with m edges and n vertices. The algorithm [`Spectral`](@ref) only works on connected graphs.
+for a graph with m edges and n vertices. The following additional algorithms are implemented as package extensions and require loading an additional package.
+
+| type               | name                              | time  | space    | package                                                                 |
+|:------------------ |:--------------------------------- |:----- |:-------- |:----------------------------------------------------------------------- |
+| [`AMD`](@ref)      | approximate minimum degree        | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)               |
+| [`SymAMD`](@ref)   | column approximate minimum degree | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)               |
+| [`METIS`](@ref)    | multilevel nested dissection      |       |          | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)                     |
+| [`Spectral`](@ref) | spectral ordering                 |       |          | [Laplacians.jl](https://github.com/danspielman/Laplacians.jl)           |
+| [`BT`](@ref)       | Bouchitte-Todinca                 |       |          | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl) |
+
+The algorithm [`Spectral`](@ref) only works on connected graphs.
 """
 abstract type EliminationAlgorithm end
 
@@ -67,31 +72,61 @@ Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of 
 struct LexBFS <: EliminationAlgorithm end
 
 """
-    RCMMD <: EliminationAlgorithm
+    RCMMD{A} <: EliminationAlgorithm
+
+    RCMMD(alg::Algorithm)
+
+    RCMMD()
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using the minimum degree heuristic.
+
+### Parameters
+
+  - `alg`: sorting algorithm
 
 ### Reference
 
 Cuthill, Elizabeth, and James McKee. "Reducing the bandwidth of sparse symmetric matrices." *Proceedings of the 1969 24th National Conference.* 1969.
 """
-struct RCMMD <: EliminationAlgorithm end
+struct RCMMD{A<:SortingAlgorithm} <: EliminationAlgorithm
+    alg::A
+end
+
+function RCMMD()
+    return RCMMD(DEFAULT_UNSTABLE)
+end
 
 """
-    RCMGL <: EliminationAlgorithm
+    RCMGL{A} <: EliminationAlgorithm
+
+    RCMGL(alg::Algorithm)
+
+    RCMGL()
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using George and Liu's variant of the GPS algorithm.
+
+### Parameters
+
+  - `alg`: sorting algorithm
 
 ### Reference
 
 George, Alan, and Joseph WH Liu. "An implementation of a pseudoperipheral node finder." *ACM Transactions on Mathematical Software (TOMS)* 5.3 (1979): 284-295.
 """
-struct RCMGL <: EliminationAlgorithm end
+struct RCMGL{A<:SortingAlgorithm} <: EliminationAlgorithm
+    alg::A
+end
+
+function RCMGL()
+    return RCMGL(DEFAULT_UNSTABLE)
+end
 
 """
     LexM <: EliminationAlgorithm
+
+    LexM()
 
 A minimal variant of the [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
 
@@ -104,6 +139,8 @@ struct LexM <: EliminationAlgorithm end
 """
     MCSM <: EliminationAlgorithm
 
+    MCSM()
+
 A minimal variant of the maximal cardinality search algorithm.
 
 ### Reference
@@ -111,6 +148,31 @@ A minimal variant of the maximal cardinality search algorithm.
 Berry, Anne, et al. "Maximum cardinality search for computing minimal triangulations of graphs." *Algorithmica* 39 (2004): 287-298.
 """
 struct MCSM <: EliminationAlgorithm end
+
+"""
+    MinimalChordal{A} <: EliminationAlgorithm
+
+    MinimalChordal(alg::PermutationOrAlgorithm)
+
+    MinimalChordal()
+
+The MinimalChordal algorithm.
+
+### Parameters
+
+  - `alg`: elimination algorithm
+
+### Reference
+
+Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
+"""
+struct MinimalChordal{A<:PermutationOrAlgorithm} <: EliminationAlgorithm
+    alg::A
+end
+
+function MinimalChordal()
+    return MinimalChordal(DEFAULT_ELIMINATION_ALGORITHM)
+end
 
 """
     AMD <: EliminationAlgorithm
@@ -158,6 +220,8 @@ end
 
 """
     MF <: EliminationAlgorithm
+
+    MF()
 
 The greedy minimum fill algorithm.
 
@@ -296,7 +360,15 @@ function permutation(graph; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGO
     return permutation(graph, alg)
 end
 
-function permutation(graph, alg::PermutationOrAlgorithm)
+function permutation(graph, alg::EliminationAlgorithm)
+    throw(
+        ArgumentError(
+            "Algorithm $alg not implemented. You may need to load an additional package."
+        ),
+    )
+end
+
+function permutation(graph, alg::AbstractVector)
     return permutation(BipartiteGraph(graph), alg)
 end
 
@@ -326,32 +398,13 @@ function permutation(graph, alg::LexBFS)
 end
 
 function permutation(graph, alg::RCMMD)
-    order = rcmmd(graph)
+    order = rcmmd(graph, alg.alg)
     return order, invperm(order)
 end
 
 function permutation(graph, alg::RCMGL)
-    order = rcmgl(graph)
+    order = rcmgl(graph, alg.alg)
     return order, invperm(order)
-end
-
-function permutation(graph::BipartiteGraph{V}, alg::Union{AMD,SymAMD,METIS}) where {V}
-    order::Vector{V}, index::Vector{V} = permutation(SparseMatrixCSC{Bool}(graph), alg)
-    return order, index
-end
-
-function permutation(graph::BipartiteGraph{V}, alg::BT) where {V}
-    order::Vector{V}, index::Vector{V} = permutation(Graph{Int}(graph), alg)
-    return order, index
-end
-
-function permutation(matrix::SparseMatrixCSC{T,I}, alg::Union{AMD,SymAMD}) where {T,I}
-    # convert matrix
-    converted::SparseMatrixCSC{T,Int} = matrix
-
-    # run algorithm
-    order::Vector{I}, index::Vector{I} = permutation(converted, alg)
-    return order, index
 end
 
 function permutation(graph, alg::LexM)
@@ -364,31 +417,8 @@ function permutation(graph, alg::MCSM)
     return invperm(index), index
 end
 
-function permutation(
-    matrix::SparseMatrixCSC{<:Any,I}, alg::AMD
-) where {I<:Union{Int32,Int64}}
-    # set parameters
-    meta = AMDJL.Amd()
-    meta.control[AMDJL.AMD_DENSE] = alg.dense
-    meta.control[AMDJL.AMD_AGGRESSIVE] = alg.aggressive
-
-    # run algorithm
-    order::Vector{I} = AMDJL.amd(matrix, meta)
-    return order, invperm(order)
-end
-
-function permutation(
-    matrix::SparseMatrixCSC{<:Any,I}, alg::SymAMD
-) where {I<:Union{Int32,Int64}}
-    # set parameters
-    meta = AMDJL.Colamd{I}()
-    meta.knobs[AMDJL.COLAMD_DENSE_ROW] = alg.dense_row
-    meta.knobs[AMDJL.COLAMD_DENSE_COL] = alg.dense_col
-    meta.knobs[AMDJL.COLAMD_AGGRESSIVE] = alg.aggressive
-
-    # run algorithm
-    order::Vector{I} = AMDJL.symamd(matrix, meta)
-    return order, invperm(order)
+function permutation(graph, alg::MinimalChordal)
+    return minimalchordal(graph, alg.alg)
 end
 
 function permutation(graph, alg::MF)
@@ -400,67 +430,21 @@ function permutation(graph, alg::MMD)
     return invperm(index), index
 end
 
-function permutation(matrix::SparseMatrixCSC{T,I}, alg::METIS) where {T,I}
-    # set options
-    options = Vector{Metis.idx_t}(undef, Metis.METIS_NOPTIONS)
-    options .= -1
-    options[Metis.METIS_OPTION_CTYPE + 1] = alg.ctype
-    options[Metis.METIS_OPTION_RTYPE + 1] = alg.rtype
-    options[Metis.METIS_OPTION_NSEPS + 1] = alg.nseps
-    options[Metis.METIS_OPTION_NUMBERING + 1] = 1
-    options[Metis.METIS_OPTION_NITER + 1] = alg.niter
-    options[Metis.METIS_OPTION_SEED + 1] = alg.seed
-    options[Metis.METIS_OPTION_COMPRESS + 1] = alg.compress
-    options[Metis.METIS_OPTION_CCORDER + 1] = alg.ccorder
-    options[Metis.METIS_OPTION_PFACTOR + 1] = alg.pfactor
-    options[Metis.METIS_OPTION_UFACTOR + 1] = alg.ufactor
-
-    # construct permutation
-    graph = Metis.graph(matrix; check_hermitian=false)
-    perm = Vector{Metis.idx_t}(undef, graph.nvtxs)
-    iperm = Vector{Metis.idx_t}(undef, graph.nvtxs)
-    Metis.@check Metis.METIS_NodeND(
-        Ref{Metis.idx_t}(graph.nvtxs),
-        graph.xadj,
-        graph.adjncy,
-        graph.vwgt,
-        options,
-        perm,
-        iperm,
-    )
-
-    # restore types
-    order::Vector{I} = perm
-    index::Vector{I} = iperm
-    return order, index
-end
-
-function permutation(graph::Graph{Int}, alg::BT)
-    order::Vector{Int} = reverse!(
-        reduce(vcat, TreeWidthSolver.elimination_order(graph); init=Int[])
-    )
-    return order, invperm(order)
-end
-
-"""
-    bfs(graph)
-
-Perform a [breadth-first search](https://en.wikipedia.org/wiki/Breadth-first_search) of a graph.
-"""
 function bfs(graph)
     return bfs(BipartiteGraph(graph))
 end
 
 function bfs(graph::AbstractGraph{V}) where {V}
-    level = zeros(V, nv(graph))
+    tag = 0
+    level = zeros(Int, nv(graph))
     order = Vector{V}(undef, nv(graph))
 
     # initialize queue
     queue = @view order[one(V):nv(graph)]
 
-    @inbounds for v in vertices(graph)
-        if iszero(level[v])
-            queue = last(bfs!(level, queue, graph, v))
+    @inbounds for root in vertices(graph)
+        if iszero(level[root])
+            _, queue, tag = bfs!(level, queue, graph, root, tag + 1)
         end
     end
 
@@ -475,13 +459,14 @@ end
 # Perform a breadth-first search of a simple graph.
 # The complexity is O(m), where m = |E|.
 function bfs!(
-    level::AbstractVector{V},
+    level::AbstractVector{Int},
     queue::AbstractVector{V},
     graph::AbstractGraph{V},
-    root::Integer,
+    root::V,
+    tag::Int,
 ) where {V}
     i = j = one(V)
-    level[root] = one(V)
+    level[root] = tag
     queue[j] = root
 
     @inbounds while i <= j
@@ -489,10 +474,10 @@ function bfs!(
         l = level[v]
 
         for w in neighbors(graph, v)
-            if iszero(level[w])
+            if level[w] < tag
                 j += one(V)
                 queue[j] = w
-                level[w] = l + one(V)
+                level[w] = l + 1
             end
         end
 
@@ -500,7 +485,7 @@ function bfs!(
     end
 
     n = convert(V, length(queue))
-    @views return queue[one(V):j], queue[i:n]
+    @views return queue[one(V):j], queue[i:n], level[queue[j]]
 end
 
 """
@@ -569,40 +554,30 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
     return alpha, size
 end
 
-"""
-    rcmmd(graph)
+function rcmmd(graph, alg::SortingAlgorithm=DEFAULT_UNSTABLE)
+    genrcm(graph, alg) do level, queue, graph, root, tag
+        component, _, tag = bfs!(level, queue, graph, root, tag)
 
-The [reverse Cuthill-Mckee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
-An initial vertex is selected using the mininum degree heuristic.
-"""
-function rcmmd(graph)
-    genrcm(graph) do level, queue, graph, root
-        component = first(bfs!(level, queue, graph, root))
-        level[component] .= zero(eltype(level))
-
-        argmin(component) do v
+        root = argmin(component) do v
             outdegree(graph, v)
         end
+
+        return root, tag
     end
 end
 
-"""
-    rcmgl(graph)
-
-The [reverse Cuthill-Mckee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
-An initial vertex is selected using George and Liu's variant of the GPS algorithm.
-This is the algorithm used by MATLAB.
-"""
-function rcmgl(graph)
-    return genrcm(fnroot!, graph)
+function rcmgl(graph, alg::SortingAlgorithm=DEFAULT_UNSTABLE)
+    return genrcm(fnroot!, graph, alg)
 end
 
-function genrcm(f::Function, graph)
-    return genrcm(f, BipartiteGraph(graph))
+function genrcm(f::Function, graph, alg::SortingAlgorithm)
+    return genrcm(f, BipartiteGraph(graph), alg)
 end
 
-function genrcm(f::Function, graph::Union{BipartiteGraph,AbstractSimpleGraph})
-    return genrcm!(f, copy(graph))
+function genrcm(
+    f::Function, graph::Union{BipartiteGraph,AbstractSimpleGraph}, alg::SortingAlgorithm
+)
+    return genrcm!(f, copy(graph), alg)
 end
 
 # Algorithms for Sparse Linear Systems
@@ -611,27 +586,28 @@ end
 #
 # Apply the reverse Cuthill-Mckee algorithm to each connected component of a graph.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function genrcm!(f::Function, graph::AbstractGraph{V}) where {V}
-    level = zeros(V, nv(graph))
+function genrcm!(f::Function, graph::AbstractGraph{V}, alg::SortingAlgorithm) where {V}
+    tag = 0
+    level = zeros(Int, nv(graph))
     order = Vector{V}(undef, nv(graph))
 
     # sort neighbors
     scratch = Vector{V}(undef, Δout(graph))
 
     @inbounds for v in vertices(graph)
-        sort!(neighbors(graph, v); by=u -> outdegree(graph, u), scratch)
+        sort!(neighbors(graph, v); alg, scratch, by=u -> outdegree(graph, u))
     end
 
     # initialize queue
     queue = @view order[one(V):nv(graph)]
 
-    @inbounds for v in vertices(graph)
-        if iszero(level[v])
+    @inbounds for root in vertices(graph)
+        if iszero(level[root])
             # find pseudo-peripheral vertex
-            root = f(level, queue, graph, v)
+            root, tag = f(level, queue, graph, root, tag + 1)
 
             # compute Cuthill-Mckee ordering
-            queue = last(bfs!(level, queue, graph, root))
+            _, queue, tag = bfs!(level, queue, graph, root, tag + 1)
         end
     end
 
@@ -645,44 +621,43 @@ end
 #
 # Find a pseudo-peripheral vertex.
 function fnroot!(
-    level::AbstractVector{V}, queue::AbstractVector{V}, graph::AbstractGraph{V}, root::V
+    level::AbstractVector{Int},
+    queue::AbstractVector{V},
+    graph::AbstractGraph{V},
+    root::V,
+    tag::Int,
 ) where {V}
-    component = first(bfs!(level, queue, graph, root))
-    v = zero(V)
+    component, _, new = bfs!(level, queue, graph, root, tag)
+    candidate = zero(V)
 
-    @inbounds while root != v
+    @inbounds while root != candidate
         i = convert(V, length(component))
-        v = component[i]
-        eccentricity = level[v]
+        candidate = component[i]
+        degree = outdegree(graph, candidate)
+        eccentricity = level[candidate] - tag
 
-        while i > firstindex(component) && eccentricity == level[component[i]]
-            w = component[i]
+        while i > firstindex(component) && eccentricity + tag == level[component[i]]
+            v = component[i]
+            n = outdegree(graph, v)
 
-            if outdegree(graph, v) > outdegree(graph, w)
-                v = w
+            if degree > n
+                candidate, degree = v, n
             end
 
             i -= one(V)
         end
 
-        level[component] .= zero(V)
-        component = first(bfs!(level, queue, graph, v))
+        tag = new
+        component, _, new = bfs!(level, queue, graph, candidate, tag + 1)
 
-        if level[component[end]] <= eccentricity
-            root = v
+        if level[component[end]] <= eccentricity + tag
+            root = candidate
         end
     end
 
-    level[component] .= zero(V)
-    return root
+    return root, new
 end
 
-"""
-    lexbfs(graph)
-
-Perform a [lexicographic breadth-first search](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
-Returns the inverse permutation.
-"""
 function lexbfs(graph)
     return lexbfs(BipartiteGraph(graph))
 end
@@ -798,12 +773,6 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
     return alpha
 end
 
-"""
-    lexm(graph)
-
-A minimal variant of the [lexicographic breadth-first search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
-Returns the inverse permutation.
-"""
 function lexm(graph)
     return lexm(BipartiteGraph(graph))
 end
@@ -914,11 +883,6 @@ function lexm(graph::AbstractGraph{V}) where {V}
     return alpha
 end
 
-"""
-    mcsm(graph)
-
-A minimal variant of the maximum cardinality search algorithm. Returns the inverse permutation.
-"""
 function mcsm(graph)
     return mcsm(BipartiteGraph(graph))
 end
@@ -1232,17 +1196,135 @@ function mf!(
     return order, index
 end
 
-"""
-    mmd(graph; delta::Integer=0)
-
-Compute the multiple minimum degree ordering of a simple graph. Returns the inverse permutation.
-"""
 function mmd(graph; kwargs...)
     return mmd(BipartiteGraph(graph); kwargs...)
 end
 
 function mmd(graph::BipartiteGraph{V}; delta::Integer=0) where {V}
     return genmmd(nv(graph), pointers(graph), targets(graph), V(delta), typemax(V))
+end
+
+function minimalchordal(graph, alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+    return minimalchordal(BipartiteGraph(graph), alg)
+end
+
+# A Practical Algorithm for Making Filled Graphs Minimal
+# Barry, Heggernes, and Telle
+# MinimalChordal
+function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
+    order, index = permutation(graph; alg)
+    M = Graph(graph)
+    F = Vector{Vector{Tuple{V,V}}}(undef, nv(graph))
+
+    for (i, v) in enumerate(order)
+        F[i] = Tuple{V,V}[]
+        list = neighbors(M, v)
+        degree = outdegree(M, v)
+
+        for j in oneto(degree)
+            w = list[j]
+
+            if i < index[w]
+                for jj in (j + 1):degree
+                    ww = list[jj]
+
+                    if i < index[ww] && !has_edge(M, w, ww)
+                        add_edge!(M, w, ww)
+                        push!(F[i], (w, ww))
+                    end
+                end
+            end
+        end
+    end
+
+    Candidate = Set{Tuple{V,V}}()
+    Incident = V[]
+
+    for i in reverse(oneto(nv(graph)))
+        for (u, v) in F[i]
+            flag = true
+
+            for x in neighbors(M, u)
+                if index[x] > i && has_edge(M, x, v) && !has_edge(M, x, order[i])
+                    flag = false
+                    break
+                end
+            end
+
+            if flag
+                push!(Candidate, (u, v))
+                push!(Incident, u, v)
+            end
+        end
+
+        if !isempty(Candidate)
+            unique!(sort!(Incident))
+
+            n = length(Incident)
+            W = Graph{V}(n)
+
+            for j in oneto(n)
+                v = Incident[j]
+
+                for jj in (j + 1):n
+                    vv = Incident[jj]
+
+                    if (v, vv) ∉ Candidate
+                        add_edge!(W, j, jj)
+                    end
+                end
+            end
+
+            worder, windex = permutation(W; alg=MCSM())
+
+            for (j, v) in enumerate(worder)
+                list = neighbors(W, v)
+                degree = outdegree(W, v)
+
+                for k in oneto(degree)
+                    w = list[k]
+
+                    if j < windex[w]
+                        for kk in (k + 1):degree
+                            ww = list[kk]
+
+                            if j < windex[ww] && !has_edge(W, w, ww)
+                                add_edge!(W, w, ww)
+                                delete!(Candidate, (Incident[w], Incident[ww]))
+                            end
+                        end
+                    end
+                end
+            end
+
+            for (u, v) in Candidate
+                rem_edge!(M, u, v)
+            end
+
+            empty!(Candidate)
+            empty!(Incident)
+        end
+    end
+
+    return permutation(M; alg=MCS())
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::RCMMD)
+    println(io, "RCMMD:")
+    println(io, "    alg: $(alg.alg)")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::RCMGL)
+    println(io, "RCMGL:")
+    println(io, "    alg: $(alg.alg)")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::MMD)
+    println(io, "MMD:")
+    println(io, "    delta: $(alg.delta)")
+    return nothing
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::AMD)
@@ -1254,9 +1336,23 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::SymAMD)
     println(io, "SymAMD:")
-    println(io, "   dense row: $(alg.dense_row)")
-    println(io, "   dense col: $(alg.dense_col)")
+    println(io, "   dense_row: $(alg.dense_row)")
+    println(io, "   dense_col: $(alg.dense_col)")
     println(io, "   aggressive: $(alg.aggressive)")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::METIS)
+    println(io, "METIS:")
+    println(io, "    ctype: $(alg.ctype)")
+    println(io, "    rtype: $(alg.rtype)")
+    println(io, "    nseps: $(alg.nseps)")
+    println(io, "    niter: $(alg.niter)")
+    println(io, "    seed: $(alg.seed)")
+    println(io, "    compress: $(alg.compress)")
+    println(io, "    ccorder: $(alg.ccorder)")
+    println(io, "    pfactor: $(alg.pfactor)")
+    println(io, "    ufactor: $(alg.ufactor)")
     return nothing
 end
 
@@ -1267,11 +1363,11 @@ function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
 end
 
 """
-    DEFAULT_ELIMINATION_ALGORITHM = AMD()
+    DEFAULT_ELIMINATION_ALGORITHM = MMD()
 
 The default algorithm.
 """
-const DEFAULT_ELIMINATION_ALGORITHM = AMD()
+const DEFAULT_ELIMINATION_ALGORITHM = MMD()
 
 """
     RCM = RCMGL
@@ -1279,10 +1375,3 @@ const DEFAULT_ELIMINATION_ALGORITHM = AMD()
 The default variant of the reverse Cuthill-Mckee algorithm.
 """
 const RCM = RCMGL
-
-"""
-    rcm = rcmgl
-
-The default variant of the reverse Cuthill-Mckee algorithm.
-"""
-const rcm = rcmgl

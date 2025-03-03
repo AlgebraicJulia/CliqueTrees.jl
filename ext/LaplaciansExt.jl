@@ -5,7 +5,11 @@ using Graphs
 using Laplacians
 using SparseArrays
 
-function CliqueTrees.permutation(graph::BipartiteGraph, alg::Spectral)
+function CliqueTrees.permutation(graph, alg::Spectral)
+    return permutation(BipartiteGraph(graph), alg)
+end
+
+function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::Spectral) where {V}
     order = spectralorder(graph; tol=alg.tol)
     return order, invperm(order)
 end

@@ -8,26 +8,6 @@ struct CliqueTree{V,E} <: AbstractVector{Clique{V,E}}
     tree::SupernodeTree{V}
     count::Vector{V}
     sep::BipartiteGraph{V,E,Vector{E},Vector{V}}
-
-    function CliqueTree{V,E}(
-        tree::SupernodeTree, count::AbstractVector, sep::BipartiteGraph
-    ) where {V,E}
-        # validate arguments
-        oneto(pointers(residuals(tree))[end] - 1) != eachindex(count) && throw(
-            ArgumentError("oneto(pointers(residuals(tree))[end] - 1) != eachindex(count)"),
-        )
-        eachindex(tree) != vertices(sep) &&
-            throw(ArgumentError("eachindex(tree) != vertices(sep)"))
-
-        # construct tree
-        return new{V,E}(tree, count, sep)
-    end
-end
-
-function CliqueTree(
-    tree::SupernodeTree{V}, count::AbstractVector{V}, sep::BipartiteGraph{V,E}
-) where {V,E}
-    return CliqueTree{V,E}(tree, count, sep)
 end
 
 function Tree(tree::CliqueTree)
@@ -128,7 +108,7 @@ end
     end
 
     # construct clique tree
-    return label, CliqueTree(tree, count, sep)
+    return label, CliqueTree(tree, invpermute!(count, index), sep)
 end
 
 """

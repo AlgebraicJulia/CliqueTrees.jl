@@ -121,7 +121,7 @@ end
 # The complexity is O(mα(m, n)), where m = |E|, n = |V|, and α is the inverse Ackermann function.
 function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
     # validate arguments
-    vertices(lower) != tree && throw(ArgumentError("vertices(lower) != tree"))
+    @argcheck vertices(lower) == tree
 
     # find postordering, first descendants, and levels
     index = postorder(tree)
@@ -301,7 +301,7 @@ end
 # Permute the vertices of a forest.
 function Base.invpermute!(tree::Tree{V}, index::AbstractVector{V}) where {V}
     # validate arguments
-    tree != eachindex(index) && throw(ArgumentError("tree != eachindex(index)"))
+    @argcheck tree == eachindex(index)
 
     # run algorithm
     tree.parent[index] = map(tree.parent) do i
@@ -375,7 +375,7 @@ end
 
 function setrootindex!(tree::Tree{V}, i::Integer) where {V}
     # validate arguments
-    i ∉ tree && throw(ArgumentError("i ∉ tree"))
+    @argcheck i in tree
 
     # run algorithm
     j = zero(V)

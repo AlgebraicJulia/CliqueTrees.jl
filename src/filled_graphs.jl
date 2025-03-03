@@ -32,20 +32,70 @@ end
 
 function BipartiteGraph{V,E}(graph::FilledGraph) where {V,E}
     result = BipartiteGraph{V,E}(nv(graph), nv(graph), ne(graph))
-    pointers(result)[begin] = j = 1
+    pointers(result)[begin] = one(E)
+    j = zero(V)
 
     @inbounds for clique in graph.tree
-        for i in eachindex(residual(clique))
-            pointers(result)[j + 1] = pointers(result)[j] + length(clique) - i
-            neighbors(result, j)[begin:(length(residual(clique)) - i)] .= residual(clique)[(i + 1):end]
-            neighbors(result, j)[(end - length(separator(clique)) + 1):end] .= separator(
-                clique
-            )
-            j += 1
+        m = convert(V, length(residual(clique)))
+        n = convert(V, length(separator(clique)))
+
+        for i in oneto(m)
+            j += one(V)
+            pointers(result)[j + one(V)] = pointers(result)[j] + m - i + n
+            neighbors(result, j)[one(V):(m - i)] = residual(clique)[(i + one(V)):m]
+            neighbors(result, j)[(m - i + one(V)):(m - i + n)] = separator(clique)
         end
     end
 
     return result
+end
+
+function Graphs.Graph{V}(graph::FilledGraph) where {V}
+    count = Vector{V}(undef, nv(graph))
+    fadjlist = Vector{Vector{V}}(undef, nv(graph))
+
+    @inbounds for v in vertices(graph)
+        count[v] = zero(V)
+        fadjlist[v] = Vector{V}(undef, degree(graph, v))
+    end
+
+    @inbounds for v in vertices(graph)
+        j = count[v]
+
+        for w in neighbors(graph, v)
+            i = count[w] += one(V)
+            fadjlist[w][i] = v
+            j += one(V)
+            fadjlist[v][j] = w
+        end
+    end
+
+    return Graph{V}(ne(graph), fadjlist)
+end
+
+function Graphs.DiGraph{V}(graph::FilledGraph) where {V}
+    count = Vector{V}(undef, nv(graph))
+    fadjlist = Vector{Vector{V}}(undef, nv(graph))
+    badjlist = Vector{Vector{V}}(undef, nv(graph))
+
+    @inbounds for v in vertices(graph)
+        count[v] = zero(V)
+        fadjlist[v] = Vector{V}(undef, outdegree(graph, v))
+        badjlist[v] = Vector{V}(undef, indegree(graph, v))
+    end
+
+    @inbounds for v in vertices(graph)
+        j = zero(V)
+
+        for w in neighbors(graph, v)
+            i = count[w] += one(V)
+            badjlist[w][i] = v
+            j += one(V)
+            fadjlist[v][j] = w
+        end
+    end
+
+    return DiGraph{V}(ne(graph), fadjlist, badjlist)
 end
 
 function Base.Matrix{T}(graph::FilledGraph) where {T}
@@ -57,9 +107,6 @@ function Base.Matrix(graph::FilledGraph)
 end
 
 # Construct a sparse symmetric matrix with a given sparsity graph.
-# The row indices of the matrix are not necessarily sorted. You can sort them as follows
-#    julia> matrix = SparseMatrixCSC{T, I}(graph)
-#    julia> sorted = copy(transpose(copy(transpose(matrix))))
 function SparseArrays.SparseMatrixCSC{T,I}(graph::FilledGraph) where {T,I}
     return SparseMatrixCSC{T}(BipartiteGraph{I,I}(graph))
 end
@@ -101,6 +148,10 @@ function ischordal(graph)
     return isperfect(graph, invperm(index), index)
 end
 
+function isperfect(graph, pair::Tuple)
+    return isperfect(graph, pair...)
+end
+
 """
     isperfect(graph, order::AbstractVector[, index::AbstractVector])
 
@@ -120,10 +171,8 @@ function isperfect(
     graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}
 ) where {V}
     # validate arguments
-    vertices(graph) != eachindex(index) &&
-        throw(ArgumentError("vertices(graph) != eachindex(index)"))
-    eachindex(order) != eachindex(index) &&
-        throw(ArgumentError("eachindex(order) != eachindex(index)"))
+    @argcheck vertices(graph) == eachindex(index)
+    @argcheck vertices(graph) == eachindex(order)
 
     # run algorithm
     f = Vector{V}(undef, nv(graph))

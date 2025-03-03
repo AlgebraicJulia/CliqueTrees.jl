@@ -7,18 +7,6 @@ This type implements the [indexed tree interface](https://juliacollections.githu
 struct SupernodeTree{V} <: AbstractVector{UnitRange{V}}
     tree::Tree{V}
     res::BipartiteGraph{V,V,Vector{V},OneTo{V}}
-
-    function SupernodeTree{V}(tree::Tree, res::BipartiteGraph) where {V}
-        # validate parameters
-        tree != vertices(res) && throw(ArgumentError("tree != vertices(res)"))
-
-        # construct tree
-        return new{V}(tree, res)
-    end
-end
-
-function SupernodeTree(tree::Tree{V}, res::BipartiteGraph{V}) where {V}
-    return SupernodeTree{V}(tree, res)
 end
 
 function Tree(tree::SupernodeTree)

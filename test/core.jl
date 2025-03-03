@@ -4,13 +4,37 @@ using Base.Order
 using Catlab: Catlab
 using CliqueTrees
 using CliqueTrees: DoublyLinkedList, sympermute
+using CliqueTrees: bfs, rcmmd, rcmgl, lexbfs, mcsm, lexm, minimalchordal, mf, mmd
 using Graphs
 using Graphs: SimpleEdge
 using JET
-using Laplacians: Laplacians
 using LinearAlgebra
 using SparseArrays
 using Test
+
+@testset "errors" begin
+    matrix = [
+        0 1 1 0 0 0 0 0
+        1 0 1 0 1 1 1 0
+        1 1 0 1 1 0 0 0
+        0 0 1 0 1 0 0 0
+        0 1 1 1 0 0 1 1
+        0 1 0 0 0 0 1 0
+        0 1 0 0 1 1 0 1
+        0 0 0 0 1 0 1 0
+    ]
+
+    @test_throws ArgumentError permutation(matrix; alg=AMD())
+    @test_throws ArgumentError permutation(matrix; alg=SymAMD())
+    @test_throws ArgumentError permutation(matrix; alg=METIS())
+    @test_throws ArgumentError permutation(matrix; alg=Spectral())
+    @test_throws ArgumentError permutation(matrix; alg=BT())
+end
+
+using AMD: AMD as AMDJL
+using Laplacians: Laplacians
+using Metis: Metis
+using TreeWidthSolver: TreeWidthSolver
 
 @testset "trees" begin
     @testset "interface" begin
@@ -298,6 +322,7 @@ end
         RCMGL,
         LexM,
         MCSM,
+        MinimalChordal,
         AMD,
         SymAMD,
         MF,
@@ -357,15 +382,16 @@ end
         RCMGL,
         LexM,
         MCSM,
+        MinimalChordal,
         AMD,
         SymAMD,
         MF,
-        MMD,
+        # MMD,
         # METIS,
         # Spectral,
         BT,
     )
-        @test permutation(graph; alg=BFS()) == ([], [])
+        @test permutation(graph; alg=A()) == ([], [])
     end
 
     for S in (Nodal, Maximal, Fundamental)
@@ -392,6 +418,7 @@ end
         RCMGL,
         LexM,
         MCSM,
+        MinimalChordal,
         AMD,
         SymAMD,
         MF,
@@ -487,12 +514,15 @@ end
                 @inferred ischordal(graph)
                 @inferred bfs(graph)
                 @inferred mcs(graph)
-                @inferred mcs(graph, V[1, 3])
+                @inferred mcs(graph, [1, 3])
                 @inferred lexbfs(graph)
                 @inferred rcmmd(graph)
                 @inferred rcmgl(graph)
                 @inferred lexm(graph)
                 @inferred mcsm(graph)
+                @inferred minimalchordal(graph)
+                @inferred mf(graph)
+                @inferred mmd(graph)
                 @inferred treewidth(graph; alg=1:17)
                 @inferred eliminationtree(graph; alg=1:17)
                 @inferred supernodetree(graph; alg=1:17, snd=Nodal())
@@ -506,44 +536,97 @@ end
                 @inferred treewidth(tree)
             end
 
-            @testset "JET" begin
-                @test_call ischordal(graph)
-                @test_call bfs(graph)
-                @test_call mcs(graph)
-                @test_call mcs(graph, V[1, 3])
-                @test_call lexbfs(graph)
-                @test_call rcmmd(graph)
-                @test_call rcmgl(graph)
-                @test_call lexm(graph)
-                @test_call mcsm(graph)
-                @test_call treewidth(graph; alg=1:17)
-                @test_call eliminationtree(graph; alg=1:17)
-                @test_call supernodetree(graph; alg=1:17, snd=Nodal())
-                @test_call supernodetree(graph; alg=1:17, snd=Maximal())
-                @test_call supernodetree(graph; alg=1:17, snd=Fundamental())
-                @test_call cliquetree(graph; alg=1:17, snd=Nodal())
-                @test_call cliquetree(graph; alg=1:17, snd=Maximal())
-                @test_call cliquetree(graph; alg=1:17, snd=Fundamental())
+            @testset "JET error qnalysis" begin
+                @test_call target_modules = (CliqueTrees,) ischordal(graph)
+                @test_call target_modules = (CliqueTrees,) bfs(graph)
+                @test_call target_modules = (CliqueTrees,) mcs(graph)
+                @test_call target_modules = (CliqueTrees,) mcs(graph, [1, 3])
+                @test_call target_modules = (CliqueTrees,) lexbfs(graph)
+                @test_call target_modules = (CliqueTrees,) rcmmd(graph)
+                @test_call target_modules = (CliqueTrees,) rcmgl(graph)
+                @test_call target_modules = (CliqueTrees,) lexm(graph)
+                @test_call target_modules = (CliqueTrees,) mcsm(graph)
+                @test_call target_modules = (CliqueTrees,) minimalchordal(graph)
+                @test_call target_modules = (CliqueTrees,) mf(graph)
+                @test_call target_modules = (CliqueTrees,) mmd(graph)
+                @test_call target_modules = (CliqueTrees,) treewidth(graph; alg=1:17)
+                @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg=1:17)
+                @test_call target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg=1:17, snd=Nodal()
+                )
+                @test_call target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg=1:17, snd=Maximal()
+                )
+                @test_call target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg=1:17, snd=Fundamental()
+                )
+                @test_call target_modules = (CliqueTrees,) cliquetree(
+                    graph; alg=1:17, snd=Nodal()
+                )
+                @test_call target_modules = (CliqueTrees,) cliquetree(
+                    graph; alg=1:17, snd=Maximal()
+                )
+                @test_call target_modules = (CliqueTrees,) cliquetree(
+                    graph; alg=1:17, snd=Fundamental()
+                )
 
                 label, tree = cliquetree(graph; alg=1:17)
-                @test_call treewidth(tree)
+                @test_call target_modules = (CliqueTrees,) treewidth(tree)
+            end
+
+            @testset "JET optimization qnalysis" begin
+                @test_opt target_modules = (CliqueTrees,) ischordal(graph)
+                @test_opt target_modules = (CliqueTrees,) bfs(graph)
+                @test_opt target_modules = (CliqueTrees,) mcs(graph)
+                @test_opt target_modules = (CliqueTrees,) mcs(graph, [1, 3])
+                @test_opt target_modules = (CliqueTrees,) lexbfs(graph)
+                @test_opt target_modules = (CliqueTrees,) rcmmd(graph)
+                @test_opt target_modules = (CliqueTrees,) rcmgl(graph)
+                @test_opt target_modules = (CliqueTrees,) lexm(graph)
+                @test_opt target_modules = (CliqueTrees,) mcsm(graph)
+                @test_opt target_modules = (CliqueTrees,) minimalchordal(graph)
+                @test_opt target_modules = (CliqueTrees,) mf(graph)
+                @test_opt target_modules = (CliqueTrees,) mmd(graph)
+                @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg=1:17)
+                @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg=1:17)
+                @test_opt target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg=1:17, snd=Nodal()
+                )
+                @test_opt target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg=1:17, snd=Maximal()
+                )
+                @test_opt target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg=1:17, snd=Fundamental()
+                )
+                @test_opt target_modules = (CliqueTrees,) cliquetree(
+                    graph; alg=1:17, snd=Nodal()
+                )
+                @test_opt target_modules = (CliqueTrees,) cliquetree(
+                    graph; alg=1:17, snd=Maximal()
+                )
+                @test_opt target_modules = (CliqueTrees,) cliquetree(
+                    graph; alg=1:17, snd=Fundamental()
+                )
+
+                label, tree = cliquetree(graph; alg=1:17)
+                @test_opt target_modules = (CliqueTrees,) treewidth(tree)
             end
 
             @testset "chordality" begin
                 @test !ischordal(graph)
-                @test !isperfect(graph, permutation(graph, MCS())...)
-                @test !isperfect(graph, permutation(graph, LexBFS())...)
-                @test !isperfect(graph, permutation(graph, LexM())...)
-                @test !isperfect(graph, permutation(graph, MCSM())...)
-                @test !isperfect(graph, permutation(graph, MF())...)
+                @test !isperfect(graph, permutation(graph, MCS()))
+                @test !isperfect(graph, permutation(graph, LexBFS()))
+                @test !isperfect(graph, permutation(graph, LexM()))
+                @test !isperfect(graph, permutation(graph, MCSM()))
+                @test !isperfect(graph, permutation(graph, MF()))
                 @test treewidth(graph; alg=1:17) === V(4)
 
                 @test ischordal(completion)
-                @test isperfect(completion, permutation(completion, MCS())...)
-                @test isperfect(completion, permutation(completion, LexBFS())...)
-                @test isperfect(completion, permutation(completion, LexM())...)
-                @test isperfect(completion, permutation(completion, MCSM())...)
-                @test isperfect(completion, permutation(completion, MF())...)
+                @test isperfect(completion, permutation(completion, MCS()))
+                @test isperfect(completion, permutation(completion, LexBFS()))
+                @test isperfect(completion, permutation(completion, LexM()))
+                @test isperfect(completion, permutation(completion, MCSM()))
+                @test isperfect(completion, permutation(completion, MF()))
                 @test treewidth(completion; alg=1:17) === V(4)
             end
 
@@ -556,6 +639,7 @@ end
                     RCMGL,
                     LexM,
                     MCSM,
+                    MinimalChordal,
                     AMD,
                     SymAMD,
                     MF,

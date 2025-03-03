@@ -40,7 +40,7 @@ struct Fundamental <: SupernodeType end
 # The complexity is O(n), where n = |V|.
 function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Maximal) where {V}
     # validate arguments
-    tree != eachindex(colcount) && throw(ArgumentError("tree != eachindex(colcount)"))
+    @argcheck tree == eachindex(colcount)
 
     # run algorithm
     new = sizehint!(V[], length(tree))
@@ -87,7 +87,7 @@ end
 # The complexity is O(n), where n = |V|.
 function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Fundamental) where {V}
     # validate arguments
-    tree != eachindex(colcount) && throw(ArgumentError("tree != eachindex(colcount)"))
+    @argcheck tree == eachindex(colcount)
 
     # run algorithm
     new = sizehint!(V[], length(tree))
