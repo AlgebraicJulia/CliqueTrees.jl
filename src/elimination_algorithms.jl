@@ -174,6 +174,52 @@ function MinimalChordal()
     return MinimalChordal(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
+struct CompositeRotations{C<:AbstractVector,A<:PermutationOrAlgorithm} <:
+       EliminationAlgorithm
+    clique::C
+    alg::A
+end
+
+function CompositeRotations(clique::AbstractVector)
+    return CompositeRotations(clique, DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+function CompositeRotations()
+    return CompositeRotations(oneto(0))
+end
+
+"""
+    MF <: EliminationAlgorithm
+
+    MF()
+
+The greedy minimum fill algorithm.
+
+### Reference
+
+Tinney, William F., and John W. Walker. "Direct solutions of sparse network equations by optimally ordered triangular factorization." *Proceedings of the IEEE* 55.11 (1967): 1801-1809.
+"""
+struct MF <: EliminationAlgorithm end
+
+"""
+    MMD <: EliminationAlgorithm
+
+    MMD(; delta=0)
+
+The [multiple minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+
+### Parameters
+
+  - `delta`: tolerance for multiple elimination
+
+### Reference
+
+Liu, Joseph WH. "Modification of the minimum-degree algorithm by multiple elimination." *ACM Transactions on Mathematical Software (TOMS)* 11.2 (1985): 141-153.
+"""
+@kwdef struct MMD <: EliminationAlgorithm
+    delta::Int = 0
+end
+
 """
     AMD <: EliminationAlgorithm
 
@@ -216,38 +262,6 @@ Davis, Timothy A., et al. "A column approximate minimum degree ordering algorith
     dense_row::Float64 = 10.0
     dense_col::Float64 = 10.0
     aggressive::Float64 = 1.0
-end
-
-"""
-    MF <: EliminationAlgorithm
-
-    MF()
-
-The greedy minimum fill algorithm.
-
-### Reference
-
-Tinney, William F., and John W. Walker. "Direct solutions of sparse network equations by optimally ordered triangular factorization." *Proceedings of the IEEE* 55.11 (1967): 1801-1809.
-"""
-struct MF <: EliminationAlgorithm end
-
-"""
-    MMD <: EliminationAlgorithm
-
-    MMD(; delta=0)
-
-The [multiple minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
-
-### Parameters
-
-  - `delta`: tolerance for multiple elimination
-
-### Reference
-
-Liu, Joseph WH. "Modification of the minimum-degree algorithm by multiple elimination." *ACM Transactions on Mathematical Software (TOMS)* 11.2 (1985): 141-153.
-"""
-@kwdef struct MMD <: EliminationAlgorithm
-    delta::Int = 0
 end
 
 """
@@ -373,7 +387,7 @@ function permutation(graph, alg::AbstractVector)
 end
 
 function permutation(graph::AbstractGraph{V}, alg::AbstractVector) where {V}
-    order::Vector{V} = alg
+    order = Vector{V}(alg)
     return order, invperm(order)
 end
 
@@ -419,6 +433,11 @@ end
 
 function permutation(graph, alg::MinimalChordal)
     return minimalchordal(graph, alg.alg)
+end
+
+function permutation(graph, alg::CompositeRotations)
+    order = compositerotations(graph, alg.clique, alg.alg)
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::MF)
@@ -1309,56 +1328,137 @@ function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) wh
     return permutation(M; alg=MCS())
 end
 
+function compositerotations(
+    graph,
+    clique::AbstractVector=oneto(0),
+    alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
+)
+    return compositerotations(BipartiteGraph(graph), clique, alg)
+end
+
+function compositerotations(
+    graph::AbstractGraph, clique::AbstractVector, alg::PermutationOrAlgorithm
+)
+    order, index = permutation(graph; alg)
+    upper = sympermute(graph, index, Forward)
+    invpermute!(
+        order, compositerotations(reverse(upper), etree(upper), view(index, clique))
+    )
+    return order
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::MCS)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "MCS")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::LexBFS)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "LexBFS")
+    return nothing
+end
+
 function Base.show(io::IO, ::MIME"text/plain", alg::RCMMD)
-    println(io, "RCMMD:")
-    println(io, "    alg: $(alg.alg)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "RCMMD:")
+    println(io, " "^indent * "    alg:")
+
+    for line in eachsplit(strip(repr(alg.alg)), "\n")
+        println(io, " "^indent * "        $line")
+    end
+
     return nothing
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::RCMGL)
-    println(io, "RCMGL:")
-    println(io, "    alg: $(alg.alg)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "RCMGL:")
+    println(io, " "^indent * "    alg:")
+
+    for line in eachsplit(strip(repr(alg.alg)), "\n")
+        println(io, " "^indent * "        $line")
+    end
+
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::MCSM)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "MCSM")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::LexM)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "LexM")
     return nothing
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::MMD)
-    println(io, "MMD:")
-    println(io, "    delta: $(alg.delta)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "MMD:")
+    println(io, " "^indent * "    delta: $(alg.delta)")
     return nothing
 end
 
+function Base.show(io::IO, ::MIME"text/plain", alg::MF)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "MF")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::MinimalChordal{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "MinimalChordal{$A}:")
+    println(io, " "^indent * "    alg:")
+    return show(IOContext(io, :indent => indent + 8), "text/plain", alg.alg)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C,A}) where {C,A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "CompositeRotations{$C,$A}:")
+    println(io, " "^indent * "    clique: $(alg.clique)")
+    println(io, " "^indent * "    alg:")
+    return show(IOContext(io, :indent => indent + 8), "text/plain", alg.alg)
+end
+
 function Base.show(io::IO, ::MIME"text/plain", alg::AMD)
-    println(io, "AMD:")
-    println(io, "   dense: $(alg.dense)")
-    println(io, "   aggressive: $(alg.aggressive)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "AMD:")
+    println(io, " "^indent * "    dense: $(alg.dense)")
+    println(io, " "^indent * "    aggressive: $(alg.aggressive)")
     return nothing
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::SymAMD)
-    println(io, "SymAMD:")
-    println(io, "   dense_row: $(alg.dense_row)")
-    println(io, "   dense_col: $(alg.dense_col)")
-    println(io, "   aggressive: $(alg.aggressive)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "SymAMD:")
+    println(io, " "^indent * "    dense_row: $(alg.dense_row)")
+    println(io, " "^indent * "    dense_col: $(alg.dense_col)")
+    println(io, " "^indent * "    aggressive: $(alg.aggressive)")
     return nothing
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::METIS)
-    println(io, "METIS:")
-    println(io, "    ctype: $(alg.ctype)")
-    println(io, "    rtype: $(alg.rtype)")
-    println(io, "    nseps: $(alg.nseps)")
-    println(io, "    niter: $(alg.niter)")
-    println(io, "    seed: $(alg.seed)")
-    println(io, "    compress: $(alg.compress)")
-    println(io, "    ccorder: $(alg.ccorder)")
-    println(io, "    pfactor: $(alg.pfactor)")
-    println(io, "    ufactor: $(alg.ufactor)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "METIS:")
+    println(io, " "^indent * "    ctype: $(alg.ctype)")
+    println(io, " "^indent * "    rtype: $(alg.rtype)")
+    println(io, " "^indent * "    nseps: $(alg.nseps)")
+    println(io, " "^indent * "    niter: $(alg.niter)")
+    println(io, " "^indent * "    seed: $(alg.seed)")
+    println(io, " "^indent * "    compress: $(alg.compress)")
+    println(io, " "^indent * "    ccorder: $(alg.ccorder)")
+    println(io, " "^indent * "    pfactor: $(alg.pfactor)")
+    println(io, " "^indent * "    ufactor: $(alg.ufactor)")
     return nothing
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
-    println(io, "Spectral:")
-    println(io, "   tol: $(alg.tol)")
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "Spectral:")
+    println(io, " "^indent * "    tol: $(alg.tol)")
     return nothing
 end
 

@@ -200,6 +200,79 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
     return rc, cc
 end
 
+# Equivalent Sparse Matrix Reorderings by Elimination Tree Rotations
+# Liu
+# Algorithm 3.2: Composite_Rotations
+function compositerotations(
+    graph::AbstractGraph{V}, tree::Tree{V}, clique::AbstractVector{V}
+) where {V}
+    index = postorder(tree)
+    order = invperm(index)
+    fdesc = firstdescendants(tree, Perm(Forward, index))
+
+    y = nv(graph)
+    tag = nv(graph) + one(V)
+    label = zeros(V, nv(graph))
+
+    @inbounds for i in reverse(eachindex(clique))
+        v = clique[i]
+        label[v] = tag -= one(V)
+        y = min(v, y)
+    end
+
+    @inbounds if !iszero(y)
+        z = parentindex(tree, y)
+
+        if !isnothing(z)
+            for i in index[fdesc[y]]:index[y]
+                v = order[i]
+
+                for w in neighbors(graph, v)
+                    if y < w && iszero(label[w])
+                        label[w] = tag -= one(V)
+                    end
+                end
+            end
+
+            x = y
+            y = z
+
+            for z in ancestorindices(tree, y)
+                for i in index[fdesc[y]]:(index[fdesc[x]] - one(V))
+                    v = order[i]
+
+                    for w in neighbors(graph, v)
+                        if y < w && iszero(label[w])
+                            label[w] = tag -= one(V)
+                        end
+                    end
+                end
+
+                for i in (index[x] + one(V)):index[y]
+                    v = order[i]
+
+                    for w in neighbors(graph, v)
+                        if y < w && iszero(label[w])
+                            label[w] = tag -= one(V)
+                        end
+                    end
+                end
+
+                x = y
+                y = z
+            end
+        end
+    end
+
+    @inbounds for v in reverse(vertices(graph))
+        if iszero(label[v])
+            label[v] = tag -= one(V)
+        end
+    end
+
+    return label
+end
+
 # Compute a postordering of a forest.
 function postorder(tree::Tree{V}) where {V}
     index = Vector{V}(undef, length(tree))
