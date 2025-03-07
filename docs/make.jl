@@ -5,7 +5,6 @@ makedocs(;
     modules=[CliqueTrees],
     format=Documenter.HTML(),
     sitename="CliqueTrees.jl",
-    doctest=false,
     checkdocs=:none,
     pages=["CliqueTrees.jl" => "index.md", "Library Reference" => "api.md"],
 )

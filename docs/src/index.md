@@ -20,14 +20,14 @@ The function `cliquetree` computes tree decompositions.
 julia> using CliqueTrees, LinearAlgebra, SparseArrays
 
 julia> graph = [
-           0 1 1 0 0 0 0 0
+           0 1 0 0 0 0 0 0
            1 0 1 0 0 1 0 0
-           1 1 0 1 1 0 0 0
-           0 0 1 0 1 0 0 0
-           0 0 1 1 0 0 1 1
-           0 1 0 0 0 0 1 0
-           0 0 0 0 1 1 0 1
-           0 0 0 0 1 0 1 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
        ];
 
 julia> label, tree = cliquetree(graph);
@@ -35,11 +35,11 @@ julia> label, tree = cliquetree(graph);
 julia> tree
 6-element CliqueTree{Int64, Int64}:
  [6, 7, 8]
- ├─ [1, 6, 7]
- ├─ [4, 6, 8]
- │  └─ [3, 4, 6]
- │     └─ [2, 3, 6]
  └─ [5, 7, 8]
+    ├─ [1, 5]
+    ├─ [3, 5, 7]
+    │  └─ [2, 3]
+    └─ [4, 5, 8]
 ```
 
 The clique tree `tree` is a tree decomposition of the permuted graph `graph[label, label]`.
@@ -49,8 +49,8 @@ A clique tree is a vector of cliques, so you can retrieve the clique at node 3 b
 julia> tree[3]
 3-element Clique{Int64, Int64}:
  3
- 4
- 6
+ 5
+ 7
 ```
 
 The width of a clique tree is computed by the function `treewidth`.
@@ -66,17 +66,17 @@ Clique trees can be used to construct chordal completions.
 
 ```julia
 julia> filledgraph = FilledGraph(tree)
-{8, 13} FilledGraph{Int64, Int64}
+{8, 11} FilledGraph{Int64, Int64}
 
 julia> sparse(filledgraph)
-8×8 SparseMatrixCSC{Bool, Int64} with 13 stored entries:
+8×8 SparseMatrixCSC{Bool, Int64} with 11 stored entries:
  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
  ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- ⋅  ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅
  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- 1  1  1  1  ⋅  ⋅  ⋅  ⋅
- 1  ⋅  ⋅  ⋅  1  1  ⋅  ⋅
+ 1  ⋅  1  1  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  1  ⋅  1  1  ⋅  ⋅
  ⋅  ⋅  ⋅  1  1  1  1  ⋅
 ```
 
@@ -85,13 +85,13 @@ The graph `filledgraph` is ordered: its edges are directed from lower to higher 
 ```julia
 julia> chordalgraph = Symmetric(sparse(filledgraph), :L)
 8×8 Symmetric{Bool, SparseMatrixCSC{Bool, Int64}}:
- ⋅  ⋅  ⋅  ⋅  ⋅  1  1  ⋅
- ⋅  ⋅  1  ⋅  ⋅  1  ⋅  ⋅
- ⋅  1  ⋅  1  ⋅  1  ⋅  ⋅
- ⋅  ⋅  1  ⋅  ⋅  1  ⋅  1
+ ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  ⋅
+ ⋅  ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  1  ⋅  ⋅  1  ⋅  1  ⋅
+ ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  1
+ 1  ⋅  1  1  ⋅  ⋅  1  1
  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  1  1
- 1  1  1  1  ⋅  ⋅  1  1
- 1  ⋅  ⋅  ⋅  1  1  ⋅  1
+ ⋅  ⋅  1  ⋅  1  1  ⋅  1
  ⋅  ⋅  ⋅  1  1  1  1  ⋅
 
 julia> ischordal(graph)

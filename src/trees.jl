@@ -41,18 +41,18 @@ end
 
 Construct a [tree-depth decomposition](https://en.wikipedia.org/wiki/Tr%C3%A9maux_tree) of a simple graph.
 
-```julia
+```jldoctest
 julia> using CliqueTrees
 
 julia> graph = [
-           0 1 1 0 0 0 0 0
+           0 1 0 0 0 0 0 0
            1 0 1 0 0 1 0 0
-           1 1 0 1 1 0 0 0
-           0 0 1 0 1 0 0 0
-           0 0 1 1 0 0 1 1
-           0 1 0 0 0 0 1 0
-           0 0 0 0 1 1 0 1
-           0 0 0 0 1 0 1 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
        ];
 
 julia> label, tree = eliminationtree(graph);
@@ -62,11 +62,11 @@ julia> tree
  8
  └─ 7
     ├─ 5
-    │  ├─ 1
-    │  └─ 4
-    │     └─ 3
-    │        └─ 2
     └─ 6
+       ├─ 1
+       ├─ 3
+       │  └─ 2
+       └─ 4
 ```
 """
 function eliminationtree(graph; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)

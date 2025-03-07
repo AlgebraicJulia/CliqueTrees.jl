@@ -27,18 +27,18 @@ Construct a tree decomposition of a simple graph.
 The vertices of the graph are first ordered by a fill-reducing permutation computed by the algorithm `alg`.
 The size of the resulting decomposition is determined by the supernode partition `snd`.
 
-```julia
+```jldoctest
 julia> using CliqueTrees
 
 julia> graph = [
-           0 1 1 0 0 0 0 0
+           0 1 0 0 0 0 0 0
            1 0 1 0 0 1 0 0
-           1 1 0 1 1 0 0 0
-           0 0 1 0 1 0 0 0
-           0 0 1 1 0 0 1 1
-           0 1 0 0 0 0 1 0
-           0 0 0 0 1 1 0 1
-           0 0 0 0 1 0 1 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
        ];
 
 julia> label, tree = cliquetree(graph);
@@ -46,11 +46,11 @@ julia> label, tree = cliquetree(graph);
 julia> tree
 6-element CliqueTree{Int64, Int64}:
  [6, 7, 8]
- ├─ [1, 6, 7]
- ├─ [4, 6, 8]
- │  └─ [3, 4, 6]
- │     └─ [2, 3, 6]
  └─ [5, 7, 8]
+    ├─ [1, 5]
+    ├─ [3, 5, 7]
+    │  └─ [2, 3]
+    └─ [4, 5, 8]
 ```
 """
 function cliquetree(
