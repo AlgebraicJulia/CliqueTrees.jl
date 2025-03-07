@@ -34,7 +34,7 @@ CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [
 
 To install CliqueTrees.jl, enter the Pkg REPL by typing `]` and run the following command.
 
-```julia
+```julia-repl
 pkg> add CliqueTrees
 ```
 
@@ -44,7 +44,7 @@ pkg> add CliqueTrees
 
 The function `cliquetree` computes tree decompositions.
 
-```julia
+```julia-repl
 julia> using CliqueTrees, LinearAlgebra, SparseArrays
 
 julia> graph = [
@@ -73,7 +73,7 @@ julia> tree
 The clique tree `tree` is a tree decomposition of the permuted graph `graph[label, label]`.
 A clique tree is a vector of cliques, so you can retrieve the clique at node 3 by typing `tree[3]`.
 
-```julia
+```julia-repl
 julia> tree[3]
 3-element Clique{Int64, Int64}:
  3
@@ -83,7 +83,7 @@ julia> tree[3]
 
 The width of a clique tree is computed by the function `treewidth`.
 
-```julia
+```julia-repl
 julia> treewidth(tree)
 2
 ```
@@ -92,7 +92,7 @@ julia> treewidth(tree)
 
 Clique trees can be used to construct chordal completions.
 
-```julia
+```julia-repl
 julia> filledgraph = FilledGraph(tree)
 {8, 11} FilledGraph{Int64, Int64}
 
@@ -110,7 +110,7 @@ julia> sparse(filledgraph)
 
 The graph `filledgraph` is ordered: its edges are directed from lower to higher vertices. The underlying undirected graph is a chordal completion of the permuted graph `graph[label, label]`.
 
-```julia
+```julia-repl
 julia> chordalgraph = Symmetric(sparse(filledgraph), :L)
 8×8 Symmetric{Bool, SparseMatrixCSC{Bool, Int64}}:
  ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  ⋅
