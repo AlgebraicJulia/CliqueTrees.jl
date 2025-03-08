@@ -1,4 +1,4 @@
-module GenMMD
+module SparsPak
 
 using Base: oneto
 using SparseArrays

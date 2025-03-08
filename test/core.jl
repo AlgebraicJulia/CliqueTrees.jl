@@ -651,6 +651,16 @@ end
                 @test isperfect(completion, permutation(completion, MCSM()))
                 @test isperfect(completion, permutation(completion, MF()))
                 @test treewidth(completion; alg=1:17) === V(4)
+
+                coloring = CliqueTrees.color(completion)
+                @test coloring.num_colors == 5
+                @test unique(sort(coloring.colors)) == 1:5
+
+                @test all(
+                    coloring.colors[v] != coloring.colors[w]
+                    for v in vertices(__completion)
+                    for w in neighbors(__completion, v)
+                )                
             end
 
             @testset "permutations" begin

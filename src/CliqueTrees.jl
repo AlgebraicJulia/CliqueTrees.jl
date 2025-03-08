@@ -8,14 +8,14 @@ using Base.Sort: DEFAULT_UNSTABLE, Algorithm as SortingAlgorithm
 using Base.Iterators: take, takewhile
 using DataStructures: IntDisjointSets, find_root!, root_union!
 using Graphs
-using Graphs: AbstractSimpleGraph, SimpleEdge
+using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra
 using SparseArrays
 using SparseArrays: getcolptr
 
-include("./sparspak/GenMMD.jl")
+include("./SparsPak.jl/src/SparsPak.jl")
 
-using .GenMMD
+using .SparsPak
 
 const AbstractScalar{T} = AbstractArray{T,0}
 const Scalar{T} = Array{T,0}
@@ -83,6 +83,7 @@ include("clique_trees.jl")
 include("abstract_trees.jl")
 include("filled_graphs.jl")
 include("filled_edge_iter.jl")
+include("chordal_graphs.jl")
 include("utils.jl")
 
 end
