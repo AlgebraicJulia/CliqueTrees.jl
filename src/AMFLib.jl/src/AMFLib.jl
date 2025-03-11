@@ -63,7 +63,9 @@ input parameters:
       + `Val(1)`: slow
       + `Val(2)`: medium
       + `Val(3)`: fast
-        output parameters:
+
+output parameters:
+
   - `(perm, invp)`: the approximate minimum fill ordering
 """
 function amf!(

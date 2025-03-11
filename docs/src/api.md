@@ -21,6 +21,7 @@ MCSM
 MinimalChordal
 AMD
 SymAMD
+AMF
 MF
 MMD
 METIS
