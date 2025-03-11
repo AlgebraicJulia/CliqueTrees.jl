@@ -19,7 +19,7 @@ function mmd(
 ) where {V,E}
     neqns = convert(V, length(xadj) - 1)
     maxint = typemax(V)
-    return mmd!(neqns, xadj, copy(adjncy), delta, maxint)
+    return mmd!(neqns, xadj, copy(adjncy), convert(V, delta), maxint)
 end
 
 """
