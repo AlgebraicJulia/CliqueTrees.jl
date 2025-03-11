@@ -1,6 +1,6 @@
 module AMDExt
 
-using AMD: AMD as AMDJL
+using AMD: AMD as AMDLib
 using CliqueTrees
 using Graphs
 using SparseArrays
@@ -25,12 +25,12 @@ function CliqueTrees.permutation(
     matrix::SparseMatrixCSC{<:Any,I}, alg::AMD
 ) where {I<:Union{Int32,Int64}}
     # set parameters
-    meta = AMDJL.Amd()
-    meta.control[AMDJL.AMD_DENSE] = alg.dense
-    meta.control[AMDJL.AMD_AGGRESSIVE] = alg.aggressive
+    meta = AMDLib.Amd()
+    meta.control[AMDLib.AMD_DENSE] = alg.dense
+    meta.control[AMDLib.AMD_AGGRESSIVE] = alg.aggressive
 
     # run algorithm
-    order::Vector{I} = AMDJL.amd(matrix, meta)
+    order::Vector{I} = AMDLib.amd(matrix, meta)
     return order, invperm(order)
 end
 
@@ -38,13 +38,13 @@ function CliqueTrees.permutation(
     matrix::SparseMatrixCSC{<:Any,I}, alg::SymAMD
 ) where {I<:Union{Int32,Int64}}
     # set parameters
-    meta = AMDJL.Colamd{I}()
-    meta.knobs[AMDJL.COLAMD_DENSE_ROW] = alg.dense_row
-    meta.knobs[AMDJL.COLAMD_DENSE_COL] = alg.dense_col
-    meta.knobs[AMDJL.COLAMD_AGGRESSIVE] = alg.aggressive
+    meta = AMDLib.Colamd{I}()
+    meta.knobs[AMDLib.COLAMD_DENSE_ROW] = alg.dense_row
+    meta.knobs[AMDLib.COLAMD_DENSE_COL] = alg.dense_col
+    meta.knobs[AMDLib.COLAMD_AGGRESSIVE] = alg.aggressive
 
     # run algorithm
-    order::Vector{I} = AMDJL.symamd(matrix, meta)
+    order::Vector{I} = AMDLib.symamd(matrix, meta)
     return order, invperm(order)
 end
 

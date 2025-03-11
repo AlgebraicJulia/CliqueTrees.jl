@@ -74,12 +74,14 @@ function color(graph, order::AbstractVector, index::AbstractVector=invperm(order
     return color(BipartiteGraph(graph), order, index)
 end
 
-function color(graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector) where V
+function color(
+    graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector
+) where {V}
     k = zero(V)
     label = fill(nv(graph) + one(V), nv(graph))
     color = Vector{V}(undef, nv(graph))
     lower = sympermute(graph, index, Reverse)
-        
+
     @inbounds for v in reverse(vertices(lower))
         if outdegree(lower, v) >= k
             color[order[v]] = k += one(V)
@@ -87,7 +89,7 @@ function color(graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVe
             for w in outneighbors(lower, v)
                 label[color[order[w]]] = v
             end
-            
+
             for i in oneto(k)
                 if label[i] > v
                     color[order[v]] = i
@@ -96,6 +98,6 @@ function color(graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVe
             end
         end
     end
-    
+
     return Coloring(k, color)
 end

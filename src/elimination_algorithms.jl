@@ -12,6 +12,7 @@ A graph elimination algorithm. The options are
 | [`RCMGL`](@ref)  | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
 | [`MCSM`](@ref)   | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
 | [`LexM`](@ref)   | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
+| [`AMF`](@ref)    | approximate minimum fill                     |          | O(m + n) |
 | [`MF`](@ref)     | minimum fill                                 | O(mn²)   | O(m + n) |
 | [`MMD`](@ref)    | multiple minimum degree                      | O(mn²)   | O(m + n) |
 
@@ -186,6 +187,25 @@ end
 
 function CompositeRotations()
     return CompositeRotations(oneto(0))
+end
+
+"""
+    AMF <: EliminationAlgorithm
+
+    AMF(; speed=1)
+
+The approximate minimum fill algorithm.
+
+### Parameters
+
+  - `speed`: fill approximation strategy (1, 2, or, 3)
+
+### Reference
+
+Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
+"""
+@kwdef struct AMF <: EliminationAlgorithm
+    speed::Int = 1
 end
 
 """
@@ -438,6 +458,10 @@ end
 function permutation(graph, alg::CompositeRotations)
     order = compositerotations(graph, alg.clique, alg.alg)
     return order, invperm(order)
+end
+
+function permutation(graph, alg::AMF)
+    return amf(graph; speed=alg.speed)
 end
 
 function permutation(graph, alg::MF)
@@ -1215,12 +1239,20 @@ function mf!(
     return order, index
 end
 
-function mmd(graph; kwargs...)
+function AMFLib.amf(graph; kwargs...)
+    return amf(BipartiteGraph(graph); kwargs...)
+end
+
+function AMFLib.amf(graph::BipartiteGraph; kwargs...)
+    return amf(pointers(graph), targets(graph); kwargs...)
+end
+
+function MMDLib.mmd(graph; kwargs...)
     return mmd(BipartiteGraph(graph); kwargs...)
 end
 
-function mmd(graph::BipartiteGraph{V}; delta::Integer=0) where {V}
-    return genmmd(nv(graph), pointers(graph), targets(graph), V(delta), typemax(V))
+function MMDLib.mmd(graph::BipartiteGraph; kwargs...)
+    return mmd(pointers(graph), targets(graph); kwargs...)
 end
 
 function minimalchordal(graph, alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
