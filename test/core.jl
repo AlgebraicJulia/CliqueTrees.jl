@@ -331,6 +331,7 @@ end
         CompositeRotations([1, 2, 3]),
         AMD(),
         SymAMD(),
+        AMF(),
         MF(),
         MMD(),
         METIS(),
@@ -392,6 +393,7 @@ end
         CompositeRotations(),
         AMD(),
         SymAMD(),
+        AMF(),
         MF(),
         MMD(),
         # METIS(),
@@ -430,6 +432,7 @@ end
         CompositeRotations([1]),
         AMD(),
         SymAMD(),
+        AMF(),
         MF(),
         MMD(),
         METIS(),
@@ -529,6 +532,7 @@ end
                 @inferred CliqueTrees.rcmgl(graph)
                 @inferred CliqueTrees.lexm(graph)
                 @inferred CliqueTrees.mcsm(graph)
+                @inferred CliqueTrees.amf(graph)
                 @inferred CliqueTrees.mf(graph)
                 @inferred CliqueTrees.mmd(graph)
                 @inferred CliqueTrees.minimalchordal(graph)
@@ -557,6 +561,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.rcmgl(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.lexm(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph)
@@ -601,6 +606,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.rcmgl(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.lexm(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph)
@@ -657,10 +663,10 @@ end
                 @test unique(sort(coloring.colors)) == 1:5
 
                 @test all(
-                    coloring.colors[v] != coloring.colors[w]
-                    for v in vertices(__completion)
-                    for w in neighbors(__completion, v)
-                )                
+                    coloring.colors[v] != coloring.colors[w] for v in
+                                                                 vertices(__completion) for
+                    w in neighbors(__completion, v)
+                )
             end
 
             @testset "permutations" begin
@@ -677,6 +683,7 @@ end
                     CompositeRotations([1, 3]),
                     AMD(),
                     SymAMD(),
+                    AMF(),
                     MF(),
                     MMD(),
                     METIS(),

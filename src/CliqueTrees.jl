@@ -13,9 +13,11 @@ using LinearAlgebra
 using SparseArrays
 using SparseArrays: getcolptr
 
-include("./SparsPak.jl/src/SparsPak.jl")
+include("./AMFLib.jl/src/AMFLib.jl")
+include("./MMDLib.jl/src/MMDLib.jl")
 
-using .SparsPak
+using .AMFLib
+using .MMDLib
 
 const AbstractScalar{T} = AbstractArray{T,0}
 const Scalar{T} = Array{T,0}
@@ -36,6 +38,7 @@ export BFS,
     RCM,
     LexM,
     MCSM,
+    AMF,
     MF,
     MMD,
     MinimalChordal,
