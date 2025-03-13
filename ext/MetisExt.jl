@@ -10,7 +10,7 @@ function CliqueTrees.permutation(graph, alg::METIS)
     return permutation(BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where V
+function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where {V}
     # construct options
     options = Vector{IDX}(undef, Metis.METIS_NOPTIONS)
     options .= -1 # null
@@ -27,7 +27,7 @@ function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where V
 
     # construct METIS graph
     xadj = Vector{IDX}(undef, nv(graph) + 1)
-    adjncy = Vector{IDX}(undef,  ne(graph) * (2 - is_directed(graph)))
+    adjncy = Vector{IDX}(undef, ne(graph) * (2 - is_directed(graph)))
     xadj[begin] = p = one(IDX)
 
     @inbounds for j in vertices(graph)

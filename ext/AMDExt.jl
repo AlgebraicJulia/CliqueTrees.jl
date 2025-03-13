@@ -8,7 +8,7 @@ function CliqueTrees.permutation(graph, alg::Union{AMD, SymAMD})
     return permutation(BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::AMD) where V
+function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::AMD) where {V}
     # set parameters
     meta = AMDLib.Amd()
     meta.control[AMDLib.AMD_DENSE] = alg.dense
@@ -54,7 +54,7 @@ function CliqueTrees.permutation(graph::BipartiteGraph{Int64}, alg::AMD)
     return order, invperm(order)
 end
 
-function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::SymAMD) where V
+function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::SymAMD) where {V}
     # set parameters
     meta = AMDLib.Colamd{Cint}()
     meta.knobs[AMDLib.COLAMD_DENSE_ROW] = alg.dense_row
@@ -76,7 +76,7 @@ function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::SymAMD) where V
     p .+= one(Cint) # 1-based indexing
 
     # restore vertex type
-    order::Vector{V} = @view p[begin:end - 1]
+    order::Vector{V} = @view p[begin:(end - 1)]
     return order, invperm(order)
 end
 
@@ -102,7 +102,7 @@ function CliqueTrees.permutation(graph::BipartiteGraph{Int64}, alg::SymAMD)
     p .+= one(Int64) # 1-based indexing
 
     # restore vertex type
-    order = p[begin:end - 1]
+    order = p[begin:(end - 1)]
     return order, invperm(order)
 end
 
