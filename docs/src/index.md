@@ -53,17 +53,17 @@ julia> tree[4]
  8
 ```
 
-> [!WARNING]
-> The numbers in each clique are vertices of the permuted graph `graph[label, label]`.
-> You can see the vertices of the original graph by typing
-> ```julia-repl
-> julia> label[tree[4]]
-> 3-element Vector{Int64}:
->  8
->  3
->  7
-> ```
-> Notice that the clique is no longer sorted.
+!!! warning
+    The numbers in each clique are vertices of the permuted graph `graph[label, label]`.
+    You can see the vertices of the original graph by typing
+    ```julia-repl
+    julia> label[tree[4]]
+    3-element Vector{Int64}:
+    8
+    3
+    7
+    ```
+    Notice that the clique is no longer sorted.
 
 The width of a clique tree is computed by the function `treewidth`.
 
