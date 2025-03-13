@@ -14,7 +14,7 @@ function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::BT) where {V}
 end
 
 function CliqueTrees.permutation(graph::Graph{Int}, alg::BT)
-    order = reverse!(reduce(vcat, TreeWidthSolver.elimination_order(graph); init=Int[]))
+    order = reverse!(reduce(vcat, TreeWidthSolver.elimination_order(graph); init = Int[]))
     return order, invperm(order)
 end
 

@@ -8,17 +8,17 @@ using CliqueTrees: sympermute, bfs, mcs, lexbfs, rcmmd, rcmgl, mcsm, lexm
 using Graphs
 using SparseArrays
 
-struct CatlabGraph{G<:Catlab.HasGraph} <: AbstractGraph{Int}
+struct CatlabGraph{G <: Catlab.HasGraph} <: AbstractGraph{Int}
     graph::G
 end
 
-function (::Type{G})(graph::BipartiteGraph) where {G<:Catlab.HasGraph}
+function (::Type{G})(graph::BipartiteGraph) where {G <: Catlab.HasGraph}
     m::Int = ne(graph)
     n::Int = nv(graph)
     tgt::Vector{Int} = targets(graph)
 
     result = G(n)
-    Catlab.add_parts!(result, :E, m; tgt=tgt)
+    Catlab.add_parts!(result, :E, m; tgt = tgt)
 
     for v::Int in vertices(graph)
         i::Int = pointers(graph)[v]
@@ -30,8 +30,8 @@ function (::Type{G})(graph::BipartiteGraph) where {G<:Catlab.HasGraph}
 end
 
 function CliqueTrees.sympermute(
-    graph::Catlab.HasGraph, index::AbstractVector, order::Ordering
-)
+        graph::Catlab.HasGraph, index::AbstractVector, order::Ordering
+    )
     return sympermute(CatlabGraph(graph), index, order)
 end
 
@@ -67,7 +67,7 @@ function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::AbstractVector)
     return permutation(CatlabGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::Union{AMD,SymAMD})
+function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::Union{AMD, SymAMD})
     return permutation(CatlabGraph(graph), alg)
 end
 
@@ -84,13 +84,13 @@ function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::BT)
 end
 
 function CliqueTrees.isperfect(
-    graph::Catlab.HasGraph, order::AbstractVector, index::AbstractVector
-)
+        graph::Catlab.HasGraph, order::AbstractVector, index::AbstractVector
+    )
     return isperfect(CatlabGraph(graph), order, index)
 end
 
-function CliqueTrees.BipartiteGraph{V,E}(graph::Catlab.HasGraph) where {V,E}
-    return BipartiteGraph{V,E}(CatlabGraph(graph))
+function CliqueTrees.BipartiteGraph{V, E}(graph::Catlab.HasGraph) where {V, E}
+    return BipartiteGraph{V, E}(CatlabGraph(graph))
 end
 
 function CliqueTrees.BipartiteGraph{V}(graph::Catlab.HasGraph) where {V}
@@ -127,7 +127,7 @@ end
 
 function Graphs.outneighbors(graph::CatlabGraph, i::Integer)
     tgt = Catlab.tgt(graph.graph)::Vector{Int} # type instability
-    @view tgt[Catlab.incident(graph.graph, Int(i), :src)]
+    return @view tgt[Catlab.incident(graph.graph, Int(i), :src)]
 end
 
 function Graphs.outdegree(graph::CatlabGraph, i::Integer)

@@ -3,9 +3,9 @@
 
 A clique of a clique tree.
 """
-struct Clique{V,E} <: AbstractVector{V}
+struct Clique{V, E} <: AbstractVector{V}
     residual::UnitRange{V}
-    separator::SubArray{V,1,Vector{V},Tuple{UnitRange{E}},true}
+    separator::SubArray{V, 1, Vector{V}, Tuple{UnitRange{E}}, true}
 end
 
 """

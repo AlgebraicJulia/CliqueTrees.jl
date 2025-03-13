@@ -4,10 +4,10 @@
 A [clique tree](https://en.wikipedia.org/wiki/Tree_decomposition) with vertices of type `V` and edges of type `E`.
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
-struct CliqueTree{V,E} <: AbstractVector{Clique{V,E}}
+struct CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
     tree::SupernodeTree{V}
     count::Vector{V}
-    sep::BipartiteGraph{V,E,Vector{E},Vector{V}}
+    sep::BipartiteGraph{V, E, Vector{E}, Vector{V}}
 end
 
 function Tree(tree::CliqueTree)
@@ -54,10 +54,10 @@ julia> tree
 ```
 """
 function cliquetree(
-    graph;
-    alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
-    snd::SupernodeType=DEFAULT_SUPERNODE_TYPE,
-)
+        graph;
+        alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
+        snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
+    )
     return cliquetree(graph, alg, snd)
 end
 
@@ -117,7 +117,7 @@ end
 Compute the [width](https://en.wikipedia.org/wiki/Treewidth) of a clique tree.
 """
 function treewidth(tree::CliqueTree{V}) where {V}
-    n::V = maximum(length, tree; init=1) - 1
+    n::V = maximum(length, tree; init = 1) - 1
     return n
 end
 
@@ -127,7 +127,7 @@ end
 
 Compute an upper bound to the [tree width](https://en.wikipedia.org/wiki/Treewidth) of a simple graph.
 """
-function treewidth(graph; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+function treewidth(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return treewidth(graph, alg)
 end
 
@@ -135,7 +135,7 @@ function treewidth(graph, alg::PermutationOrAlgorithm)
     label, tree, upper = eliminationtree(graph, alg)
     rowcount, colcount = supcnt(reverse(upper), tree)
     V = eltype(colcount)
-    return maximum(colcount; init=one(V)) - one(V)
+    return maximum(colcount; init = one(V)) - one(V)
 end
 
 """

@@ -16,8 +16,8 @@
         <a href="https://codecov.io/gh/AlgebraicJulia/CliqueTrees.jl">
             <img src="https://codecov.io/gh/AlgebraicJulia/CliqueTrees.jl/branch/main/graph/badge.svg" alt="code coverage">
         </a>
-        <a href="https://github.com/invenia/BlueStyle">
-            <img src="https://img.shields.io/badge/code%20style-blue-4495d1.svg" alt="Blue">
+        <a href="https://github.com/fredrikekre/Runic.jl">
+            <img src="https://img.shields.io/badge/code_style-%E1%9A%B1%E1%9A%A2%E1%9A%BE%E1%9B%81%E1%9A%B2-black" alt="Runic">
         </a>
         <a href="https://github.com/JuliaTesting/Aqua.jl">
             <img src="https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg" alt="Aqua">
@@ -71,15 +71,27 @@ julia> tree
 ```
 
 The clique tree `tree` is a tree decomposition of the permuted graph `graph[label, label]`.
-A clique tree is a vector of cliques, so you can retrieve the clique at node 3 by typing `tree[3]`.
+A clique tree is a vector of cliques, so you can retrieve the clique at node 4 by typing `tree[4]`.
 
 ```julia-repl
-julia> tree[3]
+julia> tree[4]
 3-element Clique{Int64, Int64}:
- 3
+ 4
  5
- 7
+ 8
 ```
+
+> [!WARNING]
+> The numbers in each clique are vertices of the permuted graph `graph[label, label]`.
+> You can see the vertices of the original graph by typing
+> ```julia-repl
+> julia> label[tree[4]]
+> 3-element Vector{Int64}:
+>  8
+>  3
+>  7
+> ```
+> Notice that the clique is no longer sorted.
 
 The width of a clique tree is computed by the function `treewidth`.
 

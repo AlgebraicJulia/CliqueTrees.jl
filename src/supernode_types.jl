@@ -99,8 +99,8 @@ function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Fundamental) whe
         u = firstchildindex(tree, v)
 
         if !isnothing(u) &&
-            colcount[u] == colcount[v] + one(V) &&
-            isnothing(nextsiblingindex(tree, u))
+                colcount[u] == colcount[v] + one(V) &&
+                isnothing(nextsiblingindex(tree, u))
             new_in_clique[v] = new_in_clique[u]
         else
             push!(new, v)

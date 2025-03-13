@@ -3,9 +3,9 @@
 
 A rooted forest. This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
-const AbstractTree{V} = Union{Tree{V},SupernodeTree{V},CliqueTree{V}}
+const AbstractTree{V} = Union{Tree{V}, SupernodeTree{V}, CliqueTree{V}}
 
-function Base.show(io::IO, ::MIME"text/plain", tree::T) where {T<:AbstractTree}
+function Base.show(io::IO, ::MIME"text/plain", tree::T) where {T <: AbstractTree}
     n = length(tree)
     println(io, "$n-element $T:")
 
@@ -20,6 +20,7 @@ function Base.show(io::IO, ::MIME"text/plain", tree::T) where {T<:AbstractTree}
             println(io, " ⋮")
         end
     end
+    return
 end
 
 ##########################
@@ -47,18 +48,18 @@ Get the proper ancestors of node `i`.
 """
 ancestorindices(tree::AbstractTree, i::Integer)
 
-function AbstractTrees.ParentLinks(::Type{IndexNode{T,V}}) where {V,T<:AbstractTree{V}}
+function AbstractTrees.ParentLinks(::Type{IndexNode{T, V}}) where {V, T <: AbstractTree{V}}
     return StoredParents()
 end
 
-function AbstractTrees.SiblingLinks(::Type{IndexNode{T,V}}) where {V,T<:AbstractTree{V}}
+function AbstractTrees.SiblingLinks(::Type{IndexNode{T, V}}) where {V, T <: AbstractTree{V}}
     return StoredSiblings()
 end
 
-function AbstractTrees.NodeType(::Type{IndexNode{T,V}}) where {V,T<:AbstractTree{V}}
+function AbstractTrees.NodeType(::Type{IndexNode{T, V}}) where {V, T <: AbstractTree{V}}
     return HasNodeType()
 end
 
-function AbstractTrees.nodetype(::Type{IndexNode{T,V}}) where {V,T<:AbstractTree{V}}
-    return IndexNode{T,V}
+function AbstractTrees.nodetype(::Type{IndexNode{T, V}}) where {V, T <: AbstractTree{V}}
+    return IndexNode{T, V}
 end

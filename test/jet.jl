@@ -22,8 +22,8 @@ using JuliaInterpreter: JuliaInterpreter
     """
     =#
     function JuliaInterpreter.step_expr!(
-        interp::ConcreteInterpreter, frame::Frame, @nospecialize(node), istoplevel::Bool
-    )
+            interp::ConcreteInterpreter, frame::Frame, @nospecialize(node), istoplevel::Bool
+        )
         @assert istoplevel "JET.ConcreteInterpreter can only work for top-level code"
 
         if ismoduleusage(node)
@@ -46,5 +46,5 @@ using JuliaInterpreter: JuliaInterpreter
 end
 
 if v"1.9" <= VERSION
-    test_package(CliqueTrees; target_modules=(CliqueTrees,))
+    test_package(CliqueTrees; target_modules = (CliqueTrees,))
 end

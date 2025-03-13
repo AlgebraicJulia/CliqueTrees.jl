@@ -8,7 +8,7 @@
 A rooted forest with vertices of type `V`.
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
-struct Tree{V<:Signed} <: AbstractUnitRange{V}
+struct Tree{V <: Signed} <: AbstractUnitRange{V}
     parent::Vector{V}  # vector of parents
     root::Scalar{V}    # root
     child::Vector{V}   # vector of left-children
@@ -69,7 +69,7 @@ julia> tree
        └─ 4
 ```
 """
-function eliminationtree(graph; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+function eliminationtree(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     label, tree, upper = eliminationtree(graph, alg)
     return label, tree
 end
@@ -204,8 +204,8 @@ end
 # Liu
 # Algorithm 3.2: Composite_Rotations
 function compositerotations(
-    graph::AbstractGraph{V}, tree::Tree{V}, clique::AbstractVector{V}
-) where {V}
+        graph::AbstractGraph{V}, tree::Tree{V}, clique::AbstractVector{V}
+    ) where {V}
     index = postorder(tree)
     order = invperm(index)
     fdesc = firstdescendants(tree, Perm(Forward, index))
@@ -285,7 +285,7 @@ function postorder(tree::Tree{V}) where {V}
         return SinglyLinkedList(head, tree.brother)
     end
 
-    # construct stack data structure 
+    # construct stack data structure
     n = zero(V)
     stack = Vector{V}(undef, length(tree))
 
@@ -331,7 +331,7 @@ function levels(tree::Tree{V}) where {V}
 end
 
 # Get the first descendant of every vertex in a topologically ordered forest.
-function firstdescendants(tree::Tree{V}, order::Ordering=Forward) where {V}
+function firstdescendants(tree::Tree{V}, order::Ordering = Forward) where {V}
     fdesc = Vector{V}(undef, length(tree))
 
     for j in tree
@@ -386,9 +386,9 @@ end
 
 function Base.isequal(left::Tree, right::Tree)
     return isequal(left.parent, right.parent) &&
-           isequal(left.root, right.root) &&
-           isequal(left.child, right.child) &&
-           isequal(left.brother, right.brother)
+        isequal(left.root, right.root) &&
+        isequal(left.child, right.child) &&
+        isequal(left.brother, right.brother)
 end
 
 ##########################

@@ -3,13 +3,13 @@
 
 A filled graph.
 """
-struct FilledGraph{V,E} <: AbstractGraph{V}
-    tree::CliqueTree{V,E}
+struct FilledGraph{V, E} <: AbstractGraph{V}
+    tree::CliqueTree{V, E}
     index::Vector{V}
     ne::Int
 end
 
-function FilledGraph{V,E}(tree::CliqueTree) where {V,E}
+function FilledGraph{V, E}(tree::CliqueTree) where {V, E}
     index = Vector{V}(undef, pointers(residuals(tree))[end] - 1)
     ne = 0
 
@@ -22,16 +22,16 @@ function FilledGraph{V,E}(tree::CliqueTree) where {V,E}
     return FilledGraph(tree, index, ne)
 end
 
-function FilledGraph{V}(tree::CliqueTree{<:Any,E}) where {V,E}
-    return FilledGraph{V,E}(tree)
+function FilledGraph{V}(tree::CliqueTree{<:Any, E}) where {V, E}
+    return FilledGraph{V, E}(tree)
 end
 
 function FilledGraph(tree::CliqueTree{V}) where {V}
     return FilledGraph{V}(tree)
 end
 
-function BipartiteGraph{V,E}(graph::FilledGraph) where {V,E}
-    result = BipartiteGraph{V,E}(nv(graph), nv(graph), ne(graph))
+function BipartiteGraph{V, E}(graph::FilledGraph) where {V, E}
+    result = BipartiteGraph{V, E}(nv(graph), nv(graph), ne(graph))
     pointers(result)[begin] = one(E)
     j = zero(V)
 
@@ -107,13 +107,13 @@ function Base.Matrix(graph::FilledGraph)
 end
 
 # Construct a sparse symmetric matrix with a given sparsity graph.
-function SparseArrays.SparseMatrixCSC{T,I}(graph::FilledGraph) where {T,I}
-    return SparseMatrixCSC{T}(BipartiteGraph{I,I}(graph))
+function SparseArrays.SparseMatrixCSC{T, I}(graph::FilledGraph) where {T, I}
+    return SparseMatrixCSC{T}(BipartiteGraph{I, I}(graph))
 end
 
 # See above.
 function SparseArrays.SparseMatrixCSC{T}(graph::FilledGraph) where {T}
-    return SparseMatrixCSC{T,Int}(graph)
+    return SparseMatrixCSC{T, Int}(graph)
 end
 
 # See above.
@@ -123,7 +123,7 @@ end
 
 # Construct the adjacency matrix of a graph.
 function SparseArrays.sparse(T::Type, I::Type, graph::FilledGraph)
-    matrix = SparseMatrixCSC{T,I}(graph)
+    matrix = SparseMatrixCSC{T, I}(graph)
     fill!(nonzeros(matrix), 1)
     return matrix
 end
@@ -138,7 +138,7 @@ function SparseArrays.sparse(graph::FilledGraph)
     return sparse(Bool, graph)
 end
 
-function Base.show(io::IO, ::MIME"text/plain", graph::G) where {G<:FilledGraph}
+function Base.show(io::IO, ::MIME"text/plain", graph::G) where {G <: FilledGraph}
     m = ne(graph)
     n = nv(graph)
     return println(io, "{$n, $m} $G")
@@ -171,11 +171,11 @@ function Graphs.vertices(graph::FilledGraph{V}) where {V}
 end
 
 @propagate_inbounds function Graphs.outneighbors(
-    graph::FilledGraph{V,E}, i::Integer
-) where {V,E}
+        graph::FilledGraph{V, E}, i::Integer
+    ) where {V, E}
     @boundscheck checkbounds(graph.index, i)
     clique = graph.tree[graph.index[i]]
-    return Clique{V,E}((i + 1):last(residual(clique)), separator(clique))
+    return Clique{V, E}((i + 1):last(residual(clique)), separator(clique))
 end
 
 # slow

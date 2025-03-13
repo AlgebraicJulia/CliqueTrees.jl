@@ -1,7 +1,7 @@
 # A doubly linked list of distinct natural numbers.
 struct DoublyLinkedList{
-    I,Init<:AbstractScalar{I},Prev<:AbstractVector{I},Next<:AbstractVector{I}
-} <: AbstractLinkedList{I}
+        I, Init <: AbstractScalar{I}, Prev <: AbstractVector{I}, Next <: AbstractVector{I},
+    } <: AbstractLinkedList{I}
     head::Init
     prev::Prev
     next::Next

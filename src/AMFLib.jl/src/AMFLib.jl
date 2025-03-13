@@ -28,8 +28,8 @@ export amf
 const MAXIW = typemax(Int) - 100000
 
 function amf(
-    xadj::AbstractVector{E}, adjncy::AbstractVector{V}; speed::Integer=1
-) where {V,E}
+        xadj::AbstractVector{E}, adjncy::AbstractVector{V}; speed::Integer = 1
+    ) where {V, E}
     EE = promote_type(Int32, E)
     nnz = length(adjncy)
     neqns = convert(V, length(xadj) - 1)
@@ -69,13 +69,13 @@ output parameters:
   - `(perm, invp)`: the approximate minimum fill ordering
 """
 function amf!(
-    neqns::V,
-    adjln::E,
-    xadj::AbstractVector{E},
-    adjncy::AbstractVector{V},
-    locaux::E,
-    speed::Val,
-) where {V,E}
+        neqns::V,
+        adjln::E,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        locaux::E,
+        speed::Val,
+    ) where {V, E}
     dgree = Vector{V}(undef, neqns)
     head = Vector{V}(undef, neqns)
     snxt = Vector{V}(undef, neqns)
@@ -572,14 +572,14 @@ function amf!(
 end
 
 @propagate_inbounds function score(
-    xadj::Vector{E},
-    adjncy::Vector{V},
-    dgree::Vector{V},
-    invp::Vector{V},
-    deg::V,
-    i::V,
-    ::Val{1},
-) where {V,E}
+        xadj::Vector{E},
+        adjncy::Vector{V},
+        dgree::Vector{V},
+        invp::Vector{V},
+        deg::V,
+        i::V,
+        ::Val{1},
+    ) where {V, E}
     @boundscheck checkbounds(xadj, i)
     @boundscheck checkbounds(invp, i)
     @inbounds l = xadj[i]
@@ -610,14 +610,14 @@ end
 end
 
 @propagate_inbounds function score(
-    xadj::AbstractVector{E},
-    adjncy::AbstractVector{V},
-    dgree::AbstractVector{V},
-    invp::AbstractVector{V},
-    deg::V,
-    i::V,
-    ::Val{2},
-) where {V,E}
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        dgree::AbstractVector{V},
+        invp::AbstractVector{V},
+        deg::V,
+        i::V,
+        ::Val{2},
+    ) where {V, E}
     @boundscheck checkbounds(xadj, i)
     @inbounds x = Float64(dgree[adjncy[xadj[i]]] - one(V))
     y = Float64(deg)
@@ -632,18 +632,18 @@ end
 end
 
 function score(
-    xadj::AbstractVector{E},
-    adjncy::AbstractVector{V},
-    dgree::AbstractVector{V},
-    invp::AbstractVector{V},
-    deg::V,
-    i::V,
-    ::Val{3},
-) where {V,E}
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        dgree::AbstractVector{V},
+        invp::AbstractVector{V},
+        deg::V,
+        i::V,
+        ::Val{3},
+    ) where {V, E}
     return deg
 end
 
-function initscore(dgree::AbstractVector, ::Union{Val{1},Val{2}})
+function initscore(dgree::AbstractVector, ::Union{Val{1}, Val{2}})
     return copy(dgree)
 end
 

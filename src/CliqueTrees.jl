@@ -19,8 +19,8 @@ include("./MMDLib.jl/src/MMDLib.jl")
 using .AMFLib
 using .MMDLib
 
-const AbstractScalar{T} = AbstractArray{T,0}
-const Scalar{T} = Array{T,0}
+const AbstractScalar{T} = AbstractArray{T, 0}
+const Scalar{T} = Array{T, 0}
 const MAX_ITEMS_PRINTED = 5
 
 # Linked Lists

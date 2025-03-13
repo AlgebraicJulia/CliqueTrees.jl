@@ -1,6 +1,6 @@
-abstract type AbstractLinkedList{I<:Integer} end
+abstract type AbstractLinkedList{I <: Integer} end
 
-function Base.show(io::IO, ::MIME"text/plain", list::L) where {L<:AbstractLinkedList}
+function Base.show(io::IO, ::MIME"text/plain", list::L) where {L <: AbstractLinkedList}
     println(io, "$L:")
 
     for (i, v) in enumerate(take(list, MAX_ITEMS_PRINTED + 1))
@@ -10,6 +10,7 @@ function Base.show(io::IO, ::MIME"text/plain", list::L) where {L<:AbstractLinked
             println(io, " ⋮")
         end
     end
+    return
 end
 
 function Base.empty!(list::AbstractLinkedList{I}) where {I}
@@ -25,8 +26,8 @@ end
 # Iteration Interface #
 #######################
 
-function Base.iterate(list::AbstractLinkedList{I}, i::I=list.head[]) where {I}
-    if !iszero(i)
+function Base.iterate(list::AbstractLinkedList{I}, i::I = list.head[]) where {I}
+    return if !iszero(i)
         @inbounds (i, list.next[i])
     end
 end

@@ -1,6 +1,6 @@
 # A doubly linked list of distinct natural numbers.
-struct SinglyLinkedList{I,Init<:AbstractScalar{I},Next<:AbstractVector{I}} <:
-       AbstractLinkedList{I}
+struct SinglyLinkedList{I, Init <: AbstractScalar{I}, Next <: AbstractVector{I}} <:
+    AbstractLinkedList{I}
     head::Init
     next::Next
 end

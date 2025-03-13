@@ -1,8 +1,8 @@
-struct BipartiteEdgeIter{V,E,Ptr,Tgt} <: AbstractEdgeIter
-    graph::BipartiteGraph{V,E,Ptr,Tgt}
+struct BipartiteEdgeIter{V, E, Ptr, Tgt} <: AbstractEdgeIter
+    graph::BipartiteGraph{V, E, Ptr, Tgt}
 end
 
-function Base.show(io::IO, iter::I) where {I<:BipartiteEdgeIter}
+function Base.show(io::IO, iter::I) where {I <: BipartiteEdgeIter}
     n = length(iter)
     println(io, "$n-element $I:")
 
@@ -13,6 +13,7 @@ function Base.show(io::IO, iter::I) where {I<:BipartiteEdgeIter}
             println(io, " ⋮")
         end
     end
+    return
 end
 
 ############################
@@ -32,9 +33,9 @@ end
 #######################
 
 function Base.iterate(
-    iter::BipartiteEdgeIter{V,E}, (i, p)::Tuple{V,E}=(one(V), one(E))
-) where {V,E}
-    if p <= length(iter)
+        iter::BipartiteEdgeIter{V, E}, (i, p)::Tuple{V, E} = (one(V), one(E))
+    ) where {V, E}
+    return if p <= length(iter)
         edge = SimpleEdge{V}(i, targets(iter.graph)[p])
 
         j = i + one(V)

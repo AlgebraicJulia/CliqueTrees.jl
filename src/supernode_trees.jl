@@ -6,7 +6,7 @@ This type implements the [indexed tree interface](https://juliacollections.githu
 """
 struct SupernodeTree{V} <: AbstractVector{UnitRange{V}}
     tree::Tree{V}
-    res::BipartiteGraph{V,V,Vector{V},OneTo{V}}
+    res::BipartiteGraph{V, V, Vector{V}, OneTo{V}}
 end
 
 function Tree(tree::SupernodeTree)
@@ -25,10 +25,10 @@ end
 Construct a supernodal elimination tree.
 """
 function supernodetree(
-    graph;
-    alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
-    snd::SupernodeType=DEFAULT_SUPERNODE_TYPE,
-)
+        graph;
+        alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
+        snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
+    )
     label, tree, count, index, ptr, lower, upper = supernodetree(graph, alg, snd)
     return label, tree
 end

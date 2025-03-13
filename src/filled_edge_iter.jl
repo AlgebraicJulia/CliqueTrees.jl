@@ -1,8 +1,8 @@
-struct FilledEdgeIter{V,E} <: AbstractEdgeIter
-    graph::FilledGraph{V,E}
+struct FilledEdgeIter{V, E} <: AbstractEdgeIter
+    graph::FilledGraph{V, E}
 end
 
-function Base.show(io::IO, iter::I) where {I<:FilledEdgeIter}
+function Base.show(io::IO, iter::I) where {I <: FilledEdgeIter}
     n = length(iter)
     println(io, "$n-element $I:")
 
@@ -13,6 +13,7 @@ function Base.show(io::IO, iter::I) where {I<:FilledEdgeIter}
             println(io, " ⋮")
         end
     end
+    return
 end
 
 ############################
@@ -32,9 +33,9 @@ end
 #######################
 
 function Base.iterate(
-    iter::FilledEdgeIter{V}, (i, p)::Tuple{V,V}=(one(V), one(V))
-) where {V}
-    if i <= nv(iter.graph)
+        iter::FilledEdgeIter{V}, (i, p)::Tuple{V, V} = (one(V), one(V))
+    ) where {V}
+    return if i <= nv(iter.graph)
         clique = neighbors(iter.graph, i)
 
         if p <= length(clique)

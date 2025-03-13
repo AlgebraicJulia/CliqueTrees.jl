@@ -23,11 +23,11 @@ using Test
         0 0 0 0 1 0 1 0
     ]
 
-    @test_throws ArgumentError permutation(matrix; alg=AMD())
-    @test_throws ArgumentError permutation(matrix; alg=SymAMD())
-    @test_throws ArgumentError permutation(matrix; alg=METIS())
-    @test_throws ArgumentError permutation(matrix; alg=Spectral())
-    @test_throws ArgumentError permutation(matrix; alg=BT())
+    @test_throws ArgumentError permutation(matrix; alg = AMD())
+    @test_throws ArgumentError permutation(matrix; alg = SymAMD())
+    @test_throws ArgumentError permutation(matrix; alg = METIS())
+    @test_throws ArgumentError permutation(matrix; alg = Spectral())
+    @test_throws ArgumentError permutation(matrix; alg = BT())
 end
 
 using AMD: AMD as AMDJL
@@ -50,7 +50,7 @@ using TreeWidthSolver: TreeWidthSolver
     end
 
     @testset "construction" begin
-        graph = BipartiteGraph{Int8,Int16}(
+        graph = BipartiteGraph{Int8, Int16}(
             [
                 0 1 1 0 0 0 0 0
                 1 0 1 0 1 1 1 0
@@ -63,22 +63,22 @@ using TreeWidthSolver: TreeWidthSolver
             ],
         )
 
-        label, tree = eliminationtree(graph; alg=1:8)
+        label, tree = eliminationtree(graph; alg = 1:8)
         @test isequal(Tree(tree), tree)
         @test isequal(Tree{Int32}(tree), tree)
 
-        label, tree = supernodetree(graph; alg=1:8)
+        label, tree = supernodetree(graph; alg = 1:8)
         @test isequal(Tree(tree), tree.tree)
         @test isequal(Tree{Int32}(tree), tree.tree)
 
-        label, tree = cliquetree(graph; alg=1:8)
+        label, tree = cliquetree(graph; alg = 1:8)
         @test isequal(Tree(tree), tree.tree.tree)
         @test isequal(Tree{Int32}(tree), tree.tree.tree)
     end
 end
 
 @testset "bipartite graphs" begin
-    graph = BipartiteGraph{Int8,Int16}(
+    graph = BipartiteGraph{Int8, Int16}(
         [
             0 1 1 0 0 0 0 0
             1 0 1 0 1 1 1 0
@@ -96,76 +96,92 @@ end
 
     @testset "conversion" begin
         @test isa(
-            convert(BipartiteGraph{Int32,Int64,Vector{Int64},Vector{Int32}}, graph),
-            BipartiteGraph{Int32,Int64,Vector{Int64},Vector{Int32}},
+            convert(BipartiteGraph{Int32, Int64, Vector{Int64}, Vector{Int32}}, graph),
+            BipartiteGraph{Int32, Int64, Vector{Int64}, Vector{Int32}},
         )
-        @test convert(BipartiteGraph{Int8,Int16,Vector{Int16},Vector{Int8}}, graph) ===
+        @test convert(BipartiteGraph{Int8, Int16, Vector{Int16}, Vector{Int8}}, graph) ===
             graph
     end
 
     @testset "construction" begin
-        @test allequal((
-            graph,
-            BipartiteGraph(graph),
-            BipartiteGraph{Int32}(graph),
-            BipartiteGraph{Int32,Int64}(graph),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(graph),
+                BipartiteGraph{Int32}(graph),
+                BipartiteGraph{Int32, Int64}(graph),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(Matrix(graph)),
-            BipartiteGraph{Int8}(Matrix{Float64}(graph)),
-            BipartiteGraph{Int8,Int16}(Matrix{Float64}(graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(Matrix(graph)),
+                BipartiteGraph{Int8}(Matrix{Float64}(graph)),
+                BipartiteGraph{Int8, Int16}(Matrix{Float64}(graph)),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(SparseMatrixCSC(graph)),
-            BipartiteGraph{Int8}(SparseMatrixCSC{Float64}(graph)),
-            BipartiteGraph{Int8,Int16}(SparseMatrixCSC{Float64,Int32}(graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(SparseMatrixCSC(graph)),
+                BipartiteGraph{Int8}(SparseMatrixCSC{Float64}(graph)),
+                BipartiteGraph{Int8, Int16}(SparseMatrixCSC{Float64, Int32}(graph)),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(sparse(graph)),
-            BipartiteGraph{Int8}(sparse(Float64, graph)),
-            BipartiteGraph{Int8,Int16}(sparse(Float64, Int32, graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(sparse(graph)),
+                BipartiteGraph{Int8}(sparse(Float64, graph)),
+                BipartiteGraph{Int8, Int16}(sparse(Float64, Int32, graph)),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(Graph(graph)),
-            BipartiteGraph{Int8}(Graph{Int64}(graph)),
-            BipartiteGraph{Int8,Int16}(Graph{Int32}(graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(Graph(graph)),
+                BipartiteGraph{Int8}(Graph{Int64}(graph)),
+                BipartiteGraph{Int8, Int16}(Graph{Int32}(graph)),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(DiGraph(graph)),
-            BipartiteGraph{Int8}(DiGraph{Int64}(graph)),
-            BipartiteGraph{Int8,Int16}(DiGraph{Int32}(graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(DiGraph(graph)),
+                BipartiteGraph{Int8}(DiGraph{Int64}(graph)),
+                BipartiteGraph{Int8, Int16}(DiGraph{Int32}(graph)),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(Catlab.Graph(graph)),
-            BipartiteGraph{Int8}(Catlab.Graph(graph)),
-            BipartiteGraph{Int8,Int16}(Catlab.Graph(graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(Catlab.Graph(graph)),
+                BipartiteGraph{Int8}(Catlab.Graph(graph)),
+                BipartiteGraph{Int8, Int16}(Catlab.Graph(graph)),
+            )
+        )
 
-        @test allequal((
-            graph,
-            BipartiteGraph(Catlab.SymmetricGraph(graph)),
-            BipartiteGraph{Int8}(Catlab.SymmetricGraph(graph)),
-            BipartiteGraph{Int8,Int16}(Catlab.SymmetricGraph(graph)),
-        ))
+        @test allequal(
+            (
+                graph,
+                BipartiteGraph(Catlab.SymmetricGraph(graph)),
+                BipartiteGraph{Int8}(Catlab.SymmetricGraph(graph)),
+                BipartiteGraph{Int8, Int16}(Catlab.SymmetricGraph(graph)),
+            )
+        )
 
         @test DiGraph(filledgraph) == DiGraph(BipartiteGraph(filledgraph))
         @test Graph(filledgraph) == Graph(BipartiteGraph(filledgraph))
     end
 
     @testset "interface" begin
-        nullgraph = zero(BipartiteGraph{Int8,Int16,Vector{Int16},Vector{Int8}})
+        nullgraph = zero(BipartiteGraph{Int8, Int16, Vector{Int16}, Vector{Int8}})
         @test nv(nullgraph) === zero(Int8)
         @test ne(nullgraph) === zero(Int16)
 
@@ -197,7 +213,7 @@ end
 end
 
 @testset "filled graphs" begin
-    graph = BipartiteGraph{Int8,Int16}(
+    graph = BipartiteGraph{Int8, Int16}(
         [
             0 1 1 0 0 0 0 0
             1 0 1 0 1 1 1 0
@@ -210,23 +226,25 @@ end
         ],
     )
 
-    label, tree = cliquetree(graph; alg=[1, 4, 6, 8, 3, 7, 2, 5])
+    label, tree = cliquetree(graph; alg = [1, 4, 6, 8, 3, 7, 2, 5])
     filledgraph = FilledGraph(tree)
 
     @testset "construction" begin
-        @test allequal((
-            BipartiteGraph(filledgraph),
-            BipartiteGraph{Int8}(filledgraph),
-            BipartiteGraph{Int8,Int16}(filledgraph),
-            BipartiteGraph(SparseMatrixCSC(filledgraph)),
-            BipartiteGraph(SparseMatrixCSC{Float64}(filledgraph)),
-            BipartiteGraph(SparseMatrixCSC{Float64,Int32}(filledgraph)),
-            BipartiteGraph(sparse(filledgraph)),
-            BipartiteGraph(sparse(Float64, filledgraph)),
-            BipartiteGraph(sparse(Float64, Int16, filledgraph)),
-            BipartiteGraph(Matrix(filledgraph)),
-            BipartiteGraph(Matrix{Float64}(filledgraph)),
-        ))
+        @test allequal(
+            (
+                BipartiteGraph(filledgraph),
+                BipartiteGraph{Int8}(filledgraph),
+                BipartiteGraph{Int8, Int16}(filledgraph),
+                BipartiteGraph(SparseMatrixCSC(filledgraph)),
+                BipartiteGraph(SparseMatrixCSC{Float64}(filledgraph)),
+                BipartiteGraph(SparseMatrixCSC{Float64, Int32}(filledgraph)),
+                BipartiteGraph(sparse(filledgraph)),
+                BipartiteGraph(sparse(Float64, filledgraph)),
+                BipartiteGraph(sparse(Float64, Int16, filledgraph)),
+                BipartiteGraph(Matrix(filledgraph)),
+                BipartiteGraph(Matrix{Float64}(filledgraph)),
+            )
+        )
     end
 
     @testset "interface" begin
@@ -320,24 +338,24 @@ end
 
 @testset "representation" begin
     for alg in (
-        BFS(),
-        MCS(),
-        LexBFS(),
-        RCMMD(),
-        RCMGL(),
-        LexM(),
-        MCSM(),
-        MinimalChordal(),
-        CompositeRotations([1, 2, 3]),
-        AMD(),
-        SymAMD(),
-        AMF(),
-        MF(),
-        MMD(),
-        METIS(),
-        Spectral(),
-        BT(),
-    )
+            BFS(),
+            MCS(),
+            LexBFS(),
+            RCMMD(),
+            RCMGL(),
+            LexM(),
+            MCSM(),
+            MinimalChordal(),
+            CompositeRotations([1, 2, 3]),
+            AMD(),
+            SymAMD(),
+            AMF(),
+            MF(),
+            MMD(),
+            METIS(),
+            Spectral(),
+            BT(),
+        )
         @test isa(repr("text/plain", alg), String)
     end
 
@@ -382,29 +400,29 @@ end
     @test iszero(treewidth(graph))
 
     for alg in (
-        BFS(),
-        MCS(),
-        LexBFS(),
-        RCMMD(),
-        RCMGL(),
-        LexM(),
-        MCSM(),
-        MinimalChordal(),
-        CompositeRotations(),
-        AMD(),
-        SymAMD(),
-        AMF(),
-        MF(),
-        MMD(),
-        # METIS(),
-        # Spectral(),
-        BT(),
-    )
+            BFS(),
+            MCS(),
+            LexBFS(),
+            RCMMD(),
+            RCMGL(),
+            LexM(),
+            MCSM(),
+            MinimalChordal(),
+            CompositeRotations(),
+            AMD(),
+            SymAMD(),
+            AMF(),
+            MF(),
+            MMD(),
+            # METIS(),
+            # Spectral(),
+            BT(),
+        )
         @test permutation(graph; alg) == ([], [])
     end
 
     for S in (Nodal, Maximal, Fundamental)
-        label, tree = cliquetree(graph; snd=S())
+        label, tree = cliquetree(graph; snd = S())
         filledgraph = FilledGraph(tree)
         @test iszero(length(tree))
         @test isnothing(rootindex(tree))
@@ -420,30 +438,30 @@ end
     @test iszero(treewidth(graph))
 
     for alg in (
-        BFS(),
-        MCS(),
-        LexBFS(),
-        RCMMD(),
-        RCMGL(),
-        LexM(),
-        MCSM(),
-        MinimalChordal(),
-        CompositeRotations(),
-        CompositeRotations([1]),
-        AMD(),
-        SymAMD(),
-        AMF(),
-        MF(),
-        MMD(),
-        METIS(),
-        # Spectral,
-        BT(),
-    )
+            BFS(),
+            MCS(),
+            LexBFS(),
+            RCMMD(),
+            RCMGL(),
+            LexM(),
+            MCSM(),
+            MinimalChordal(),
+            CompositeRotations(),
+            CompositeRotations([1]),
+            AMD(),
+            SymAMD(),
+            AMF(),
+            MF(),
+            MMD(),
+            METIS(),
+            # Spectral,
+            BT(),
+        )
         @test permutation(graph; alg) == ([1], [1])
     end
 
     for S in (Nodal, Maximal, Fundamental)
-        label, tree = cliquetree(graph; snd=S())
+        label, tree = cliquetree(graph; snd = S())
         filledgraph = FilledGraph(tree)
         @test isone(length(tree))
         @test isone(rootindex(tree))
@@ -463,9 +481,9 @@ end
 # Vandenberghe and Andersen
 @testset "vandenberghe and andersen" begin
     types = (
-        (BipartiteGraph{Int8,Int16}, Int8, Int16),
+        (BipartiteGraph{Int8, Int16}, Int8, Int16),
         (Matrix{Float64}, Int, Int),
-        (SparseMatrixCSC{Float64,Int16}, Int16, Int16),
+        (SparseMatrixCSC{Float64, Int16}, Int16, Int16),
         (Graph{Int8}, Int8, Int),
         (DiGraph{Int8}, Int8, Int),
         (Catlab.Graph, Int, Int),
@@ -538,16 +556,16 @@ end
                 @inferred CliqueTrees.minimalchordal(graph)
                 @inferred CliqueTrees.compositerotations(graph)
                 @inferred CliqueTrees.compositerotations(graph, [1, 3])
-                @inferred treewidth(graph; alg=1:17)
-                @inferred eliminationtree(graph; alg=1:17)
-                @inferred supernodetree(graph; alg=1:17, snd=Nodal())
-                @inferred supernodetree(graph; alg=1:17, snd=Maximal())
-                @inferred supernodetree(graph; alg=1:17, snd=Fundamental())
-                @inferred cliquetree(graph; alg=1:17, snd=Nodal())
-                @inferred cliquetree(graph; alg=1:17, snd=Maximal())
-                @inferred cliquetree(graph; alg=1:17, snd=Fundamental())
+                @inferred treewidth(graph; alg = 1:17)
+                @inferred eliminationtree(graph; alg = 1:17)
+                @inferred supernodetree(graph; alg = 1:17, snd = Nodal())
+                @inferred supernodetree(graph; alg = 1:17, snd = Maximal())
+                @inferred supernodetree(graph; alg = 1:17, snd = Fundamental())
+                @inferred cliquetree(graph; alg = 1:17, snd = Nodal())
+                @inferred cliquetree(graph; alg = 1:17, snd = Maximal())
+                @inferred cliquetree(graph; alg = 1:17, snd = Fundamental())
 
-                label, tree = cliquetree(graph; alg=1:17)
+                label, tree = cliquetree(graph; alg = 1:17)
                 @inferred treewidth(tree)
             end
 
@@ -571,28 +589,28 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
                     graph, [1, 3]
                 )
-                @test_call target_modules = (CliqueTrees,) treewidth(graph; alg=1:17)
-                @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg=1:17)
+                @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
+                @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) supernodetree(
-                    graph; alg=1:17, snd=Nodal()
-                )
-                @test_call target_modules = (CliqueTrees,) supernodetree(
-                    graph; alg=1:17, snd=Maximal()
+                    graph; alg = 1:17, snd = Nodal()
                 )
                 @test_call target_modules = (CliqueTrees,) supernodetree(
-                    graph; alg=1:17, snd=Fundamental()
+                    graph; alg = 1:17, snd = Maximal()
+                )
+                @test_call target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg = 1:17, snd = Fundamental()
                 )
                 @test_call target_modules = (CliqueTrees,) cliquetree(
-                    graph; alg=1:17, snd=Nodal()
+                    graph; alg = 1:17, snd = Nodal()
                 )
                 @test_call target_modules = (CliqueTrees,) cliquetree(
-                    graph; alg=1:17, snd=Maximal()
+                    graph; alg = 1:17, snd = Maximal()
                 )
                 @test_call target_modules = (CliqueTrees,) cliquetree(
-                    graph; alg=1:17, snd=Fundamental()
+                    graph; alg = 1:17, snd = Fundamental()
                 )
 
-                label, tree = cliquetree(graph; alg=1:17)
+                label, tree = cliquetree(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) treewidth(tree)
             end
 
@@ -616,28 +634,28 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
                     graph, [1, 3]
                 )
-                @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg=1:17)
-                @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg=1:17)
+                @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
+                @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) supernodetree(
-                    graph; alg=1:17, snd=Nodal()
-                )
-                @test_opt target_modules = (CliqueTrees,) supernodetree(
-                    graph; alg=1:17, snd=Maximal()
+                    graph; alg = 1:17, snd = Nodal()
                 )
                 @test_opt target_modules = (CliqueTrees,) supernodetree(
-                    graph; alg=1:17, snd=Fundamental()
+                    graph; alg = 1:17, snd = Maximal()
+                )
+                @test_opt target_modules = (CliqueTrees,) supernodetree(
+                    graph; alg = 1:17, snd = Fundamental()
                 )
                 @test_opt target_modules = (CliqueTrees,) cliquetree(
-                    graph; alg=1:17, snd=Nodal()
+                    graph; alg = 1:17, snd = Nodal()
                 )
                 @test_opt target_modules = (CliqueTrees,) cliquetree(
-                    graph; alg=1:17, snd=Maximal()
+                    graph; alg = 1:17, snd = Maximal()
                 )
                 @test_opt target_modules = (CliqueTrees,) cliquetree(
-                    graph; alg=1:17, snd=Fundamental()
+                    graph; alg = 1:17, snd = Fundamental()
                 )
 
-                label, tree = cliquetree(graph; alg=1:17)
+                label, tree = cliquetree(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) treewidth(tree)
             end
 
@@ -648,7 +666,7 @@ end
                 @test !isperfect(graph, permutation(graph, LexM()))
                 @test !isperfect(graph, permutation(graph, MCSM()))
                 @test !isperfect(graph, permutation(graph, MF()))
-                @test treewidth(graph; alg=1:17) === V(4)
+                @test treewidth(graph; alg = 1:17) === V(4)
 
                 @test ischordal(completion)
                 @test isperfect(completion, permutation(completion, MCS()))
@@ -656,7 +674,7 @@ end
                 @test isperfect(completion, permutation(completion, LexM()))
                 @test isperfect(completion, permutation(completion, MCSM()))
                 @test isperfect(completion, permutation(completion, MF()))
-                @test treewidth(completion; alg=1:17) === V(4)
+                @test treewidth(completion; alg = 1:17) === V(4)
 
                 coloring = CliqueTrees.color(completion)
                 @test coloring.num_colors == 5
@@ -664,32 +682,32 @@ end
 
                 @test all(
                     coloring.colors[v] != coloring.colors[w] for v in
-                                                                 vertices(__completion) for
-                    w in neighbors(__completion, v)
+                        vertices(__completion) for
+                        w in neighbors(__completion, v)
                 )
             end
 
             @testset "permutations" begin
                 for alg in (
-                    BFS(),
-                    MCS(),
-                    LexBFS(),
-                    RCMMD(),
-                    RCMGL(),
-                    LexM(),
-                    MCSM(),
-                    MinimalChordal(),
-                    CompositeRotations(),
-                    CompositeRotations([1, 3]),
-                    AMD(),
-                    SymAMD(),
-                    AMF(),
-                    MF(),
-                    MMD(),
-                    METIS(),
-                    Spectral(),
-                    BT(),
-                )
+                        BFS(),
+                        MCS(),
+                        LexBFS(),
+                        RCMMD(),
+                        RCMGL(),
+                        LexM(),
+                        MCSM(),
+                        MinimalChordal(),
+                        CompositeRotations(),
+                        CompositeRotations([1, 3]),
+                        AMD(),
+                        SymAMD(),
+                        AMF(),
+                        MF(),
+                        MMD(),
+                        METIS(),
+                        Spectral(),
+                        BT(),
+                    )
                     order, index = permutation(graph; alg)
                     @test isa(order, Vector{V})
                     @test isa(index, Vector{V})
@@ -701,11 +719,11 @@ end
             @testset "clique trees" begin
                 @testset "nodal" begin
                     # Figure 4.3
-                    label, tree = cliquetree(graph; alg=1:17, snd=Nodal())
+                    label, tree = cliquetree(graph; alg = 1:17, snd = Nodal())
                     filledgraph = FilledGraph(tree)
                     @test isa(label, Vector{V})
-                    @test isa(tree, CliqueTree{V,E})
-                    @test isa(filledgraph, FilledGraph{V,E})
+                    @test isa(tree, CliqueTree{V, E})
+                    @test isa(filledgraph, FilledGraph{V, E})
                     @test length(tree) == 17
                     @test rootindex(tree) === V(17)
                     @test treewidth(tree) === V(4)
@@ -782,7 +800,7 @@ end
                     end
 
                     rg = relatives(tree)
-                    @test isa(rg, BipartiteGraph{V,E})
+                    @test isa(rg, BipartiteGraph{V, E})
 
                     @test all(1:16) do i
                         j = parentindex(tree, i)
@@ -794,11 +812,11 @@ end
 
                 @testset "maximal" begin
                     # Figure 4.7 (left)
-                    label, tree = cliquetree(graph; alg=1:17, snd=Maximal())
+                    label, tree = cliquetree(graph; alg = 1:17, snd = Maximal())
                     filledgraph = FilledGraph(tree)
                     @test isa(label, Vector{V})
-                    @test isa(tree, CliqueTree{V,E})
-                    @test isa(filledgraph, FilledGraph{V,E})
+                    @test isa(tree, CliqueTree{V, E})
+                    @test isa(filledgraph, FilledGraph{V, E})
                     @test length(tree) == 8
                     @test rootindex(tree) === V(8)
                     @test treewidth(tree) === V(4)
@@ -840,7 +858,7 @@ end
                     end
 
                     rg = relatives(tree)
-                    @test isa(rg, BipartiteGraph{V,E})
+                    @test isa(rg, BipartiteGraph{V, E})
 
                     @test all(1:7) do i
                         j = parentindex(tree, i)
@@ -852,11 +870,11 @@ end
 
                 @testset "fundamental" begin
                     # Figure 4.9
-                    label, tree = cliquetree(graph; alg=1:17, snd=Fundamental())
+                    label, tree = cliquetree(graph; alg = 1:17, snd = Fundamental())
                     filledgraph = FilledGraph(tree)
                     @test isa(label, Vector{V})
-                    @test isa(tree, CliqueTree{V,E})
-                    @test isa(filledgraph, FilledGraph{V,E})
+                    @test isa(tree, CliqueTree{V, E})
+                    @test isa(filledgraph, FilledGraph{V, E})
                     @test length(tree) == 12
                     @test rootindex(tree) === V(12)
                     @test treewidth(tree) === V(4)
@@ -918,7 +936,7 @@ end
                     end
 
                     rg = relatives(tree)
-                    @test isa(rg, BipartiteGraph{V,E})
+                    @test isa(rg, BipartiteGraph{V, E})
 
                     @test all(1:11) do i
                         j = parentindex(tree, i)

@@ -9,11 +9,11 @@ end
 # Compute the union of sorted sets `source1` and `source2`.
 # The result is written to `target`.
 function mergesorted!(
-    target::AbstractVector{I},
-    source1::AbstractVector{I},
-    source2::AbstractVector{I},
-    order::Ordering=Forward,
-) where {I}
+        target::AbstractVector{I},
+        source1::AbstractVector{I},
+        source2::AbstractVector{I},
+        order::Ordering = Forward,
+    ) where {I}
     s1 = firstindex(source1)
     s2 = firstindex(source2)
     t = firstindex(target)
@@ -49,15 +49,15 @@ function mergesorted!(
         t += 1
     end
 
-    @view target[begin:(t - 1)]
+    return @view target[begin:(t - 1)]
 end
 
 function indexinsorted!(
-    target::AbstractVector{I},
-    source1::AbstractVector{I},
-    source2::AbstractVector{I},
-    order::Ordering=Forward,
-) where {I}
+        target::AbstractVector{I},
+        source1::AbstractVector{I},
+        source2::AbstractVector{I},
+        order::Ordering = Forward,
+    ) where {I}
     s1 = firstindex(source1)
     s2 = firstindex(source2)
 
@@ -90,8 +90,8 @@ end
 end
 
 function hfall!(
-    hnum::V, hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
-) where {V}
+        hnum::V, hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
+    ) where {V}
     j = i * two(V)
 
     @inbounds while j <= hnum
@@ -113,8 +113,8 @@ function hfall!(
 end
 
 function hrise!(
-    hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
-) where {V}
+        hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
+    ) where {V}
     j = i ÷ two(V)
 
     @inbounds while j > zero(V)

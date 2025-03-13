@@ -15,8 +15,8 @@ using Base: oneto
 export mmd
 
 function mmd(
-    xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer=0
-) where {V,E}
+        xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0
+    ) where {V, E}
     neqns = convert(V, length(xadj) - 1)
     maxint = typemax(V)
     return mmd!(neqns, xadj, copy(adjncy), convert(V, delta), maxint)
@@ -60,8 +60,8 @@ working arrays:
   - `needsupdate`: positive iff node needs a degree update (0 otherwise)
 """
 function mmd!(
-    neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, delta::V, maxint::V
-) where {V,E}
+        neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, delta::V, maxint::V
+    ) where {V, E}
     # initialization for the minimum degree algorithm.
     invp = zeros(V, neqns)
     deghead = zeros(V, neqns + one(V))
@@ -244,21 +244,21 @@ updated parameters:
   - `needsupdate`: positive iff the node needs a degree update (0 otherwise)
 """
 function mmdelim!(
-    mdnode::V,
-    xadj::AbstractVector{E},
-    adjncy::AbstractVector{V},
-    deghead::AbstractVector{V},
-    degnext::AbstractVector{V},
-    degprev::AbstractVector{V},
-    supersize::AbstractVector{V},
-    elimnext::AbstractVector{V},
-    marker::AbstractVector{V},
-    maxint::V,
-    tag::V,
-    mergeparent::AbstractVector{V},
-    needsupdate::AbstractVector{V},
-    invp::AbstractVector{V},
-) where {V,E}
+        mdnode::V,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        supersize::AbstractVector{V},
+        elimnext::AbstractVector{V},
+        marker::AbstractVector{V},
+        maxint::V,
+        tag::V,
+        mergeparent::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+        invp::AbstractVector{V},
+    ) where {V, E}
     # find reachable set and place in data structure
     marker[mdnode] = tag
 
@@ -411,6 +411,8 @@ function mmdelim!(
 
         rnode = adjncy[i]
     end
+
+    return
 end
 
 """
@@ -450,23 +452,23 @@ updated parameters:
   - `needsupdate`: positive iff node needs update (0 otherwise)
 """
 function mmdupdate!(
-    elimhead::V,
-    xadj::AbstractVector{E},
-    adjncy::AbstractVector{V},
-    delta::V,
-    mindeg::V,
-    deghead::AbstractVector{V},
-    degnext::AbstractVector{V},
-    degprev::AbstractVector{V},
-    supersize::AbstractVector{V},
-    elimnext::AbstractVector{V},
-    marker::AbstractVector{V},
-    maxint::V,
-    tag::V,
-    mergeparent::AbstractVector{V},
-    needsupdate::AbstractVector{V},
-    invp::AbstractVector{V},
-) where {V,E}
+        elimhead::V,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        delta::V,
+        mindeg::V,
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        supersize::AbstractVector{V},
+        elimnext::AbstractVector{V},
+        marker::AbstractVector{V},
+        maxint::V,
+        tag::V,
+        mergeparent::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+        invp::AbstractVector{V},
+    ) where {V, E}
     mindeglimit = mindeg + delta
     deg = enode = zero(V)
     elimnode = elimhead
@@ -673,15 +675,15 @@ function mmdupdate!(
 end
 
 function updateexternaldegree!(
-    deg::V,
-    mindeg::V,
-    enode::V,
-    supersize::AbstractVector{V},
-    deghead::AbstractVector{V},
-    degnext::AbstractVector{V},
-    degprev::AbstractVector{V},
-    needsupdate::AbstractVector{V},
-) where {V}
+        deg::V,
+        mindeg::V,
+        enode::V,
+        supersize::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+    ) where {V}
     @inbounds begin
         deg -= supersize[enode]
         firstnode = deghead[deg + one(V)]
@@ -754,6 +756,8 @@ function mmdnumber!(neqns::V, invp::Vector{V}, mergeparent::Vector{V}) where {V}
             end
         end
     end
+
+    return
 end
 
 function two(::Type{V}) where {V}

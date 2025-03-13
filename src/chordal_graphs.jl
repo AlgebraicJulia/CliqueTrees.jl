@@ -4,7 +4,7 @@
 Determine whether a simple graph is [chordal](https://en.wikipedia.org/wiki/Chordal_graph).
 """
 function ischordal(graph)
-    return isperfect(graph, permutation(graph; alg=MCS()))
+    return isperfect(graph, permutation(graph; alg = MCS()))
 end
 
 function isperfect(graph, pair::Tuple)
@@ -16,7 +16,7 @@ end
 
 Determine whether an fill-reducing permutation is perfect.
 """
-function isperfect(graph, order::AbstractVector, index::AbstractVector=invperm(order))
+function isperfect(graph, order::AbstractVector, index::AbstractVector = invperm(order))
     return isperfect(BipartiteGraph(graph), order, index)
 end
 
@@ -27,8 +27,8 @@ end
 # Determine whether a fill-reducing permutation is perfect.
 # The complexity is O(m + n), where m = |E| and n = |V|.
 function isperfect(
-    graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}
-) where {V}
+        graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}
+    ) where {V}
     # validate arguments
     @argcheck vertices(graph) == eachindex(index)
     @argcheck vertices(graph) == eachindex(order)
@@ -66,17 +66,17 @@ end
 
 Compute a minimal vertex coloring of a chordal graph.
 """
-function color(graph, pair::Tuple=permutation(graph; alg=MCS()))
+function color(graph, pair::Tuple = permutation(graph; alg = MCS()))
     return color(graph, pair...)
 end
 
-function color(graph, order::AbstractVector, index::AbstractVector=invperm(order))
+function color(graph, order::AbstractVector, index::AbstractVector = invperm(order))
     return color(BipartiteGraph(graph), order, index)
 end
 
 function color(
-    graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector
-) where {V}
+        graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector
+    ) where {V}
     k = zero(V)
     label = fill(nv(graph) + one(V), nv(graph))
     color = Vector{V}(undef, nv(graph))

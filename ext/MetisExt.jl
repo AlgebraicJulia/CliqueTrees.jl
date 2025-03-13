@@ -3,26 +3,16 @@ module MetisExt
 using CliqueTrees
 using Graphs
 using Metis: Metis
-using SparseArrays
+
+const IDX = Metis.idx_t
 
 function CliqueTrees.permutation(graph, alg::METIS)
     return permutation(BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where {V}
-    order::Vector{V}, index::Vector{V} = permutation(sparse(graph), alg)
-    return order, index
-end
-
-function CliqueTrees.permutation(matrix::SparseMatrixCSC{T,I}, alg::METIS) where {T,I}
-    order::Vector{I}, index::Vector{I} = permutation(
-        SparseMatrixCSC{T,Metis.idx_t}(matrix), alg
-    )
-    return order, index
-end
-
-function CliqueTrees.permutation(matrix::SparseMatrixCSC{<:Any,Metis.idx_t}, alg::METIS)
-    options = Vector{Metis.idx_t}(undef, Metis.METIS_NOPTIONS)
+function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where V
+    # construct options
+    options = Vector{IDX}(undef, Metis.METIS_NOPTIONS)
     options .= -1 # null
     options[Metis.METIS_OPTION_CTYPE + 1] = alg.ctype
     options[Metis.METIS_OPTION_RTYPE + 1] = alg.rtype
@@ -35,19 +25,41 @@ function CliqueTrees.permutation(matrix::SparseMatrixCSC{<:Any,Metis.idx_t}, alg
     options[Metis.METIS_OPTION_PFACTOR + 1] = alg.pfactor
     options[Metis.METIS_OPTION_UFACTOR + 1] = alg.ufactor
 
-    graph = Metis.graph(matrix; check_hermitian=false)
-    order = Vector{Metis.idx_t}(undef, graph.nvtxs)
-    index = Vector{Metis.idx_t}(undef, graph.nvtxs)
+    # construct METIS graph
+    xadj = Vector{IDX}(undef, nv(graph) + 1)
+    adjncy = Vector{IDX}(undef,  ne(graph) * (2 - is_directed(graph)))
+    xadj[begin] = p = one(IDX)
+
+    @inbounds for j in vertices(graph)
+        for i in neighbors(graph, j)
+            if i != j
+                adjncy[p] = i
+                p += one(IDX)
+            end
+        end
+
+        xadj[j + one(V)] = p
+    end
+
+    resize!(adjncy, p - one(IDX))
+
+    # construct permutation
+    metisorder = Vector{IDX}(undef, nv(graph))
+    metisindex = Vector{IDX}(undef, nv(graph))
+
     Metis.@check Metis.METIS_NodeND(
-        Ref{Metis.idx_t}(graph.nvtxs),
-        graph.xadj,
-        graph.adjncy,
-        graph.vwgt,
+        Ref{IDX}(nv(graph)),
+        xadj,
+        adjncy,
+        C_NULL,
         options,
-        order,
-        index,
+        metisorder,
+        metisindex,
     )
 
+    # restore vertex type
+    order::Vector{V} = metisorder
+    index::Vector{V} = metisindex
     return order, index
 end
 

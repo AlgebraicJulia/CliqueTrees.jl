@@ -35,7 +35,7 @@ abstract type EliminationAlgorithm end
 
 Either a permutation or an algorithm.
 """
-const PermutationOrAlgorithm = Union{AbstractVector,EliminationAlgorithm}
+const PermutationOrAlgorithm = Union{AbstractVector, EliminationAlgorithm}
 
 """
     BFS <: EliminationAlgorithm
@@ -90,7 +90,7 @@ An initial vertex is selected using the minimum degree heuristic.
 
 Cuthill, Elizabeth, and James McKee. "Reducing the bandwidth of sparse symmetric matrices." *Proceedings of the 1969 24th National Conference.* 1969.
 """
-struct RCMMD{A<:SortingAlgorithm} <: EliminationAlgorithm
+struct RCMMD{A <: SortingAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
@@ -116,7 +116,7 @@ An initial vertex is selected using George and Liu's variant of the GPS algorith
 
 George, Alan, and Joseph WH Liu. "An implementation of a pseudoperipheral node finder." *ACM Transactions on Mathematical Software (TOMS)* 5.3 (1979): 284-295.
 """
-struct RCMGL{A<:SortingAlgorithm} <: EliminationAlgorithm
+struct RCMGL{A <: SortingAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
@@ -167,7 +167,7 @@ The MinimalChordal algorithm.
 
 Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
 """
-struct MinimalChordal{A<:PermutationOrAlgorithm} <: EliminationAlgorithm
+struct MinimalChordal{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
@@ -175,8 +175,8 @@ function MinimalChordal()
     return MinimalChordal(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
-struct CompositeRotations{C<:AbstractVector,A<:PermutationOrAlgorithm} <:
-       EliminationAlgorithm
+struct CompositeRotations{C <: AbstractVector, A <: PermutationOrAlgorithm} <:
+    EliminationAlgorithm
     clique::C
     alg::A
 end
@@ -390,7 +390,7 @@ julia> index == invperm(order)
 true
 ```
 """
-function permutation(graph; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+function permutation(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return permutation(graph, alg)
 end
 
@@ -411,7 +411,7 @@ function permutation(graph::AbstractGraph{V}, alg::AbstractVector) where {V}
     return order, invperm(order)
 end
 
-function permutation(graph::SparseMatrixCSC{<:Any,I}, alg::AbstractVector) where {I}
+function permutation(graph::SparseMatrixCSC{<:Any, I}, alg::AbstractVector) where {I}
     order::Vector{I} = alg
     return order, invperm(order)
 end
@@ -461,7 +461,7 @@ function permutation(graph, alg::CompositeRotations)
 end
 
 function permutation(graph, alg::AMF)
-    return amf(graph; speed=alg.speed)
+    return amf(graph; speed = alg.speed)
 end
 
 function permutation(graph, alg::MF)
@@ -469,7 +469,7 @@ function permutation(graph, alg::MF)
 end
 
 function permutation(graph, alg::MMD)
-    index = mmd(graph; delta=alg.delta)
+    index = mmd(graph; delta = alg.delta)
     return invperm(index), index
 end
 
@@ -502,12 +502,12 @@ end
 # Perform a breadth-first search of a simple graph.
 # The complexity is O(m), where m = |E|.
 function bfs!(
-    level::AbstractVector{Int},
-    queue::AbstractVector{V},
-    graph::AbstractGraph{V},
-    root::V,
-    tag::Int,
-) where {V}
+        level::AbstractVector{Int},
+        queue::AbstractVector{V},
+        graph::AbstractGraph{V},
+        root::V,
+        tag::Int,
+    ) where {V}
     i = j = one(V)
     level[root] = tag
     queue[j] = root
@@ -537,7 +537,7 @@ end
 Perform a maximum cardinality search, optionally specifying a clique to be ordered last.
 Returns the inverse permutation.
 """
-function mcs(graph, clique::AbstractVector=oneto(0))
+function mcs(graph, clique::AbstractVector = oneto(0))
     return mcs(BipartiteGraph(graph), clique)
 end
 
@@ -554,7 +554,7 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
     next = Vector{V}(undef, nv(graph) + one(V))
 
     function set(i)
-        @inbounds DoublyLinkedList(view(head, i), prev, next)
+        return @inbounds DoublyLinkedList(view(head, i), prev, next)
     end
 
     # run algorithm
@@ -597,8 +597,8 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
     return alpha, size
 end
 
-function rcmmd(graph, alg::SortingAlgorithm=DEFAULT_UNSTABLE)
-    genrcm(graph, alg) do level, queue, graph, root, tag
+function rcmmd(graph, alg::SortingAlgorithm = DEFAULT_UNSTABLE)
+    return genrcm(graph, alg) do level, queue, graph, root, tag
         component, _, tag = bfs!(level, queue, graph, root, tag)
 
         root = argmin(component) do v
@@ -609,7 +609,7 @@ function rcmmd(graph, alg::SortingAlgorithm=DEFAULT_UNSTABLE)
     end
 end
 
-function rcmgl(graph, alg::SortingAlgorithm=DEFAULT_UNSTABLE)
+function rcmgl(graph, alg::SortingAlgorithm = DEFAULT_UNSTABLE)
     return genrcm(fnroot!, graph, alg)
 end
 
@@ -618,8 +618,8 @@ function genrcm(f::Function, graph, alg::SortingAlgorithm)
 end
 
 function genrcm(
-    f::Function, graph::Union{BipartiteGraph,AbstractSimpleGraph}, alg::SortingAlgorithm
-)
+        f::Function, graph::Union{BipartiteGraph, AbstractSimpleGraph}, alg::SortingAlgorithm
+    )
     return genrcm!(f, copy(graph), alg)
 end
 
@@ -638,7 +638,7 @@ function genrcm!(f::Function, graph::AbstractGraph{V}, alg::SortingAlgorithm) wh
     scratch = Vector{V}(undef, Δout(graph))
 
     @inbounds for v in vertices(graph)
-        sort!(neighbors(graph, v); alg, scratch, by=u -> outdegree(graph, u))
+        sort!(neighbors(graph, v); alg, scratch, by = u -> outdegree(graph, u))
     end
 
     # initialize queue
@@ -654,7 +654,7 @@ function genrcm!(f::Function, graph::AbstractGraph{V}, alg::SortingAlgorithm) wh
         end
     end
 
-    # reverse ordering    
+    # reverse ordering
     return reverse!(order)
 end
 
@@ -664,12 +664,12 @@ end
 #
 # Find a pseudo-peripheral vertex.
 function fnroot!(
-    level::AbstractVector{Int},
-    queue::AbstractVector{V},
-    graph::AbstractGraph{V},
-    root::V,
-    tag::Int,
-) where {V}
+        level::AbstractVector{Int},
+        queue::AbstractVector{V},
+        graph::AbstractGraph{V},
+        root::V,
+        tag::Int,
+    ) where {V}
     component, _, new = bfs!(level, queue, graph, root, tag)
     candidate = zero(V)
 
@@ -906,7 +906,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
         # sort #
         ########
 
-        sort!(unnumbered; scratch, by=w -> label[w])
+        sort!(unnumbered; scratch, by = w -> label[w])
 
         p = 0
         k = zero(V)
@@ -1012,7 +1012,7 @@ end
 Compute the greedy minimum-fill ordering of a simple graph.
 Returns the permutation and its inverse.
 """
-function mf(graph, issorted::Val=Val(false))
+function mf(graph, issorted::Val = Val(false))
     return mf(BipartiteGraph(graph), issorted)
 end
 
@@ -1070,8 +1070,8 @@ function mf(graph::AbstractGraph{V}, ::Val{true}) where {V}
 end
 
 function mf!(
-    nv::V, degrees::AbstractVector{V}, lists::AbstractVector{<:AbstractVector{V}}
-) where {V}
+        nv::V, degrees::AbstractVector{V}, lists::AbstractVector{<:AbstractVector{V}}
+    ) where {V}
     order = zeros(V, nv)
     index = zeros(V, nv)
     label = zeros(Int, nv)
@@ -1255,7 +1255,7 @@ function MMDLib.mmd(graph::BipartiteGraph; kwargs...)
     return mmd(pointers(graph), targets(graph); kwargs...)
 end
 
-function minimalchordal(graph, alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+function minimalchordal(graph, alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return minimalchordal(BipartiteGraph(graph), alg)
 end
 
@@ -1265,10 +1265,10 @@ end
 function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
     order, index = permutation(graph; alg)
     M = Graph(graph)
-    F = Vector{Vector{Tuple{V,V}}}(undef, nv(graph))
+    F = Vector{Vector{Tuple{V, V}}}(undef, nv(graph))
 
     for (i, v) in enumerate(order)
-        F[i] = Tuple{V,V}[]
+        F[i] = Tuple{V, V}[]
         list = neighbors(M, v)
         degree = outdegree(M, v)
 
@@ -1288,7 +1288,7 @@ function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) wh
         end
     end
 
-    Candidate = Set{Tuple{V,V}}()
+    Candidate = Set{Tuple{V, V}}()
     Incident = V[]
 
     for i in reverse(oneto(nv(graph)))
@@ -1326,7 +1326,7 @@ function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) wh
                 end
             end
 
-            worder, windex = permutation(W; alg=MCSM())
+            worder, windex = permutation(W; alg = MCSM())
 
             for (j, v) in enumerate(worder)
                 list = neighbors(W, v)
@@ -1357,20 +1357,20 @@ function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) wh
         end
     end
 
-    return permutation(M; alg=MCS())
+    return permutation(M; alg = MCS())
 end
 
 function compositerotations(
-    graph,
-    clique::AbstractVector=oneto(0),
-    alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
-)
+        graph,
+        clique::AbstractVector = oneto(0),
+        alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
+    )
     return compositerotations(BipartiteGraph(graph), clique, alg)
 end
 
 function compositerotations(
-    graph::AbstractGraph, clique::AbstractVector, alg::PermutationOrAlgorithm
-)
+        graph::AbstractGraph, clique::AbstractVector, alg::PermutationOrAlgorithm
+    )
     order, index = permutation(graph; alg)
     upper = sympermute(graph, index, Forward)
     invpermute!(
@@ -1447,7 +1447,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::MinimalChordal{A}) where {A}
     return show(IOContext(io, :indent => indent + 8), "text/plain", alg.alg)
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C,A}) where {C,A}
+function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) where {C, A}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "CompositeRotations{$C,$A}:")
     println(io, " "^indent * "    clique: $(alg.clique)")
