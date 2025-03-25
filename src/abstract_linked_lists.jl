@@ -1,16 +1,9 @@
 abstract type AbstractLinkedList{I <: Integer} end
 
-function Base.show(io::IO, ::MIME"text/plain", list::L) where {L <: AbstractLinkedList}
-    println(io, "$L:")
-
-    for (i, v) in enumerate(take(list, MAX_ITEMS_PRINTED + 1))
-        if i <= MAX_ITEMS_PRINTED
-            println(io, " $v")
-        else
-            println(io, " ⋮")
-        end
-    end
-    return
+function Base.popfirst!(list::AbstractLinkedList)
+    @inbounds i = list.head[]
+    @inbounds list.head[] = list.next[i]
+    return i
 end
 
 function Base.empty!(list::AbstractLinkedList{I}) where {I}
@@ -22,14 +15,22 @@ function Base.isempty(list::AbstractLinkedList)
     return iszero(list.head[])
 end
 
+function Base.show(io::IO, ::MIME"text/plain", list::AbstractLinkedList)
+    printiterator(io, list)
+    return
+end
+
 #######################
 # Iteration Interface #
 #######################
 
-function Base.iterate(list::AbstractLinkedList{I}, i::I = list.head[]) where {I}
-    return if !iszero(i)
-        @inbounds (i, list.next[i])
+@propagate_inbounds function Base.iterate(list::AbstractLinkedList{I}, i::I = list.head[]) where {I}
+    if ispositive(i)
+        @boundscheck checkbounds(list.next, i)
+        @inbounds return (i, list.next[i])
     end
+
+    return
 end
 
 function Base.IteratorSize(::Type{<:AbstractLinkedList})

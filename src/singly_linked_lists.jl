@@ -1,7 +1,48 @@
-# A doubly linked list of distinct natural numbers.
-struct SinglyLinkedList{I, Init <: AbstractScalar{I}, Next <: AbstractVector{I}} <:
+"""
+    SinglyLinkedList{I, Head, Next} <: AbstractLinkedList{I}
+
+    SinglyLinkedList{I}(n::Integer)
+
+A singly linked list of distinct natural numbers. This type supports the [iteration interface](https://docs.julialang.org/en/v1/manual/interfaces/#man-interface-iteration).
+
+```jldoctest
+julia> using CliqueTrees
+
+julia> list = SinglyLinkedList{Int}(10)
+SinglyLinkedList{Int64, Array{Int64, 0}, Vector{Int64}}:
+
+julia> pushfirst!(list, 4, 5, 6, 7, 8, 9)
+SinglyLinkedList{Int64, Array{Int64, 0}, Vector{Int64}}:
+ 4
+ 5
+ 6
+ 7
+ 8
+ ⋮
+
+julia> collect(list)
+6-element Vector{Int64}:
+ 4
+ 5
+ 6
+ 7
+ 8
+ 9
+```
+"""
+struct SinglyLinkedList{I, Head <: AbstractScalar{I}, Next <: AbstractVector{I}} <:
     AbstractLinkedList{I}
-    head::Init
+    """
+    If `list` is empty, then `list.head[]` is equal to `0`.
+    Otherwise, `list.head[]` is the first element of `list`
+    """
+    head::Head
+
+    """
+    If `i` is not in `list`, then `list.next[i]` is undefined.
+    If `i` is the last element of `list`, then `list.next[i]` is equal to `0`.
+    Otherwise, `list.next[i]` is the element of `list` following `i`.
+    """
     next::Next
 end
 
@@ -11,35 +52,26 @@ function SinglyLinkedList{I}(n::Integer) where {I}
     return SinglyLinkedList(head, next)
 end
 
-function SinglyLinkedList{I}(vector::AbstractVector) where {I}
-    list = SinglyLinkedList{I}(length(vector))
-    return prepend!(list, vector)
-end
-
-function SinglyLinkedList(vector::AbstractVector{I}) where {I}
-    return SinglyLinkedList{I}(vector)
-end
-
 @propagate_inbounds function Base.pushfirst!(list::SinglyLinkedList, i::Integer)
     @boundscheck checkbounds(list.next, i)
     @inbounds list.next[i] = list.head[]
-    list.head[] = i
+    @inbounds list.head[] = i
     return list
 end
 
-@propagate_inbounds function Base.popfirst!(list::SinglyLinkedList)
-    i = list.head[]
-    @boundscheck checkbounds(list.next, i)
-    @inbounds list.head[] = list.next[i]
-    return i
-end
-
-function Base.prepend!(list::SinglyLinkedList, vector::AbstractVector)
-    @views list.next[vector[begin:(end - 1)]] = vector[(begin + 1):end]
-
+@propagate_inbounds function Base.prepend!(list::SinglyLinkedList{I}, vector::AbstractVector) where {I}
     if !isempty(vector)
-        list.next[vector[end]] = list.head[]
-        list.head[] = vector[begin]
+        @inbounds i = vector[begin]
+        @inbounds h = list.head[]
+        @inbounds list.head[] = i
+
+        for j in @view vector[(begin + 1):end]
+            @boundscheck checkbounds(list.next, j)
+            @inbounds list.next[i] = j
+            i = j
+        end
+
+        @inbounds list.next[i] = h
     end
 
     return list

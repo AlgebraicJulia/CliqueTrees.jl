@@ -1,8 +1,7 @@
-# A doubly linked list of distinct natural numbers.
 struct DoublyLinkedList{
-        I, Init <: AbstractScalar{I}, Prev <: AbstractVector{I}, Next <: AbstractVector{I},
+        I, Head <: AbstractScalar{I}, Prev <: AbstractVector{I}, Next <: AbstractVector{I},
     } <: AbstractLinkedList{I}
-    head::Init
+    head::Head
     prev::Prev
     next::Next
 end
@@ -14,77 +13,52 @@ function DoublyLinkedList{I}(n::Integer) where {I}
     return DoublyLinkedList(head, prev, next)
 end
 
-function DoublyLinkedList{I}(vector::AbstractVector) where {I}
-    list = DoublyLinkedList{I}(length(vector))
-    return prepend!(list, vector)
-end
-
-function DoublyLinkedList(vector::AbstractVector{I}) where {I}
-    return DoublyLinkedList{I}(vector)
-end
-
 @propagate_inbounds function Base.pushfirst!(list::DoublyLinkedList, i::Integer)
     @boundscheck checkbounds(list.prev, i)
-    @boundscheck checkbounds(list.next, i)
+    @inbounds n = list.next[i] = list.head[]
+    @inbounds list.head[] = i
 
-    @inbounds begin
-        n = list.next[i] = list.head[]
-        list.head[] = i
-        list.prev[i] = 0
-
-        if !iszero(n)
-            list.prev[n] = i
-        end
+    if ispositive(n)
+        @inbounds list.prev[n] = i
     end
 
     return list
-end
-
-@propagate_inbounds function Base.popfirst!(list::DoublyLinkedList)
-    i = list.head[]
-    @boundscheck checkbounds(list.next, i)
-
-    @inbounds begin
-        n = list.head[] = list.next[i]
-
-        if !iszero(n)
-            list.prev[n] = 0
-        end
-    end
-
-    return i
 end
 
 @propagate_inbounds function Base.delete!(list::DoublyLinkedList, i::Integer)
     @boundscheck checkbounds(list.prev, i)
-    @boundscheck checkbounds(list.next, i)
+    @inbounds h = list.head[]
+    @inbounds n = list.next[i]
 
-    @inbounds begin
-        p = list.prev[i]
-        n = list.next[i]
+    if i == h
+        @inbounds list.head[] = n
+    else
+        @inbounds p = list.prev[i]
+        @inbounds list.next[p] = n
 
-        if !iszero(p)
-            list.next[p] = n
-        else
-            list.head[] = n
-        end
-
-        if !iszero(n)
-            list.prev[n] = p
+        if ispositive(n)
+            @inbounds list.prev[n] = p
         end
     end
 
     return list
 end
 
-function Base.prepend!(list::DoublyLinkedList, vector::AbstractVector)
-    @views list.next[vector[begin:(end - 1)]] = vector[(begin + 1):end]
-    @views list.prev[vector[(begin + 1):end]] = vector[begin:(end - 1)]
-
+@propagate_inbounds function Base.prepend!(list::DoublyLinkedList, vector::AbstractVector)
     if !isempty(vector)
-        list.next[vector[end]] = list.head[]
-        list.prev[vector[begin]] = 0
-        list.head[] = vector[begin]
+        @inbounds i = vector[begin]
+        @inbounds h = list.head[]
+        @inbounds list.head[] = i
+        @boundscheck checkbounds(list.prev, i)
+
+        for j in @view vector[(begin + 1):end]
+            @boundscheck checkbounds(list.prev, j)
+            @inbounds list.prev[j] = i
+            @inbounds list.next[i] = j
+            i = j
+        end
+
+        @inbounds list.next[i] = h
     end
 
     return list

@@ -360,7 +360,8 @@ end
     end
 
     for L in (SinglyLinkedList, DoublyLinkedList)
-        @test isa(repr("text/plain", L([1, 2, 3, 4, 5, 6])), String)
+        list = prepend!(L{Int}(10), [1, 2, 3, 4, 5, 6])
+        @test isa(repr("text/plain", list), String)
     end
 
     graph = BipartiteGraph(
@@ -550,6 +551,7 @@ end
                 @inferred CliqueTrees.rcmgl(graph)
                 @inferred CliqueTrees.lexm(graph)
                 @inferred CliqueTrees.mcsm(graph)
+                @inferred CliqueTrees.mcsm(graph, [1, 3])
                 @inferred CliqueTrees.amf(graph)
                 @inferred CliqueTrees.mf(graph)
                 @inferred CliqueTrees.mmd(graph)
@@ -579,6 +581,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.rcmgl(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.lexm(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph, [1, 3])
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
@@ -624,6 +627,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.rcmgl(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.lexm(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph, [1, 3])
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)

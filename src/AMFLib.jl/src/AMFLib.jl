@@ -93,7 +93,6 @@ function amf!(
     end
 
     erscore = initscore(dgree, speed)
-
     maxmum = zero(V)
     mindeg = one(V)
     fltag = 2
@@ -310,7 +309,7 @@ function amf!(
 
             if ispositive(j)
                 numii = -varbl[i]
-                i4 = fltag - numii
+                ii4 = fltag - convert(Int, numii)
                 ii2 = xadj[i] + convert(E, j)
 
                 for l in xadj[i]:(ii2 - one(E))
@@ -320,7 +319,7 @@ function amf!(
                     if j9 >= fltag
                         j9 -= convert(Int, numii)
                     elseif !iszero(j9)
-                        j9 = convert(Int, dgree[tn]) + convert(Int, i4)
+                        j9 = convert(Int, dgree[tn]) + ii4
                     end
 
                     flag[tn] = j9
@@ -411,7 +410,7 @@ function amf!(
             maxmum = nodeg
         end
 
-        fltag += maxmum
+        fltag += convert(Int, maxmum)
 
         for j3 in j4:(j5 - one(E))
             i = adjncy[j3]
@@ -572,8 +571,8 @@ function amf!(
 end
 
 @propagate_inbounds function score(
-        xadj::Vector{E},
-        adjncy::Vector{V},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
         dgree::Vector{V},
         invp::Vector{V},
         deg::V,
@@ -612,8 +611,8 @@ end
 @propagate_inbounds function score(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
-        dgree::AbstractVector{V},
-        invp::AbstractVector{V},
+        dgree::Vector{V},
+        invp::Vector{V},
         deg::V,
         i::V,
         ::Val{2},
@@ -634,8 +633,8 @@ end
 function score(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
-        dgree::AbstractVector{V},
-        invp::AbstractVector{V},
+        dgree::Vector{V},
+        invp::Vector{V},
         deg::V,
         i::V,
         ::Val{3},

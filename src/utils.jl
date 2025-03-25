@@ -1,9 +1,39 @@
-function three(::Type{V}) where {V}
-    return one(V) + two(V)
+function double(i::I) where {I}
+    return i * two(I)
 end
 
-function two(::Type{V}) where {V}
-    return one(V) + one(V)
+function halve(i::I) where {I}
+    return i ÷ two(I)
+end
+
+function three(::Type{I}) where {I}
+    return one(I) + two(I)
+end
+
+function two(::Type{I}) where {I}
+    return one(I) + one(I)
+end
+
+function ispositive(i::I) where {I}
+    return i > zero(I)
+end
+
+function isnegative(i::I) where {I}
+    return i < zero(I)
+end
+
+function printiterator(io::IO, iterator::T) where {T}
+    print(io, "$T:")
+
+    for (i, v) in enumerate(take(iterator, MAX_ITEMS_PRINTED + 1))
+        if i <= MAX_ITEMS_PRINTED
+            print(io, "\n $v")
+        else
+            print(io, "\n ⋮")
+        end
+    end
+
+    return
 end
 
 # Compute the union of sorted sets `source1` and `source2`.
@@ -79,54 +109,8 @@ end
 @propagate_inbounds function swap!(vector::AbstractVector, i::Integer, j::Integer)
     @boundscheck checkbounds(vector, i)
     @boundscheck checkbounds(vector, j)
-
-    @inbounds begin
-        v = vector[i]
-        vector[i] = vector[j]
-        vector[j] = v
-    end
-
-    return nothing
-end
-
-function hfall!(
-        hnum::V, hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
-    ) where {V}
-    j = i * two(V)
-
-    @inbounds while j <= hnum
-        if j < hnum && hkey[heap[j + one(V)]] < hkey[heap[j]]
-            j += one(V)
-        end
-
-        if hkey[heap[i]] > hkey[heap[j]]
-            swap!(heap, i, j)
-            swap!(hinv, heap[i], heap[j])
-            i = j
-            j = i * two(V)
-        else
-            break
-        end
-    end
-
-    return nothing
-end
-
-function hrise!(
-        hkey::AbstractVector{V}, hinv::AbstractVector{V}, heap::AbstractVector{V}, i::V
-    ) where {V}
-    j = i ÷ two(V)
-
-    @inbounds while j > zero(V)
-        if hkey[heap[j]] > hkey[heap[i]]
-            swap!(heap, i, j)
-            swap!(hinv, heap[i], heap[j])
-            i = j
-            j = i ÷ two(V)
-        else
-            break
-        end
-    end
-
-    return nothing
+    @inbounds v = vector[i]
+    @inbounds vector[i] = vector[j]
+    @inbounds vector[j] = v
+    return vector
 end

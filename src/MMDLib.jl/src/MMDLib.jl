@@ -14,16 +14,17 @@ using Base: oneto
 
 export mmd
 
+const MAXINT = typemax(Int) - 100000
+
 function mmd(
         xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0
     ) where {V, E}
     neqns = convert(V, length(xadj) - 1)
-    maxint = typemax(V)
-    return mmd!(neqns, xadj, copy(adjncy), convert(V, delta), maxint)
+    return mmd!(neqns, xadj, Vector{V}(adjncy), convert(V, delta))
 end
 
 """
-    mmd!(neqns, xadj, adjncy, delta, maxint)
+    mmd!(neqns, xadj, adjncy, delta)
 
 This routine implements the minimum degree algorithm. It makes use of the
 implicit representation of elimination graphs by quotient graphs, and the
@@ -60,12 +61,12 @@ working arrays:
   - `needsupdate`: positive iff node needs a degree update (0 otherwise)
 """
 function mmd!(
-        neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, delta::V, maxint::V
+        neqns::V, xadj::AbstractVector{E}, adjncy::Vector{V}, delta::V
     ) where {V, E}
     # initialization for the minimum degree algorithm.
     invp = zeros(V, neqns)
     deghead = zeros(V, neqns + one(V))
-    marker = zeros(V, neqns)
+    marker = zeros(Int, neqns)
     mergeparent = zeros(V, neqns)
     needsupdate = zeros(V, neqns)
     degnext = Vector{V}(undef, neqns)
@@ -93,14 +94,14 @@ function mmd!(
     mdnode = deghead[begin]
 
     @inbounds while mdnode > zero(V)
-        marker[mdnode] = maxint
+        marker[mdnode] = MAXINT
         invp[mdnode] = num
         num += one(V)
         mdnode = degnext[mdnode]
     end
 
     deghead[begin] = zero(V)
-    tag = one(V)
+    tag = 1
     mindeg = one(V)
 
     # search for node of the minimum degree
@@ -145,11 +146,16 @@ function mmd!(
 
             # eliminate `mdnode` and perform quotient graph
             # transformation (reset `tag` value if necessary)
-            tag += one(V)
+            tag += 1
 
-            if tag >= maxint
-                tag = one(V)
-                marker[marker .< maxint] .= zero(V)
+            if tag >= MAXINT
+                tag = 1
+
+                for m in eachindex(marker)
+                    if marker[m] < MAXINT
+                        marker[m] = 0
+                    end
+                end
             end
 
             mmdelim!(
@@ -162,7 +168,6 @@ function mmd!(
                 supersize,
                 elimnext,
                 marker,
-                maxint,
                 tag,
                 mergeparent,
                 needsupdate,
@@ -193,7 +198,6 @@ function mmd!(
             supersize,
             elimnext,
             marker,
-            maxint,
             tag,
             mergeparent,
             needsupdate,
@@ -209,7 +213,7 @@ function mmd!(
 end
 
 """
-    mmdelim!(mdnode, xadj, adjncy, deghead, degnext, degprev, supersize, elimnext, marker, maxint, tag, mergeparent, needsupdate, invp)
+    mmdelim!(mdnode, xadj, adjncy, deghead, degnext, degprev, supersize, elimnext, marker, tag, mergeparent, needsupdate, invp)
 
 This routine eliminates the node mdnode of
 minimum degree from the adjacency structure, which
@@ -246,18 +250,17 @@ updated parameters:
 function mmdelim!(
         mdnode::V,
         xadj::AbstractVector{E},
-        adjncy::AbstractVector{V},
-        deghead::AbstractVector{V},
-        degnext::AbstractVector{V},
-        degprev::AbstractVector{V},
-        supersize::AbstractVector{V},
-        elimnext::AbstractVector{V},
-        marker::AbstractVector{V},
-        maxint::V,
-        tag::V,
-        mergeparent::AbstractVector{V},
-        needsupdate::AbstractVector{V},
-        invp::AbstractVector{V},
+        adjncy::Vector{V},
+        deghead::Vector{V},
+        degnext::Vector{V},
+        degprev::Vector{V},
+        supersize::Vector{V},
+        elimnext::Vector{V},
+        marker::Vector{Int},
+        tag::Int,
+        mergeparent::Vector{V},
+        needsupdate::Vector{V},
+        invp::Vector{V},
     ) where {V, E}
     # find reachable set and place in data structure
     marker[mdnode] = tag
@@ -344,7 +347,6 @@ function mmdelim!(
             i = xadj[-rnode]
             istop = xadj[one(V) - rnode]
         else
-
             # if `rnode` is in the degree list structure...
             pvnode = degprev[rnode]
 
@@ -388,7 +390,7 @@ function mmdelim!(
                 supersize[mdnode] += supersize[rnode]
                 supersize[rnode] = zero(V)
                 mergeparent[rnode] = mdnode
-                marker[rnode] = maxint
+                marker[rnode] = MAXINT
             else
                 # else flag `rnode` for degree update, and
                 # add `mdnode` as a neighbor of `rnode`
@@ -416,7 +418,7 @@ function mmdelim!(
 end
 
 """
-    mmdupdate!(elimhead, xadj, adjncy, delta, mindeg, deghead, degnext, degprev, supersize, elimnext, marker, maxint, tag, mergeparent, needsupdate, invp)
+    mmdupdate!(elimhead, xadj, adjncy, delta, mindeg, deghead, degnext, degprev, supersize, elimnext, marker, tag, mergeparent, needsupdate, invp)
 
 This routine updates the degrees of nodes
 after a multiple elimination step.
@@ -454,20 +456,19 @@ updated parameters:
 function mmdupdate!(
         elimhead::V,
         xadj::AbstractVector{E},
-        adjncy::AbstractVector{V},
+        adjncy::Vector{V},
         delta::V,
         mindeg::V,
-        deghead::AbstractVector{V},
-        degnext::AbstractVector{V},
-        degprev::AbstractVector{V},
-        supersize::AbstractVector{V},
-        elimnext::AbstractVector{V},
-        marker::AbstractVector{V},
-        maxint::V,
-        tag::V,
-        mergeparent::AbstractVector{V},
-        needsupdate::AbstractVector{V},
-        invp::AbstractVector{V},
+        deghead::Vector{V},
+        degnext::Vector{V},
+        degprev::Vector{V},
+        supersize::Vector{V},
+        elimnext::Vector{V},
+        marker::Vector{Int},
+        tag::Int,
+        mergeparent::Vector{V},
+        needsupdate::Vector{V},
+        invp::Vector{V},
     ) where {V, E}
     mindeglimit = mindeg + delta
     deg = enode = zero(V)
@@ -476,12 +477,17 @@ function mmdupdate!(
     # for each of the newly formed element, do the following
     # (reset `tag` value if necessary)
     @inbounds while elimnode > zero(V)
-        mtag = tag + mindeglimit
+        mtag = tag + convert(Int, mindeglimit)
 
-        if mtag >= maxint
-            tag = one(V)
-            mtag = tag + mindeglimit
-            marker[marker .< maxint] .= zero(V)
+        if mtag >= MAXINT
+            tag = 1
+            mtag = tag + convert(Int, mindeglimit)
+
+            for m in eachindex(marker)
+                if marker[m] < MAXINT
+                    marker[m] = 0
+                end
+            end
         end
 
         # create two linked lists from nodes associated
@@ -533,7 +539,7 @@ function mmdupdate!(
 
         while enode > zero(V)
             if needsupdate[enode] > zero(V)
-                tag += one(V)
+                tag += 1
                 deg = elimsize
 
                 # identify the other adjacent element neighbor
@@ -572,7 +578,7 @@ function mmdupdate!(
                                     if needsupdate[node] == two(V)
                                         supersize[enode] += supersize[node]
                                         supersize[node] = zero(V)
-                                        marker[node] = maxint
+                                        marker[node] = MAXINT
                                         mergeparent[node] = enode
                                     end
 
@@ -605,7 +611,7 @@ function mmdupdate!(
 
         while enode > zero(V)
             if needsupdate[enode] > zero(V)
-                tag += one(V)
+                tag += 1
                 deg = elimsize
 
                 # for each unmarked neighbor of `enode`,
@@ -678,11 +684,11 @@ function updateexternaldegree!(
         deg::V,
         mindeg::V,
         enode::V,
-        supersize::AbstractVector{V},
-        deghead::AbstractVector{V},
-        degnext::AbstractVector{V},
-        degprev::AbstractVector{V},
-        needsupdate::AbstractVector{V},
+        supersize::Vector{V},
+        deghead::Vector{V},
+        degnext::Vector{V},
+        degprev::Vector{V},
+        needsupdate::Vector{V},
     ) where {V}
     @inbounds begin
         deg -= supersize[enode]

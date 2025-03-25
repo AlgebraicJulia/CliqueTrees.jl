@@ -203,6 +203,10 @@ end
 # Equivalent Sparse Matrix Reorderings by Elimination Tree Rotations
 # Liu
 # Algorithm 3.2: Composite_Rotations
+#
+# Fast Computation of Minimal Fill Inside a Given Elimination Ordering
+# Heggernes and Peyton
+# Change_Root
 function compositerotations(
         graph::AbstractGraph{V}, tree::Tree{V}, clique::AbstractVector{V}
     ) where {V}
@@ -210,78 +214,74 @@ function compositerotations(
     order = invperm(index)
     fdesc = firstdescendants(tree, Perm(Forward, index))
 
-    y = nv(graph)
-    tag = nv(graph) + one(V)
-    label = zeros(V, nv(graph))
+    n = nv(graph)
+    alpha = zeros(V, n)
 
-    @inbounds for i in reverse(eachindex(clique))
-        v = clique[i]
-        label[v] = tag -= one(V)
-        y = min(v, y)
-    end
+    if ispositive(n)
+        y = n
 
-    @inbounds if !iszero(y)
-        z = parentindex(tree, y)
+        @inbounds for v in reverse(clique)
+            alpha[v] = n
+            n -= one(V)
 
-        if !isnothing(z)
-            for i in index[fdesc[y]]:index[y]
+            if v < y
+                y = v
+            end
+        end
+
+        @inbounds xstop = index[y]
+        xstart = xstop + one(V)
+
+        @inbounds for z in ancestorindices(tree, y)
+            ystart = index[fdesc[y]]
+            ystop = index[y]
+
+            for i in ystart:(xstart - one(V))
                 v = order[i]
 
                 for w in neighbors(graph, v)
-                    if y < w && iszero(label[w])
-                        label[w] = tag -= one(V)
+                    if y < w && iszero(alpha[w])
+                        alpha[w] = n
+                        n -= one(V)
                     end
                 end
             end
 
-            x = y
+            for i in (xstop + one(V)):ystop
+                v = order[i]
+
+                for w in neighbors(graph, v)
+                    if y < w && iszero(alpha[w])
+                        alpha[w] = n
+                        n -= one(V)
+                    end
+                end
+            end
+
+            xstart, xstop = ystart, ystop
             y = z
+        end
 
-            for z in ancestorindices(tree, y)
-                for i in index[fdesc[y]]:(index[fdesc[x]] - one(V))
-                    v = order[i]
-
-                    for w in neighbors(graph, v)
-                        if y < w && iszero(label[w])
-                            label[w] = tag -= one(V)
-                        end
-                    end
-                end
-
-                for i in (index[x] + one(V)):index[y]
-                    v = order[i]
-
-                    for w in neighbors(graph, v)
-                        if y < w && iszero(label[w])
-                            label[w] = tag -= one(V)
-                        end
-                    end
-                end
-
-                x = y
-                y = z
+        @inbounds for v in reverse(vertices(graph))
+            if iszero(alpha[v])
+                alpha[v] = n
+                n -= one(V)
             end
         end
     end
 
-    @inbounds for v in reverse(vertices(graph))
-        if iszero(label[v])
-            label[v] = tag -= one(V)
-        end
-    end
-
-    return label
+    return alpha
 end
 
 # Compute a postordering of a forest.
 function postorder(tree::Tree{V}) where {V}
     index = Vector{V}(undef, length(tree))
 
-    # construct disjoint sets data structure
+    # construct bucket queue data structure
     child = copy(tree.child)
 
     function set(i)
-        head = @view child[i]
+        @inbounds head = @view child[i]
         return SinglyLinkedList(head, tree.brother)
     end
 
@@ -290,12 +290,12 @@ function postorder(tree::Tree{V}) where {V}
     stack = Vector{V}(undef, length(tree))
 
     # run algorithm
-    for j in rootindices(tree)
+    @inbounds for j in rootindices(tree)
         n += one(V)
         stack[n] = j
     end
 
-    for i in tree
+    @inbounds for i in tree
         j = stack[n]
         n -= one(V)
 
@@ -334,7 +334,7 @@ end
 function firstdescendants(tree::Tree{V}, order::Ordering = Forward) where {V}
     fdesc = Vector{V}(undef, length(tree))
 
-    for j in tree
+    @inbounds for j in tree
         v = j
 
         for i in childindices(tree, j)

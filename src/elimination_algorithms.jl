@@ -198,7 +198,7 @@ The approximate minimum fill algorithm.
 
 ### Parameters
 
-  - `speed`: fill approximation strategy (1, 2, or, 3)
+  - `speed`: fill approximation strategy (`1`, `2`, or, `3`)
 
 ### Reference
 
@@ -411,11 +411,6 @@ function permutation(graph::AbstractGraph{V}, alg::AbstractVector) where {V}
     return order, invperm(order)
 end
 
-function permutation(graph::SparseMatrixCSC{<:Any, I}, alg::AbstractVector) where {I}
-    order::Vector{I} = alg
-    return order, invperm(order)
-end
-
 function permutation(graph, alg::BFS)
     order = bfs(graph)
     return order, invperm(order)
@@ -465,7 +460,8 @@ function permutation(graph, alg::AMF)
 end
 
 function permutation(graph, alg::MF)
-    return mf(graph)
+    order = mf(graph)
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::MMD)
@@ -532,12 +528,16 @@ function bfs!(
 end
 
 """
-    mcs(graph[, clique::AbstractVector])
+    mcs(graph[, clique])
 
 Perform a maximum cardinality search, optionally specifying a clique to be ordered last.
 Returns the inverse permutation.
 """
-function mcs(graph, clique::AbstractVector = oneto(0))
+function mcs(graph)
+    return mcs(BipartiteGraph(graph))
+end
+
+function mcs(graph, clique)
     return mcs(BipartiteGraph(graph), clique)
 end
 
@@ -547,40 +547,30 @@ end
 #
 # Construct a fill-reducing permutation of a graph.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
-    # construct disjoint sets data structure
-    head = zeros(V, nv(graph) + one(V))
-    prev = Vector{V}(undef, nv(graph) + one(V))
-    next = Vector{V}(undef, nv(graph) + one(V))
+function mcs(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
+    j = one(V); n = nv(graph)
+    size = ones(V, n)
+    alpha = Vector{V}(undef, n)
+
+    # construct bucket queue data structure
+    head = zeros(V, n + one(V))
+    prev = Vector{V}(undef, n)
+    next = Vector{V}(undef, n)
 
     function set(i)
         return @inbounds DoublyLinkedList(view(head, i), prev, next)
     end
 
+    @inbounds prepend!(set(j), vertices(graph))
+
     # run algorithm
-    alpha = Vector{V}(undef, nv(graph))
-    size = ones(V, nv(graph))
-    prepend!(set(one(V)), vertices(graph))
-
-    j = one(V)
-    k = convert(V, lastindex(clique))
-
-    @inbounds for i in reverse(oneto(nv(graph)))
-        v = zero(V)
-
-        if k in eachindex(clique)
-            v = convert(V, clique[k])
-            k -= one(V)
-            delete!(set(j), v)
-        else
-            v = popfirst!(set(j))
-        end
-
-        alpha[v] = i
-        size[v] = one(V) - size[v]
+    @inbounds for v in reverse(clique)
+        delete!(set(j), v)
+        alpha[v] = n
+        size[v] = one(V) - j
 
         for w in neighbors(graph, v)
-            if size[w] >= one(V)
+            if ispositive(size[w])
                 delete!(set(size[w]), w)
                 size[w] += one(V)
                 pushfirst!(set(size[w]), w)
@@ -589,9 +579,33 @@ function mcs(graph::AbstractGraph{V}, clique::AbstractVector) where {V}
 
         j += one(V)
 
-        while j >= one(V) && isempty(set(j))
+        while ispositive(j) && isempty(set(j))
             j -= one(V)
         end
+
+        n -= one(V)
+    end
+
+    @inbounds while ispositive(n)
+        v = popfirst!(set(j))
+        alpha[v] = n
+        size[v] = one(V) - j
+
+        for w in neighbors(graph, v)
+            if ispositive(size[w])
+                delete!(set(size[w]), w)
+                size[w] += one(V)
+                pushfirst!(set(size[w]), w)
+            end
+        end
+
+        j += one(V)
+
+        while ispositive(j) && isempty(set(j))
+            j -= one(V)
+        end
+
+        n -= one(V)
     end
 
     return alpha, size
@@ -828,54 +842,54 @@ end
 # Returns a minimal ordering.
 # The complexity is O(mn), where m = |E| and n = |V|.
 function lexm(graph::AbstractGraph{V}) where {V}
-    unnumbered = Vector{V}(undef, nv(graph))
-    alpha = Vector{V}(undef, nv(graph))
-    scratch = Vector{V}(undef, nv(graph))
-    isreached = Vector{Bool}(undef, nv(graph))
-    label = Vector{Int}(undef, nv(graph))
+    k = one(V); n = nv(graph)
+    alpha = fill(-n - one(V), n)
+    label = fill(double(k), n)
 
-    # construct disjoint sets data structure
-    head = Vector{V}(undef, nv(graph))
-    prev = Vector{V}(undef, nv(graph))
-    next = Vector{V}(undef, nv(graph))
+    # construct stack data structure
+    stack = Vector{V}(undef, n)
 
-    function reach(j)
-        @inbounds return DoublyLinkedList(view(head, j), prev, next)
+    # construct bucket queue data structures
+    shead = zeros(V, double(n) + two(V))
+    sprev = Vector{V}(undef, n)
+    snext = Vector{V}(undef, n)
+
+    function set(j)
+        @inbounds head = @view shead[j]
+        return DoublyLinkedList(head, sprev, snext)
     end
 
-    # run algorithm
-    unnumbered .= vertices(graph)
-    alpha .= zero(V)
-    label .= 2
-    p = 0
-    n = 0
-    k = one(V)
+    rhead = zeros(V, n)
+    rprev = Vector{V}(undef, n)
+    rnext = Vector{V}(undef, n)
+
+    function reach(j)
+        @inbounds head = @view rhead[j]
+        return DoublyLinkedList(head, rprev, rnext)
+    end
+
+    @inbounds prepend!(set(double(k)), vertices(graph))
 
     ########
     # loop #
     ########
 
-    @inbounds for i in reverse(oneto(nv(graph)))
+    @inbounds while ispositive(n)
         ##########
         # select #
         ##########
 
         # assign v the number i
-        v = pop!(unnumbered)
-        isreached[v] = true
-        alpha[v] = i
-
-        for j in oneto(k)
-            empty!(reach(j))
-        end
-
-        isreached[unnumbered] .= false
+        v = popfirst!(set(double(k)))
+        alpha[v] = n
 
         for w in neighbors(graph, v)
-            if iszero(alpha[w])
-                pushfirst!(reach(div(label[w], 2)), w)
-                isreached[w] = true
-                label[w] += 1
+            if isnegative(alpha[w])
+                alpha[w] = -n
+                pushfirst!(reach(halve(label[w])), w)
+                delete!(set(label[w]), w)
+                label[w] += one(V)
+                pushfirst!(set(label[w]), w)
             end
         end
 
@@ -888,12 +902,14 @@ function lexm(graph::AbstractGraph{V}) where {V}
                 w = popfirst!(reach(j))
 
                 for z in neighbors(graph, w)
-                    if !isreached[z]
-                        isreached[z] = true
+                    if alpha[z] < -n
+                        alpha[z] = -n
 
-                        if label[z] > 2j
-                            pushfirst!(reach(div(label[z], 2)), z)
-                            label[z] += 1
+                        if label[z] > double(j)
+                            pushfirst!(reach(halve(label[z])), z)
+                            delete!(set(label[z]), z)
+                            label[z] += one(V)
+                            pushfirst!(set(label[z]), z)
                         else
                             pushfirst!(reach(j), z)
                         end
@@ -906,21 +922,29 @@ function lexm(graph::AbstractGraph{V}) where {V}
         # sort #
         ########
 
-        sort!(unnumbered; scratch, by = w -> label[w])
-
-        p = 0
+        m = double(k) + one(V)
         k = zero(V)
 
-        for w in unnumbered
-            n = label[w]
+        for j in oneto(m)
+            w = shead[j]
 
-            if p < n
+            if ispositive(w)
                 k += one(V)
-                p = n
-            end
 
-            label[w] = 2k
+                for v in set(j)
+                    label[v] = double(k)
+                end
+
+                stack[k] = w
+                shead[j] = zero(V)
+            end
         end
+
+        for j in oneto(k)
+            shead[double(j)] = stack[j]
+        end
+
+        n -= one(V)
     end
 
     return alpha
@@ -930,6 +954,10 @@ function mcsm(graph)
     return mcsm(BipartiteGraph(graph))
 end
 
+function mcsm(graph, clique)
+    return mcsm(BipartiteGraph(graph), clique)
+end
+
 # Maximum Cardinality Search for Computing Minimal Triangulations
 # Berry, Blair, and Heggernes
 # MCS-M
@@ -937,49 +965,44 @@ end
 # Perform a maximum cardinality search of a simple graph.
 # Returns a minimal ordering.
 # The complexity is O(mn), where m = |E| and n = |V|.
-function mcsm(graph::AbstractGraph{V}) where {V}
-    alpha = Vector{V}(undef, nv(graph))
-    isreached = Vector{Bool}(undef, nv(graph))
-    label = Vector{V}(undef, nv(graph))
+function mcsm(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
+    k = one(V); n = nv(graph)
+    alpha = fill(-n - one(V), n)
+    size = ones(V, n)
 
-    # construct disjoint sets data structure
-    head = Vector{V}(undef, nv(graph))
-    prev = Vector{V}(undef, nv(graph))
-    next = Vector{V}(undef, nv(graph))
+    # construct bucket queue data structures
+    shead = zeros(V, n + one(V))
+    sprev = Vector{V}(undef, n)
+    snext = Vector{V}(undef, n)
 
-    function reach(j)
-        @inbounds return DoublyLinkedList(view(head, j), prev, next)
+    function set(j)
+        @inbounds head = @view shead[j]
+        return DoublyLinkedList(head, sprev, snext)
     end
 
+    rhead = zeros(V, n)
+    rprev = Vector{V}(undef, n)
+    rnext = Vector{V}(undef, n)
+
+    function reach(j)
+        @inbounds head = @view rhead[j]
+        return DoublyLinkedList(head, rprev, rnext)
+    end
+
+    @inbounds prepend!(set(k), vertices(graph))
+
     # run algorithm
-    alpha .= zero(V)
-    label .= one(V)
-
-    @inbounds for i in reverse(oneto(nv(graph)))
-        v = k = zero(V)
-
-        for w in vertices(graph)
-            if iszero(alpha[w])
-                isreached[w] = false
-
-                if label[w] > k
-                    v, k = w, label[w]
-                end
-            end
-        end
-
-        isreached[v] = true
-        alpha[v] = i
-
-        for j in oneto(k)
-            empty!(reach(j))
-        end
+    @inbounds for v in reverse(clique)
+        delete!(set(k), v)
+        alpha[v] = n
 
         for w in neighbors(graph, v)
-            if iszero(alpha[w])
-                isreached[w] = true
-                pushfirst!(reach(label[w]), w)
-                label[w] += one(V)
+            if isnegative(alpha[w])
+                alpha[w] = -n
+                pushfirst!(reach(size[w]), w)
+                delete!(set(size[w]), w)
+                size[w] += one(V)
+                pushfirst!(set(size[w]), w)
             end
         end
 
@@ -988,12 +1011,14 @@ function mcsm(graph::AbstractGraph{V}) where {V}
                 w = popfirst!(reach(j))
 
                 for z in neighbors(graph, w)
-                    if !isreached[z]
-                        isreached[z] = true
+                    if alpha[z] < -n
+                        alpha[z] = -n
 
-                        if label[z] > j
-                            pushfirst!(reach(label[z]), z)
-                            label[z] += one(V)
+                        if size[z] > j
+                            pushfirst!(reach(size[z]), z)
+                            delete!(set(size[z]), z)
+                            size[z] += one(V)
+                            pushfirst!(set(size[z]), z)
                         else
                             pushfirst!(reach(j), z)
                         end
@@ -1001,6 +1026,58 @@ function mcsm(graph::AbstractGraph{V}) where {V}
                 end
             end
         end
+
+        k += one(V)
+
+        while ispositive(k) && isempty(set(k))
+            k -= one(V)
+        end
+
+        n -= one(V)
+    end
+
+    @inbounds while ispositive(n)
+        v = popfirst!(set(k))
+        alpha[v] = n
+
+        for w in neighbors(graph, v)
+            if isnegative(alpha[w])
+                alpha[w] = -n
+                pushfirst!(reach(size[w]), w)
+                delete!(set(size[w]), w)
+                size[w] += one(V)
+                pushfirst!(set(size[w]), w)
+            end
+        end
+
+        for j in oneto(k)
+            while !isempty(reach(j))
+                w = popfirst!(reach(j))
+
+                for z in neighbors(graph, w)
+                    if alpha[z] < -n
+                        alpha[z] = -n
+
+                        if size[z] > j
+                            pushfirst!(reach(size[z]), z)
+                            delete!(set(size[z]), z)
+                            size[z] += one(V)
+                            pushfirst!(set(size[z]), z)
+                        else
+                            pushfirst!(reach(j), z)
+                        end
+                    end
+                end
+            end
+        end
+
+        k += one(V)
+
+        while ispositive(k) && isempty(set(k))
+            k -= one(V)
+        end
+
+        n -= one(V)
     end
 
     return alpha
@@ -1082,10 +1159,7 @@ function mf!(
     stack = Vector{V}(undef, nv)
 
     # construct min-heap data structure
-    hnum = nv # size of heap
-    hkey = Vector{V}(undef, nv)
-    heap = Vector{V}(undef, nv)
-    hinv = Vector{V}(undef, nv)
+    heap = Heap{V}(nv)
 
     @inbounds for v in oneto(nv)
         count = zero(V)
@@ -1105,47 +1179,43 @@ function mf!(
             end
         end
 
-        hkey[v] = count
-        heap[v] = hinv[v] = v
+        push!(heap, v => count)
     end
 
-    @inbounds for v in reverse(oneto(nv))
-        hfall!(hnum, hkey, hinv, heap, v)
-    end
+    hfall!(heap)
 
     # run algorithm
     i = one(V)
 
     @inbounds while i <= nv
         # select vertex from heap
-        v = order[i] = first(heap)
+        v = order[i] = argmin(heap)
         list = lists[v]
         degree = degrees[v]
-        index[list] .= index[v] = i
+        label[list] .= label[v] = tag += 1
 
         # append distinguishable neighbors to the stack
         snum = zero(V)
         ii = i + one(V)
 
         for w in list
+            flag = false
+
             if degrees[w] == degree
                 flag = true
 
                 for x in lists[w]
-                    if index[x] < i
+                    if label[x] < tag
                         flag = false
                         break
                     end
                 end
+            end
 
-                if flag
-                    order[ii] = w
-                    index[w] = ii
-                    ii += one(V)
-                else
-                    snum += one(V)
-                    stack[snum] = w
-                end
+            if flag
+                order[ii] = w
+                label[w] += 1
+                ii += one(V)
             else
                 snum += one(V)
                 stack[snum] = w
@@ -1161,6 +1231,8 @@ function mf!(
 
         # remove indistinguishable neighbors from graph
         if ii > i + one(V)
+            tag += 1
+
             for w in take(stack, snum)
                 list = lists[w]
                 count = zero(V)
@@ -1168,7 +1240,7 @@ function mf!(
                 for j in oneto(degrees[w])
                     x = list[j]
 
-                    if index[x] > i
+                    if label[x] == tag
                         count += one(V)
                     else
                         list[j - count] = x
@@ -1181,21 +1253,11 @@ function mf!(
 
         # remove vertex and indistinguishable neighbors from heap
         for j in i:(ii - one(V))
-            k = hinv[order[j]]
-            key = hkey[heap[k]]
-            heap[k] = heap[hnum]
-            hinv[heap[k]] = k
-            hnum -= one(V)
-
-            if key < hkey[heap[k]]
-                hfall!(hnum, hkey, hinv, heap, k)
-            else
-                hrise!(hkey, hinv, heap, k)
-            end
+            delete!(heap, order[j])
         end
 
         # update deficiencies
-        if hkey[order[i]] > zero(V)
+        if heap[order[i]] > zero(V)
             for j in oneto(snum)
                 w = stack[j]
                 label[lists[w]] .= tag += 1
@@ -1208,14 +1270,14 @@ function mf!(
 
                         for xx in lists[ww]
                             if label[xx] == tag
-                                hkey[xx] -= one(V)
-                                hrise!(hkey, hinv, heap, hinv[xx])
+                                heap[xx] -= one(V)
+                                hrise!(heap, xx)
                                 count += one(V)
                             end
                         end
 
-                        hkey[w] += degrees[w] - count
-                        hkey[ww] += degrees[ww] - count
+                        heap[w] += degrees[w] - count
+                        heap[ww] += degrees[ww] - count
                         insert!(lists[w], searchsortedfirst(lists[w], ww), ww)
                         insert!(lists[ww], searchsortedfirst(lists[ww], w), w)
                         degrees[w] += one(V)
@@ -1228,15 +1290,15 @@ function mf!(
 
         # update heap
         for w in take(stack, snum)
-            hkey[w] -= (ii - i) * (degrees[w] - snum + one(V))
-            hrise!(hkey, hinv, heap, hinv[w])
-            hfall!(hnum, hkey, hinv, heap, hinv[w])
+            heap[w] -= (ii - i) * (degrees[w] - snum + one(V))
+            hrise!(heap, w)
+            hfall!(heap, w)
         end
 
         i = ii
     end
 
-    return order, index
+    return order
 end
 
 function AMFLib.amf(graph; kwargs...)

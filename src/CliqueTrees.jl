@@ -72,6 +72,7 @@ export firstchildindex, rootindices, ancestorindices
 # Filled Graphs
 export FilledGraph, FilledEdgeIter, ischordal, isperfect
 
+include("heaps.jl")
 include("abstract_linked_lists.jl")
 include("singly_linked_lists.jl")
 include("doubly_linked_lists.jl")

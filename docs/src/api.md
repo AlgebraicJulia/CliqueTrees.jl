@@ -41,15 +41,12 @@ Maximal
 Fundamental
 ```
 
-## Filled Graphs
-
+## Linked Lists
 ```@docs
-FilledGraph
-ischordal
-isperfect
+SinglyLinkedList
 ```
 
-## Abstract Trees
+## Trees
 
 ```@docs
 AbstractTree
@@ -81,4 +78,12 @@ cliquetree
 treewidth
 separator
 residual
+```
+
+## Filled Graphs
+
+```@docs
+FilledGraph
+ischordal
+isperfect
 ```
