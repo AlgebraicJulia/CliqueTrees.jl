@@ -18,7 +18,6 @@ RCMGL
 RCM
 LexM
 MCSM
-MinimalChordal
 AMD
 SymAMD
 AMF
@@ -27,6 +26,9 @@ MMD
 METIS
 Spectral
 BT
+MinimalChordal
+CompositeRotations
+RuleReduction
 permutation
 mcs
 ```

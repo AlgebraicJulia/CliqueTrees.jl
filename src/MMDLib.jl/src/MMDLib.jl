@@ -93,7 +93,7 @@ function mmd!(
     # eliminate all isolated nodes
     mdnode = deghead[begin]
 
-    @inbounds while mdnode > zero(V)
+    @inbounds while ispositive(mdnode)
         marker[mdnode] = MAXINT
         invp[mdnode] = num
         num += one(V)
@@ -108,7 +108,7 @@ function mmd!(
     # - `mindeg` is the current minimum degree
     # - `tag` is used to facilitate marking nodes
     @inbounds while num <= neqns
-        while deghead[mindeg + one(V)] <= zero(V)
+        while !ispositive(deghead[mindeg + one(V)])
             mindeg += one(V)
         end
 
@@ -120,7 +120,7 @@ function mmd!(
         while true
             mdnode = deghead[mindeg + one(V)]
 
-            while mdnode <= zero(V)
+            while !ispositive(mdnode)
                 mindeg += one(V)
 
                 if mindeg > mindeglimit
@@ -134,7 +134,7 @@ function mmd!(
             mdnextnode = degnext[mdnode]
             deghead[mindeg + one(V)] = mdnextnode
 
-            if mdnextnode > zero(V)
+            if ispositive(mdnextnode)
                 degprev[mdnextnode] = -mindeg
             end
 
@@ -294,7 +294,7 @@ function mmdelim!(
     end
 
     # merge with reachable nodes from generalized elements
-    @inbounds while elmnt > zero(V)
+    @inbounds while ispositive(elmnt)
         adjncy[rlmt] = -elmnt
         j = xadj[elmnt]
         jstop = xadj[elmnt + one(V)]
@@ -305,7 +305,7 @@ function mmdelim!(
                 j = xadj[-node]
                 jstop = xadj[one(V) - node]
             else
-                if marker[node] < tag && degnext[node] >= zero(V)
+                if marker[node] < tag && !isnegative(degnext[node])
                     marker[node] = tag
 
                     # use storage from eliminated nodes
@@ -343,7 +343,7 @@ function mmdelim!(
     rnode = adjncy[i]
 
     @inbounds while !iszero(rnode)
-        if rnode < zero(V)
+        if isnegative(rnode)
             i = xadj[-rnode]
             istop = xadj[one(V) - rnode]
         else
@@ -355,11 +355,11 @@ function mmdelim!(
                 # then remove `rnode` from the structure
                 nxnode = degnext[rnode]
 
-                if nxnode > zero(V)
+                if ispositive(nxnode)
                     degprev[nxnode] = pvnode
                 end
 
-                if pvnode > zero(V)
+                if ispositive(pvnode)
                     degnext[pvnode] = nxnode
                 else
                     deghead[one(V) - pvnode] = nxnode
@@ -385,7 +385,7 @@ function mmdelim!(
             # if no active neighbor after the purging...
             nqnbrs = convert(V, xqnbr - xadj[rnode])
 
-            if nqnbrs <= zero(V)
+            if !ispositive(nqnbrs)
                 # then merge `rnode` with `mdnode`
                 supersize[mdnode] += supersize[rnode]
                 supersize[rnode] = zero(V)
@@ -476,7 +476,7 @@ function mmdupdate!(
 
     # for each of the newly formed element, do the following
     # (reset `tag` value if necessary)
-    @inbounds while elimnode > zero(V)
+    @inbounds while ispositive(elimnode)
         mtag = tag + convert(Int, mindeglimit)
 
         if mtag >= MAXINT
@@ -502,7 +502,7 @@ function mmdupdate!(
         enode = adjncy[i]
 
         while !iszero(enode)
-            if enode < zero(V)
+            if isnegative(enode)
                 i = xadj[-enode]
                 istop = xadj[one(V) - enode]
             else
@@ -512,9 +512,9 @@ function mmdupdate!(
 
                     # if `enode` requires a degree update,
                     # then do the following
-                    if needsupdate[enode] > zero(V)
+                    if ispositive(needsupdate[enode])
                         # place either in `qxhead` or `q2head` lists
-                        if needsupdate[enode] != two(V)
+                        if !istwo(needsupdate[enode])
                             elimnext[enode] = qxhead
                             qxhead = enode
                         else
@@ -537,8 +537,8 @@ function mmdupdate!(
         # For each enode in q2 list, do the following.
         enode = q2head
 
-        while enode > zero(V)
-            if needsupdate[enode] > zero(V)
+        while ispositive(enode)
+            if ispositive(needsupdate[enode])
                 tag += 1
                 deg = elimsize
 
@@ -561,7 +561,7 @@ function mmdupdate!(
                     node = adjncy[i]
 
                     while !iszero(node)
-                        if node < zero(V)
+                        if isnegative(node)
                             i = xadj[-node]
                             istop = xadj[one(V) - node]
                         else
@@ -570,12 +570,12 @@ function mmdupdate!(
                                     # case when `node` is not yet considered
                                     marker[node] = tag
                                     deg += supersize[node]
-                                elseif needsupdate[node] > zero(V)
+                                elseif ispositive(needsupdate[node])
                                     # case when `node` is indistinguishable from
                                     # `enode`
                                     #
                                     # merge them into a new supernode
-                                    if needsupdate[node] == two(V)
+                                    if istwo(needsupdate[node])
                                         supersize[enode] += supersize[node]
                                         supersize[node] = zero(V)
                                         marker[node] = MAXINT
@@ -609,8 +609,8 @@ function mmdupdate!(
         # for each `enode` in the qx list, do the following.
         enode = qxhead
 
-        while enode > zero(V)
-            if needsupdate[enode] > zero(V)
+        while ispositive(enode)
+            if ispositive(needsupdate[enode])
                 tag += 1
                 deg = elimsize
 
@@ -639,7 +639,7 @@ function mmdupdate!(
                             node = adjncy[j]
 
                             while !iszero(node)
-                                if node < zero(V)
+                                if isnegative(node)
                                     j = xadj[-node]
                                     jstop = xadj[one(V) - node]
                                 else
@@ -741,12 +741,12 @@ function mmdnumber!(neqns::V, invp::Vector{V}, mergeparent::Vector{V}) where {V}
     @inbounds for node in oneto(neqns)
         parent = mergeparent[node]
 
-        if parent > zero(V)
+        if ispositive(parent)
             # trace the merged tree until one which has
             # not been merged, call it `root`
             root = zero(V)
 
-            while parent > zero(V)
+            while ispositive(parent)
                 root = parent
                 parent = mergeparent[parent]
             end
@@ -766,8 +766,20 @@ function mmdnumber!(neqns::V, invp::Vector{V}, mergeparent::Vector{V}) where {V}
     return
 end
 
-function two(::Type{V}) where {V}
-    return one(V) + one(V)
+function ispositive(i::I) where {I}
+    return i > zero(I)
+end
+
+function isnegative(i::I) where {I}
+    return i < zero(I)
+end
+
+function istwo(i::I) where {I}
+    return i == two(I)
+end
+
+function two(::Type{I}) where {I}
+    return one(I) + one(I)
 end
 
 end

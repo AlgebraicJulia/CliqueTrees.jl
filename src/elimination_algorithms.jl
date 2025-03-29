@@ -1,22 +1,27 @@
 """
     EliminationAlgorithm
 
-A graph elimination algorithm. The options are
+A *graph elimination algorithm* computes a permutation of the vertices of a graph, which induces a chordal completion
+of the graph. The algorithms below generally seek to minimize the *fill* (number of edges) or *width* (largest clique)
+of the completed graph.
 
-| type             | name                                         | time     | space    |
-|:---------------- |:-------------------------------------------- |:-------- |:-------- |
-| [`BFS`](@ref)    | breadth-first search                         | O(m + n) | O(n)     |
-| [`MCS`](@ref)    | maximum cardinality search                   | O(m + n) | O(n)     |
-| [`LexBFS`](@ref) | lexicographic breadth-first search           | O(m + n) | O(m + n) |
-| [`RCMMD`](@ref)  | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
-| [`RCMGL`](@ref)  | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
-| [`MCSM`](@ref)   | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
-| [`LexM`](@ref)   | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
-| [`AMF`](@ref)    | approximate minimum fill                     |          | O(m + n) |
-| [`MF`](@ref)     | minimum fill                                 | O(mn²)   | O(m + n) |
-| [`MMD`](@ref)    | multiple minimum degree                      | O(mn²)   | O(m + n) |
+| type                         | name                                         | time     | space    |
+|:---------------------------- |:-------------------------------------------- |:-------- |:-------- |
+| [`BFS`](@ref)                | breadth-first search                         | O(m + n) | O(n)     |
+| [`MCS`](@ref)                | maximum cardinality search                   | O(m + n) | O(n)     |
+| [`LexBFS`](@ref)             | lexicographic breadth-first search           | O(m + n) | O(m + n) |
+| [`RCMMD`](@ref)              | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
+| [`RCMGL`](@ref)              | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
+| [`MCSM`](@ref)               | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
+| [`LexM`](@ref)               | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
+| [`AMF`](@ref)                | approximate minimum fill                     | O(mn)    | O(m + n) |
+| [`MF`](@ref)                 | minimum fill                                 | O(mn²)   |          |
+| [`MMD`](@ref)                | multiple minimum degree                      | O(mn²)   | O(m + n) |
+| [`MinimalChordal`](@ref)     | MinimalChordal                               |          |          |
+| [`CompositeRotations`](@ref) | elimination tree rotation                    | O(m + n) | O(m + n) |
+| [`RuleReduction`](@ref)      | treewith-safe rule-based reduction           |          |          |    
 
-for a graph with m edges and n vertices. The following additional algorithms are implemented as package extensions and require loading an additional package.
+The following additional algorithms are implemented as package extensions and require loading an additional package.
 
 | type               | name                              | time  | space    | package                                                                 |
 |:------------------ |:--------------------------------- |:----- |:-------- |:----------------------------------------------------------------------- |
@@ -26,7 +31,56 @@ for a graph with m edges and n vertices. The following additional algorithms are
 | [`Spectral`](@ref) | spectral ordering                 |       |          | [Laplacians.jl](https://github.com/danspielman/Laplacians.jl)           |
 | [`BT`](@ref)       | Bouchitte-Todinca                 |       |          | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl) |
 
-The algorithm [`Spectral`](@ref) only works on connected graphs.
+# Triangulation Recognition Heuristics
+
+  - [`MCS`](@ref)
+  - [`LexBFS`](@ref)
+  - [`MCSM`](@ref)
+  - [`LexM`](@ref)
+
+These algorithms are guaranteed to compute perfect elimination orderings for chordal graphs. [`MCSM`](@ref) and [`LexM`](@ref)
+are variants of [`MCS`](@ref) and [`LexBFS`](@ref) that compute minimal orderings. The Lex algorithms were pubished first,
+and the MCS algorithms were introducd later as simplications. In practice, these algorithms work poorly on non-chordal graphs.
+
+# Bandwidth and Envelope Reduction Heuristics
+
+  - [`RCMMD`](@ref)
+  - [`RCMGL`](@ref)
+  - [`Spectral`](@ref)
+
+These algorithms seek to minimize the *bandwidth* and *profile* of the permuted graph, quantities that upper bound the width
+and fill of theinduced chordal completion. [`RCMMD`](@ref) and [`RCMGL`](@ref) are two variants of the reverse Cuthill-McKee
+algorithm, a type of breadth-first search. They differ in in their choice of starting vertex. In practice, these algorithms work
+better than the triangulation recognition heuristics and worse than the greedy heuristics.
+
+# Greedy Heuristics
+
+  - [`MMD`](@ref)
+  - [`MF`](@ref)
+  - [`AMD`](@ref)
+  - [`SymAMD`](@ref)
+  - [`AMF`](@ref)
+
+These algorithms simulate the elimination process, greedity selecting vertices to eliminate. [`MMD`](@ref) selects a vertex
+of minimum degree, and [`MF`](@ref) selects a vertex that induces the least fill. Updating the degree or fill of every vertex
+after elimination is costly; the algorithms [`AMD`](@ref), [`SymAMD`](@ref), and [`AMF`](@ref) are relaxations that work by
+approximating these values. The [`AMD`](@ref) algorithm is the state-of-the-practice for sparse matrix ordering.
+
+# Exact Treewidth Algorithms
+
+  - [`BT`](@ref)
+
+These algorithm minimizes the treewidth of the completed graph. Beware! This is an NP-hard problem. I recommend wrapping exact
+treewidth algorithms with preprocessors like [`RuleReduction`](@ref). 
+
+# Meta Algorithms
+
+  - [`MinimalChordal`](@ref)
+  - [`CompositeRotations`](@ref)
+  - [`RuleReduction`](@ref)
+
+These algorithms are parametrized by another algorithm and work by transforming its input or output. 
+
 """
 abstract type EliminationAlgorithm end
 
@@ -149,45 +203,6 @@ A minimal variant of the maximal cardinality search algorithm.
 Berry, Anne, et al. "Maximum cardinality search for computing minimal triangulations of graphs." *Algorithmica* 39 (2004): 287-298.
 """
 struct MCSM <: EliminationAlgorithm end
-
-"""
-    MinimalChordal{A} <: EliminationAlgorithm
-
-    MinimalChordal(alg::PermutationOrAlgorithm)
-
-    MinimalChordal()
-
-The MinimalChordal algorithm.
-
-### Parameters
-
-  - `alg`: elimination algorithm
-
-### Reference
-
-Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
-"""
-struct MinimalChordal{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
-    alg::A
-end
-
-function MinimalChordal()
-    return MinimalChordal(DEFAULT_ELIMINATION_ALGORITHM)
-end
-
-struct CompositeRotations{C <: AbstractVector, A <: PermutationOrAlgorithm} <:
-    EliminationAlgorithm
-    clique::C
-    alg::A
-end
-
-function CompositeRotations(clique::AbstractVector)
-    return CompositeRotations(clique, DEFAULT_ELIMINATION_ALGORITHM)
-end
-
-function CompositeRotations()
-    return CompositeRotations(oneto(0))
-end
 
 """
     AMF <: EliminationAlgorithm
@@ -354,6 +369,84 @@ Korhonen, Tuukka, Jeremias Berg, and Matti Järvisalo. "Solving Graph Problems v
 struct BT <: EliminationAlgorithm end
 
 """
+    MinimalChordal{A} <: EliminationAlgorithm
+
+    MinimalChordal(alg::PermutationOrAlgorithm)
+
+    MinimalChordal()
+
+The MinimalChordal algorithm.
+
+### Parameters
+
+  - `alg`: elimination algorithm
+
+### Reference
+
+Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
+"""
+struct MinimalChordal{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    alg::A
+end
+
+function MinimalChordal()
+    return MinimalChordal(DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+"""
+    CompositeRotations{C, A} <: EliminationAlgorithm
+
+    CompositeRotations(clique::AbstractVector, alg::EliminationAlgorithm)
+
+    CompositeRotations(clique::AbstractVector)
+
+Evaluate an eliminaton algorithm, ensuring that the given clique is at the end of the ordering.
+
+### Parameters
+
+  - `clique`: clique
+  - `alg`: elimination algorithm
+
+### Reference
+
+Liu, Joseph WH. "Equivalent sparse matrix reordering by elimination tree rotations." *Siam Journal on Scientific and Statistical Computing* 9.3 (1988): 424-444.
+"""
+struct CompositeRotations{C <: AbstractVector, A <: PermutationOrAlgorithm} <:
+    EliminationAlgorithm
+    clique::C
+    alg::A
+end
+
+function CompositeRotations(clique::AbstractVector)
+    return CompositeRotations(clique, DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+"""
+    RuleReduction{A} <: EliminationAlgorithm
+
+    RuleReduction(alg::PermutationOrAlgororithm)
+
+    RuleReduction()
+
+Preprocess a graph using safe reduction rules.
+
+### Parameters
+
+   - `alg`: elimination algorithm
+
+### Reference
+
+Bodlaender, Hans L., Arie MCA Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
+"""
+struct RuleReduction{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    alg::A
+end
+
+function RuleReduction()
+    return RuleReduction(DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+"""
     permutation(graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
 
@@ -446,15 +539,6 @@ function permutation(graph, alg::MCSM)
     return invperm(index), index
 end
 
-function permutation(graph, alg::MinimalChordal)
-    return minimalchordal(graph, alg.alg)
-end
-
-function permutation(graph, alg::CompositeRotations)
-    order = compositerotations(graph, alg.clique, alg.alg)
-    return order, invperm(order)
-end
-
 function permutation(graph, alg::AMF)
     return amf(graph; speed = alg.speed)
 end
@@ -467,6 +551,22 @@ end
 function permutation(graph, alg::MMD)
     index = mmd(graph; delta = alg.delta)
     return invperm(index), index
+end
+
+function permutation(graph, alg::MinimalChordal)
+    return minimalchordal(graph, alg.alg)
+end
+
+function permutation(graph, alg::CompositeRotations)
+    order = compositerotations(graph, alg.clique, alg.alg)
+    return order, invperm(order)
+end
+
+function permutation(graph, alg::RuleReduction)
+    stack, label, kernel = rulereduction(graph)
+    order, index = permutation(kernel, alg.alg)
+    append!(stack, view(label, order))
+    return stack, invperm(stack)
 end
 
 function bfs(graph)
@@ -1439,6 +1539,224 @@ function compositerotations(
         order, compositerotations(reverse(upper), etree(upper), view(index, clique))
     )
     return order
+end
+
+
+# Preprocessing Rules for Triangulation of Probabilistic Networks
+# Bodlaender, Koster, Ejkhof, and van der Gaag
+function rulereduction(graph)
+    return rulereduction(BipartiteGraph(graph))
+end
+
+function rulereduction(graph::AbstractGraph)
+    return rulereduction!(Graph(graph))
+end
+
+function rulereduction!(graph::Graph{V}) where {V}
+    n = nv(graph)
+
+    for v in vertices(graph)
+        @inbounds rem_edge!(graph, v, v)
+    end
+
+    # bucket queue
+    head = zeros(V, max(n, four(V)))
+    prev = Vector{V}(undef, n)
+    next = Vector{V}(undef, n)
+
+    function set(i)
+        @inbounds h = @view head[i + one(i)]
+        return DoublyLinkedList(h, prev, next)
+    end
+
+    for v in vertices(graph)
+        @inbounds pushfirst!(set(outdegree(graph, v)), v)
+    end
+
+    # stack of eliminated vertices
+    lo = -one(V)
+    hi = zero(V)
+    stack = Vector{V}(undef, n)
+
+    # apply rules until exhaustion
+    @inbounds while lo < hi
+        lo = hi
+
+        # islet rule
+        v = head[1]
+
+        while ispositive(v)
+            hi += one(V)
+            stack[hi] = v
+            v = eliminate!(graph, head, prev, next, v, Val(0))
+        end
+
+        # twig rule
+        v = head[2]
+
+        while ispositive(v)
+            hi += one(V)
+            stack[hi] = v
+            v = eliminate!(graph, head, prev, next, v, Val(1))
+        end
+
+        if lo == hi
+            # series rule
+            v = head[3]
+
+            while ispositive(v)
+                hi += one(V)
+                stack[hi] = v
+                v = eliminate!(graph, head, prev, next, v, Val(2))
+            end
+
+            if lo == hi
+                # triangle rule
+                v = head[4]
+
+                while ispositive(v)
+                    w, ww, www = neighbors(graph, v)
+
+                    if has_edge(graph, w, ww) || has_edge(graph, w, www) || has_edge(graph, ww, www)
+                        hi += one(V)
+                        stack[hi] = v
+                        v = eliminate!(graph, head, prev, next, v, Val(3))
+                    else
+                        v = next[v]
+                    end
+                end
+
+                # buddy rule
+                v = head[4]
+
+                while ispositive(v)
+                    w = next[v]
+                    flag = false
+
+                    while ispositive(w) && !flag
+                        if v != w && (neighbors(graph, v) == neighbors(graph, w))
+                            hi += one(V)
+                            stack[hi] = v
+                            v = eliminate!(graph, head, prev, next, v, Val(3))
+                            flag = true
+                        end
+
+                        w = next[w]
+                    end
+
+                    if !flag
+                        v = next[v]
+                    end
+                end
+
+                # cube rule
+                v = head[4]
+
+                while ispositive(v)
+                    w, ww, www = neighbors(graph, v)
+
+                    if isthree(outdegree(graph, w)) && isthree(outdegree(graph, ww)) && isthree(outdegree(graph, www))
+                        x, xx, xxx = neighbors(graph, w)
+                        y, yy, yyy = neighbors(graph, ww)
+                        z, zz, zzz = neighbors(graph, www)
+
+                        if v == x
+                            x, xx = xx, xxx
+                        elseif v == xx
+                            x, xx = x, xxx
+                        end
+
+                        if v == y
+                            y, yy = yy, yyy
+                        elseif v == yy
+                            y, yy = y, yyy
+                        end
+
+                        if v == z
+                            z, zz = zz, zzz
+                        elseif v == zz
+                            z, zz = z, zzz
+                        end
+
+                        if (x == y && z == xx && zz == yy) ||
+                                (x == y && z == yy && zz == xx) ||
+                                (y == z && x == yy && xx == zz) ||
+                                (y == z && x == zz && xx == yy) ||
+                                (x == z && y == xx && yy == zz) ||
+                                (x == z && y == zz && yy == xx)
+
+                            hi += one(V)
+                            stack[hi] = v
+                            v = eliminate!(graph, head, prev, next, v, Val(3))
+                        else
+                            v = next[v]
+                        end
+                    else
+                        v = next[v]
+                    end
+                end
+            end
+        end
+    end
+
+    resize!(stack, hi)
+    return stack, rem_vertices!(graph, stack), graph
+end
+
+# eliminate a vertex with degree i
+@propagate_inbounds function eliminate!(graph::Graph{V}, head::Vector{V}, prev::Vector{V}, next::Vector{V}, v::V, ::Val{i}) where {V, i}
+    @boundscheck checkbounds(prev, v)
+
+    function set(i)
+        @inbounds h = @view head[i + one(i)]
+        return DoublyLinkedList(h, prev, next)
+    end
+
+    _eliminate!(set, graph, v, Val(i))
+    @inbounds n = next[v]
+    @inbounds delete!(set(i), v)
+    return n
+end
+
+function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{0}) where {V}
+    return
+end
+
+function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{1}) where {V}
+    @inbounds w = only(neighbors(graph, v))
+    @inbounds delete!(set(outdegree(graph, w)), w)
+    @inbounds rem_edge!(graph, v, w)
+    @inbounds pushfirst!(set(outdegree(graph, w)), w)
+    return
+end
+
+function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{2}) where {V}
+    @inbounds w, ww = neighbors(graph, v)
+    @inbounds delete!(set(outdegree(graph, w)), w)
+    @inbounds delete!(set(outdegree(graph, ww)), ww)
+    @inbounds rem_edge!(graph, v, w)
+    @inbounds rem_edge!(graph, v, ww)
+    @inbounds add_edge!(graph, w, ww)
+    @inbounds pushfirst!(set(outdegree(graph, w)), w)
+    @inbounds pushfirst!(set(outdegree(graph, ww)), ww)
+    return
+end
+
+function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{3}) where {V}
+    @inbounds w, ww, www = neighbors(graph, v)
+    @inbounds delete!(set(outdegree(graph, w)), w)
+    @inbounds delete!(set(outdegree(graph, ww)), ww)
+    @inbounds delete!(set(outdegree(graph, www)), www)
+    @inbounds rem_edge!(graph, v, w)
+    @inbounds rem_edge!(graph, v, ww)
+    @inbounds rem_edge!(graph, v, www)
+    @inbounds add_edge!(graph, w, ww)
+    @inbounds add_edge!(graph, w, www)
+    @inbounds add_edge!(graph, ww, www)
+    @inbounds pushfirst!(set(outdegree(graph, w)), w)
+    @inbounds pushfirst!(set(outdegree(graph, ww)), ww)
+    @inbounds pushfirst!(set(outdegree(graph, www)), www)
+    return
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::MCS)

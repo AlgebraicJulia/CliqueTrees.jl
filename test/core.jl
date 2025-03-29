@@ -345,8 +345,6 @@ end
             RCMGL(),
             LexM(),
             MCSM(),
-            MinimalChordal(),
-            CompositeRotations([1, 2, 3]),
             AMD(),
             SymAMD(),
             AMF(),
@@ -355,6 +353,9 @@ end
             METIS(),
             Spectral(),
             BT(),
+            MinimalChordal(),
+            CompositeRotations([1, 2, 3]),
+            RuleReduction(),
         )
         @test isa(repr("text/plain", alg), String)
     end
@@ -408,8 +409,6 @@ end
             RCMGL(),
             LexM(),
             MCSM(),
-            MinimalChordal(),
-            CompositeRotations(),
             AMD(),
             SymAMD(),
             AMF(),
@@ -418,6 +417,9 @@ end
             # METIS(),
             # Spectral(),
             BT(),
+            MinimalChordal(),
+            CompositeRotations([]),
+            RuleReduction(),
         )
         @test permutation(graph; alg) == ([], [])
     end
@@ -447,8 +449,6 @@ end
             LexM(),
             MCSM(),
             MinimalChordal(),
-            CompositeRotations(),
-            CompositeRotations([1]),
             AMD(),
             SymAMD(),
             AMF(),
@@ -457,6 +457,8 @@ end
             METIS(),
             # Spectral,
             BT(),
+            CompositeRotations([1]),
+            RuleReduction(),
         )
         @test permutation(graph; alg) == ([1], [1])
     end
@@ -558,6 +560,7 @@ end
                 @inferred CliqueTrees.minimalchordal(graph)
                 @inferred CliqueTrees.compositerotations(graph)
                 @inferred CliqueTrees.compositerotations(graph, [1, 3])
+                @inferred CliqueTrees.rulereduction(graph)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
                 @inferred supernodetree(graph; alg = 1:17, snd = Nodal())
@@ -587,11 +590,9 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
-                    graph
-                )
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
                     graph, [1, 3]
                 )
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.rulereduction(graph)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) supernodetree(
@@ -633,11 +634,9 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
-                    graph
-                )
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
                     graph, [1, 3]
                 )
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.rulereduction(graph)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) supernodetree(
@@ -700,9 +699,6 @@ end
                         RCMGL(),
                         LexM(),
                         MCSM(),
-                        MinimalChordal(),
-                        CompositeRotations(),
-                        CompositeRotations([1, 3]),
                         AMD(),
                         SymAMD(),
                         AMF(),
@@ -711,6 +707,9 @@ end
                         METIS(),
                         Spectral(),
                         BT(),
+                        MinimalChordal(),
+                        CompositeRotations([1, 3]),
+                        RuleReduction(),
                     )
                     order, index = permutation(graph; alg)
                     @test isa(order, Vector{V})

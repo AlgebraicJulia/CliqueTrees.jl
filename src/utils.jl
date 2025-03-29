@@ -10,6 +10,10 @@ function three(::Type{I}) where {I}
     return one(I) + two(I)
 end
 
+function four(::Type{I}) where {I}
+    return one(I) + three(I)
+end
+
 function two(::Type{I}) where {I}
     return one(I) + one(I)
 end
@@ -20,6 +24,10 @@ end
 
 function isnegative(i::I) where {I}
     return i < zero(I)
+end
+
+function isthree(i::I) where {I}
+    return i == three(I)
 end
 
 function printiterator(io::IO, iterator::T) where {T}

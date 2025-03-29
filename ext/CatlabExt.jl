@@ -6,6 +6,7 @@ using Catlab: Catlab
 using CliqueTrees
 using CliqueTrees: sympermute, bfs, mcs, lexbfs, rcmmd, rcmgl, mcsm, lexm
 using Graphs
+using Graphs: SimpleEdge
 using SparseArrays
 
 struct CatlabGraph{G <: Catlab.HasGraph} <: AbstractGraph{Int}
@@ -123,6 +124,14 @@ end
 
 function Graphs.vertices(graph::CatlabGraph)
     return Catlab.vertices(graph.graph)
+end
+
+function Graphs.edges(graph::CatlabGraph)
+    return (
+        SimpleEdge{Int}(Catlab.src(graph.graph, e), Catlab.tgt(graph.graph, e))
+            for e in Catlab.edges(graph.graph)
+            if Catlab.src(graph.graph, e) < Catlab.tgt(graph.graph, e)
+    )
 end
 
 function Graphs.outneighbors(graph::CatlabGraph, i::Integer)
