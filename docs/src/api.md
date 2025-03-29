@@ -29,6 +29,7 @@ BT
 MinimalChordal
 CompositeRotations
 RuleReduction
+ComponentReduction
 permutation
 mcs
 ```

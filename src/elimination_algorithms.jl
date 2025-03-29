@@ -20,6 +20,7 @@ of the completed graph.
 | [`MinimalChordal`](@ref)     | MinimalChordal                               |          |          |
 | [`CompositeRotations`](@ref) | elimination tree rotation                    | O(m + n) | O(m + n) |
 | [`RuleReduction`](@ref)      | treewith-safe rule-based reduction           |          |          |    
+| [`ComponentReduction`](@ref) | connected component reduction                |          |          |
 
 The following additional algorithms are implemented as package extensions and require loading an additional package.
 
