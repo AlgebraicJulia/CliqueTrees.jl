@@ -38,8 +38,8 @@ struct Fast <: Speed end
 
 function Speed(speed::Integer)
     return isone(speed) ? Slow() :
-           istwo(speed) ? Medium() :
-           Fast()
+        istwo(speed) ? Medium() :
+        Fast()
 end
 
 function amf(

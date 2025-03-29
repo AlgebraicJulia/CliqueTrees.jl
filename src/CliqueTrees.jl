@@ -6,6 +6,7 @@ using Base: OneTo, oneto, @kwdef, @propagate_inbounds
 using Base.Iterators
 using Base.Order
 using Base.Sort: DEFAULT_UNSTABLE, Algorithm as SortingAlgorithm
+using Base.Threads: @threads
 using DataStructures: IntDisjointSets, find_root!, root_union!
 using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
@@ -50,6 +51,7 @@ export BFS,
     MinimalChordal,
     CompositeRotations,
     RuleReduction,
+    ComponentReduction,
     permutation,
     mcs
 

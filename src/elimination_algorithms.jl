@@ -71,13 +71,14 @@ approximating these values. The [`AMD`](@ref) algorithm is the state-of-the-prac
   - [`BT`](@ref)
 
 These algorithm minimizes the treewidth of the completed graph. Beware! This is an NP-hard problem. I recommend wrapping exact
-treewidth algorithms with preprocessors like [`RuleReduction`](@ref). 
+treewidth algorithms with preprocessors like [`RuleReduction`](@ref) or [`ComponentReduction`](@ref). 
 
 # Meta Algorithms
 
   - [`MinimalChordal`](@ref)
   - [`CompositeRotations`](@ref)
   - [`RuleReduction`](@ref)
+  - [`ComponentReduction`](@ref)
 
 These algorithms are parametrized by another algorithm and work by transforming its input or output. 
 
@@ -375,7 +376,7 @@ struct BT <: EliminationAlgorithm end
 
     MinimalChordal()
 
-The MinimalChordal algorithm.
+Evaluate an elimination algorithm, and them improve its output using the MinimalChordal algorithm. The result is guaranteed to be minimal.
 
 ### Parameters
 
@@ -444,6 +445,28 @@ end
 
 function RuleReduction()
     return RuleReduction(DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+"""
+    ComponentReduction{A} <: EliminationAlgorithm
+
+    ComponentReduction(alg::PermutationOrAlgorithm)
+
+    ComponentReduction()
+
+Apply an elimination algorithm to each connected component of a graph.
+
+### Parameters
+
+  - `alg`: elimination algorithm
+
+"""
+struct ComponentReduction{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    alg::A
+end
+
+function ComponentReduction()
+    return ComponentReduction(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -567,6 +590,19 @@ function permutation(graph, alg::RuleReduction)
     order, index = permutation(kernel, alg.alg)
     append!(stack, view(label, order))
     return stack, invperm(stack)
+end
+
+# TODO: multi-threading
+function permutation(graph, alg::ComponentReduction)
+    components, subgraphs = componentreduction(graph)
+    order = eltype(eltype(components))[]
+
+    @inbounds for (component, subgraph) in zip(components, subgraphs)
+        suborder, subindex = permutation(subgraph, alg.alg)
+        append!(order, view(component, suborder))
+    end
+
+    return order, invperm(order)
 end
 
 function bfs(graph)
@@ -1757,6 +1793,60 @@ function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{3}) where {V}
     @inbounds pushfirst!(set(outdegree(graph, ww)), ww)
     @inbounds pushfirst!(set(outdegree(graph, www)), www)
     return
+end
+
+function componentreduction(graph)
+    return componentreduction(BipartiteGraph(graph))
+end
+
+function componentreduction(graph::AbstractGraph{V}) where {V}
+    E = etype(graph)
+    n = nv(graph)
+    m = is_directed(graph) ? ne(graph) : twice(ne(graph))
+    components = SubArray{V, 1, Vector{V}, Tuple{UnitRange{V}}, true}[]
+    subgraphs = BipartiteGraph{V, E, SubArray{E, 1, Vector{E}, Tuple{UnitRange{V}}, true}, SubArray{V, 1, Vector{V}, Tuple{UnitRange{E}}, true}}[]
+    projection = Vector{V}(undef, n)
+
+    # initialize work arrays
+    level = zeros(Int, n); tag = 0
+    queue = @view Vector{V}(undef, n)[one(V):n]
+    nfree = @view Vector{E}(undef, twice(n))[one(V):twice(n)]
+    mfree = @view Vector{V}(undef, m)[one(E):m]
+
+    @inbounds for root in vertices(graph)
+        if iszero(level[root])
+            component, queue, tag = bfs!(level, queue, graph, root, tag + 1)
+            nstop = one(V)
+            mstop = zero(E)
+
+            for v in component
+                projection[v] = nstop
+                nstop += one(V)
+                mstop += convert(E, outdegree(graph, v))
+            end
+
+            subgraph = BipartiteGraph{V, E}(
+                nstop - one(V),
+                view(nfree, one(V):nstop),
+                view(mfree, one(E):mstop),
+            )
+
+            p = pointers(subgraph)[begin] = one(E)
+
+            for (i, v) in enumerate(component)
+                pp = pointers(subgraph)[i + 1] = p + outdegree(graph, v)
+                targets(subgraph)[p:(pp - one(E))] = @view projection[neighbors(graph, v)]
+                p = pp
+            end
+
+            push!(components, component)
+            push!(subgraphs, subgraph)
+            nfree = @view nfree[(nstop + one(V)):twice(n)]
+            mfree = @view mfree[(mstop + one(E)):m]
+        end
+    end
+
+    return components, subgraphs
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::MCS)

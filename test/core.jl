@@ -356,6 +356,7 @@ end
             MinimalChordal(),
             CompositeRotations([1, 2, 3]),
             RuleReduction(),
+            ComponentReduction(),
         )
         @test isa(repr("text/plain", alg), String)
     end
@@ -420,6 +421,7 @@ end
             MinimalChordal(),
             CompositeRotations([]),
             RuleReduction(),
+            ComponentReduction(),
         )
         @test permutation(graph; alg) == ([], [])
     end
@@ -459,6 +461,7 @@ end
             BT(),
             CompositeRotations([1]),
             RuleReduction(),
+            ComponentReduction(),
         )
         @test permutation(graph; alg) == ([1], [1])
     end
@@ -561,6 +564,7 @@ end
                 @inferred CliqueTrees.compositerotations(graph)
                 @inferred CliqueTrees.compositerotations(graph, [1, 3])
                 @inferred CliqueTrees.rulereduction(graph)
+                @inferred CliqueTrees.componentreduction(graph)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
                 @inferred supernodetree(graph; alg = 1:17, snd = Nodal())
@@ -593,6 +597,7 @@ end
                     graph, [1, 3]
                 )
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.rulereduction(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.componentreduction(graph)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) supernodetree(
@@ -637,6 +642,7 @@ end
                     graph, [1, 3]
                 )
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.rulereduction(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.componentreduction(graph)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) supernodetree(
@@ -710,6 +716,7 @@ end
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
                         RuleReduction(),
+                        ComponentReduction(),
                     )
                     order, index = permutation(graph; alg)
                     @test isa(order, Vector{V})
