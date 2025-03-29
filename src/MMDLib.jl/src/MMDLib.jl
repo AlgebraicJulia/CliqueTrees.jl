@@ -11,6 +11,7 @@
 module MMDLib
 
 using Base: oneto
+using ..Utilities
 
 export mmd
 
@@ -764,22 +765,6 @@ function mmdnumber!(neqns::V, invp::Vector{V}, mergeparent::Vector{V}) where {V}
     end
 
     return
-end
-
-function ispositive(i::I) where {I}
-    return i > zero(I)
-end
-
-function isnegative(i::I) where {I}
-    return i < zero(I)
-end
-
-function istwo(i::I) where {I}
-    return i == two(I)
-end
-
-function two(::Type{I}) where {I}
-    return one(I) + one(I)
 end
 
 end

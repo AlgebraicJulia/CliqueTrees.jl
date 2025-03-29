@@ -3,9 +3,9 @@ module CliqueTrees
 using AbstractTrees
 using ArgCheck
 using Base: OneTo, oneto, @kwdef, @propagate_inbounds
+using Base.Iterators
 using Base.Order
 using Base.Sort: DEFAULT_UNSTABLE, Algorithm as SortingAlgorithm
-using Base.Iterators: take, takewhile
 using DataStructures: IntDisjointSets, find_root!, root_union!
 using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
@@ -13,15 +13,16 @@ using LinearAlgebra
 using SparseArrays
 using SparseArrays: getcolptr
 
+include("./Utilities.jl/src/Utilities.jl")
 include("./AMFLib.jl/src/AMFLib.jl")
 include("./MMDLib.jl/src/MMDLib.jl")
 
+using .Utilities
 using .AMFLib
 using .MMDLib
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
-const MAX_ITEMS_PRINTED = 5
 
 # Linked Lists
 export SinglyLinkedList
@@ -89,6 +90,5 @@ include("abstract_trees.jl")
 include("filled_graphs.jl")
 include("filled_edge_iter.jl")
 include("chordal_graphs.jl")
-include("utils.jl")
 
 end

@@ -1,17 +1,34 @@
-function double(i::I) where {I}
-    return i * two(I)
+module Utilities
+
+using Base: @propagate_inbounds
+using Base.Iterators
+using Base.Order
+
+# arithmetic
+export twice, half, four, three, two, ispositive, isnegative, isthree, istwo
+
+# sorted collections
+export mergesorted!, indexinsorted!, swap!
+
+# printing
+export MAX_ITEMS_PRINTED, printiterator
+
+const MAX_ITEMS_PRINTED = 5
+
+function twice(i::I) where {I}
+    return i + i
 end
 
-function halve(i::I) where {I}
+function half(i::I) where {I}
     return i ÷ two(I)
-end
-
-function three(::Type{I}) where {I}
-    return one(I) + two(I)
 end
 
 function four(::Type{I}) where {I}
     return one(I) + three(I)
+end
+
+function three(::Type{I}) where {I}
+    return one(I) + two(I)
 end
 
 function two(::Type{I}) where {I}
@@ -30,18 +47,8 @@ function isthree(i::I) where {I}
     return i == three(I)
 end
 
-function printiterator(io::IO, iterator::T) where {T}
-    print(io, "$T:")
-
-    for (i, v) in enumerate(take(iterator, MAX_ITEMS_PRINTED + 1))
-        if i <= MAX_ITEMS_PRINTED
-            print(io, "\n $v")
-        else
-            print(io, "\n ⋮")
-        end
-    end
-
-    return
+function istwo(i::I) where {I}
+    return i == two(I)
 end
 
 # Compute the union of sorted sets `source1` and `source2`.
@@ -121,4 +128,20 @@ end
     @inbounds vector[i] = vector[j]
     @inbounds vector[j] = v
     return vector
+end
+
+function printiterator(io::IO, iterator::T) where {T}
+    print(io, "$T:")
+
+    for (i, v) in enumerate(take(iterator, MAX_ITEMS_PRINTED + 1))
+        if i <= MAX_ITEMS_PRINTED
+            print(io, "\n $v")
+        else
+            print(io, "\n ⋮")
+        end
+    end
+
+    return
+end
+
 end

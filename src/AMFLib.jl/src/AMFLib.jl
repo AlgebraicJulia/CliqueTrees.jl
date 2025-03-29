@@ -22,10 +22,25 @@
 module AMFLib
 
 using Base: oneto, @propagate_inbounds
+using ..Utilities
 
 export amf
 
 const MAXIW = typemax(Int) - 100000
+
+abstract type Speed end
+
+struct Slow <: Speed end
+
+struct Medium <: Speed end
+
+struct Fast <: Speed end
+
+function Speed(speed::Integer)
+    return isone(speed) ? Slow() :
+           istwo(speed) ? Medium() :
+           Fast()
+end
 
 function amf(
         xadj::AbstractVector{E}, adjncy::AbstractVector{V}; speed::Integer = 1
@@ -42,7 +57,7 @@ function amf(
         Vector{EE}(xadj),
         copyto!(Vector{V}(undef, adjln), 1, adjncy, 1, nnz),
         locaux,
-        Val(Int(speed)),
+        Speed(speed),
     )
 end
 
@@ -74,7 +89,7 @@ function amf!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
         locaux::E,
-        speed::Val,
+        speed::Speed,
     ) where {V, E}
     dgree = Vector{V}(undef, neqns)
     head = Vector{V}(undef, neqns)
@@ -577,7 +592,7 @@ end
         invp::Vector{V},
         deg::V,
         i::V,
-        ::Val{1},
+        ::Slow,
     ) where {V, E}
     @boundscheck checkbounds(xadj, i)
     @boundscheck checkbounds(invp, i)
@@ -615,7 +630,7 @@ end
         invp::Vector{V},
         deg::V,
         i::V,
-        ::Val{2},
+        ::Medium,
     ) where {V, E}
     @boundscheck checkbounds(xadj, i)
     @inbounds x = Float64(dgree[adjncy[xadj[i]]] - one(V))
@@ -637,33 +652,17 @@ function score(
         invp::Vector{V},
         deg::V,
         i::V,
-        ::Val{3},
+        ::Fast,
     ) where {V, E}
     return deg
 end
 
-function initscore(dgree::AbstractVector, ::Union{Val{1}, Val{2}})
+function initscore(dgree::AbstractVector, ::Union{Slow, Medium})
     return copy(dgree)
 end
 
-function initscore(dgree::AbstractVector, ::Val{3})
+function initscore(dgree::AbstractVector, ::Fast)
     return dgree
-end
-
-function ispositive(i::Integer)
-    return i > zero(i)
-end
-
-function isnegative(i::Integer)
-    return i < zero(i)
-end
-
-function istwo(i::Integer)
-    return i == two(i)
-end
-
-function two(i::Integer)
-    return one(i) + one(i)
 end
 
 end

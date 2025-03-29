@@ -944,13 +944,13 @@ end
 function lexm(graph::AbstractGraph{V}) where {V}
     k = one(V); n = nv(graph)
     alpha = fill(-n - one(V), n)
-    label = fill(double(k), n)
+    label = fill(twice(k), n)
 
     # construct stack data structure
     stack = Vector{V}(undef, n)
 
     # construct bucket queue data structures
-    shead = zeros(V, double(n) + two(V))
+    shead = zeros(V, twice(n) + two(V))
     sprev = Vector{V}(undef, n)
     snext = Vector{V}(undef, n)
 
@@ -968,7 +968,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
         return DoublyLinkedList(head, rprev, rnext)
     end
 
-    @inbounds prepend!(set(double(k)), vertices(graph))
+    @inbounds prepend!(set(twice(k)), vertices(graph))
 
     ########
     # loop #
@@ -980,13 +980,13 @@ function lexm(graph::AbstractGraph{V}) where {V}
         ##########
 
         # assign v the number i
-        v = popfirst!(set(double(k)))
+        v = popfirst!(set(twice(k)))
         alpha[v] = n
 
         for w in neighbors(graph, v)
             if isnegative(alpha[w])
                 alpha[w] = -n
-                pushfirst!(reach(halve(label[w])), w)
+                pushfirst!(reach(half(label[w])), w)
                 delete!(set(label[w]), w)
                 label[w] += one(V)
                 pushfirst!(set(label[w]), w)
@@ -1005,8 +1005,8 @@ function lexm(graph::AbstractGraph{V}) where {V}
                     if alpha[z] < -n
                         alpha[z] = -n
 
-                        if label[z] > double(j)
-                            pushfirst!(reach(halve(label[z])), z)
+                        if label[z] > twice(j)
+                            pushfirst!(reach(half(label[z])), z)
                             delete!(set(label[z]), z)
                             label[z] += one(V)
                             pushfirst!(set(label[z]), z)
@@ -1022,7 +1022,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
         # sort #
         ########
 
-        m = double(k) + one(V)
+        m = twice(k) + one(V)
         k = zero(V)
 
         for j in oneto(m)
@@ -1032,7 +1032,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
                 k += one(V)
 
                 for v in set(j)
-                    label[v] = double(k)
+                    label[v] = twice(k)
                 end
 
                 stack[k] = w
@@ -1041,7 +1041,7 @@ function lexm(graph::AbstractGraph{V}) where {V}
         end
 
         for j in oneto(k)
-            shead[double(j)] = stack[j]
+            shead[twice(j)] = stack[j]
         end
 
         n -= one(V)
