@@ -1616,25 +1616,39 @@ function rulereduction!(graph::Graph{V}) where {V}
     stack = Vector{V}(undef, n)
 
     # apply rules until exhaustion
-    @inbounds while lo < hi
+    while lo < hi
         lo = hi
 
         # islet rule
         v = head[1]
 
         while ispositive(v)
-            hi += one(V)
-            stack[hi] = v
-            v = eliminate!(graph, head, prev, next, v, Val(0))
+            # v
+            hi += one(V); stack[hi] = v
+
+            n = next[v]; delete!(set(0), v)
+
+            v = n
         end
 
         # twig rule
         v = head[2]
 
         while ispositive(v)
-            hi += one(V)
-            stack[hi] = v
-            v = eliminate!(graph, head, prev, next, v, Val(1))
+            # w
+            # |
+            # v
+            w = only(neighbors(graph, v))
+
+            hi += one(V); stack[hi] = v
+
+            delete!(set(outdegree(graph, w)), w)
+            rem_edge!(graph, v, w)
+            pushfirst!(set(outdegree(graph, w)), w)
+
+            n = next[v]; delete!(set(1), v)
+
+            v = n
         end
 
         if lo == hi
@@ -1642,9 +1656,23 @@ function rulereduction!(graph::Graph{V}) where {V}
             v = head[3]
 
             while ispositive(v)
-                hi += one(V)
-                stack[hi] = v
-                v = eliminate!(graph, head, prev, next, v, Val(2))
+                # w
+                # |
+                # v  ---  ww
+                w, ww = neighbors(graph, v)
+
+                hi += one(V); stack[hi] = v
+
+                delete!(set(outdegree(graph, w)), w)
+                delete!(set(outdegree(graph, ww)), ww)
+                rem_edge!(graph, v, w)
+                rem_edge!(graph, v, ww)
+                add_edge!(graph, w, ww)
+                pushfirst!(set(outdegree(graph, w)), w)
+                pushfirst!(set(outdegree(graph, ww)), ww)
+
+                n = next[v]; delete!(set(2), v)
+                v = n
             end
 
             if lo == hi
@@ -1652,50 +1680,99 @@ function rulereduction!(graph::Graph{V}) where {V}
                 v = head[4]
 
                 while ispositive(v)
-                    w, ww, www = neighbors(graph, v)
+                    w = ww = www = zero(V)
+                    x, xx, xxx = neighbors(graph, v)
 
-                    if has_edge(graph, w, ww) || has_edge(graph, w, www) || has_edge(graph, ww, www)
-                        hi += one(V)
-                        stack[hi] = v
-                        v = eliminate!(graph, head, prev, next, v, Val(3))
-                    else
-                        v = next[v]
+                    if has_edge(graph, x, xx)
+                        w, ww, www = x, xx, xxx
+                    elseif has_edge(graph, x, xxx)
+                        w, ww, www = x, xxx, xx
+                    elseif has_edge(graph, xx, xxx)
+                        w, ww, www = xx, xxx, x
                     end
+
+                    if ispositive(w)
+                        # w  ---  ww
+                        # |   /
+                        # v  ---  www
+                        hi += one(V); stack[hi] = v
+
+                        delete!(set(outdegree(graph, w)), w)
+                        delete!(set(outdegree(graph, ww)), ww)
+                        delete!(set(outdegree(graph, www)), www)
+                        rem_edge!(graph, v, w)
+                        rem_edge!(graph, v, ww)
+                        rem_edge!(graph, v, www)
+                        add_edge!(graph, w, www)
+                        add_edge!(graph, ww, www)
+                        pushfirst!(set(outdegree(graph, w)), w)
+                        pushfirst!(set(outdegree(graph, ww)), ww)
+                        pushfirst!(set(outdegree(graph, www)), www)
+
+                        n = next[v]; delete!(set(3), v)
+                    else
+                        n = next[v]
+                    end
+
+                    v = n
                 end
 
                 # buddy rule
                 v = head[4]
 
                 while ispositive(v)
-                    w = next[v]
-                    flag = false
+                    w, ww, www = neighbors(graph, v)
+                    vv = n = next[v]
 
-                    while ispositive(w) && !flag
-                        if v != w && (neighbors(graph, v) == neighbors(graph, w))
-                            hi += one(V)
-                            stack[hi] = v
-                            v = eliminate!(graph, head, prev, next, v, Val(3))
-                            flag = true
+                    while ispositive(vv)
+                        if (w, ww, www) == neighbors(graph, vv)
+                            # w  -----------  vv
+                            # |           /   |
+                            # |       ww      |
+                            # |   /           |
+                            # v  -----------  www
+                            hi += one(V); stack[hi] = vv
+                            hi += one(V); stack[hi] = v
+                            
+                            delete!(set(outdegree(graph, w)), w)
+                            delete!(set(outdegree(graph, ww)), ww)
+                            delete!(set(outdegree(graph, www)), www)
+                            rem_edge!(graph, v, w)
+                            rem_edge!(graph, v, ww)
+                            rem_edge!(graph, v, www)
+                            rem_edge!(graph, vv, w)
+                            rem_edge!(graph, vv, ww)
+                            rem_edge!(graph, vv, www)
+                            add_edge!(graph, w, ww)
+                            add_edge!(graph, w, www)
+                            add_edge!(graph, ww, www)
+                            pushfirst!(set(outdegree(graph, w)), w)
+                            pushfirst!(set(outdegree(graph, ww)), ww)
+                            pushfirst!(set(outdegree(graph, www)), www)
+
+                            nn = zero(V); delete!(set(3), vv)
+                            n = next[v]; delete!(set(3), v)
+                        else
+                            nn = next[vv]
                         end
 
-                        w = next[w]
+                        vv = nn
                     end
 
-                    if !flag
-                        v = next[v]
-                    end
+                    v = n
                 end
 
                 # cube rule
                 v = head[4]
 
                 while ispositive(v)
-                    w, ww, www = neighbors(graph, v)
+                    vv, vvv, vvvv = neighbors(graph, v)
 
-                    if isthree(outdegree(graph, w)) && isthree(outdegree(graph, ww)) && isthree(outdegree(graph, www))
-                        x, xx, xxx = neighbors(graph, w)
-                        y, yy, yyy = neighbors(graph, ww)
-                        z, zz, zzz = neighbors(graph, www)
+                    if isthree(outdegree(graph, vv)) && isthree(outdegree(graph, vvv)) && isthree(outdegree(graph, vvvv))
+                        w = ww = www = zero(V)
+                        x, xx, xxx = neighbors(graph, vv)
+                        y, yy, yyy = neighbors(graph, vvv)
+                        z, zz, zzz = neighbors(graph, vvvv)
 
                         if v == x
                             x, xx = xx, xxx
@@ -1715,22 +1792,66 @@ function rulereduction!(graph::Graph{V}) where {V}
                             z, zz = z, zzz
                         end
 
-                        if (x == y && z == xx && zz == yy) ||
-                                (x == y && z == yy && zz == xx) ||
-                                (y == z && x == yy && xx == zz) ||
-                                (y == z && x == zz && xx == yy) ||
-                                (x == z && y == xx && yy == zz) ||
-                                (x == z && y == zz && yy == xx)
+                        if x == y != vvvv && yy == zz != vv && z == xx != vvv
+                            w, ww, www = x, yy, z
+                        elseif x == y != vvvv && yy == z != vv && zz == xx != vvv
+                            w, ww, www = x, yy, zz
+                        elseif x == yy != vvvv && y == z != vv && zz == xx != vvv
+                            w, ww, www = x, y, zz
+                        elseif xx == yy != vvvv && y == z != vv && zz == x != vvv
+                            w, ww, www = xx, y, zz
+                        elseif xx == y != vvvv && yy == zz != vv && z == x != vvv
+                            w, ww, www = xx, yy, z
+                        elseif xx == yy != vvvv && y == zz != vv && z == x != vvv
+                            w, ww, www = xx, y, z
+                        end
+        
+                        if ispositive(w)
+                            #         ww
+                            #     /       \
+                            # vvv             vvvv
+                            # |   \       /   |
+                            # |       v       |
+                            # |       |       |
+                            # w       |       www
+                            #     \   |   /
+                            #         vv
+                            hi += one(V); stack[hi] = vvvv
+                            hi += one(V); stack[hi] = vvv
+                            hi += one(V); stack[hi] = vv
+                            hi += one(V); stack[hi] = v
 
-                            hi += one(V)
-                            stack[hi] = v
-                            v = eliminate!(graph, head, prev, next, v, Val(3))
+                            delete!(set(outdegree(graph, w)), w)
+                            delete!(set(outdegree(graph, ww)), ww)
+                            delete!(set(outdegree(graph, www)), www)
+                            rem_edge!(graph, vv, v)
+                            rem_edge!(graph, vv, x)
+                            rem_edge!(graph, vv, xx)
+                            rem_edge!(graph, vvv, v)
+                            rem_edge!(graph, vvv, y)
+                            rem_edge!(graph, vvv, yy)
+                            rem_edge!(graph, vvvv, v)
+                            rem_edge!(graph, vvvv, z)
+                            rem_edge!(graph, vvvv, zz)
+                            add_edge!(graph, w, ww)
+                            add_edge!(graph, w, www)
+                            add_edge!(graph, ww, www)
+                            pushfirst!(set(outdegree(graph, w)), w)
+                            pushfirst!(set(outdegree(graph, ww)), ww)
+                            pushfirst!(set(outdegree(graph, www)), www)
+
+                            delete!(set(3), vvvv)
+                            delete!(set(3), vvv)
+                            delete!(set(3), vv)
+                            n = next[v]; delete!(set(3), v)
                         else
-                            v = next[v]
+                            n = next[v]
                         end
                     else
-                        v = next[v]
+                        n = next[v]
                     end
+
+                    v = n
                 end
             end
         end
@@ -1738,62 +1859,6 @@ function rulereduction!(graph::Graph{V}) where {V}
 
     resize!(stack, hi)
     return stack, rem_vertices!(graph, stack), graph
-end
-
-# eliminate a vertex with degree i
-@propagate_inbounds function eliminate!(graph::Graph{V}, head::Vector{V}, prev::Vector{V}, next::Vector{V}, v::V, ::Val{i}) where {V, i}
-    @boundscheck checkbounds(prev, v)
-
-    function set(i)
-        @inbounds h = @view head[i + one(i)]
-        return DoublyLinkedList(h, prev, next)
-    end
-
-    _eliminate!(set, graph, v, Val(i))
-    @inbounds n = next[v]
-    @inbounds delete!(set(i), v)
-    return n
-end
-
-function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{0}) where {V}
-    return
-end
-
-function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{1}) where {V}
-    @inbounds w = only(neighbors(graph, v))
-    @inbounds delete!(set(outdegree(graph, w)), w)
-    @inbounds rem_edge!(graph, v, w)
-    @inbounds pushfirst!(set(outdegree(graph, w)), w)
-    return
-end
-
-function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{2}) where {V}
-    @inbounds w, ww = neighbors(graph, v)
-    @inbounds delete!(set(outdegree(graph, w)), w)
-    @inbounds delete!(set(outdegree(graph, ww)), ww)
-    @inbounds rem_edge!(graph, v, w)
-    @inbounds rem_edge!(graph, v, ww)
-    @inbounds add_edge!(graph, w, ww)
-    @inbounds pushfirst!(set(outdegree(graph, w)), w)
-    @inbounds pushfirst!(set(outdegree(graph, ww)), ww)
-    return
-end
-
-function _eliminate!(set::Function, graph::Graph{V}, v::V, ::Val{3}) where {V}
-    @inbounds w, ww, www = neighbors(graph, v)
-    @inbounds delete!(set(outdegree(graph, w)), w)
-    @inbounds delete!(set(outdegree(graph, ww)), ww)
-    @inbounds delete!(set(outdegree(graph, www)), www)
-    @inbounds rem_edge!(graph, v, w)
-    @inbounds rem_edge!(graph, v, ww)
-    @inbounds rem_edge!(graph, v, www)
-    @inbounds add_edge!(graph, w, ww)
-    @inbounds add_edge!(graph, w, www)
-    @inbounds add_edge!(graph, ww, www)
-    @inbounds pushfirst!(set(outdegree(graph, w)), w)
-    @inbounds pushfirst!(set(outdegree(graph, ww)), ww)
-    @inbounds pushfirst!(set(outdegree(graph, www)), www)
-    return
 end
 
 function componentreduction(graph)
