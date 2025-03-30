@@ -1733,7 +1733,7 @@ function rulereduction!(graph::Graph{V}) where {V}
                             # v  -----------  www
                             hi += one(V); stack[hi] = vv
                             hi += one(V); stack[hi] = v
-                            
+
                             delete!(set(outdegree(graph, w)), w)
                             delete!(set(outdegree(graph, ww)), ww)
                             delete!(set(outdegree(graph, www)), www)
@@ -1805,7 +1805,7 @@ function rulereduction!(graph::Graph{V}) where {V}
                         elseif xx == yy != vvvv && y == zz != vv && z == x != vvv
                             w, ww, www = xx, y, z
                         end
-        
+
                         if ispositive(w)
                             #         ww
                             #     /       \
