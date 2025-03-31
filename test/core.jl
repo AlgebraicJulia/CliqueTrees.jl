@@ -560,10 +560,9 @@ end
                 @inferred CliqueTrees.amf(graph)
                 @inferred CliqueTrees.mf(graph)
                 @inferred CliqueTrees.mmd(graph)
-                @inferred CliqueTrees.minimalchordal(graph)
-                @inferred CliqueTrees.compositerotations(graph)
-                @inferred CliqueTrees.compositerotations(graph, [1, 3])
+                @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.rulereduction(graph)
+                @inferred CliqueTrees.rulereduction(ones(17), graph)
                 @inferred CliqueTrees.componentreduction(graph)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
@@ -592,11 +591,9 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
-                    graph, [1, 3]
-                )
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.rulereduction(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.rulereduction(ones(17), graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.componentreduction(graph)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
@@ -637,11 +634,9 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.compositerotations(
-                    graph, [1, 3]
-                )
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.rulereduction(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.rulereduction(ones(17), graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.componentreduction(graph)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
@@ -676,6 +671,7 @@ end
                 @test !isperfect(graph, permutation(graph, MCSM()))
                 @test !isperfect(graph, permutation(graph, MF()))
                 @test treewidth(graph; alg = 1:17) === V(4)
+                @test treewidth(ones(17), graph; alg = 1:17) === 5.0
 
                 @test ischordal(completion)
                 @test isperfect(completion, permutation(completion, MCS()))
@@ -684,6 +680,7 @@ end
                 @test isperfect(completion, permutation(completion, MCSM()))
                 @test isperfect(completion, permutation(completion, MF()))
                 @test treewidth(completion; alg = 1:17) === V(4)
+                @test treewidth(ones(17), completion; alg = 1:17) === 5.0
 
                 coloring = CliqueTrees.color(completion)
                 @test coloring.num_colors == 5
@@ -719,6 +716,7 @@ end
                         ComponentReduction(),
                     )
                     order, index = permutation(graph; alg)
+                    order, index = permutation(ones(17), graph; alg)
                     @test isa(order, Vector{V})
                     @test isa(index, Vector{V})
                     @test length(order) == 17

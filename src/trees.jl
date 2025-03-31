@@ -36,7 +36,7 @@ function Tree(tree::Tree)
 end
 
 """
-    eliminationtree(graph;
+    eliminationtree([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
 
 Construct a [tree-depth decomposition](https://en.wikipedia.org/wiki/Tr%C3%A9maux_tree) of a simple graph.
@@ -74,8 +74,25 @@ function eliminationtree(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATIO
     return label, tree
 end
 
+function eliminationtree(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
+    label, tree, upper = eliminationtree(weights, graph, alg)
+    return label, tree
+end
+
+# method ambiguity
+function eliminationtree(weights::AbstractVector, alg::PermutationOrAlgorithm)
+    error()
+end
+
 function eliminationtree(graph, alg::PermutationOrAlgorithm)
-    label, index = permutation(graph, alg)
+    return eliminationtree(graph, permutation(graph, alg)...)
+end
+
+function eliminationtree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    return eliminationtree(graph, permutation(weights, graph, alg)...)
+end
+
+function eliminationtree(graph, label, index)
     upper = sympermute(graph, index, Forward)
     return label, etree(upper), upper
 end

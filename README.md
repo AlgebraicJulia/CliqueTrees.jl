@@ -154,7 +154,7 @@ Users can input graphs as adjacency matrices. Additionally, CliqueTrees.jl suppo
   - `outneighbors`
   - `vertices`
 
-Weights and self-edges are always ignored.
+Self-edges are always ignored.
 
 ## References
 

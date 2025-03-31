@@ -19,7 +19,7 @@ function Tree{V}(tree::CliqueTree) where {V}
 end
 
 """
-    cliquetree(graph;
+    cliquetree([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
         snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
 
@@ -61,9 +61,24 @@ function cliquetree(
     return cliquetree(graph, alg, snd)
 end
 
-@views function cliquetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    # construct supernodal elimination tree
-    label, tree, count, index, ptr, lower, upper = supernodetree(graph, alg, snd)
+function cliquetree(
+        weights::AbstractVector,
+        graph;
+        alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
+        snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
+    )
+    return cliquetree(weights, graph, alg, snd)
+end
+
+function cliquetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
+    return cliquetree(supernodetree(graph, alg, snd)...)
+end
+
+function cliquetree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
+    return cliquetree(supernodetree(weights, graph, alg, snd)...)
+end
+
+@views function cliquetree(label, tree, count, index, ptr, lower, upper)
     lower = sympermute!(upper, lower, index, Reverse)
 
     # compute separators
@@ -112,7 +127,7 @@ end
 end
 
 """
-    treewidth(tree::CliqueTree)
+    treewidth([weights, ]tree::CliqueTree)
 
 Compute the [width](https://en.wikipedia.org/wiki/Treewidth) of a clique tree.
 """
@@ -121,8 +136,25 @@ function treewidth(tree::CliqueTree{V}) where {V}
     return n
 end
 
+function treewidth(weights::AbstractVector, tree::CliqueTree{V}) where {V}
+    W = eltype(weights)
+    treewidth = zero(W)
+
+    for clique in tree
+        width = zero(W)
+
+        for v in clique
+            width += weights[v]
+        end
+
+        treewidth = max(treewidth, width)
+    end
+
+    return treewidth
+end
+
 """
-    treewidth(graph;
+    treewidth([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
 
 Compute an upper bound to the [tree width](https://en.wikipedia.org/wiki/Treewidth) of a simple graph.
@@ -131,12 +163,27 @@ function treewidth(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGO
     return treewidth(graph, alg)
 end
 
+function treewidth(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
+    return treewidth(weights, graph, alg)
+end
+
 function treewidth(graph, alg::PermutationOrAlgorithm)
     label, tree, upper = eliminationtree(graph, alg)
     rowcount, colcount = supcnt(reverse(upper), tree)
     V = eltype(colcount)
     return maximum(colcount; init = one(V)) - one(V)
 end
+
+function treewidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    label, tree = cliquetree(weights, graph; alg)
+    return treewidth(view(weights, label), tree)
+end
+
+# method ambiguity
+function treewidth(weights::AbstractVector, alg::PermutationOrAlgorithm)
+    error()
+end
+
 
 """
     residual(tree::CliqueTree, i::Integer)

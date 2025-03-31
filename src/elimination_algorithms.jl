@@ -109,9 +109,9 @@ struct BFS <: EliminationAlgorithm end
 
 The maximum cardinality search algorithm.
 
-### Reference
+### References
 
-Tarjan, Robert E., and Mihalis Yannakakis. "Simple linear-time algorithms to test chordality of graphs, test acyclicity of hypergraphs, and selectively reduce acyclic hypergraphs." *SIAM Journal on Computing* 13.3 (1984): 566-579.
+  - Tarjan, Robert E., and Mihalis Yannakakis. "Simple linear-time algorithms to test chordality of graphs, test acyclicity of hypergraphs, and selectively reduce acyclic hypergraphs." *SIAM Journal on Computing* 13.3 (1984): 566-579.
 """
 struct MCS <: EliminationAlgorithm end
 
@@ -122,9 +122,9 @@ struct MCS <: EliminationAlgorithm end
 
 The [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
 
-### Reference
+### References
 
-Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
+  - Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
 """
 struct LexBFS <: EliminationAlgorithm end
 
@@ -142,9 +142,9 @@ An initial vertex is selected using the minimum degree heuristic.
 
   - `alg`: sorting algorithm
 
-### Reference
+### References
 
-Cuthill, Elizabeth, and James McKee. "Reducing the bandwidth of sparse symmetric matrices." *Proceedings of the 1969 24th National Conference.* 1969.
+  - Cuthill, Elizabeth, and James McKee. "Reducing the bandwidth of sparse symmetric matrices." *Proceedings of the 1969 24th National Conference.* 1969.
 """
 struct RCMMD{A <: SortingAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -168,9 +168,10 @@ An initial vertex is selected using George and Liu's variant of the GPS algorith
 
   - `alg`: sorting algorithm
 
-### Reference
+### References
 
-George, Alan, and Joseph WH Liu. "An implementation of a pseudoperipheral node finder." *ACM Transactions on Mathematical Software (TOMS)* 5.3 (1979): 284-295.
+  - Cuthill, Elizabeth, and James McKee. "Reducing the bandwidth of sparse symmetric matrices." *Proceedings of the 1969 24th National Conference.* 1969.
+  - George, Alan, and Joseph WH Liu. "An implementation of a pseudoperipheral node finder." *ACM Transactions on Mathematical Software (TOMS)* 5.3 (1979): 284-295.
 """
 struct RCMGL{A <: SortingAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -187,9 +188,9 @@ end
 
 A minimal variant of the [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
 
-### Reference
+### References
 
-Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
+  - Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
 """
 struct LexM <: EliminationAlgorithm end
 
@@ -200,9 +201,9 @@ struct LexM <: EliminationAlgorithm end
 
 A minimal variant of the maximal cardinality search algorithm.
 
-### Reference
+### References
 
-Berry, Anne, et al. "Maximum cardinality search for computing minimal triangulations of graphs." *Algorithmica* 39 (2004): 287-298.
+  - Berry, Anne, et al. "Maximum cardinality search for computing minimal triangulations of graphs." *Algorithmica* 39 (2004): 287-298.
 """
 struct MCSM <: EliminationAlgorithm end
 
@@ -217,9 +218,9 @@ The approximate minimum fill algorithm.
 
   - `speed`: fill approximation strategy (`1`, `2`, or, `3`)
 
-### Reference
+### References
 
-Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
+  - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
 """
 @kwdef struct AMF <: EliminationAlgorithm
     speed::Int = 1
@@ -232,9 +233,9 @@ end
 
 The greedy minimum fill algorithm.
 
-### Reference
+### References
 
-Tinney, William F., and John W. Walker. "Direct solutions of sparse network equations by optimally ordered triangular factorization." *Proceedings of the IEEE* 55.11 (1967): 1801-1809.
+  - Tinney, William F., and John W. Walker. "Direct solutions of sparse network equations by optimally ordered triangular factorization." *Proceedings of the IEEE* 55.11 (1967): 1801-1809.
 """
 struct MF <: EliminationAlgorithm end
 
@@ -249,9 +250,9 @@ The [multiple minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_de
 
   - `delta`: tolerance for multiple elimination
 
-### Reference
+### References
 
-Liu, Joseph WH. "Modification of the minimum-degree algorithm by multiple elimination." *ACM Transactions on Mathematical Software (TOMS)* 11.2 (1985): 141-153.
+  - Liu, Joseph WH. "Modification of the minimum-degree algorithm by multiple elimination." *ACM Transactions on Mathematical Software (TOMS)* 11.2 (1985): 141-153.
 """
 @kwdef struct MMD <: EliminationAlgorithm
     delta::Int = 0
@@ -269,9 +270,9 @@ The approximate minimum degree algorithm.
   - `dense`: dense row parameter
   - `aggressive`: aggressive absorption
 
-### Reference
+### References
 
-Amestoy, Patrick R., Timothy A. Davis, and Iain S. Duff. "An approximate minimum degree ordering algorithm." *SIAM Journal on Matrix Analysis and Applications* 17.4 (1996): 886-905.
+  - Amestoy, Patrick R., Timothy A. Davis, and Iain S. Duff. "An approximate minimum degree ordering algorithm." *SIAM Journal on Matrix Analysis and Applications* 17.4 (1996): 886-905.
 """
 @kwdef struct AMD <: EliminationAlgorithm
     dense::Float64 = 10.0
@@ -291,9 +292,9 @@ The column approximate minimum degree algorithm.
   - `dense_column`: dense column parameter
   - `aggressive`: aggressive absorption
 
-### Reference
+### References
 
-Davis, Timothy A., et al. "A column approximate minimum degree ordering algorithm." *ACM Transactions on Mathematical Software* (TOMS) 30.3 (2004): 353-376.
+  - Davis, Timothy A., et al. "A column approximate minimum degree ordering algorithm." *ACM Transactions on Mathematical Software* (TOMS) 30.3 (2004): 353-376.
 """
 @kwdef struct SymAMD <: EliminationAlgorithm
     dense_row::Float64 = 10.0
@@ -321,9 +322,9 @@ The multilevel [nested dissection](https://en.wikipedia.org/wiki/Nested_dissecti
   - `pfactor`: minimum degree of vertices that will be ordered last
   - `ufactor`: maximum allowed load imbalance partitions
 
-### Reference
+### References
 
-Karypis, George, and Vipin Kumar. "A fast and high quality multilevel scheme for partitioning irregular graphs." *SIAM Journal on Scientific Computing* 20.1 (1998): 359-392.
+  - Karypis, George, and Vipin Kumar. "A fast and high quality multilevel scheme for partitioning irregular graphs." *SIAM Journal on Scientific Computing* 20.1 (1998): 359-392.
 """
 @kwdef struct METIS <: EliminationAlgorithm
     ctype::Int = -1
@@ -349,9 +350,9 @@ In order to use it, import the package [Laplacians](https://github.com/danspielm
 
   - `tol`: tolerance for convergence
 
-### Reference
+### References
 
-Barnard, Stephen T., Alex Pothen, and Horst D. Simon. "A spectral algorithm for envelope reduction of sparse matrices." *Proceedings of the 1993 ACM/IEEE Conference on Supercomputing.* 1993.
+  - Barnard, Stephen T., Alex Pothen, and Horst D. Simon. "A spectral algorithm for envelope reduction of sparse matrices." *Proceedings of the 1993 ACM/IEEE Conference on Supercomputing.* 1993.
 """
 @kwdef struct Spectral <: EliminationAlgorithm
     tol::Float64 = 0.0
@@ -364,9 +365,9 @@ end
 
 The Bouchitte-Todinca algorithm.
 
-### Reference
+### References
 
-Korhonen, Tuukka, Jeremias Berg, and Matti Järvisalo. "Solving Graph Problems via Potential Maximal Cliques: An Experimental Evaluation of the Bouchitté-Todinca Algorithm." *Journal of Experimental Algorithmics (JEA)* 24 (2019): 1-19.
+  - Korhonen, Tuukka, Jeremias Berg, and Matti Järvisalo. "Solving Graph Problems via Potential Maximal Cliques: An Experimental Evaluation of the Bouchitté-Todinca Algorithm." *Journal of Experimental Algorithmics (JEA)* 24 (2019): 1-19.
 """
 struct BT <: EliminationAlgorithm end
 
@@ -383,9 +384,9 @@ Evaluate an elimination algorithm, and them improve its output using the Minimal
 
   - `alg`: elimination algorithm
 
-### Reference
+### References
 
-Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
+  - Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
 """
 struct MinimalChordal{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -409,9 +410,9 @@ Evaluate an eliminaton algorithm, ensuring that the given clique is at the end o
   - `clique`: clique
   - `alg`: elimination algorithm
 
-### Reference
+### References
 
-Liu, Joseph WH. "Equivalent sparse matrix reordering by elimination tree rotations." *Siam Journal on Scientific and Statistical Computing* 9.3 (1988): 424-444.
+  - Liu, Joseph WH. "Equivalent sparse matrix reordering by elimination tree rotations." *Siam Journal on Scientific and Statistical Computing* 9.3 (1988): 424-444.
 """
 struct CompositeRotations{C <: AbstractVector, A <: PermutationOrAlgorithm} <:
     EliminationAlgorithm
@@ -434,11 +435,12 @@ Preprocess a graph using safe reduction rules.
 
 ### Parameters
 
-   - `alg`: elimination algorithm
+  - `alg`: elimination algorithm
 
-### Reference
+### References
 
-Bodlaender, Hans L., Arie MCA Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
+  - Bodlaender, Hans L., Arie M.C.A. Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
+  - van den Eijkhof, Frank, Hans L. Bodlaender, and Arie M.C.A. Koster. "Safe reduction rules for weighted treewidth." *Algorithmica* 47 (2007): 139-158. 
 """
 struct RuleReduction{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -471,7 +473,7 @@ function ComponentReduction()
 end
 
 """
-    permutation(graph;
+    permutation([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
 
 Construct a fill-reducing permutation of the vertices of a simple graph.
@@ -511,12 +513,125 @@ function permutation(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_AL
     return permutation(graph, alg)
 end
 
+function permutation(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
+    return permutation(weights, graph, alg)
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::EliminationAlgorithm)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::AbstractVector)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::BFS)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::MCS)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::LexBFS)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::RCMMD)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::RCMGL)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::LexM)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::MCSM)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::AMF)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::MF)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::MMD)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::AMD)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::SymAMD)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::METIS)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::Spectral)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::BT)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::MinimalChordal)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::CompositeRotations)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::RuleReduction)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::ComponentReduction)
+    error()
+end
+
 function permutation(graph, alg::EliminationAlgorithm)
     throw(
         ArgumentError(
             "Algorithm $alg not implemented. You may need to load an additional package."
         ),
     )
+end
+
+function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    return permutation(graph, alg)
 end
 
 function permutation(graph, alg::AbstractVector)
@@ -578,17 +693,45 @@ function permutation(graph, alg::MMD)
 end
 
 function permutation(graph, alg::MinimalChordal)
-    return minimalchordal(graph, alg.alg)
+    return minimalchordal(graph, permutation(graph, alg.alg)...)
+end
+
+function permutation(weights::AbstractVector, graph, alg::MinimalChordal)
+    return minimalchordal(graph, permutation(weights, graph, alg = alg.alg)...)
 end
 
 function permutation(graph, alg::CompositeRotations)
-    order = compositerotations(graph, alg.clique, alg.alg)
+    order, index = permutation(graph, alg.alg)
+    upper = sympermute(graph, index, Forward)
+
+    invpermute!(
+        order, compositerotations(reverse(upper), etree(upper), view(index, alg.clique))
+    )
+
+    return order, invperm(order)
+end
+
+function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
+    order, index = permutation(weights, graph, alg.alg)
+    upper = sympermute(graph, index, Forward)
+
+    invpermute!(
+        order, compositerotations(reverse(upper), etree(upper), view(index, alg.clique))
+    )
+
     return order, invperm(order)
 end
 
 function permutation(graph, alg::RuleReduction)
     stack, label, kernel = rulereduction(graph)
     order, index = permutation(kernel, alg.alg)
+    append!(stack, view(label, order))
+    return stack, invperm(stack)
+end
+
+function permutation(weights::AbstractVector, graph, alg::RuleReduction)
+    stack, label, kernel = rulereduction(weights, graph)
+    order, index = permutation(view(weights, label), kernel, alg.alg)
     append!(stack, view(label, order))
     return stack, invperm(stack)
 end
@@ -600,6 +743,18 @@ function permutation(graph, alg::ComponentReduction)
 
     @inbounds for (component, subgraph) in zip(components, subgraphs)
         suborder, subindex = permutation(subgraph, alg.alg)
+        append!(order, view(component, suborder))
+    end
+
+    return order, invperm(order)
+end
+
+function permutation(weights::AbstractVector, graph, alg::ComponentReduction)
+    components, subgraphs = componentreduction(graph)
+    order = eltype(eltype(components))[]
+
+    @inbounds for (component, subgraph) in zip(components, subgraphs)
+        suborder, subindex = permutation(weights[component], subgraph, alg.alg)
         append!(order, view(component, suborder))
     end
 
@@ -1296,7 +1451,7 @@ function mf!(
     stack = Vector{V}(undef, nv)
 
     # construct min-heap data structure
-    heap = Heap{V}(nv)
+    heap = Heap{V, V}(nv)
 
     @inbounds for v in oneto(nv)
         count = zero(V)
@@ -1454,15 +1609,14 @@ function MMDLib.mmd(graph::BipartiteGraph; kwargs...)
     return mmd(pointers(graph), targets(graph); kwargs...)
 end
 
-function minimalchordal(graph, alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
-    return minimalchordal(BipartiteGraph(graph), alg)
+function minimalchordal(graph, order::AbstractVector, index::AbstractVector = invperm(order))
+    return minimalchordal(BipartiteGraph(graph), order, index)
 end
 
 # A Practical Algorithm for Making Filled Graphs Minimal
 # Barry, Heggernes, and Telle
 # MinimalChordal
-function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
-    order, index = permutation(graph; alg)
+function minimalchordal(graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector) where {V}
     M = Graph(graph)
     F = Vector{Vector{Tuple{V, V}}}(undef, nv(graph))
 
@@ -1559,28 +1713,9 @@ function minimalchordal(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) wh
     return permutation(M; alg = MCS())
 end
 
-function compositerotations(
-        graph,
-        clique::AbstractVector = oneto(0),
-        alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
-    )
-    return compositerotations(BipartiteGraph(graph), clique, alg)
-end
-
-function compositerotations(
-        graph::AbstractGraph, clique::AbstractVector, alg::PermutationOrAlgorithm
-    )
-    order, index = permutation(graph; alg)
-    upper = sympermute(graph, index, Forward)
-    invpermute!(
-        order, compositerotations(reverse(upper), etree(upper), view(index, clique))
-    )
-    return order
-end
-
-
 # Preprocessing Rules for Triangulation of Probabilistic Networks
 # Bodlaender, Koster, Ejkhof, and van der Gaag
+# PR-3
 function rulereduction(graph)
     return rulereduction(BipartiteGraph(graph))
 end
@@ -1625,9 +1760,7 @@ function rulereduction!(graph::Graph{V}) where {V}
         while ispositive(v)
             # v
             hi += one(V); stack[hi] = v
-
             n = next[v]; delete!(set(0), v)
-
             v = n
         end
 
@@ -1639,15 +1772,15 @@ function rulereduction!(graph::Graph{V}) where {V}
             # |
             # v
             w = only(neighbors(graph, v))
-
             hi += one(V); stack[hi] = v
 
             delete!(set(outdegree(graph, w)), w)
+
             rem_edge!(graph, v, w)
+
             pushfirst!(set(outdegree(graph, w)), w)
 
             n = next[v]; delete!(set(1), v)
-
             v = n
         end
 
@@ -1660,14 +1793,16 @@ function rulereduction!(graph::Graph{V}) where {V}
                 # |
                 # v  ---  ww
                 w, ww = neighbors(graph, v)
-
                 hi += one(V); stack[hi] = v
 
                 delete!(set(outdegree(graph, w)), w)
                 delete!(set(outdegree(graph, ww)), ww)
+
                 rem_edge!(graph, v, w)
                 rem_edge!(graph, v, ww)
+
                 add_edge!(graph, w, ww)
+
                 pushfirst!(set(outdegree(graph, w)), w)
                 pushfirst!(set(outdegree(graph, ww)), ww)
 
@@ -1700,11 +1835,14 @@ function rulereduction!(graph::Graph{V}) where {V}
                         delete!(set(outdegree(graph, w)), w)
                         delete!(set(outdegree(graph, ww)), ww)
                         delete!(set(outdegree(graph, www)), www)
+
                         rem_edge!(graph, v, w)
                         rem_edge!(graph, v, ww)
                         rem_edge!(graph, v, www)
+
                         add_edge!(graph, w, www)
                         add_edge!(graph, ww, www)
+
                         pushfirst!(set(outdegree(graph, w)), w)
                         pushfirst!(set(outdegree(graph, ww)), ww)
                         pushfirst!(set(outdegree(graph, www)), www)
@@ -1737,15 +1875,18 @@ function rulereduction!(graph::Graph{V}) where {V}
                             delete!(set(outdegree(graph, w)), w)
                             delete!(set(outdegree(graph, ww)), ww)
                             delete!(set(outdegree(graph, www)), www)
+
                             rem_edge!(graph, v, w)
                             rem_edge!(graph, v, ww)
                             rem_edge!(graph, v, www)
                             rem_edge!(graph, vv, w)
                             rem_edge!(graph, vv, ww)
                             rem_edge!(graph, vv, www)
+
                             add_edge!(graph, w, ww)
                             add_edge!(graph, w, www)
                             add_edge!(graph, ww, www)
+
                             pushfirst!(set(outdegree(graph, w)), w)
                             pushfirst!(set(outdegree(graph, ww)), ww)
                             pushfirst!(set(outdegree(graph, www)), www)
@@ -1824,6 +1965,7 @@ function rulereduction!(graph::Graph{V}) where {V}
                             delete!(set(outdegree(graph, w)), w)
                             delete!(set(outdegree(graph, ww)), ww)
                             delete!(set(outdegree(graph, www)), www)
+
                             rem_edge!(graph, vv, v)
                             rem_edge!(graph, vv, x)
                             rem_edge!(graph, vv, xx)
@@ -1833,9 +1975,11 @@ function rulereduction!(graph::Graph{V}) where {V}
                             rem_edge!(graph, vvvv, v)
                             rem_edge!(graph, vvvv, z)
                             rem_edge!(graph, vvvv, zz)
+
                             add_edge!(graph, w, ww)
                             add_edge!(graph, w, www)
                             add_edge!(graph, ww, www)
+
                             pushfirst!(set(outdegree(graph, w)), w)
                             pushfirst!(set(outdegree(graph, ww)), ww)
                             pushfirst!(set(outdegree(graph, www)), www)
@@ -1859,6 +2003,473 @@ function rulereduction!(graph::Graph{V}) where {V}
 
     resize!(stack, hi)
     return stack, rem_vertices!(graph, stack), graph
+end
+
+# Safe Reduction Rules for Weighted Treewidth
+# Eijkhof, Bodlaender, and Koster
+function rulereduction(weights::AbstractVector, graph)
+    return rulereduction(weights, BipartiteGraph(graph))
+end
+
+function rulereduction(weights::AbstractVector, graph::AbstractGraph)
+    return rulereduction!(weights, Graph(graph))
+end
+
+function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
+    n = nv(graph)
+
+    @inbounds for v in vertices(graph)
+        rem_edge!(graph, v, v)
+    end
+
+    # neighbor weights
+    nws = Vector{W}(undef, n)
+
+    # bucket queue
+    head = zeros(V, max(n, four(V)))
+    prev = Vector{V}(undef, n)
+    next = Vector{V}(undef, n)
+
+    function set(i)
+        @inbounds h = @view head[i + one(i)]
+        return DoublyLinkedList(h, prev, next)
+    end
+
+    @inbounds for v in vertices(graph)
+        nw = weights[v]
+
+        for w in neighbors(graph, v)
+            nw += weights[w]
+        end
+
+        nws[v] = nw
+        pushfirst!(set(outdegree(graph, v)), v)
+    end
+
+    # lower bound
+    width = mmnw(weights, graph)
+
+    # stack of eliminated vertices
+    lo = -one(V)
+    hi = zero(V)
+    stack = Vector{V}(undef, n)
+
+    # apply rules until exhaustion
+    while lo < hi
+        lo = hi
+
+        # islet rule
+        v = head[1]
+
+        while ispositive(v)
+            # v
+            hi += one(V); stack[hi] = v; width = max(width, nws[v])
+            n = next[v]; delete!(set(0), v)
+            v = n
+        end
+
+        # twig rule
+        v = head[2]
+
+        while ispositive(v)
+            # w
+            # |
+            # v
+            w = only(neighbors(graph, v))
+            hi += one(V); stack[hi] = v; width = max(width, nws[v])
+
+            delete!(set(outdegree(graph, w)), w)
+
+            rem_edge!(graph, v, w); nws[w] -= weights[v]
+
+            pushfirst!(set(outdegree(graph, w)), w)
+
+            n = next[v]; delete!(set(1), v)
+            v = n
+        end
+
+        # series rule
+        v = head[3]
+
+        while ispositive(v)
+            w = ww = zero(V)
+
+            if nws[v] <= width
+                x, xx = neighbors(graph, v)
+
+                if weights[v] >= min(weights[x], weights[xx])
+                    w, ww = x, xx
+                end
+            end
+
+            if ispositive(w)
+                # w
+                # |
+                # v  ---  ww
+                hi += one(V); stack[hi] = v
+
+                delete!(set(outdegree(graph, w)), w)
+                delete!(set(outdegree(graph, ww)), ww)
+
+                rem_edge!(graph, v, w); nws[w] -= weights[v]
+                rem_edge!(graph, v, ww); nws[ww] -= weights[v]
+
+                if add_edge!(graph, w, ww)
+                    nws[w] += weights[ww]
+                    nws[ww] += weights[w]
+                end
+
+                pushfirst!(set(outdegree(graph, w)), w)
+                pushfirst!(set(outdegree(graph, ww)), ww)
+
+                n = next[v]; delete!(set(2), v)
+            else
+                n = next[v]
+            end
+
+            v = n
+        end
+
+        # triangle rule
+        v = head[4]
+
+        while ispositive(v)
+            w = ww = www = zero(V)
+
+            if nws[v] <= width
+                x, xx, xxx = neighbors(graph, v)
+
+                if has_edge(graph, x, xx) && weights[v] >= weights[xxx]
+                    w, ww, www = x, xx, xxx
+                elseif has_edge(graph, x, xxx) && weights[v] >= weights[xx]
+                    w, ww, www = x, xxx, xx
+                elseif has_edge(graph, xx, xxx) && weights[v] >= weights[x]
+                    w, ww, www = xx, xxx, x
+                end
+            end
+
+            if ispositive(w)
+                # w  ---  ww
+                # |   /
+                # v  ---  www
+                hi += one(V); stack[hi] = v
+
+                delete!(set(outdegree(graph, w)), w)
+                delete!(set(outdegree(graph, ww)), ww)
+                delete!(set(outdegree(graph, www)), www)
+
+                rem_edge!(graph, v, w); nws[w] -= weights[v]
+                rem_edge!(graph, v, ww); nws[ww] -= weights[v]
+                rem_edge!(graph, v, www); nws[www] -= weights[v]
+
+                if add_edge!(graph, w, www)
+                    nws[w] += weights[ww]
+                    nws[ww] += weights[w]
+                end
+
+                if add_edge!(graph, ww, www)
+                    nws[ww] += weights[www]
+                    nws[www] += weights[ww]
+                end
+
+                pushfirst!(set(outdegree(graph, w)), w)
+                pushfirst!(set(outdegree(graph, ww)), ww)
+                pushfirst!(set(outdegree(graph, www)), www)
+
+                n = next[v]; delete!(set(3), v)
+            else
+                n = next[v]
+            end
+
+            v = n
+        end
+
+        # buddy rule
+        v = head[4]
+
+        while ispositive(v)
+            vv = n = next[v]
+
+            if nws[v] <= width
+                w, ww, www = neighbors(graph, v)
+
+                # sort the weights
+                p = weights[w]
+                pp = weights[ww]
+                ppp = weights[www]
+
+                if p > pp
+                    p, pp = pp, p
+                end
+
+                if pp > ppp
+                    pp, ppp = ppp, pp
+                end
+
+                if p > pp
+                    p, pp = pp, p
+                end
+
+                while ispositive(vv)
+                    # sort the weights
+                    q = weights[v]
+                    qq = weights[vv]
+
+                    if q > qq
+                        q, qq = qq, q
+                    end
+
+                    if nws[vv] <= width && p <= q && pp <= qq && (w, ww, www) == neighbors(graph, vv)
+                        # w  -----------  vv
+                        # |           /   |
+                        # |       ww      |
+                        # |   /           |
+                        # v  -----------  www
+                        hi += one(V); stack[hi] = vv
+                        hi += one(V); stack[hi] = v
+
+                        delete!(set(outdegree(graph, w)), w)
+                        delete!(set(outdegree(graph, ww)), ww)
+                        delete!(set(outdegree(graph, www)), www)
+
+                        rem_edge!(graph, v, w); nws[w] -= weights[v]
+                        rem_edge!(graph, v, ww); nws[ww] -= weights[v]
+                        rem_edge!(graph, v, www); nws[www] -= weights[v]
+                        rem_edge!(graph, vv, w); nws[w] -= weights[vv]
+                        rem_edge!(graph, vv, ww); nws[ww] -= weights[vv]
+                        rem_edge!(graph, vv, www); nws[www] -= weights[vv]
+
+                        if add_edge!(graph, w, ww)
+                            nws[w] += weights[ww]
+                            nws[ww] += weights[w]
+                        end
+
+                        if add_edge!(graph, w, www)
+                            nws[w] += weights[www]
+                            nws[www] += weights[w]
+                        end
+
+                        if add_edge!(graph, ww, www)
+                            nws[ww] += weights[www]
+                            nws[www] += weights[ww]
+                        end
+
+                        pushfirst!(set(outdegree(graph, w)), w)
+                        pushfirst!(set(outdegree(graph, ww)), ww)
+                        pushfirst!(set(outdegree(graph, www)), www)
+
+                        nn = zero(V); delete!(set(3), vv)
+                        n = next[v]; delete!(set(3), v)
+                    else
+                        nn = next[vv]
+                    end
+
+                    vv = nn
+                end
+            end
+
+            v = n
+        end
+
+        # cube rule
+        v = head[4]
+
+        while ispositive(v)
+            vv, vvv, vvvv = neighbors(graph, v)
+
+            if isthree(outdegree(graph, vv)) && isthree(outdegree(graph, vvv)) && isthree(outdegree(graph, vvvv)) && max(nws[vv], nws[vvv], nws[vvvv]) <= width
+                w = ww = www = zero(V)
+                x, xx, xxx = neighbors(graph, vv)
+                y, yy, yyy = neighbors(graph, vvv)
+                z, zz, zzz = neighbors(graph, vvvv)
+
+                if v == x
+                    x, xx = xx, xxx
+                elseif v == xx
+                    x, xx = x, xxx
+                end
+
+                if v == y
+                    y, yy = yy, yyy
+                elseif v == yy
+                    y, yy = y, yyy
+                end
+
+                if v == z
+                    z, zz = zz, zzz
+                elseif v == zz
+                    z, zz = z, zzz
+                end
+
+                if x == y != vvvv && yy == zz != vv && z == xx != vvv
+                    w, ww, www = x, yy, z
+                elseif x == y != vvvv && yy == z != vv && zz == xx != vvv
+                    w, ww, www = x, yy, zz
+                elseif x == yy != vvvv && y == z != vv && zz == xx != vvv
+                    w, ww, www = x, y, zz
+                elseif xx == yy != vvvv && y == z != vv && zz == x != vvv
+                    w, ww, www = xx, y, zz
+                elseif xx == y != vvvv && yy == zz != vv && z == x != vvv
+                    w, ww, www = xx, yy, z
+                elseif xx == yy != vvvv && y == zz != vv && z == x != vvv
+                    w, ww, www = xx, y, z
+                end
+
+                if ispositive(w) && (
+                        (weights[vv] >= weights[www] && weights[vvv] >= weights[w] && weights[vvvv] >= weights[ww]) ||
+                            (weights[vv] >= weights[w] && weights[vvv] >= weights[ww] && weights[vvvv] >= weights[www])
+                    )
+                    #         ww
+                    #     /       \
+                    # vvv             vvvv
+                    # |   \       /   |
+                    # |       v       |
+                    # |       |       |
+                    # w       |       www
+                    #     \   |   /
+                    #         vv
+                    hi += one(V); stack[hi] = vvvv
+                    hi += one(V); stack[hi] = vvv
+                    hi += one(V); stack[hi] = vv
+                    hi += one(V); stack[hi] = v
+
+                    delete!(set(outdegree(graph, w)), w)
+                    delete!(set(outdegree(graph, ww)), ww)
+                    delete!(set(outdegree(graph, www)), www)
+
+                    rem_edge!(graph, vv, v); nws[vv] -= weights[v]
+                    rem_edge!(graph, vv, x); nws[vv] -= weights[x]
+                    rem_edge!(graph, vv, xx); nws[vv] -= weights[xx]
+                    rem_edge!(graph, vvv, v); nws[vvv] -= weights[v]
+                    rem_edge!(graph, vvv, y); nws[vvv] -= weights[y]
+                    rem_edge!(graph, vvv, yy); nws[vvv] -= weights[yy]
+                    rem_edge!(graph, vvvv, v); nws[vvvv] -= weights[v]
+                    rem_edge!(graph, vvvv, z); nws[vvvv] -= weights[z]
+                    rem_edge!(graph, vvvv, zz); nws[vvvv] -= weights[zz]
+
+                    if add_edge!(graph, w, ww)
+                        nws[w] += weights[ww]
+                        nws[ww] += weights[w]
+                    end
+
+                    if add_edge!(graph, w, www)
+                        nws[w] += weights[www]
+                        nws[www] += weights[w]
+                    end
+
+                    if add_edge!(graph, ww, www)
+                        nws[ww] += weights[www]
+                        nws[www] += weights[ww]
+                    end
+
+                    pushfirst!(set(outdegree(graph, w)), w)
+                    pushfirst!(set(outdegree(graph, ww)), ww)
+                    pushfirst!(set(outdegree(graph, www)), www)
+
+                    delete!(set(3), vvvv)
+                    delete!(set(3), vvv)
+                    delete!(set(3), vv)
+                    n = next[v]; delete!(set(3), v)
+                else
+                    n = next[v]
+                end
+            else
+                n = next[v]
+            end
+
+            v = n
+        end
+    end
+
+    resize!(stack, hi)
+    return stack, rem_vertices!(graph, stack), graph
+end
+
+# Safe Reduction Rules for Weighted Treewidth
+# Eijkhof, Bodlaender, and Koster
+# Maximum Minimum Neighborwood Weight heuristic
+function mmnw(weights::AbstractVector, graph)
+    return mmnw(weights, BipartiteGraph(graph))
+end
+
+function mmnw(weights::AbstractVector, graph::AbstractGraph)
+    return mmnw!(weights, Graph(graph))
+end
+
+function mmnw!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
+    n = nv(graph)
+    tag = zero(V)
+    label = zeros(V, n)
+
+    # remove self-loops
+    for v in vertices(graph)
+        rem_edge!(graph, v, v)
+    end
+
+    # heap data structure
+    heap = Heap{V, W}(n)
+    maxminweight = zero(W)
+
+    for v in vertices(graph)
+        nw = weights[v]
+
+        for w in neighbors(graph, v)
+            nw += weights[w]
+        end
+
+        push!(heap, v => nw)
+    end
+
+    hfall!(heap)
+
+    while !isempty(heap)
+        v = argmin(heap)
+        delete!(heap, v)
+        maxminweight = max(maxminweight, heap[v])
+
+        w = zero(V)
+        nw = typemax(W)
+
+        for ww in neighbors(graph, v)
+            nww = heap[ww]
+
+            if weights[ww] <= weights[v] && nww < nw
+                w, nw = ww, nww
+            end
+        end
+
+        if ispositive(w)
+            rem_edge!(graph, v, w)
+            heap[w] -= weights[v]
+            tag += one(V)
+
+            for x in neighbors(graph, w)
+                label[x] = tag
+            end
+
+            for ww in neighbors(graph, v)
+                if w != ww
+                    if label[ww] < tag
+                        add_edge!(graph, w, ww)
+                        heap[w] += weights[ww]
+                        heap[ww] += weights[w]
+                    end
+                end
+            end
+
+            hrise!(heap, w)
+            hfall!(heap, w)
+        end
+
+        while !isempty(neighbors(graph, v))
+            w = last(neighbors(graph, v))
+            rem_edge!(graph, v, w)
+            heap[w] -= weights[v]
+            hrise!(heap, w)
+        end
+    end
+
+    return maxminweight
 end
 
 function componentreduction(graph)
@@ -1930,10 +2541,9 @@ end
 function Base.show(io::IO, ::MIME"text/plain", alg::RCMMD)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "RCMMD:")
-    println(io, " "^indent * "    alg:")
 
     for line in eachsplit(strip(repr(alg.alg)), "\n")
-        println(io, " "^indent * "        $line")
+        println(io, " "^indent * "    $line")
     end
 
     return nothing
@@ -1942,10 +2552,9 @@ end
 function Base.show(io::IO, ::MIME"text/plain", alg::RCMGL)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "RCMGL:")
-    println(io, " "^indent * "    alg:")
 
     for line in eachsplit(strip(repr(alg.alg)), "\n")
-        println(io, " "^indent * "        $line")
+        println(io, " "^indent * "    $line")
     end
 
     return nothing
@@ -1974,21 +2583,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::MF)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "MF")
     return nothing
-end
-
-function Base.show(io::IO, ::MIME"text/plain", alg::MinimalChordal{A}) where {A}
-    indent = get(io, :indent, 0)
-    println(io, " "^indent * "MinimalChordal{$A}:")
-    println(io, " "^indent * "    alg:")
-    return show(IOContext(io, :indent => indent + 8), "text/plain", alg.alg)
-end
-
-function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) where {C, A}
-    indent = get(io, :indent, 0)
-    println(io, " "^indent * "CompositeRotations{$C,$A}:")
-    println(io, " "^indent * "    clique: $(alg.clique)")
-    println(io, " "^indent * "    alg:")
-    return show(IOContext(io, :indent => indent + 8), "text/plain", alg.alg)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::AMD)
@@ -2028,6 +2622,37 @@ function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
     println(io, " "^indent * "Spectral:")
     println(io, " "^indent * "    tol: $(alg.tol)")
     return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::BT)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "BT")
+    return nothing
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::MinimalChordal{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "MinimalChordal{$A}:")
+    return show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) where {C, A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "CompositeRotations{$C,$A}:")
+    println(io, " "^indent * "    clique: $(alg.clique)")
+    return show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::RuleReduction{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "RuleReduction{$A}:")
+    return show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::ComponentReduction{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "ComponentReduction{$A}:")
+    return show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
 end
 
 """

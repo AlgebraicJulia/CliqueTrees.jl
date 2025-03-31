@@ -1,16 +1,16 @@
-struct Heap{I}
+struct Heap{I, K}
     num::Scalar{I}
-    key::Vector{I}
+    key::Vector{K}
     inv::Vector{I}
     heap::Vector{I}
 end
 
-function Heap{I}(n::Integer) where {I}
+function Heap{I, K}(n::Integer) where {I, K}
     num = fill(zero(I))
-    key = Vector{I}(undef, n)
+    key = Vector{K}(undef, n)
     inv = Vector{I}(undef, n)
     heap = Vector{I}(undef, n)
-    return Heap{I}(num, key, inv, heap)
+    return Heap{I, K}(num, key, inv, heap)
 end
 
 @propagate_inbounds function hrise!(heap::Heap, v::Integer)
@@ -100,7 +100,22 @@ end
 end
 
 function Base.argmin(heap::Heap)
+    @argcheck !isempty(heap)
     return first(heap.heap)
+end
+
+function Base.minimum(heap::Heap)
+    v = argmin(heap)
+    @inbounds k = heap[v]
+    return k
+end
+
+function Base.length(heap::Heap)
+    return heap.num[]
+end
+
+function Base.isempty(heap::Heap)
+    return iszero(length(heap))
 end
 
 @propagate_inbounds function Base.getindex(heap::Heap, i::Integer)
@@ -108,7 +123,7 @@ end
     @inbounds return heap.key[i]
 end
 
-@propagate_inbounds function Base.setindex!(heap::Heap, v::Integer, i::Integer)
+@propagate_inbounds function Base.setindex!(heap::Heap, v, i::Integer)
     @boundscheck checkbounds(heap.key, i)
     @inbounds heap.key[i] = v
     return heap
