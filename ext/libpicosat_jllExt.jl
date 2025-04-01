@@ -1,7 +1,7 @@
-module PicoSAT_jllExt
+module libpicosat_jllExt
 
 import CliqueTrees
-import PicoSAT_jll
+import libpicosat_jll as PicoSAT_jll
 
 const library = PicoSAT_jll.libpicosat
 

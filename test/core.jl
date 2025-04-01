@@ -1,17 +1,23 @@
 using AbstractTrees
 using Base: oneto
 using Base.Order
-using Catlab: Catlab
 using CliqueTrees
 using CliqueTrees: DoublyLinkedList, sympermute
-using CryptoMiniSat_jll
 using Graphs
 using Graphs: SimpleEdge
 using JET
 using LinearAlgebra
-using PicoSAT_jll
 using SparseArrays
 using Test
+
+import Catlab
+import CryptoMiniSat_jll
+
+@static if Sys.iswindows()
+    import libpicosat_jll as PicoSAT_jll
+else
+    import PicoSAT_jll
+end
 
 const TYPES = (
     (BipartiteGraph{Int8, Int16}, Int8, Int16),

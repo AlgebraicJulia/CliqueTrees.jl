@@ -1,4 +1,5 @@
 [deps]
+libpicosat_jll = "6b231c3b-13f8-5ced-86ae-8860c7f75d86"
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 AMD = "14f7f29c-3bd6-536c-9a0b-7339e30b5a3e"

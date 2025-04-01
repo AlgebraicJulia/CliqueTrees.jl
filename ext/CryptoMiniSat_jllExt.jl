@@ -1,7 +1,7 @@
 module CryptoMiniSat_jllExt
 
-using CliqueTrees
-using CryptoMiniSat_jll
+import CliqueTrees
+import CryptoMiniSat_jll
 
 const library = CryptoMiniSat_jll.libipasircryptominisat5
 
