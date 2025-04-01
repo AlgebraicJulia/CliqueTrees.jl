@@ -4,12 +4,24 @@ using Base.Order
 using Catlab: Catlab
 using CliqueTrees
 using CliqueTrees: DoublyLinkedList, sympermute
+using CryptoMiniSat_jll
 using Graphs
 using Graphs: SimpleEdge
 using JET
 using LinearAlgebra
+using PicoSAT_jll
 using SparseArrays
 using Test
+
+const TYPES = (
+    (BipartiteGraph{Int8, Int16}, Int8, Int16),
+    (Matrix{Float64}, Int, Int),
+    (SparseMatrixCSC{Float64, Int16}, Int16, Int16),
+    (Graph{Int8}, Int8, Int),
+    (DiGraph{Int8}, Int8, Int),
+    (Catlab.Graph, Int, Int),
+    (Catlab.SymmetricGraph, Int, Int),
+)
 
 @testset "errors" begin
     matrix = [
@@ -486,16 +498,6 @@ end
 # Chordal Graphs and Semidefinite Optimization
 # Vandenberghe and Andersen
 @testset "vandenberghe and andersen" begin
-    types = (
-        (BipartiteGraph{Int8, Int16}, Int8, Int16),
-        (Matrix{Float64}, Int, Int),
-        (SparseMatrixCSC{Float64, Int16}, Int16, Int16),
-        (Graph{Int8}, Int8, Int),
-        (DiGraph{Int8}, Int8, Int),
-        (Catlab.Graph, Int, Int),
-        (Catlab.SymmetricGraph, Int, Int),
-    )
-
     __graph = BipartiteGraph(
         [
             0 0 1 1 1 0 0 0 0 0 0 0 0 0 1 0 0
@@ -541,7 +543,7 @@ end
         ],
     )
 
-    for (G, V, E) in types
+    for (G, V, E) in TYPES
         @testset "$(nameof(G))" begin
             graph = G(__graph)
             completion = G(__completion)
@@ -670,8 +672,6 @@ end
                 @test !isperfect(graph, permutation(graph, LexM()))
                 @test !isperfect(graph, permutation(graph, MCSM()))
                 @test !isperfect(graph, permutation(graph, MF()))
-                @test treewidth(graph; alg = 1:17) === V(4)
-                @test treewidth(ones(17), graph; alg = 1:17) === 5.0
 
                 @test ischordal(completion)
                 @test isperfect(completion, permutation(completion, MCS()))
@@ -679,18 +679,16 @@ end
                 @test isperfect(completion, permutation(completion, LexM()))
                 @test isperfect(completion, permutation(completion, MCSM()))
                 @test isperfect(completion, permutation(completion, MF()))
-                @test treewidth(completion; alg = 1:17) === V(4)
-                @test treewidth(ones(17), completion; alg = 1:17) === 5.0
 
                 coloring = CliqueTrees.color(completion)
                 @test coloring.num_colors == 5
                 @test unique(sort(coloring.colors)) == 1:5
 
-                @test all(
-                    coloring.colors[v] != coloring.colors[w] for v in
-                        vertices(__completion) for
-                        w in neighbors(__completion, v)
-                )
+                @test all(edges(__completion)) do edge
+                    v = src(edge)
+                    w = dst(edge)
+                    return coloring.colors[v] != coloring.colors[w]
+                end
             end
 
             @testset "permutations" begin
@@ -954,6 +952,116 @@ end
                     @test neighbors(rg, 12) == []
                 end
             end
+        end
+    end
+end
+
+@testset "treewidth" begin
+    __graph1 = BipartiteGraph(
+        [
+            0  1  0  1  0  1  1  0  0  0  0  0  0  0  0  0
+            1  0  1  0  1  0  1  0  0  0  0  0  0  0  0  0
+            0  1  0  1  0  1  0  0  0  0  0  0  0  0  0  0
+            1  0  1  0  1  0  1  0  0  0  0  0  0  0  0  0
+            0  1  0  1  0  1  0  0  0  0  0  0  0  0  0  0
+            1  0  1  0  1  0  1  0  0  0  0  0  0  0  0  0
+            1  1  0  1  0  1  0  0  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  1  0  1  0  1  0  1
+            0  0  0  0  0  0  0  0  0  0  1  0  1  0  1  0
+            0  0  0  0  0  0  0  1  0  0  1  0  1  0  0  1
+            0  0  0  0  0  0  0  0  1  1  0  0  0  1  0  0
+            0  0  0  0  0  0  0  1  0  0  0  0  1  0  1  1
+            0  0  0  0  0  0  0  0  1  1  0  1  0  0  0  0
+            0  0  0  0  0  0  0  1  0  0  1  0  0  0  1  1
+            0  0  0  0  0  0  0  0  1  0  0  1  0  1  0  0
+            0  0  0  0  0  0  0  1  0  1  0  1  0  1  0  0
+        ]
+    )
+
+    __graph2 = BipartiteGraph(
+        [
+            0  1  1  0  1  1  0  0  1  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            1  0  1  1  1  1  1  0  0  1  1  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            1  1  0  0  1  1  0  1  0  0  1  0  1  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            0  1  0  0  0  0  1  0  0  0  0  1  0  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            1  1  1  0  0  1  1  1  0  0  1  0  1  0  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            1  1  1  0  1  0  1  1  0  0  1  0  0  1  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            0  1  0  1  1  1  0  1  0  0  0  1  0  0  1  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            0  0  1  0  1  1  1  0  0  0  0  0  1  1  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            1  0  0  0  0  0  0  0  0  1  1  0  1  1  0  0  1  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0
+            0  1  0  0  0  0  0  0  1  0  1  1  1  1  1  0  0  1  1  1  0  0  0  0  0  0  0  0  0  0  0  0
+            1  1  1  0  1  1  0  0  1  1  0  0  1  1  0  1  0  0  1  0  1  1  0  0  0  0  0  0  0  0  0  0
+            0  1  0  1  0  0  1  0  0  1  0  0  0  0  1  0  0  0  0  1  0  0  1  0  0  0  0  0  0  0  0  0
+            0  0  1  0  1  0  0  1  1  1  1  0  0  1  1  1  0  0  1  0  1  0  0  1  0  0  0  0  0  0  0  0
+            0  0  1  0  0  1  0  1  1  1  1  0  1  0  1  1  0  0  1  0  0  1  0  1  0  0  0  0  0  0  0  0
+            0  0  0  1  0  0  1  0  0  1  0  1  1  1  0  1  0  0  0  1  0  0  1  1  0  0  0  0  0  0  0  0
+            0  0  0  0  1  1  1  1  0  0  1  0  1  1  1  0  0  0  0  0  1  1  0  1  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  1  0  0  0  0  0  0  0  0  1  1  0  1  1  0  0  1  0  1  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  1  0  0  0  0  0  0  1  0  1  1  1  1  1  0  0  1  1  1  0  0  0  0
+            0  0  0  0  0  0  0  0  1  1  1  0  1  1  0  0  1  1  0  0  1  1  0  1  0  0  1  0  1  1  0  0
+            0  0  0  0  0  0  0  0  0  1  0  1  0  0  1  0  0  1  0  0  0  0  1  0  0  0  0  1  0  0  1  0
+            0  0  0  0  0  0  0  0  0  0  1  0  1  0  0  1  1  1  1  0  0  1  1  1  0  0  1  0  1  0  0  1
+            0  0  0  0  0  0  0  0  0  0  1  0  0  1  0  1  1  1  1  0  1  0  1  1  0  0  1  0  0  1  0  1
+            0  0  0  0  0  0  0  0  0  0  0  1  0  0  1  0  0  1  0  1  1  1  0  1  0  0  0  1  0  0  1  1
+            0  0  0  0  0  0  0  0  0  0  0  0  1  1  1  1  0  0  1  0  1  1  1  0  0  0  0  0  1  1  0  1
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  0  0  0  0  0  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  1  1  0  1  1  0  0  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  1  0  0  1  0  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  1  0  0  1  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  0  1  0  1  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  0  0  1  0  0  0  0  0  0  0  0  0
+            0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1  1  1  1  0  0  0  0  0  0  0  0
+        ]
+    )
+
+    weights1 = log2.([2, 2, 4, 2, 4, 2, 2, 2, 2, 2, 4, 2, 4, 2, 4, 2])
+    weights2 = log2.([4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4])
+
+    for (G, V, E) in TYPES
+        @testset "$(nameof(G))" begin
+            graph1 = G(__graph1)
+            graph2 = G(__graph2)
+
+            width1 = V(4)
+
+            @test lowerbound(graph1) <= width1 <= treewidth(graph1)
+            # @test treewidth(graph1; alg=ComponentReduction(BT())) === width1
+            @test treewidth(graph1; alg = SAT{PicoSAT_jll}()) === width1
+            @test treewidth(graph1; alg = SAT{CryptoMiniSat_jll}()) === width1
+            # @test treewidth(graph1; alg=RuleReduction(ComponentReduction(BT()))) === width1
+            @test treewidth(graph1; alg = RuleReduction(SAT{PicoSAT_jll}())) === width1
+            @test treewidth(graph1; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width1
+
+            width1 = 5.0
+
+            @test lowerbound(weights1, graph1) <= width1 <= treewidth(weights1, graph1)
+            # @test treewidth(weights1, graph1; alg=ComponentReduction(BT())) === width1
+            @test treewidth(weights1, graph1; alg = SAT{PicoSAT_jll}()) === width1
+            @test treewidth(weights1, graph1; alg = SAT{CryptoMiniSat_jll}()) === width1
+            # @test treewidth(weights1, graph1; alg=RuleReduction(ComponentReduction(BT()))) === width1
+            @test treewidth(weights1, graph1; alg = RuleReduction(SAT{PicoSAT_jll}())) === width1
+            @test treewidth(weights1, graph1; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width1
+
+            width2 = V(9)
+
+            @test lowerbound(graph2) <= width2 <= treewidth(graph2)
+            @test treewidth(graph2; alg = BT()) === width2
+            @test treewidth(graph2; alg = SAT{PicoSAT_jll}()) === width2
+            @test treewidth(graph2; alg = SAT{CryptoMiniSat_jll}()) === width2
+            @test treewidth(graph2; alg = RuleReduction(BT())) === width2
+            @test treewidth(graph2; alg = RuleReduction(SAT{PicoSAT_jll}())) === width2
+            @test treewidth(graph2; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width2
+
+            width2 = 19.169925001442312
+
+            @test lowerbound(weights2, graph2) <= width2 <= treewidth(weights2, graph2)
+            @test treewidth(weights2, graph2; alg = BT()) === width2
+            @test treewidth(weights2, graph2; alg = SAT{PicoSAT_jll}()) === width2
+            @test treewidth(weights2, graph2; alg = SAT{CryptoMiniSat_jll}()) === width2
+            @test treewidth(weights2, graph2; alg = RuleReduction(BT())) === width2
+            @test treewidth(weights2, graph2; alg = RuleReduction(SAT{PicoSAT_jll}())) === width2
+            @test treewidth(weights2, graph2; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width2
         end
     end
 end

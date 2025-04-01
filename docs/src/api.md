@@ -4,6 +4,14 @@
 CurrentModule = CliqueTrees
 ```
 
+## Lower Bound Algorithms
+```@docs
+LowerBoundAlgorithm
+MMW
+lowerbound
+DEFAULT_LOWER_BOUND_ALGORITHM
+```
+
 ## Elimination Algorithms
 
 ```@docs
@@ -26,6 +34,7 @@ MMD
 METIS
 Spectral
 BT
+SAT
 MinimalChordal
 CompositeRotations
 RuleReduction
