@@ -1,6 +1,11 @@
-# An IPASIR compliant SAT solver
-# https://github.com/biotomas/ipasir
-mutable struct Solver{Handle}
+"""
+    Solver{Handle} <: AbstractVector{Int32}
+
+    Solver{Handle}(num::Integer)
+
+An IPASIR-compliant SAT solver.
+"""
+mutable struct Solver{Handle} <: AbstractVector{Int32}
     handle::Val{Handle}
     solver::Ptr{Cvoid}
     num::Int32
@@ -12,14 +17,17 @@ mutable struct Solver{Handle}
     end
 end
 
-function variable!(solver::Solver)
-    return solver.num += one(Int32)
-end
-
 function clause!(solver::Solver, clause::Integer...)
     return clause!(solver, clause)
 end
 
+"""
+    clause!(solver::Solver, clause)
+
+    clause!(solver::Solver, clause::Integer...)
+
+Add a clause to a solver.
+"""
 function clause!(solver::Solver, clause)
     for lit in clause
         @argcheck one(Int32) <= abs(lit) <= length(solver)
@@ -30,27 +38,17 @@ function clause!(solver::Solver, clause)
     return solver
 end
 
-function assume!(solver::Solver, lit::Integer)
-    @argcheck one(Int32) <= abs(lit) <= length(solver)
-    assume(solver.handle, solver.solver, Int32(lit))
-    return solver
-end
+"""
+    solve!(solver::Solver)
 
+Solve a SAT problem. Returns `:sat`, `:unsat`, or `:unknown`.
+"""
 function solve!(solver::Solver)
     state = solve(solver.handle, solver.solver)
 
     return state == Cint(10) ? :sat :
         state == Cint(20) ? :unsat :
         :unknown
-end
-
-function Base.getindex(solver::Solver, lit::Integer)
-    @argcheck one(Int32) <= lit <= length(solver)
-    return sign(val(solver.handle, solver.solver, Int32(lit)))
-end
-
-function Base.length(solver::Solver)
-    return solver.num
 end
 
 function Base.open(f::Function, ::Type{Solver{Handle}}, num::Integer = zero(Int32)) where {Handle}
@@ -72,6 +70,32 @@ function Base.show(io::IO, solver::Solver{Handle}) where {Handle}
     println(io, "Solver{$Handle}:")
     print(io, "    solver: $(signature(solver.handle))")
     return
+end
+
+#############################
+# abstract vector interface #
+#############################
+
+function Base.size(solver::Solver)
+    return (solver.num,)
+end
+
+function Base.setindex!(solver::Solver, val::Integer, lit::Integer)
+    @argcheck one(Int32) <= lit <= length(solver)
+    @argcheck isone(val) || isone(-val)
+    assume(solver.handle, solver.solver, Int32(val * lit))
+    return solver
+end
+
+function Base.getindex(solver::Solver, lit::Integer)
+    @argcheck one(Int32) <= lit <= length(solver)
+    return sign(val(solver.handle, solver.solver, Int32(lit)))
+end
+
+function Base.resize!(solver::Solver, num::Integer)
+    @argcheck !isnegative(num)
+    solver.num = num
+    return solver
 end
 
 #######################

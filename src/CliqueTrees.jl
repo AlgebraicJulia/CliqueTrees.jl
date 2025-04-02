@@ -15,10 +15,12 @@ using SparseArrays
 using SparseArrays: getcolptr
 
 include("./Utilities.jl/src/Utilities.jl")
+include("./IPASIR.jl/src/IPASIR.jl")
 include("./AMFLib.jl/src/AMFLib.jl")
 include("./MMDLib.jl/src/MMDLib.jl")
 
 using .Utilities
+using .IPASIR
 using .AMFLib
 using .MMDLib
 
@@ -86,7 +88,6 @@ include("singly_linked_lists.jl")
 include("doubly_linked_lists.jl")
 include("bipartite_graphs.jl")
 include("bipartite_edge_iter.jl")
-include("solvers.jl")
 include("lower_bound_algorithms.jl")
 include("elimination_algorithms.jl")
 include("trees.jl")

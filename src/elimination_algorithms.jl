@@ -1036,20 +1036,18 @@ function fnroot!(
     candidate = zero(V)
 
     @inbounds while root != candidate
-        i = convert(V, length(component))
-        candidate = component[i]
+        candidate = last(component)
         degree = outdegree(graph, candidate)
         eccentricity = level[candidate] - tag
 
-        while i > firstindex(component) && eccentricity + tag == level[component[i]]
-            v = component[i]
-            n = outdegree(graph, v)
+        for v in Iterators.reverse(component)
+            eccentricity + tag == level[v] || break
 
-            if degree > n
-                candidate, degree = v, n
+            d = outdegree(graph, v)
+
+            if d < degree
+                candidate, degree = v, d
             end
-
-            i -= one(V)
         end
 
         tag = new
@@ -1704,11 +1702,17 @@ function sat(graph::AbstractGraph{V}, Handle::Module, lowerbound::Integer, upper
 
         # define ord and arc variables
         for i in oneto(n), j in oneto(n)
-            ord[i, j] = i < j ? variable!(solver) :
-                i > j ? -ord[j, i] :
-                zero(Int32)
+            if i < j
+                resize!(solver, length(solver) + one(Int32))
+                ord[i, j] = length(solver)
+            elseif i > j
+                ord[i, j] = -ord[j, i]
+            else
+                ord[i, j] = zero(Int32)
+            end
 
-            arc[i, j] = variable!(solver)
+            resize!(solver, length(solver) + one(Int32))
+            arc[i, j] = length(solver)
         end
 
         # base encoding
@@ -1780,7 +1784,7 @@ function sat(graph::AbstractGraph{V}, Handle::Module, lowerbound::Integer, upper
 
         for i in oneto(n)
             # Σ { arc(i, j) : j } <= count
-            assume!(solver, -arc[i, n - count])
+            solver[arc[i, n - count]] = -one(Int32)
         end
 
         state = solve!(solver)
@@ -1803,7 +1807,7 @@ function sat(graph::AbstractGraph{V}, Handle::Module, lowerbound::Integer, upper
 
             for i in oneto(n)
                 # Σ { arc(i, j) : j } <= count
-                assume!(solver, -arc[i, n - count])
+                solver[arc[i, n - count]] = -one(Int32)
             end
 
             state = solve!(solver)
@@ -1853,7 +1857,8 @@ function maximalclique(graph::AbstractGraph, Handle::Module)
         count = zero(Int32)
 
         # Σ { variables(i) : i } > count
-        state = solve!(assume!(solver, variables[n - count]))
+        solver[variables[n - count]] = one(Int32)
+        state = solve!(solver)
 
         if state != :sat
             error("no solutions found")
@@ -1875,37 +1880,14 @@ function maximalclique(graph::AbstractGraph, Handle::Module)
             count += one(Int32)
 
             # Σ { variables(i) : i } > count
-            state = solve!(assume!(solver, variables[n - count]))
+            solver[variables[n - count]] = one(Int32)
+            state = solve!(solver)
         end
 
         return resize!(stack, num)
     end
 
     return clique
-end
-
-# encode a sorting network
-function sortingnetwork!(solver::Solver, var::AbstractVector)
-    n = length(var)
-
-    mergesort(n) do i, j
-        # min ↔ var(i) ∧ var(j)
-        min = variable!(solver)
-        clause!(solver, var[i], -min)
-        clause!(solver, var[j], -min)
-        clause!(solver, -var[i], -var[j], min)
-
-        # max ↔ var(i) ∨ var(j)
-        max = variable!(solver)
-        clause!(solver, -var[i], max)
-        clause!(solver, -var[j], max)
-        clause!(solver, var[i], var[j], -max)
-
-        var[i] = min
-        var[j] = max
-    end
-
-    return solver
 end
 
 # partition a graph into (false) twins
@@ -2004,90 +1986,6 @@ function twins(graph::AbstractGraph{V}, ::Val{T}) where {V, T}
 
     return set, list
 end
-
-# Batcher's Odd-Even Merge Sort
-# https://gist.github.com/stbuehler/883635
-function mergesort(f::Function, n::Integer)
-    mergesort(f, oneto(n))
-    return
-end
-
-function mergesort(f::Function, slice::AbstractRange)
-    if length(slice) <= 2
-        sorttwo(f, slice)
-    else
-        lhs, rhs = halves(slice)
-        mergesort(f, lhs)
-        mergesort(f, rhs)
-        oddevenmerge(f, slice)
-    end
-
-    return
-end
-
-function is2pot(n::Integer)
-    return ispositive(n) && iszero(n & (n - 1))
-end
-
-function is2pot(slice::AbstractRange)
-    return is2pot(length(slice))
-end
-
-function odd(slice::AbstractRange)
-    return (first(slice) + step(slice)):twice(step(slice)):last(slice)
-end
-
-function even(slice::AbstractRange)
-    return first(slice):twice(step(slice)):last(slice)
-end
-
-function halves(slice::AbstractRange)
-    if length(slice) <= 1
-        lhs = slice
-        rhs = 1:1:0
-    else
-        if is2pot(slice)
-            mid = first(slice) + half(length(slice)) * step(slice)
-        else
-            len = 2
-
-            while len < length(slice)
-                len = twice(len)
-            end
-
-            mid = first(slice) + half(len) * step(slice)
-        end
-
-        lhs = first(slice):step(slice):(mid - 1)
-        rhs = mid:step(slice):last(slice)
-    end
-
-    return lhs, rhs
-end
-
-function sorttwo(f::Function, slice::AbstractRange)
-    if istwo(length(slice))
-        f(slice[1], slice[2])
-    end
-
-    return
-end
-
-function oddevenmerge(f::Function, slice::AbstractRange)
-    if length(slice) <= 2
-        sorttwo(f, slice)
-    else
-        oddevenmerge(f, odd(slice))
-        oddevenmerge(f, even(slice))
-
-        for i in 2:2:(length(slice) - 1)
-            f(slice[i], slice[i + 1])
-        end
-    end
-
-    return
-end
-
 
 function minimalchordal(graph, order::AbstractVector, index::AbstractVector = invperm(order))
     return minimalchordal(BipartiteGraph(graph), order, index)
