@@ -3,7 +3,7 @@
 
     Solver{Handle}(num::Integer)
 
-An IPASIR-compliant SAT solver.
+An IPASIR-compliant SAT solver. This type implements the [abstract vector interface](https://docs.julialang.org/en/v1/manual/interfaces/#man-interface-array).
 """
 mutable struct Solver{Handle} <: AbstractVector{Int32}
     handle::Val{Handle}

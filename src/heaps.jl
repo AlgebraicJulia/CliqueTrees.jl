@@ -118,6 +118,11 @@ function Base.isempty(heap::Heap)
     return iszero(length(heap))
 end
 
+function Base.keys(heap::Heap{I}) where {I}
+    @inbounds keys = @view heap.heap[one(I):heap.num[]]
+    return keys
+end
+
 @propagate_inbounds function Base.getindex(heap::Heap, i::Integer)
     @boundscheck checkbounds(heap.key, i)
     @inbounds return heap.key[i]

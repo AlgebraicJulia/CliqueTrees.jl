@@ -2,6 +2,10 @@
 
 An wrapper for IPASIR-compliant SAT solvers.
 
+## Basic Usage
+
+Solvers implement the [abstract vector interface](https://docs.julialang.org/en/v1/manual/interfaces/#man-interface-array). 
+
 ```julia-repl
 julia> using CliqueTrees.IPASIR, PicoSAT_jll, CryptoMiniSAT_jll
 

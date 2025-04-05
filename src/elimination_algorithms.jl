@@ -74,8 +74,11 @@ approximating these values. The [`AMD`](@ref) algorithm is the state-of-the-prac
   - [`BT`](@ref)
   - [`SAT`](@ref)
 
-These algorithm minimizes the treewidth of the completed graph. Beware! This is an NP-hard problem. I recommend wrapping exact
-treewidth algorithms with preprocessors like [`RuleReduction`](@ref) or [`ComponentReduction`](@ref). 
+These algorithm minimizes the treewidth of the completed graph.
+
+!!! warning
+    This is an NP-hard problem. I recommend wrapping exact treewidth algorithms with preprocessors like
+    [`RuleReduction`](@ref) or [`ComponentReduction`](@ref). 
 
 # Meta Algorithms
 
@@ -779,14 +782,14 @@ function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
 end
 
 function permutation(graph, alg::RuleReduction)
-    stack, label, kernel = rulereduction(graph)
+    kernel, stack, label, width = pr4(graph, lowerbound(graph))
     order, index = permutation(kernel, alg.alg)
     append!(stack, view(label, order))
     return stack, invperm(stack)
 end
 
 function permutation(weights::AbstractVector, graph, alg::RuleReduction)
-    stack, label, kernel = rulereduction(weights, graph)
+    kernel, stack, label, width = pr4(weights, graph, lowerbound(weights, graph))
     order, index = permutation(view(weights, label), kernel, alg.alg)
     append!(stack, view(label, order))
     return stack, invperm(stack)
@@ -964,7 +967,7 @@ function rcmmd(graph, alg::SortingAlgorithm = DEFAULT_UNSTABLE)
         component, _, tag = bfs!(level, queue, graph, root, tag)
 
         root = argmin(component) do v
-            outdegree(graph, v)
+            eltypedegree(graph, v)
         end
 
         return root, tag
@@ -1000,7 +1003,7 @@ function genrcm!(f::Function, graph::AbstractGraph{V}, alg::SortingAlgorithm) wh
     scratch = Vector{V}(undef, Δout(graph))
 
     @inbounds for v in vertices(graph)
-        sort!(neighbors(graph, v); alg, scratch, by = u -> outdegree(graph, u))
+        sort!(neighbors(graph, v); alg, scratch, by = u -> eltypedegree(graph, u))
     end
 
     # initialize queue
@@ -1037,13 +1040,13 @@ function fnroot!(
 
     @inbounds while root != candidate
         candidate = last(component)
-        degree = outdegree(graph, candidate)
+        degree = eltypedegree(graph, candidate)
         eccentricity = level[candidate] - tag
 
         for v in Iterators.reverse(component)
             eccentricity + tag == level[v] || break
 
-            d = outdegree(graph, v)
+            d = eltypedegree(graph, v)
 
             if d < degree
                 candidate, degree = v, d
@@ -1454,7 +1457,7 @@ function mf(graph::AbstractGraph{V}, ::Val{false}) where {V}
 
     for v in vertices(graph)
         i = zero(V)
-        list = Vector{V}(undef, outdegree(graph, v))
+        list = Vector{V}(undef, eltypedegree(graph, v))
 
         for w in outneighbors(graph, v)
             if v != w
@@ -1476,7 +1479,7 @@ function mf(graph::AbstractGraph{V}, ::Val{true}) where {V}
 
     for v in vertices(graph)
         i = zero(V)
-        list = Vector{V}(undef, outdegree(graph, v))
+        list = Vector{V}(undef, eltypedegree(graph, v))
 
         for w in outneighbors(graph, v)
             if v != w
@@ -2001,13 +2004,13 @@ function minimalchordal(graph::AbstractGraph{V}, order::AbstractVector, index::A
     for (i, v) in enumerate(order)
         F[i] = Tuple{V, V}[]
         list = neighbors(M, v)
-        degree = outdegree(M, v)
+        degree = eltypedegree(M, v)
 
         for j in oneto(degree)
             w = list[j]
 
             if i < index[w]
-                for jj in (j + 1):degree
+                for jj in (j + one(V)):degree
                     ww = list[jj]
 
                     if i < index[ww] && !has_edge(M, w, ww)
@@ -2061,7 +2064,7 @@ function minimalchordal(graph::AbstractGraph{V}, order::AbstractVector, index::A
 
             for (j, v) in enumerate(worder)
                 list = neighbors(W, v)
-                degree = outdegree(W, v)
+                degree = eltypedegree(W, v)
 
                 for k in oneto(degree)
                     w = list[k]
@@ -2093,16 +2096,17 @@ end
 
 # Preprocessing Rules for Triangulation of Probabilistic Networks
 # Bodlaender, Koster, Ejkhof, and van der Gaag
-# PR-3
-function rulereduction(graph)
-    return rulereduction(BipartiteGraph(graph))
+# PR-3 (Islet, Twig, Series, Triangle, Buddy, and Cube)
+function pr3(graph, width::Integer)
+    return pr3(BipartiteGraph(graph), width)
 end
 
-function rulereduction(graph::AbstractGraph)
-    return rulereduction!(Graph(graph))
+function pr3(graph::AbstractGraph{V}, width::Integer) where {V}
+    kernel = Graph(graph)
+    return kernel, pr3!(kernel, convert(V, width))...
 end
 
-function rulereduction!(graph::Graph{V}) where {V}
+function pr3!(graph::Graph{V}, width::V) where {V}
     n = nv(graph)
 
     for v in vertices(graph)
@@ -2120,8 +2124,11 @@ function rulereduction!(graph::Graph{V}) where {V}
     end
 
     for v in vertices(graph)
-        @inbounds pushfirst!(set(outdegree(graph, v)), v)
+        @inbounds pushfirst!(set(eltypedegree(graph, v)), v)
     end
+
+    # treewidth lower bound
+    width = max(width, zero(V))
 
     # stack of eliminated vertices
     lo = -one(V)
@@ -2153,17 +2160,19 @@ function rulereduction!(graph::Graph{V}) where {V}
                 w = only(neighbors(graph, v))
                 hi += one(V); stack[hi] = v
 
-                delete!(set(outdegree(graph, w)), w)
+                delete!(set(eltypedegree(graph, w)), w)
 
                 rem_edge!(graph, v, w)
 
-                pushfirst!(set(outdegree(graph, w)), w)
+                pushfirst!(set(eltypedegree(graph, w)), w)
 
                 n = next[v]; delete!(set(1), v)
                 v = n
             end
 
             if lo == hi
+                width = max(width, two(V))
+
                 # series rule
                 v = head[3]
 
@@ -2174,22 +2183,24 @@ function rulereduction!(graph::Graph{V}) where {V}
                     w, ww = neighbors(graph, v)
                     hi += one(V); stack[hi] = v
 
-                    delete!(set(outdegree(graph, w)), w)
-                    delete!(set(outdegree(graph, ww)), ww)
+                    delete!(set(eltypedegree(graph, w)), w)
+                    delete!(set(eltypedegree(graph, ww)), ww)
 
                     rem_edge!(graph, v, w)
                     rem_edge!(graph, v, ww)
 
                     add_edge!(graph, w, ww)
 
-                    pushfirst!(set(outdegree(graph, w)), w)
-                    pushfirst!(set(outdegree(graph, ww)), ww)
+                    pushfirst!(set(eltypedegree(graph, w)), w)
+                    pushfirst!(set(eltypedegree(graph, ww)), ww)
 
                     n = next[v]; delete!(set(2), v)
                     v = n
                 end
 
                 if lo == hi
+                    width = max(width, three(V))
+
                     # triangle rule
                     v = head[4]
 
@@ -2211,9 +2222,9 @@ function rulereduction!(graph::Graph{V}) where {V}
                             # v  ---  www
                             hi += one(V); stack[hi] = v
 
-                            delete!(set(outdegree(graph, w)), w)
-                            delete!(set(outdegree(graph, ww)), ww)
-                            delete!(set(outdegree(graph, www)), www)
+                            delete!(set(eltypedegree(graph, w)), w)
+                            delete!(set(eltypedegree(graph, ww)), ww)
+                            delete!(set(eltypedegree(graph, www)), www)
 
                             rem_edge!(graph, v, w)
                             rem_edge!(graph, v, ww)
@@ -2222,9 +2233,9 @@ function rulereduction!(graph::Graph{V}) where {V}
                             add_edge!(graph, w, www)
                             add_edge!(graph, ww, www)
 
-                            pushfirst!(set(outdegree(graph, w)), w)
-                            pushfirst!(set(outdegree(graph, ww)), ww)
-                            pushfirst!(set(outdegree(graph, www)), www)
+                            pushfirst!(set(eltypedegree(graph, w)), w)
+                            pushfirst!(set(eltypedegree(graph, ww)), ww)
+                            pushfirst!(set(eltypedegree(graph, www)), www)
 
                             n = next[v]; delete!(set(3), v)
                         else
@@ -2254,9 +2265,9 @@ function rulereduction!(graph::Graph{V}) where {V}
                                     hi += one(V); stack[hi] = vv
                                     hi += one(V); stack[hi] = v
 
-                                    delete!(set(outdegree(graph, w)), w)
-                                    delete!(set(outdegree(graph, ww)), ww)
-                                    delete!(set(outdegree(graph, www)), www)
+                                    delete!(set(eltypedegree(graph, w)), w)
+                                    delete!(set(eltypedegree(graph, ww)), ww)
+                                    delete!(set(eltypedegree(graph, www)), www)
 
                                     rem_edge!(graph, v, w)
                                     rem_edge!(graph, v, ww)
@@ -2269,9 +2280,9 @@ function rulereduction!(graph::Graph{V}) where {V}
                                     add_edge!(graph, w, www)
                                     add_edge!(graph, ww, www)
 
-                                    pushfirst!(set(outdegree(graph, w)), w)
-                                    pushfirst!(set(outdegree(graph, ww)), ww)
-                                    pushfirst!(set(outdegree(graph, www)), www)
+                                    pushfirst!(set(eltypedegree(graph, w)), w)
+                                    pushfirst!(set(eltypedegree(graph, ww)), ww)
+                                    pushfirst!(set(eltypedegree(graph, www)), www)
 
                                     nn = zero(V); delete!(set(3), vv)
                                     n = next[v]; delete!(set(3), v)
@@ -2292,7 +2303,7 @@ function rulereduction!(graph::Graph{V}) where {V}
                             while ispositive(v)
                                 vv, vvv, vvvv = neighbors(graph, v)
 
-                                if isthree(outdegree(graph, vv)) && isthree(outdegree(graph, vvv)) && isthree(outdegree(graph, vvvv))
+                                if isthree(eltypedegree(graph, vv)) && isthree(eltypedegree(graph, vvv)) && isthree(eltypedegree(graph, vvvv))
                                     w = ww = www = zero(V)
                                     x, xx, xxx = neighbors(graph, vv)
                                     y, yy, yyy = neighbors(graph, vvv)
@@ -2345,9 +2356,9 @@ function rulereduction!(graph::Graph{V}) where {V}
                                         hi += one(V); stack[hi] = vv
                                         hi += one(V); stack[hi] = v
 
-                                        delete!(set(outdegree(graph, w)), w)
-                                        delete!(set(outdegree(graph, ww)), ww)
-                                        delete!(set(outdegree(graph, www)), www)
+                                        delete!(set(eltypedegree(graph, w)), w)
+                                        delete!(set(eltypedegree(graph, ww)), ww)
+                                        delete!(set(eltypedegree(graph, www)), www)
 
                                         rem_edge!(graph, vv, v)
                                         rem_edge!(graph, vv, x)
@@ -2363,9 +2374,9 @@ function rulereduction!(graph::Graph{V}) where {V}
                                         add_edge!(graph, w, www)
                                         add_edge!(graph, ww, www)
 
-                                        pushfirst!(set(outdegree(graph, w)), w)
-                                        pushfirst!(set(outdegree(graph, ww)), ww)
-                                        pushfirst!(set(outdegree(graph, www)), www)
+                                        pushfirst!(set(eltypedegree(graph, w)), w)
+                                        pushfirst!(set(eltypedegree(graph, ww)), ww)
+                                        pushfirst!(set(eltypedegree(graph, www)), www)
 
                                         delete!(set(3), vvvv)
                                         delete!(set(3), vvv)
@@ -2380,6 +2391,10 @@ function rulereduction!(graph::Graph{V}) where {V}
 
                                 v = n
                             end
+
+                            if lo == hi
+                                width = max(width, four(V))
+                            end
                         end
                     end
                 end
@@ -2387,22 +2402,156 @@ function rulereduction!(graph::Graph{V}) where {V}
         end
     end
 
-    resize!(stack, hi)
-    return stack, rem_vertices!(graph, stack), graph
+    label = rem_vertices!(graph, resize!(stack, hi); keep_order = true)
+    return stack, label, width
 end
+
+# Preprocessing Rules for Triangulation of Probabilistic Networks
+# Bodlaender, Koster, Ejkhof, and van der Gaag
+# PR-4 (PR-3 + Simplicial + Almost Simplicial)
+function pr4(graph, width::Integer)
+    return pr4(BipartiteGraph(graph), width)
+end
+
+function pr4(graph::AbstractGraph{V}, width::Integer) where {V}
+    kernel = Graph(graph)
+    return kernel, pr4!(kernel, convert(V, width))...
+end
+
+function pr4!(graph::Graph{V}, width::V) where {V}
+    # apply PR-3
+    _stack, _label, width = pr3!(graph, width)
+
+    # apply simplicial and almost simplicial rules
+    n = nv(graph)
+    marker = zeros(Int, n); tag = 0
+
+    # heap
+    heap = Heap{V, V}(n)
+
+    for v in vertices(graph)
+        list = neighbors(graph, v)
+        degeneracy = zero(V)
+
+        for i in oneto(eltypedegree(graph, v))
+            w = list[i]
+            marker[neighbors(graph, w)] .= tag += 1
+
+            for ii in oneto(i - one(V))
+                ww = list[ii]
+
+                if marker[ww] < tag
+                    degeneracy += one(V)
+                end
+            end
+        end
+
+        push!(heap, v => degeneracy)
+    end
+
+    hfall!(heap)
+
+    # stack of eliminated vertices
+    lo = -one(V)
+    hi = zero(V)
+    stack = Vector{V}(undef, n)
+
+    while lo < hi
+        lo = hi
+
+        # simplicial
+        while !isempty(heap) && iszero(minimum(heap))
+            v = argmin(heap)
+            list = neighbors(graph, v)
+            degree = eltypedegree(graph, v)
+
+            hi += one(V); stack[hi] = v; width = max(width, degree)
+            delete!(heap, v)
+
+            while !isempty(list)
+                w = last(list)
+                heap[w] -= (eltypedegree(graph, w) - degree)
+                hrise!(heap, w)
+                hfall!(heap, w)
+                rem_edge!(graph, v, w)
+            end
+        end
+
+        # almost-simplicial
+        for w in keys(heap)
+            marker[neighbors(graph, w)] .= tag += 1
+
+            for v in neighbors(graph, w)
+                list = neighbors(graph, v)
+                degree = eltypedegree(graph, v)
+
+                if degree <= width
+                    count = zero(V)
+
+                    for ww in neighbors(graph, v)
+                        if w != ww && marker[ww] < tag
+                            count += one(V)
+                        end
+                    end
+
+                    if heap[v] == count
+                        hi += one(V); stack[hi] = v
+                        delete!(heap, v)
+
+                        for ww in list
+                            if w != ww && marker[ww] < tag
+                                count = one(V)
+
+                                for vv in neighbors(graph, ww)
+                                    if v != vv && marker[vv] == tag
+                                        heap[vv] -= one(V)
+                                        hrise!(heap, vv)
+                                        count += one(V)
+                                    end
+                                end
+
+                                heap[w] += (eltypedegree(graph, w) - count)
+                                heap[ww] += (eltypedegree(graph, ww) - count)
+                                add_edge!(graph, w, ww); marker[ww] = tag
+                            end
+                        end
+
+                        while !isempty(list)
+                            ww = last(list)
+                            heap[ww] -= (eltypedegree(graph, ww) - degree)
+                            hrise!(heap, ww)
+                            hfall!(heap, ww)
+                            rem_edge!(graph, v, ww)
+                        end
+
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    append!(_stack, view(_label, resize!(stack, hi)))
+    keepat!(_label, rem_vertices!(graph, stack; keep_order = true))
+    return _stack, _label, width
+end
+
 
 # Safe Reduction Rules for Weighted Treewidth
 # Eijkhof, Bodlaender, and Koster
-function rulereduction(weights::AbstractVector, graph)
-    return rulereduction(weights, BipartiteGraph(graph))
+# PR-3 (Islet, Twig, Series, Triangle, Buddy, and Cube)
+function pr3(weights::AbstractVector, graph, width::Number)
+    return pr3(weights, BipartiteGraph(graph), width)
 end
 
-function rulereduction(weights::AbstractVector, graph::AbstractGraph)
-    return rulereduction!(weights, Graph(graph))
+function pr3(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
+    kernel = Graph(graph)
+    return kernel, pr3!(weights, kernel, convert(W, width))...
 end
 
-function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
+function pr3!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V}
     n = nv(graph)
+    tol = tolerance(weights)
 
     @inbounds for v in vertices(graph)
         rem_edge!(graph, v, v)
@@ -2429,11 +2578,8 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
         end
 
         nws[v] = nw
-        pushfirst!(set(outdegree(graph, v)), v)
+        pushfirst!(set(eltypedegree(graph, v)), v)
     end
-
-    # lower bound
-    width = lowerbound(weights, graph)
 
     # stack of eliminated vertices
     lo = -one(V)
@@ -2465,11 +2611,11 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                 w = only(neighbors(graph, v))
                 hi += one(V); stack[hi] = v; width = max(width, nws[v])
 
-                delete!(set(outdegree(graph, w)), w)
+                delete!(set(eltypedegree(graph, w)), w)
 
                 rem_edge!(graph, v, w); nws[w] -= weights[v]
 
-                pushfirst!(set(outdegree(graph, w)), w)
+                pushfirst!(set(eltypedegree(graph, w)), w)
 
                 n = next[v]; delete!(set(1), v)
                 v = n
@@ -2482,10 +2628,10 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                 while ispositive(v)
                     w = ww = zero(V)
 
-                    if nws[v] <= width
+                    if nws[v] < width + tol
                         x, xx = neighbors(graph, v)
 
-                        if weights[v] >= min(weights[x], weights[xx])
+                        if weights[v] + tol > min(weights[x], weights[xx])
                             w, ww = x, xx
                         end
                     end
@@ -2496,8 +2642,8 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                         # v  ---  ww
                         hi += one(V); stack[hi] = v
 
-                        delete!(set(outdegree(graph, w)), w)
-                        delete!(set(outdegree(graph, ww)), ww)
+                        delete!(set(eltypedegree(graph, w)), w)
+                        delete!(set(eltypedegree(graph, ww)), ww)
 
                         rem_edge!(graph, v, w); nws[w] -= weights[v]
                         rem_edge!(graph, v, ww); nws[ww] -= weights[v]
@@ -2507,8 +2653,8 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                             nws[ww] += weights[w]
                         end
 
-                        pushfirst!(set(outdegree(graph, w)), w)
-                        pushfirst!(set(outdegree(graph, ww)), ww)
+                        pushfirst!(set(eltypedegree(graph, w)), w)
+                        pushfirst!(set(eltypedegree(graph, ww)), ww)
 
                         n = next[v]; delete!(set(2), v)
                     else
@@ -2525,14 +2671,14 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                     while ispositive(v)
                         w = ww = www = zero(V)
 
-                        if nws[v] <= width
+                        if nws[v] < width + tol
                             x, xx, xxx = neighbors(graph, v)
 
-                            if has_edge(graph, x, xx) && weights[v] >= weights[xxx]
+                            if has_edge(graph, x, xx) && weights[v] + tol > weights[xxx]
                                 w, ww, www = x, xx, xxx
-                            elseif has_edge(graph, x, xxx) && weights[v] >= weights[xx]
+                            elseif has_edge(graph, x, xxx) && weights[v] + tol > weights[xx]
                                 w, ww, www = x, xxx, xx
-                            elseif has_edge(graph, xx, xxx) && weights[v] >= weights[x]
+                            elseif has_edge(graph, xx, xxx) && weights[v] + tol > weights[x]
                                 w, ww, www = xx, xxx, x
                             end
                         end
@@ -2543,9 +2689,9 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                             # v  ---  www
                             hi += one(V); stack[hi] = v
 
-                            delete!(set(outdegree(graph, w)), w)
-                            delete!(set(outdegree(graph, ww)), ww)
-                            delete!(set(outdegree(graph, www)), www)
+                            delete!(set(eltypedegree(graph, w)), w)
+                            delete!(set(eltypedegree(graph, ww)), ww)
+                            delete!(set(eltypedegree(graph, www)), www)
 
                             rem_edge!(graph, v, w); nws[w] -= weights[v]
                             rem_edge!(graph, v, ww); nws[ww] -= weights[v]
@@ -2561,9 +2707,9 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                 nws[www] += weights[ww]
                             end
 
-                            pushfirst!(set(outdegree(graph, w)), w)
-                            pushfirst!(set(outdegree(graph, ww)), ww)
-                            pushfirst!(set(outdegree(graph, www)), www)
+                            pushfirst!(set(eltypedegree(graph, w)), w)
+                            pushfirst!(set(eltypedegree(graph, ww)), ww)
+                            pushfirst!(set(eltypedegree(graph, www)), www)
 
                             n = next[v]; delete!(set(3), v)
                         else
@@ -2580,7 +2726,7 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                         while ispositive(v)
                             vv = n = next[v]
 
-                            if nws[v] <= width
+                            if nws[v] < width + tol
                                 w, ww, www = neighbors(graph, v)
 
                                 # sort the weights
@@ -2588,15 +2734,15 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                 pp = weights[ww]
                                 ppp = weights[www]
 
-                                if p > pp
+                                if p - tol > pp
                                     p, pp = pp, p
                                 end
 
-                                if pp > ppp
+                                if pp - tol > ppp
                                     pp, ppp = ppp, pp
                                 end
 
-                                if p > pp
+                                if p - tol > pp
                                     p, pp = pp, p
                                 end
 
@@ -2607,11 +2753,11 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                     q = weights[v]
                                     qq = weights[vv]
 
-                                    if q > qq
+                                    if q - tol > qq
                                         q, qq = qq, q
                                     end
 
-                                    if nws[vv] <= width && p <= q && pp <= qq && (w, ww, www) == (x, xx, xxx)
+                                    if nws[vv] < width + tol && p < q + tol && pp < qq + tol && (w, ww, www) == (x, xx, xxx)
                                         # w  -----------  vv
                                         # |           /   |
                                         # |       ww      |
@@ -2620,9 +2766,9 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                         hi += one(V); stack[hi] = vv
                                         hi += one(V); stack[hi] = v
 
-                                        delete!(set(outdegree(graph, w)), w)
-                                        delete!(set(outdegree(graph, ww)), ww)
-                                        delete!(set(outdegree(graph, www)), www)
+                                        delete!(set(eltypedegree(graph, w)), w)
+                                        delete!(set(eltypedegree(graph, ww)), ww)
+                                        delete!(set(eltypedegree(graph, www)), www)
 
                                         rem_edge!(graph, v, w); nws[w] -= weights[v]
                                         rem_edge!(graph, v, ww); nws[ww] -= weights[v]
@@ -2646,9 +2792,9 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                             nws[www] += weights[ww]
                                         end
 
-                                        pushfirst!(set(outdegree(graph, w)), w)
-                                        pushfirst!(set(outdegree(graph, ww)), ww)
-                                        pushfirst!(set(outdegree(graph, www)), www)
+                                        pushfirst!(set(eltypedegree(graph, w)), w)
+                                        pushfirst!(set(eltypedegree(graph, ww)), ww)
+                                        pushfirst!(set(eltypedegree(graph, www)), www)
 
                                         nn = zero(V); delete!(set(3), vv)
                                         n = next[v]; delete!(set(3), v)
@@ -2670,7 +2816,7 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                             while ispositive(v)
                                 vv, vvv, vvvv = neighbors(graph, v)
 
-                                if isthree(outdegree(graph, vv)) && isthree(outdegree(graph, vvv)) && isthree(outdegree(graph, vvvv)) && max(nws[vv], nws[vvv], nws[vvvv]) <= width
+                                if isthree(eltypedegree(graph, vv)) && isthree(eltypedegree(graph, vvv)) && isthree(eltypedegree(graph, vvvv)) && max(nws[vv], nws[vvv], nws[vvvv]) < width + tol
                                     w = ww = www = zero(V)
                                     x, xx, xxx = neighbors(graph, vv)
                                     y, yy, yyy = neighbors(graph, vvv)
@@ -2709,8 +2855,8 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                     end
 
                                     if ispositive(w) && (
-                                            (weights[vv] >= weights[www] && weights[vvv] >= weights[w] && weights[vvvv] >= weights[ww]) ||
-                                                (weights[vv] >= weights[w] && weights[vvv] >= weights[ww] && weights[vvvv] >= weights[www])
+                                            (weights[vv] + tol > weights[www] && weights[vvv] + tol > weights[w] && weights[vvvv] + tol > weights[ww]) ||
+                                                (weights[vv] + tol > weights[w] && weights[vvv] + tol > weights[ww] && weights[vvvv] + tol > weights[www])
                                         )
                                         #         ww
                                         #     /       \
@@ -2726,9 +2872,9 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                         hi += one(V); stack[hi] = vv
                                         hi += one(V); stack[hi] = v
 
-                                        delete!(set(outdegree(graph, w)), w)
-                                        delete!(set(outdegree(graph, ww)), ww)
-                                        delete!(set(outdegree(graph, www)), www)
+                                        delete!(set(eltypedegree(graph, w)), w)
+                                        delete!(set(eltypedegree(graph, ww)), ww)
+                                        delete!(set(eltypedegree(graph, www)), www)
 
                                         rem_edge!(graph, vv, v); nws[vv] -= weights[v]
                                         rem_edge!(graph, vv, x); nws[vv] -= weights[x]
@@ -2755,9 +2901,9 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
                                             nws[www] += weights[ww]
                                         end
 
-                                        pushfirst!(set(outdegree(graph, w)), w)
-                                        pushfirst!(set(outdegree(graph, ww)), ww)
-                                        pushfirst!(set(outdegree(graph, www)), www)
+                                        pushfirst!(set(eltypedegree(graph, w)), w)
+                                        pushfirst!(set(eltypedegree(graph, ww)), ww)
+                                        pushfirst!(set(eltypedegree(graph, www)), www)
 
                                         delete!(set(3), vvvv)
                                         delete!(set(3), vvv)
@@ -2779,8 +2925,150 @@ function rulereduction!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V
         end
     end
 
-    resize!(stack, hi)
-    return stack, rem_vertices!(graph, stack), graph
+    label = rem_vertices!(graph, resize!(stack, hi); keep_order = true)
+    return stack, label, width
+end
+
+# Safe Reduction Rules for Weighted Treewidth
+# Eijkhof, Bodlaender, and Koster
+# PR-4 (PR-3 + Simplicial + Almost Simplicial)
+function pr4(weights::AbstractVector, graph, width::Number)
+    return pr4(weights, BipartiteGraph(graph), width)
+end
+
+function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
+    kernel = Graph(graph)
+    return kernel, pr4!(weights, kernel, convert(W, width))...
+end
+
+function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V}
+    # apply PR-3
+    _stack, _label, width = pr3!(weights, graph, width)
+
+    # apply simplicial and almost simplicial rules
+    n = nv(graph)
+    tol = tolerance(weights)
+    marker = zeros(Int, n); tag = 0
+
+    # neighbor weights
+    nws = Vector{W}(undef, n)
+
+    # heap
+    heap = Heap{V, V}(n)
+
+    for v in vertices(graph)
+        list = neighbors(graph, v)
+
+        nw = weights[_label[v]]
+        degeneracy = zero(V)
+
+        for i in oneto(eltypedegree(graph, v))
+            w = list[i]
+            nw += weights[_label[w]]
+            marker[neighbors(graph, w)] .= tag += 1
+
+            for ii in oneto(i - one(V))
+                ww = list[ii]
+
+                if marker[ww] < tag
+                    degeneracy += one(V)
+                end
+            end
+        end
+
+        nws[v] = nw
+        push!(heap, v => degeneracy)
+    end
+
+    hfall!(heap)
+
+    # stack of eliminated vertices
+    lo = -one(V)
+    hi = zero(V)
+    stack = Vector{V}(undef, n)
+
+    while lo < hi
+        lo = hi
+
+        # simplicial
+        while !isempty(heap) && iszero(minimum(heap))
+            v = argmin(heap)
+            list = neighbors(graph, v)
+            degree = eltypedegree(graph, v)
+
+            hi += one(V); stack[hi] = v; width = max(width, nws[v])
+            delete!(heap, v)
+
+            while !isempty(list)
+                w = last(list)
+                nws[w] -= weights[_label[v]]
+                heap[w] -= (eltypedegree(graph, w) - degree)
+                hrise!(heap, w)
+                hfall!(heap, w)
+                rem_edge!(graph, v, w)
+            end
+        end
+
+        # almost-simplicial
+        for w in keys(heap)
+            marker[neighbors(graph, w)] .= tag += 1
+
+            for v in neighbors(graph, w)
+                list = neighbors(graph, v)
+                degree = eltypedegree(graph, v)
+
+                if nws[v] < width + tol && weights[_label[w]] < weights[_label[v]] + tol
+                    count = zero(V)
+
+                    for ww in neighbors(graph, v)
+                        if w != ww && marker[ww] < tag
+                            count += one(V)
+                        end
+                    end
+
+                    if heap[v] == count
+                        hi += one(V); stack[hi] = v
+                        delete!(heap, v)
+
+                        for ww in list
+                            if w != ww && marker[ww] < tag
+                                count = one(V)
+
+                                for vv in neighbors(graph, ww)
+                                    if v != vv && marker[vv] == tag
+                                        heap[vv] -= one(V)
+                                        hrise!(heap, vv)
+                                        count += one(V)
+                                    end
+                                end
+
+                                nws[w] += weights[_label[ww]]
+                                nws[ww] += weights[_label[w]]
+                                heap[w] += (eltypedegree(graph, w) - count)
+                                heap[ww] += (eltypedegree(graph, ww) - count)
+                                add_edge!(graph, w, ww); marker[ww] = tag
+                            end
+                        end
+
+                        while !isempty(list)
+                            ww = last(list)
+                            nws[ww] -= weights[_label[v]]
+                            heap[ww] -= (eltypedegree(graph, ww) - degree)
+                            hrise!(heap, ww)
+                            hfall!(heap, ww)
+                            rem_edge!(graph, v, ww)
+                        end
+
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    append!(_stack, view(_label, resize!(stack, hi)))
+    keepat!(_label, rem_vertices!(graph, stack; keep_order = true))
+    return _stack, _label, width
 end
 
 function componentreduction(graph)
@@ -2810,7 +3098,7 @@ function componentreduction(graph::AbstractGraph{V}) where {V}
             for v in component
                 projection[v] = nstop
                 nstop += one(V)
-                mstop += convert(E, outdegree(graph, v))
+                mstop += convert(E, eltypedegree(graph, v))
             end
 
             subgraph = BipartiteGraph{V, E}(
@@ -2822,7 +3110,7 @@ function componentreduction(graph::AbstractGraph{V}) where {V}
             p = pointers(subgraph)[begin] = one(E)
 
             for (i, v) in enumerate(component)
-                pp = pointers(subgraph)[i + 1] = p + outdegree(graph, v)
+                pp = pointers(subgraph)[i + 1] = p + eltypedegree(graph, v)
                 targets(subgraph)[p:(pp - one(E))] = @view projection[neighbors(graph, v)]
                 p = pp
             end

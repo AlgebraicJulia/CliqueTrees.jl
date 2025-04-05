@@ -3,9 +3,13 @@ module Utilities
 using Base: @propagate_inbounds
 using Base.Iterators
 using Base.Order
+using Graphs
 
 # arithmetic
-export twice, half, four, three, two, ispositive, isnegative, isthree, istwo
+export tolerance, twice, half, two, three, four, ispositive, isnegative, istwo, isthree
+
+# graphs
+export eltypedegree
 
 # sorted collections
 export mergesorted!, indexinsorted!, swap!
@@ -14,6 +18,11 @@ export mergesorted!, indexinsorted!, swap!
 export MAX_ITEMS_PRINTED, printiterator
 
 const MAX_ITEMS_PRINTED = 5
+
+function tolerance(weights::AbstractVector{W}) where {W}
+    tol::W = 1.0e-5
+    return tol
+end
 
 function twice(i::I) where {I}
     return i + i
@@ -27,12 +36,24 @@ function four(::Type{I}) where {I}
     return one(I) + three(I)
 end
 
+function four(i::I) where {I}
+    return four(I)
+end
+
 function three(::Type{I}) where {I}
     return one(I) + two(I)
 end
 
+function three(i::I) where {I}
+    return three(I)
+end
+
 function two(::Type{I}) where {I}
     return one(I) + one(I)
+end
+
+function two(i::I) where {I}
+    return two(I)
 end
 
 function ispositive(i::I) where {I}
@@ -49,6 +70,11 @@ end
 
 function istwo(i::I) where {I}
     return i == two(I)
+end
+
+function eltypedegree(graph::AbstractGraph{V}, i::Integer) where {V}
+    n::V = outdegree(graph, i)
+    return n
 end
 
 # Compute the union of sorted sets `source1` and `source2`.

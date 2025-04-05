@@ -82,7 +82,7 @@ function mmw!(graph::Graph{V}) where {V}
     maxdegree = zero(V)
 
     for v in vertices(graph)
-        degree = outdegree(graph, v)
+        degree = eltypedegree(graph, v)
         mindegree = min(degree, mindegree)
         maxdegree = max(degree, maxdegree)
         pushfirst!(set(degree), v)
@@ -95,9 +95,9 @@ function mmw!(graph::Graph{V}) where {V}
             v = first(set(mindegree))
             delete!(set(mindegree), v)
 
-            if !iszero(outdegree(graph, v))
-                w = argmin(v -> outdegree(graph, v), neighbors(graph, v))
-                delete!(set(outdegree(graph, w)), w)
+            if !iszero(eltypedegree(graph, v))
+                w = argmin(v -> eltypedegree(graph, v), neighbors(graph, v))
+                delete!(set(eltypedegree(graph, w)), w)
                 rem_edge!(graph, v, w)
 
                 tag += one(V)
@@ -107,14 +107,14 @@ function mmw!(graph::Graph{V}) where {V}
                 end
 
                 for ww in neighbors(graph, v)
-                    delete!(set(outdegree(graph, ww)), ww)
+                    delete!(set(eltypedegree(graph, ww)), ww)
 
                     if label[ww] < tag
                         add_edge!(graph, w, ww)
                     end
                 end
 
-                degree = outdegree(graph, w)
+                degree = eltypedegree(graph, w)
                 pushfirst!(set(degree), w)
                 mindegree = min(mindegree, degree)
                 maxdegree = max(maxdegree, degree)
@@ -123,7 +123,7 @@ function mmw!(graph::Graph{V}) where {V}
             while !isempty(neighbors(graph, v))
                 w = last(neighbors(graph, v))
                 rem_edge!(graph, v, w)
-                degree = outdegree(graph, w)
+                degree = eltypedegree(graph, w)
                 pushfirst!(set(degree), w)
                 mindegree = min(mindegree, degree)
                 maxdegree = max(maxdegree, degree)
@@ -157,8 +157,8 @@ end
 
 function mmw!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
     n = nv(graph)
-    tag = zero(V)
-    label = zeros(V, n)
+    tol = tolerance(weights)
+    label = zeros(V, n); tag = zero(V)
 
     # remove self-loops
     for v in vertices(graph)
@@ -192,7 +192,7 @@ function mmw!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
         for ww in neighbors(graph, v)
             nww = heap[ww]
 
-            if weights[ww] <= weights[v] && nww < nw
+            if weights[ww] < weights[v] + tol && nww < nw - tol
                 w, nw = ww, nww
             end
         end
