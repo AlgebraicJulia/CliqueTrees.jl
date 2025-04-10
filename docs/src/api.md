@@ -33,12 +33,14 @@ MF
 MMD
 METIS
 Spectral
+FlowCutter
 BT
 SAT
 MinimalChordal
 CompositeRotations
-RuleReduction
-ComponentReduction
+SafeRules
+SafeSeparators
+ConnectedComponents
 permutation
 mcs
 ```

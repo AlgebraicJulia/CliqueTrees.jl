@@ -11,12 +11,16 @@ using SparseArrays
 using Test
 
 import Catlab
+import libpicosat_jll
 import CryptoMiniSat_jll
+import FlowCutterPACE17_jll
 
 @static if Sys.iswindows()
     import libpicosat_jll as PicoSAT_jll
+    import libpicosat_jll as Lingeling_jll
 else
     import PicoSAT_jll
+    import Lingeling_jll
 end
 
 const TYPES = (
@@ -370,11 +374,13 @@ end
             MMD(),
             METIS(),
             Spectral(),
+            FlowCutter(),
             BT(),
             MinimalChordal(),
             CompositeRotations([1, 2, 3]),
-            RuleReduction(),
-            ComponentReduction(),
+            SafeRules(),
+            SafeSeparators(),
+            ConnectedComponents(),
         )
         @test isa(repr("text/plain", alg), String)
     end
@@ -435,11 +441,13 @@ end
             MMD(),
             # METIS(),
             # Spectral(),
+            FlowCutter(),
             BT(),
             MinimalChordal(),
             CompositeRotations([]),
-            RuleReduction(),
-            ComponentReduction(),
+            SafeRules(),
+            SafeSeparators(),
+            ConnectedComponents(),
         )
         @test permutation(graph; alg) == ([], [])
     end
@@ -476,10 +484,12 @@ end
             MMD(),
             METIS(),
             # Spectral,
+            FlowCutter(),
             BT(),
             CompositeRotations([1]),
-            RuleReduction(),
-            ComponentReduction(),
+            SafeRules(),
+            SafeSeparators(),
+            ConnectedComponents(),
         )
         @test permutation(graph; alg) == ([1], [1])
     end
@@ -571,7 +581,7 @@ end
                 @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.pr3(graph, lowerbound(graph))
                 @inferred CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
-                @inferred CliqueTrees.componentreduction(graph)
+                @inferred CliqueTrees.connectedcomponents(graph)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
                 @inferred supernodetree(graph; alg = 1:17, snd = Nodal())
@@ -602,7 +612,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.componentreduction(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) supernodetree(
@@ -645,7 +655,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.componentreduction(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) supernodetree(
@@ -713,11 +723,13 @@ end
                         MMD(),
                         METIS(),
                         Spectral(),
+                        FlowCutter(),
                         BT(),
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
-                        RuleReduction(),
-                        ComponentReduction(),
+                        SafeRules(),
+                        SafeSeparators(),
+                        ConnectedComponents(),
                     )
                     order, index = permutation(graph; alg)
                     order, index = permutation(ones(17), graph; alg)
@@ -1036,12 +1048,21 @@ end
             @test isa(lb1, V)
             @test isa(ub1, V)
             @test lb1 <= width1 <= ub1
-            # @test treewidth(graph1; alg=ComponentReduction(BT())) === width1
+            # @test treewidth(graph1; alg=ConnectedComponents(BT())) === width1
+            @test treewidth(graph1; alg = SAT{libpicosat_jll}()) === width1
+            @test treewidth(graph1; alg = SAT{Lingeling_jll}()) === width1
             @test treewidth(graph1; alg = SAT{PicoSAT_jll}()) === width1
             @test treewidth(graph1; alg = SAT{CryptoMiniSat_jll}()) === width1
-            # @test treewidth(graph1; alg=RuleReduction(ComponentReduction(BT()))) === width1
-            @test treewidth(graph1; alg = RuleReduction(SAT{PicoSAT_jll}())) === width1
-            @test treewidth(graph1; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width1
+            # @test treewidth(graph1; alg=SafeRules(ConnectedComponents(BT()))) === width1
+            @test treewidth(graph1; alg = SafeRules(SAT{libpicosat_jll}())) === width1
+            @test treewidth(graph1; alg = SafeRules(SAT{Lingeling_jll}())) === width1
+            @test treewidth(graph1; alg = SafeRules(SAT{PicoSAT_jll}())) === width1
+            @test treewidth(graph1; alg = SafeRules(SAT{CryptoMiniSat_jll}())) === width1
+            @test treewidth(graph1; alg = SafeSeparators(MinimalChordal(), BT())) === width1
+            @test treewidth(graph1; alg = SafeSeparators(MinimalChordal(), SAT{libpicosat_jll}())) === width1
+            @test treewidth(graph1; alg = SafeSeparators(MinimalChordal(), SAT{Lingeling_jll}())) === width1
+            @test treewidth(graph1; alg = SafeSeparators(MinimalChordal(), SAT{PicoSAT_jll}())) === width1
+            @test treewidth(graph1; alg = SafeSeparators(MinimalChordal(), SAT{CryptoMiniSat_jll}())) === width1
 
             width1 = 5.0
             lb1 = lowerbound(weights1, graph1)
@@ -1050,12 +1071,16 @@ end
             @test isa(lb1, Float64)
             @test isa(ub1, Float64)
             @test lb1 <= width1 <= ub1
-            # @test treewidth(weights1, graph1; alg=ComponentReduction(BT())) === width1
+            # @test treewidth(weights1, graph1; alg=ConnectedComponents(BT())) === width1
+            @test treewidth(weights1, graph1; alg = SAT{libpicosat_jll}()) === width1
+            @test treewidth(weights1, graph1; alg = SAT{Lingeling_jll}()) === width1
             @test treewidth(weights1, graph1; alg = SAT{PicoSAT_jll}()) === width1
             @test treewidth(weights1, graph1; alg = SAT{CryptoMiniSat_jll}()) === width1
-            # @test treewidth(weights1, graph1; alg=RuleReduction(ComponentReduction(BT()))) === width1
-            @test treewidth(weights1, graph1; alg = RuleReduction(SAT{PicoSAT_jll}())) === width1
-            @test treewidth(weights1, graph1; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width1
+            # @test treewidth(weights1, graph1; alg=SafeRules(ConnectedComponents(BT()))) === width1
+            @test treewidth(weights1, graph1; alg = SafeRules(SAT{libpicosat_jll}())) === width1
+            @test treewidth(weights1, graph1; alg = SafeRules(SAT{Lingeling_jll}())) === width1
+            @test treewidth(weights1, graph1; alg = SafeRules(SAT{PicoSAT_jll}())) === width1
+            @test treewidth(weights1, graph1; alg = SafeRules(SAT{CryptoMiniSat_jll}())) === width1
 
             width2 = V(9)
             lb2 = lowerbound(graph2)
@@ -1065,11 +1090,20 @@ end
             @test isa(ub2, V)
             @test lb2 <= width2 <= ub2
             @test treewidth(graph2; alg = BT()) === width2
+            @test treewidth(graph2; alg = SAT{libpicosat_jll}()) === width2
+            @test treewidth(graph2; alg = SAT{Lingeling_jll}()) === width2
             @test treewidth(graph2; alg = SAT{PicoSAT_jll}()) === width2
             @test treewidth(graph2; alg = SAT{CryptoMiniSat_jll}()) === width2
-            @test treewidth(graph2; alg = RuleReduction(BT())) === width2
-            @test treewidth(graph2; alg = RuleReduction(SAT{PicoSAT_jll}())) === width2
-            @test treewidth(graph2; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width2
+            @test treewidth(graph2; alg = SafeRules(BT())) === width2
+            @test treewidth(graph2; alg = SafeRules(SAT{libpicosat_jll}())) === width2
+            @test treewidth(graph2; alg = SafeRules(SAT{Lingeling_jll}())) === width2
+            @test treewidth(graph2; alg = SafeRules(SAT{PicoSAT_jll}())) === width2
+            @test treewidth(graph2; alg = SafeRules(SAT{CryptoMiniSat_jll}())) === width2
+            @test treewidth(graph2; alg = SafeSeparators(MinimalChordal(), BT())) === width2
+            @test treewidth(graph2; alg = SafeSeparators(MinimalChordal(), SAT{libpicosat_jll}())) === width2
+            @test treewidth(graph2; alg = SafeSeparators(MinimalChordal(), SAT{Lingeling_jll}())) === width2
+            @test treewidth(graph2; alg = SafeSeparators(MinimalChordal(), SAT{PicoSAT_jll}())) === width2
+            @test treewidth(graph2; alg = SafeSeparators(MinimalChordal(), SAT{CryptoMiniSat_jll}())) === width2
 
             width2 = 19.169925001442312
             lb2 = lowerbound(weights2, graph2)
@@ -1079,11 +1113,15 @@ end
             @test isa(ub2, Float64)
             @test lb2 <= width2 <= ub2
             @test treewidth(weights2, graph2; alg = BT()) === width2
+            @test treewidth(weights2, graph2; alg = SAT{libpicosat_jll}()) === width2
+            @test treewidth(weights2, graph2; alg = SAT{Lingeling_jll}()) === width2
             @test treewidth(weights2, graph2; alg = SAT{PicoSAT_jll}()) === width2
             @test treewidth(weights2, graph2; alg = SAT{CryptoMiniSat_jll}()) === width2
-            @test treewidth(weights2, graph2; alg = RuleReduction(BT())) === width2
-            @test treewidth(weights2, graph2; alg = RuleReduction(SAT{PicoSAT_jll}())) === width2
-            @test treewidth(weights2, graph2; alg = RuleReduction(SAT{CryptoMiniSat_jll}())) === width2
+            @test treewidth(weights2, graph2; alg = SafeRules(BT())) === width2
+            @test treewidth(weights2, graph2; alg = SafeRules(SAT{libpicosat_jll}())) === width2
+            @test treewidth(weights2, graph2; alg = SafeRules(SAT{Lingeling_jll}())) === width2
+            @test treewidth(weights2, graph2; alg = SafeRules(SAT{PicoSAT_jll}())) === width2
+            @test treewidth(weights2, graph2; alg = SafeRules(SAT{CryptoMiniSat_jll}())) === width2
         end
     end
 end

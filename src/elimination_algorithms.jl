@@ -5,34 +5,38 @@ A *graph elimination algorithm* computes a permutation of the vertices of a grap
 of the graph. The algorithms below generally seek to minimize the *fill* (number of edges) or *width* (largest clique)
 of the completed graph.
 
-| type                         | name                                         | time     | space    |
-|:---------------------------- |:-------------------------------------------- |:-------- |:-------- |
-| [`BFS`](@ref)                | breadth-first search                         | O(m + n) | O(n)     |
-| [`MCS`](@ref)                | maximum cardinality search                   | O(m + n) | O(n)     |
-| [`LexBFS`](@ref)             | lexicographic breadth-first search           | O(m + n) | O(m + n) |
-| [`RCMMD`](@ref)              | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
-| [`RCMGL`](@ref)              | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
-| [`MCSM`](@ref)               | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
-| [`LexM`](@ref)               | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
-| [`AMF`](@ref)                | approximate minimum fill                     | O(mn)    | O(m + n) |
-| [`MF`](@ref)                 | minimum fill                                 | O(mn²)   |          |
-| [`MMD`](@ref)                | multiple minimum degree                      | O(mn²)   | O(m + n) |
-| [`MinimalChordal`](@ref)     | MinimalChordal                               |          |          |
-| [`CompositeRotations`](@ref) | elimination tree rotation                    | O(m + n) | O(m + n) |
-| [`RuleReduction`](@ref)      | treewith-safe rule-based reduction           |          |          |    
-| [`ComponentReduction`](@ref) | connected component reduction                |          |          |
+| type                          | name                                         | time     | space    |
+|:----------------------------- |:-------------------------------------------- |:-------- |:-------- |
+| [`BFS`](@ref)                 | breadth-first search                         | O(m + n) | O(n)     |
+| [`MCS`](@ref)                 | maximum cardinality search                   | O(m + n) | O(n)     |
+| [`LexBFS`](@ref)              | lexicographic breadth-first search           | O(m + n) | O(m + n) |
+| [`RCMMD`](@ref)               | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
+| [`RCMGL`](@ref)               | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
+| [`MCSM`](@ref)                | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
+| [`LexM`](@ref)                | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
+| [`AMF`](@ref)                 | approximate minimum fill                     | O(mn)    | O(m + n) |
+| [`MF`](@ref)                  | minimum fill                                 | O(mn²)   |          |
+| [`MMD`](@ref)                 | multiple minimum degree                      | O(mn²)   | O(m + n) |
+| [`MinimalChordal`](@ref)      | MinimalChordal                               |          |          |
+| [`CompositeRotations`](@ref)  | elimination tree rotation                    | O(m + n) | O(m + n) |
+| [`SafeRules`](@ref)           | treewith-safe rule-based reduction           |          |          |    
+| [`SafeSeparators`](@ref)      | treewith-safe separator decomposition        |          |          |    
+| [`ConnectedComponents`](@ref) | connected component decomposition            |          |          |
 
 The following additional algorithms are implemented as package extensions and require loading an additional package.
 
-| type               | name                              | time  | space    | package                                                                             |
-|:------------------ |:--------------------------------- |:----- |:-------- |:----------------------------------------------------------------------------------- |
-| [`AMD`](@ref)      | approximate minimum degree        | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)                           |
-| [`SymAMD`](@ref)   | column approximate minimum degree | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)                           |
-| [`METIS`](@ref)    | multilevel nested dissection      |       |          | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)                                 |
-| [`Spectral`](@ref) | spectral ordering                 |       |          | [Laplacians.jl](https://github.com/danspielman/Laplacians.jl)                       |
-| [`BT`](@ref)       | Bouchitte-Todinca                 |       |          | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl)             |
-| [`SAT`](@ref)      | SAT encoding (picosat)            |       |          | [PicoSAT_jll.jl](https://github.com/JuliaBinaryWrappers/PicoSAT_jll.jl)             |
-| [`SAT`](@ref)      | SAT encoding (cryptominisat)      |       |          | [CryptoMiniSat_jll.jl](https://github.com/JuliaBinaryWrappers/CryptoMiniSat_jll.jl) |
+| type                             | name                              | time  | space    | package                                                                                   |
+|:-------------------------------- |:--------------------------------- |:----- |:-------- |:----------------------------------------------------------------------------------------- |
+| [`AMD`](@ref)                    | approximate minimum degree        | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)                                 |
+| [`SymAMD`](@ref)                 | column approximate minimum degree | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)                                 |
+| [`METIS`](@ref)                  | multilevel nested dissection      |       |          | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)                                       |
+| [`Spectral`](@ref)               | spectral ordering                 |       |          | [Laplacians.jl](https://github.com/danspielman/Laplacians.jl)                             |
+| [`FlowCutter`](@ref)             | FlowCutter                        |       |          | [FlowCutterPACE17_jll.jl](https://github.com/JuliaBinaryWrappers/FlowCutterPACE17_jll.jl) |
+| [`BT`](@ref)                     | Bouchitte-Todinca                 |       |          | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl)                   |
+| [`SAT{libpicosat_jll}`](@ref)    | SAT encoding (picosat)            |       |          | [libpicosat_jll.jl](https://github.com/JuliaBinaryWrappers/libpicosat_jll.jl)             |
+| [`SAT{PicoSAT_jll}`](@ref)       | SAT encoding (picosat)            |       |          | [PicoSAT_jll.jl](https://github.com/JuliaBinaryWrappers/PicoSAT_jll.jl)                   |
+| [`SAT{Lingeling_jll}`](@ref)     | SAT encoding (lingeling)          |       |          | [Lingeling_jll.jl](https://github.com/JuliaBinaryWrappers/Lingeling_jll.jl)               |
+| [`SAT{CryptoMiniSat_jll}`](@ref) | SAT encoding (cryptominisat)      |       |          | [CryptoMiniSat_jll.jl](https://github.com/JuliaBinaryWrappers/CryptoMiniSat_jll.jl)       |
 
 # Triangulation Recognition Heuristics
 
@@ -78,14 +82,14 @@ These algorithm minimizes the treewidth of the completed graph.
 
 !!! warning
     This is an NP-hard problem. I recommend wrapping exact treewidth algorithms with preprocessors like
-    [`RuleReduction`](@ref) or [`ComponentReduction`](@ref). 
+    [`SafeRules`](@ref) or [`ConnectedComponents`](@ref). 
 
 # Meta Algorithms
 
   - [`MinimalChordal`](@ref)
   - [`CompositeRotations`](@ref)
-  - [`RuleReduction`](@ref)
-  - [`ComponentReduction`](@ref)
+  - [`SafeRules`](@ref)
+  - [`ConnectedComponents`](@ref)
 
 These algorithms are parametrized by another algorithm and work by transforming its input or output. 
 
@@ -365,6 +369,27 @@ In order to use it, import the package [Laplacians](https://github.com/danspielm
 end
 
 """
+    FlowCutter <: EliminationAlgorithm
+
+    FlowCutter(; time=5, seed=0)
+
+The FlowCutter algorithm.
+
+### Parameters
+
+  - `time`: run time
+  - `seed`: random seed
+
+### References
+
+  - Strasser, Ben. "Computing tree decompositions with flowcutter: PACE 2017 submission." arXiv preprint arXiv:1709.08949 (2017).
+"""
+@kwdef struct FlowCutter <: EliminationAlgorithm
+    time::Int = 5
+    seed::Int = 0
+end
+
+"""
     BT <: EliminationAlgorithm
 
     BT()
@@ -378,17 +403,21 @@ The Bouchitte-Todinca algorithm.
 struct BT <: EliminationAlgorithm end
 
 """
-    SAT <: EliminationAlgorithm
+    SAT{H, L, U} <: EliminationAlgorithm
 
-    SAT{Handle}(lb::LowerBoundAlgorithn, ub::PermutationOrAlgorithm)
+    SAT{H}(lb::WidthOrAlgorithn, ub::PermutationOrAlgorithm)
 
-    SAT{Handle}()
+    SAT{H}()
 
 Compute a minimum-treewidth permutation using a SAT solver.
 
 ### Parameters
 
-  - `Handle`: solver module (either `PicoSAT_jll` or `CryptoMiniSat_jll`)
+  - `H`: solver module
+    - `libpicosat_jll`
+    - `PicoSAT_jll`
+    - `CryptoMiniSat_jll`
+    - `Lingeling_jll`
   - `lb`: lower bound algorithm
   - `ub`: upper bound algorithm
 
@@ -398,18 +427,18 @@ Compute a minimum-treewidth permutation using a SAT solver.
   - Berg, Jeremias, and Matti Järvisalo. "SAT-based approaches to treewidth computation: An evaluation." *2014 IEEE 26th international conference on tools with artificial intelligence.* IEEE, 2014.
   - Bannach, Max, Sebastian Berndt, and Thorsten Ehlers. "Jdrasil: A modular library for computing tree decompositions." *16th International Symposium on Experimental Algorithms (SEA 2017)*. Schloss Dagstuhl–Leibniz-Zentrum fuer Informatik, 2017.
 """
-struct SAT{Handle, LB <: LowerBoundAlgorithm, UB <: PermutationOrAlgorithm} <: EliminationAlgorithm
-    handle::Val{Handle}
-    lb::LB
-    ub::UB
+struct SAT{H, L <: WidthOrAlgorithm, U <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    handle::Val{H}
+    lb::L
+    ub::U
 end
 
-function SAT{Handle}(lb::LowerBoundAlgorithm, ub::PermutationOrAlgorithm) where {Handle}
-    return SAT(Val(Handle), lb, ub)
+function SAT{H}(lb::WidthOrAlgorithm, ub::PermutationOrAlgorithm) where {H}
+    return SAT(Val(H), lb, ub)
 end
 
-function SAT{Handle}() where {Handle}
-    return SAT{Handle}(DEFAULT_LOWER_BOUND_ALGORITHM, DEFAULT_ELIMINATION_ALGORITHM)
+function SAT{H}() where {H}
+    return SAT{H}(DEFAULT_LOWER_BOUND_ALGORITHM, DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -466,37 +495,86 @@ function CompositeRotations(clique::AbstractVector)
 end
 
 """
-    RuleReduction{A} <: EliminationAlgorithm
+    SafeRules{L, U} <: EliminationAlgorithm
 
-    RuleReduction(alg::PermutationOrAlgororithm)
+    SafeRules(lb::WidthOrAlgorithm, ub::EliminationAlgororithm)
 
-    RuleReduction()
+    SafeRules()
 
-Preprocess a graph using safe reduction rules.
+Preprocess a graph using safe reduction rules. The algorithm `lb` is used to compute a lower bound
+to the treewidth; better lower bounds allow the algorithm to perform more reductions.
 
 ### Parameters
 
+  - `lb`: lower bound algorithm
+  - `ub`: elimination algorithm
+
+### References
+
+  - Bodlaender, Hans L., et al. "Pre-processing for triangulation of probabilistic networks." (2001).
+  - Bodlaender, Hans L., Arie M.C.A. Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
+  - van den Eijkhof, Frank, Hans L. Bodlaender, and Arie M.C.A. Koster. "Safe reduction rules for weighted treewidth." *Algorithmica* 47 (2007): 139-158. 
+"""
+struct SafeRules{L <: WidthOrAlgorithm, U <: EliminationAlgorithm} <: EliminationAlgorithm
+    lb::L
+    ub::U
+end
+
+function SafeRules(alg::PermutationOrAlgorithm)
+    return SafeRules(DEFAULT_LOWER_BOUND_ALGORITHM, alg)
+end
+
+function SafeRules()
+    return SafeRules(DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+# deprecated
+const RuleReduction{U} = SafeRules{MMW, U}
+RuleReduction(alg) = SafeRules(MMW(), alg)
+
+"""
+    SafeSeparators{M, A} <: EliminationAlgorithm
+
+    SafeSeparators(min::PermutationOrAlgorithm, alg::EliminationAlgorithm)
+
+    SeparatorReducton()
+
+Apple an elimination algorithm to the atoms of an almost-clique separator decomposition. The algorithm
+`min` is used to compute the decomposition.
+
+!!! warning
+    The algorithm `min` must compute a *minimimal* ordering. I recommend wrapping a heuristic algorithm
+    with `MinimalChordal`. 
+
+### Parameters
+
+  - `min`: minimal elimination algorithm
   - `alg`: elimination algorithm
 
 ### References
 
-  - Bodlaender, Hans L., Arie M.C.A. Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
-  - van den Eijkhof, Frank, Hans L. Bodlaender, and Arie M.C.A. Koster. "Safe reduction rules for weighted treewidth." *Algorithmica* 47 (2007): 139-158. 
+  - Bodlaender, Hans L., and Arie MCA Koster. "Safe separators for treewidth." *Discrete Mathematics* 306.3 (2006): 337-350.
+  - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." arXiv preprint arXiv:2108.07551 (2021).
 """
-struct RuleReduction{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+struct SafeSeparators{M <: PermutationOrAlgorithm, A <: EliminationAlgorithm} <: EliminationAlgorithm
+    min::M
     alg::A
 end
 
-function RuleReduction()
-    return RuleReduction(DEFAULT_ELIMINATION_ALGORITHM)
+function SafeSeparators(min::PermutationOrAlgorithm)
+    return SafeSeparators(min, DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+function SafeSeparators()
+    return SafeSeparators(MinimalChordal())
 end
 
 """
-    ComponentReduction{A} <: EliminationAlgorithm
+    ConnectedComponents{A} <: EliminationAlgorithm
 
-    ComponentReduction(alg::PermutationOrAlgorithm)
+    ConnectedComponents(alg::PermutationOrAlgorithm)
 
-    ComponentReduction()
+    ConnectedComponents()
 
 Apply an elimination algorithm to each connected component of a graph.
 
@@ -505,13 +583,16 @@ Apply an elimination algorithm to each connected component of a graph.
   - `alg`: elimination algorithm
 
 """
-struct ComponentReduction{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+struct ConnectedComponents{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
-function ComponentReduction()
-    return ComponentReduction(DEFAULT_ELIMINATION_ALGORITHM)
+function ConnectedComponents()
+    return ConnectedComponents(DEFAULT_ELIMINATION_ALGORITHM)
 end
+
+# deprecated
+const ComponentReduction = ConnectedComponents
 
 """
     permutation([weights, ]graph;
@@ -659,12 +740,17 @@ function permutation(weights::AbstractVector, alg::CompositeRotations)
 end
 
 # method ambiguity
-function permutation(weights::AbstractVector, alg::RuleReduction)
+function permutation(weights::AbstractVector, alg::SafeRules)
     error()
 end
 
 # method ambiguity
-function permutation(weights::AbstractVector, alg::ComponentReduction)
+function permutation(weights::AbstractVector, alg::SafeSeparators)
+    error()
+end
+
+# method ambiguity
+function permutation(weights::AbstractVector, alg::ConnectedComponents)
     error()
 end
 
@@ -738,13 +824,13 @@ function permutation(graph, alg::MMD)
     return invperm(index), index
 end
 
-function permutation(graph, alg::SAT{Handle}) where {Handle}
+function permutation(graph, alg::SAT{H}) where {H}
     order, index = permutation(graph, alg.ub)
     lb = lowerbound(graph, alg.lb)
     ub = treewidth(graph, order)
 
     if lb < ub
-        order, width = sat(graph, Handle, lb, ub)
+        order, width = sat(graph, H, lb, ub)
         index = invperm(order)
     end
 
@@ -781,23 +867,58 @@ function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::RuleReduction)
-    kernel, stack, label, width = pr4(graph, lowerbound(graph))
-    order, index = permutation(kernel, alg.alg)
+function permutation(graph, alg::SafeRules)
+    kernel, stack, label, width = pr4(graph, lowerbound(graph, alg.lb))
+    order, index = permutation(kernel, alg.ub)
     append!(stack, view(label, order))
     return stack, invperm(stack)
 end
 
-function permutation(weights::AbstractVector, graph, alg::RuleReduction)
-    kernel, stack, label, width = pr4(weights, graph, lowerbound(weights, graph))
-    order, index = permutation(view(weights, label), kernel, alg.alg)
+function permutation(weights::AbstractVector, graph, alg::SafeRules)
+    kernel, stack, label, width = pr4(weights, graph, lowerbound(weights, graph, alg.lb))
+    order, index = permutation(view(weights, label), kernel, alg.ub)
     append!(stack, view(label, order))
     return stack, invperm(stack)
+end
+
+function permutation(graph, alg::SafeSeparators)
+    # construct almost-clique separator decomposition
+    graph, label, tree = almosttree(graph, alg.min)
+
+    # permute graph
+    graph = Graph(sympermute(graph, invperm(label), Reverse))
+
+    # compute ordering
+    order = cliquedissect(graph, tree, alg.alg)
+
+    for v in vertices(graph)
+        order[v] = label[order[v]]
+    end
+
+    return order, invperm(order)
+end
+
+function permutation(weights::AbstractVector, graph, alg::SafeSeparators)
+    # construct almost-clique separator decomposition
+    graph, label, tree = almosttree(graph, alg.min)
+
+    # permute graph
+    weights = weights[label]
+    graph = Graph(sympermute(graph, invperm(label), Reverse))
+
+    # compute ordering
+    order = cliquedissect(weights, graph, tree, alg.alg)
+
+    for v in vertices(graph)
+        order[v] = label[order[v]]
+    end
+
+    return order, invperm(order)
 end
 
 # TODO: multi-threading
-function permutation(graph, alg::ComponentReduction)
-    components, subgraphs = componentreduction(graph)
+function permutation(graph, alg::ConnectedComponents)
+    components, subgraphs = connectedcomponents(graph)
     order = eltype(eltype(components))[]
 
     @inbounds for (component, subgraph) in zip(components, subgraphs)
@@ -808,8 +929,8 @@ function permutation(graph, alg::ComponentReduction)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph, alg::ComponentReduction)
-    components, subgraphs = componentreduction(graph)
+function permutation(weights::AbstractVector, graph, alg::ConnectedComponents)
+    components, subgraphs = connectedcomponents(graph)
     order = eltype(eltype(components))[]
 
     @inbounds for (component, subgraph) in zip(components, subgraphs)
@@ -1498,10 +1619,8 @@ end
 function mf!(
         nv::V, degrees::AbstractVector{V}, lists::AbstractVector{<:AbstractVector{V}}
     ) where {V}
-    order = zeros(V, nv)
-    index = zeros(V, nv)
-    label = zeros(Int, nv)
-    tag = 0
+    order = Vector{V}(undef, nv)
+    label = zeros(Int, nv); tag = 0
 
     # construct stack data structure
     snum = zero(V) # size of stack
@@ -1666,8 +1785,8 @@ function MMDLib.mmd(graph::BipartiteGraph; kwargs...)
     return mmd(pointers(graph), targets(graph); kwargs...)
 end
 
-function sat(graph, Handle::Module, lowerbound::Integer, upperbound::Integer)
-    return sat(BipartiteGraph(graph), Handle, lowerbound, upperbound)
+function sat(graph, H::Module, lowerbound::Integer, upperbound::Integer)
+    return sat(BipartiteGraph(graph), H, lowerbound, upperbound)
 end
 
 # Encoding Treewidth into SAT
@@ -1678,11 +1797,11 @@ end
 #
 # Jdrasil: A Modular Library for Computing Tree Decompositions
 # Bannach, Berndt, and Ehlers
-function sat(graph::AbstractGraph{V}, Handle::Module, lowerbound::Integer, upperbound::Integer) where {V}
+function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound::Integer) where {V}
     @argcheck !isnegative(lowerbound) && lowerbound <= upperbound <= nv(graph)
 
     # compute a maximal clique
-    clique = maximalclique(graph, Handle)
+    clique = maximalclique(graph, H)
 
     # compute true twins
     trueset, truelist = twins(graph, Val(true))
@@ -1698,7 +1817,7 @@ function sat(graph::AbstractGraph{V}, Handle::Module, lowerbound::Integer, upper
     end
 
     # run solver
-    order, width = open(Solver{Handle}) do solver
+    order, width = open(Solver{H}) do solver
         n = Int32(nv(graph))
         ord = Matrix{Int32}(undef, n, n)
         arc = Matrix{Int32}(undef, n, n)
@@ -1827,8 +1946,8 @@ function sat(graph::AbstractGraph{V}, Handle::Module, lowerbound::Integer, upper
 end
 
 # compute a maximal clique
-function maximalclique(graph::AbstractGraph, Handle::Module)
-    clique = open(Solver{Handle}, nv(graph)) do solver
+function maximalclique(graph::AbstractGraph, H::Module)
+    clique = open(Solver{H}, nv(graph)) do solver
         n = length(solver)
         variables = collect(oneto(n))
         label = zeros(Int32, n); tag = zero(Int32)
@@ -2094,8 +2213,12 @@ function minimalchordal(graph::AbstractGraph{V}, order::AbstractVector, index::A
     return permutation(M; alg = MCS())
 end
 
+# Pre-processing for Triangulation of Probabilistic Networks
+# Bodlaender, Koster, Eijkhof, and van der Gaag
+#
 # Preprocessing Rules for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Ejkhof, and van der Gaag
+# Bodlaender, Koster, Eijkhof, and van der Gaag
+#
 # PR-3 (Islet, Twig, Series, Triangle, Buddy, and Cube)
 function pr3(graph, width::Integer)
     return pr3(BipartiteGraph(graph), width)
@@ -2406,9 +2529,13 @@ function pr3!(graph::Graph{V}, width::V) where {V}
     return stack, label, width
 end
 
+# Pre-processing for Triangulation of Probabilistic Networks
+# Bodlaender, Koster, Eijkhof, and van der Gaag
+#
 # Preprocessing Rules for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Ejkhof, and van der Gaag
-# PR-4 (PR-3 + Simplicial + Almost Simplicial)
+# Bodlaender, Koster, Eijkhof, and van der Gaag
+#
+#  PR-4 (PR-3 + Simplicial + Almost Simplicial)
 function pr4(graph, width::Integer)
     return pr4(BipartiteGraph(graph), width)
 end
@@ -2734,15 +2861,15 @@ function pr3!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
                                 pp = weights[ww]
                                 ppp = weights[www]
 
-                                if p - tol > pp
+                                if p - tol >= pp
                                     p, pp = pp, p
                                 end
 
-                                if pp - tol > ppp
+                                if pp - tol >= ppp
                                     pp, ppp = ppp, pp
                                 end
 
-                                if p - tol > pp
+                                if p - tol >= pp
                                     p, pp = pp, p
                                 end
 
@@ -2753,7 +2880,7 @@ function pr3!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
                                     q = weights[v]
                                     qq = weights[vv]
 
-                                    if q - tol > qq
+                                    if q - tol >= qq
                                         q, qq = qq, q
                                     end
 
@@ -3071,11 +3198,11 @@ function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
     return _stack, _label, width
 end
 
-function componentreduction(graph)
-    return componentreduction(BipartiteGraph(graph))
+function connectedcomponents(graph)
+    return connectedcomponents(BipartiteGraph(graph))
 end
 
-function componentreduction(graph::AbstractGraph{V}) where {V}
+function connectedcomponents(graph::AbstractGraph{V}) where {V}
     E = etype(graph)
     n = nv(graph)
     m = is_directed(graph) ? ne(graph) : twice(ne(graph))
@@ -3223,15 +3350,23 @@ function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
     return
 end
 
+function Base.show(io::IO, ::MIME"text/plain", alg::FlowCutter)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "FlowCutter:")
+    println(io, " "^indent * "    time: $(alg.time)")
+    println(io, " "^indent * "    seed: $(alg.seed)")
+    return
+end
+
 function Base.show(io::IO, ::MIME"text/plain", alg::BT)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "BT")
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::SAT{Handle, LB, UB}) where {Handle, LB, UB}
+function Base.show(io::IO, ::MIME"text/plain", alg::SAT{H, L, U}) where {H, L, U}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "SAT{$Handle,$LB,$UB}:")
+    println(io, " "^indent * "SAT{$H,$L,$U}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.ub)
     return
@@ -3252,16 +3387,25 @@ function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) wh
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::RuleReduction{A}) where {A}
+function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{L, U}) where {L, U}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "RuleReduction{$A}:")
+    println(io, " "^indent * "SafeRules{$L,$U}:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.ub)
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::SafeSeparators{M, A}) where {M, A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "SafeSeparators{$M,$A}:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.min)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::ComponentReduction{A}) where {A}
+function Base.show(io::IO, ::MIME"text/plain", alg::ConnectedComponents{A}) where {A}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "ComponentReduction{$A}:")
+    println(io, " "^indent * "ConnectedComponents{$A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
 end

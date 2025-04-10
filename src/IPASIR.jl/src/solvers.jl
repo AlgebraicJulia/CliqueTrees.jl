@@ -1,19 +1,19 @@
 """
-    Solver{Handle} <: AbstractVector{Int32}
+    Solver{H} <: AbstractVector{Int32}
 
-    Solver{Handle}(num::Integer)
+    Solver{H}(num::Integer)
 
 An IPASIR-compliant SAT solver. This type implements the [abstract vector interface](https://docs.julialang.org/en/v1/manual/interfaces/#man-interface-array).
 """
-mutable struct Solver{Handle} <: AbstractVector{Int32}
-    handle::Val{Handle}
+mutable struct Solver{H} <: AbstractVector{Int32}
+    handle::Val{H}
     solver::Ptr{Cvoid}
     num::Int32
 
-    function Solver{Handle}(num::Integer) where {Handle}
-        handle = Val(Handle)
+    function Solver{H}(num::Integer) where {H}
+        handle = Val(H)
         solver = init(handle)
-        return new{Handle}(handle, solver, num)
+        return new{H}(handle, solver, num)
     end
 end
 
@@ -51,8 +51,8 @@ function solve!(solver::Solver)
         :unknown
 end
 
-function Base.open(f::Function, ::Type{Solver{Handle}}, num::Integer = zero(Int32)) where {Handle}
-    solver = Solver{Handle}(num)
+function Base.open(f::Function, ::Type{Solver{H}}, num::Integer = zero(Int32)) where {H}
+    solver = Solver{H}(num)
 
     try
         return f(solver)
@@ -66,8 +66,8 @@ function Base.close(solver::Solver)
     return
 end
 
-function Base.show(io::IO, solver::Solver{Handle}) where {Handle}
-    println(io, "Solver{$Handle}:")
+function Base.show(io::IO, solver::Solver{H}) where {H}
+    println(io, "Solver{$H}:")
     print(io, "    solver: $(signature(solver.handle))")
     return
 end

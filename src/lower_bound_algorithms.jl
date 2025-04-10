@@ -10,6 +10,11 @@ An algorithm for computing a lower bound to the treewidth of a graph. The option
 abstract type LowerBoundAlgorithm end
 
 """
+    WidthOrAlgorithm = Union{Number, LowerBoundAlgorithm}
+"""
+const WidthOrAlgorithm = Union{Number, LowerBoundAlgorithm}
+
+"""
     MMW <: LowerBoundAlgorithm
 
     MMW()
@@ -25,16 +30,21 @@ struct MMW <: LowerBoundAlgorithm end
 
 """
     lowerbound([weights, ]graph;
-        alg::LowerBoundAlgorithm=DEFAULT_LOWER_BOUND_ALGORITHM)
+        alg::WidthOrAlgorithm=DEFAULT_LOWER_BOUND_ALGORITHM)
 
 Compute a lower bound to the treewidth of a graph.
 """
-function lowerbound(graph; alg::LowerBoundAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
+function lowerbound(graph; alg::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
     return lowerbound(graph, alg)
 end
 
-function lowerbound(weights::AbstractVector, graph; alg::LowerBoundAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
+function lowerbound(weights::AbstractVector, graph; alg::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
     return lowerbound(weights, graph, alg)
+end
+
+# method ambiguity
+function lowerbound(weights::AbstractVector, ::Number)
+    error()
 end
 
 # method ambiguity
@@ -48,6 +58,20 @@ end
 
 function lowerbound(weights::AbstractVector, graph, ::MMW)
     return mmw(weights, graph)
+end
+
+function lowerbound(graph, alg::Number)
+    return lowerbound(BipartiteGraph(graph), alg)
+end
+
+function lowerbound(graph::AbstractGraph{V}, alg::Number) where {V}
+    width::V = alg
+    return width
+end
+
+function lowerbound(weights::AbstractVector{W}, graph, alg::Number) where {W}
+    width::W = alg
+    return with
 end
 
 # Contraction and Treewidth Lower Bounds
@@ -192,7 +216,7 @@ function mmw!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
         for ww in neighbors(graph, v)
             nww = heap[ww]
 
-            if weights[ww] < weights[v] + tol && nww < nw - tol
+            if weights[ww] < weights[v] + tol && nww <= nw - tol
                 w, nw = ww, nww
             end
         end

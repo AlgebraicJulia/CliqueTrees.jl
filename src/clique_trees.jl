@@ -18,6 +18,324 @@ function Tree{V}(tree::CliqueTree) where {V}
     return Tree{V}(tree.tree)
 end
 
+function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::EliminationAlgorithm) where {V}
+    orders = Vector{Vector{V}}(undef, length(tree))
+    index = Vector{V}(undef, nv(graph))
+
+    for (j, bag) in enumerate(tree)
+        subgraph, order = induced_subgraph(graph, bag)
+        perm, utree, upper = eliminationtree(subgraph, alg)
+        permute!(order, perm); index[order] = vertices(upper)
+
+        for i in childindices(tree, j)
+            invpermute!(
+                order,
+                compositerotations(
+                    reverse(upper),
+                    utree,
+                    view(index, separator(tree, i)),
+                )
+            )
+
+            prepend!(order, orders[i])
+            upper = isu!(graph, order, index)
+            utree = etree(upper)
+        end
+
+        invpermute!(
+            order,
+            compositerotations(
+                reverse(upper),
+                utree,
+                view(index, separator(tree, j)),
+            )
+        )
+
+        for _ in separator(tree, j)
+            pop!(order)
+        end
+
+        orders[j] = order
+    end
+
+    order = V[]
+
+    for j in rootindices(tree)
+        append!(order, orders[j])
+    end
+
+    return order
+end
+
+function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::EliminationAlgorithm) where {V}
+    orders = Vector{Vector{V}}(undef, length(tree))
+    index = Vector{V}(undef, nv(graph))
+
+    for (j, bag) in enumerate(tree)
+        subgraph, order = induced_subgraph(graph, bag)
+        perm, utree, upper = eliminationtree(view(weights, order), subgraph, alg)
+        permute!(order, perm)
+        index[order] = vertices(upper)
+
+        for i in childindices(tree, j)
+            invpermute!(
+                order,
+                compositerotations(
+                    reverse(upper),
+                    utree,
+                    view(index, separator(tree, i)),
+                )
+            )
+
+            prepend!(order, orders[i])
+            upper = isu!(graph, order, index)
+            utree = etree(upper)
+        end
+
+        invpermute!(
+            order,
+            compositerotations(
+                reverse(upper),
+                utree,
+                view(index, separator(tree, j)),
+            )
+        )
+
+        for _ in separator(tree, j)
+            pop!(order)
+        end
+
+        orders[j] = order
+    end
+
+    order = V[]
+
+    for j in rootindices(tree)
+        append!(order, orders[j])
+    end
+
+    return order
+end
+
+function isu!(graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}) where {V}
+    index .= n = zero(V)
+
+    for v in order
+        index[v] = n += one(V)
+    end
+
+    E = etype(graph)
+    subgraph = BipartiteGraph{V, E}(n, n, zero(E))
+    pointers(subgraph)[begin] = p = one(E)
+
+    for v in order
+        i = index[v]
+
+        for w in neighbors(graph, v)
+            j = index[w]
+
+            if i > j > zero(V)
+                p += one(E)
+                push!(targets(subgraph), j)
+            end
+        end
+
+        pointers(subgraph)[i + one(V)] = p
+    end
+
+    return subgraph
+end
+
+function almosttree(graph; alg::PermutationOrAlgorithm = MinimalChordal())
+    return almosttree(graph, alg)
+end
+
+function almosttree(graph, alg::PermutationOrAlgorithm)
+    return almosttree(BipartiteGraph(graph), alg)
+end
+
+function almosttree(graph::AbstractGraph, alg::PermutationOrAlgorithm)
+    graph = Graph(graph)
+    return graph, almosttree!(graph, alg)...
+end
+
+# A Heuristic for Listing Almost-Clique Minimal Separators of a Graph
+# Tamaki
+function almosttree!(graph::Graph{V}, alg::PermutationOrAlgorithm) where {V}
+    n = nv(graph)
+    marker = zeros(Int, n); tag = 0; flag = true
+
+    while flag
+        flag = false
+        label, tree = cliquetree(graph, alg, Maximal())
+
+        for bag in tree
+            sep = separator(bag)
+            len = convert(V, length(sep))
+            i = zero(V)
+            isalmostclique = false
+
+            while !isalmostclique && i < len
+                i += one(V)
+                ii = zero(V)
+                v = label[sep[i]]
+                isalmostclique = true
+
+                while isalmostclique && ii < len
+                    iii = ii += one(V)
+                    vv = label[sep[ii]]
+                    marker[neighbors(graph, vv)] .= tag += 1
+
+                    while isalmostclique && iii < len
+                        iii += one(V)
+                        vvv = label[sep[iii]]
+
+                        if v != vvv && marker[vvv] < tag
+                            isalmostclique = false
+                        end
+                    end
+                end
+            end
+
+            if isalmostclique
+                v = label[sep[i]]
+
+                for ii in oneto(len)
+                    if i != ii
+                        vv = label[sep[ii]]
+                        flag = add_edge!(graph, v, vv) || flag
+                    end
+                end
+            end
+        end
+    end
+
+    return atomtree(graph, MCSM())
+end
+
+function atomtree(graph; alg::PermutationOrAlgorithm = MCSM())
+    return atomtree(graph, alg)
+end
+
+function atomtree(graph, alg::PermutationOrAlgorithm)
+    return atomtree(BipartiteGraph(graph), alg)
+end
+
+function atomtree(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
+    return atomtree(graph, cliquetree(graph, alg, Maximal())...)
+end
+
+# Organizing the Atoms of the Clique Separator Decomposition into an Atom Tree
+# Berry, Pogorelcnik, and Simonet
+# Algorithm Atom-Tree
+function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::CliqueTree{V, E}) where {V, E}
+    n = nv(graph)
+    m = convert(V, length(tree))
+    marker = zeros(Int, n); tag = 0
+    atom = Vector{V}(undef, m); a = b = zero(V)
+
+    # identify clique separators
+    for i in reverse(oneto(m))
+        sep = separator(tree, i)
+        flag = true
+        s = zero(V)
+
+        while flag && s < length(sep)
+            ss = s += one(V)
+            v = label[sep[s]]
+            marker[neighbors(graph, v)] .= tag += 1
+
+            while flag && one(V) < ss
+                ss -= one(V)
+                vv = label[sep[ss]]
+
+                if marker[vv] < tag
+                    flag = false
+                end
+            end
+        end
+
+        if flag
+            atom[i] = a += one(V)
+            b += convert(V, length(sep))
+        else
+            j = parentindex(tree, i)
+            atom[i] = atom[j]
+        end
+    end
+
+    # construct postordered atom tree
+    parent = Vector{V}(undef, a)
+
+    for i in oneto(m)
+        j = parentindex(tree, i)
+
+        if isnothing(j)
+            parent[atom[i]] = zero(V)
+        elseif atom[i] != atom[j]
+            parent[atom[i]] = atom[j]
+        end
+    end
+
+    atree = Tree(parent)
+    aindex = postorder!(atree)
+
+    for i in oneto(m)
+        atom[i] = aindex[atom[i]]
+    end
+
+    # invert quotient map
+    ainv = Vector{Vector{V}}(undef, a)
+
+    for aa in oneto(a)
+        ainv[aa] = V[]
+    end
+
+    for i in oneto(m)
+        push!(ainv[atom[i]], i)
+    end
+
+    # construct residuals
+    index = Vector{V}(undef, n)
+    sndptr = Vector{V}(undef, a + one(V))
+    sndptr[begin] = p = one(V)
+
+    for aa in oneto(a)
+        set = ainv[aa]
+
+        for i in set, v in residual(tree, i)
+            index[v] = p
+            p += one(V)
+        end
+
+        sndptr[aa + one(V)] = p
+    end
+
+    # construct separators
+    count = zeros(V, n)
+    sepval = Vector{V}(undef, b)
+    sepptr = Vector{E}(undef, a + one(V))
+    sepptr[begin] = q = one(E)
+
+    for aa in oneto(a)
+        set = ainv[aa]
+
+        for v in separator(tree, last(set))
+            count[index[v]] += (sndptr[aa + one(V)] - sndptr[aa])
+            sepval[q] = index[v]
+            q += one(V)
+        end
+
+        sepptr[aa + one(V)] = q
+    end
+
+    # return atom tree
+    invpermute!(label, index)
+    stree = SupernodeTree(atree, BipartiteGraph(n, sndptr, oneto(n)))
+    ctree = CliqueTree(stree, count, BipartiteGraph(n, sepptr, sepval))
+    return label, ctree
+end
+
 """
     cliquetree([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
