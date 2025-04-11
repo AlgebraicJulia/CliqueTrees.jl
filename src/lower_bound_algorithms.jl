@@ -52,14 +52,6 @@ function lowerbound(weights::AbstractVector, ::MMW)
     error()
 end
 
-function lowerbound(graph, ::MMW)
-    return mmw(graph)
-end
-
-function lowerbound(weights::AbstractVector, graph, ::MMW)
-    return mmw(weights, graph)
-end
-
 function lowerbound(graph, alg::Number)
     return lowerbound(BipartiteGraph(graph), alg)
 end
@@ -72,6 +64,14 @@ end
 function lowerbound(weights::AbstractVector{W}, graph, alg::Number) where {W}
     width::W = alg
     return with
+end
+
+function lowerbound(graph, ::MMW)
+    return mmw(graph)
+end
+
+function lowerbound(weights::AbstractVector, graph, ::MMW)
+    return mmw(weights, graph)
 end
 
 # Contraction and Treewidth Lower Bounds
