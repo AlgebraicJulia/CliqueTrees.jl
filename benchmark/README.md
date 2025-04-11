@@ -1,11 +1,17 @@
 # CliqueTrees.jl Benchmarks
 
-This file was automatically generated on 2025-04-11. To regenerate it, navigate to the `benchmark` directory and run the following command.
+To regenerate this file, navigate to the `benchmark` directory and run the following command.
 ```
 julia --project make.jl
 ```
 
 ## Exact Treewidth
+
+To run the exact treewidth benchmarks, navigate to the `benchmark` directory and run the following command.
+
+```
+julia --project exact/make.jl
+```
 
 The algorithms `bt` and `sat` are benchmarked on the DIMACS graph coloring instances.
 ```julia-repl
@@ -21,19 +27,6 @@ SafeRules{MMW, SAT{CryptoMiniSat_jll, MMW, MF}}:
     SAT{CryptoMiniSat_jll, MMW, MF}:
         MMW
         MF
-```
-
-To run these benchmarks, navigate to the `benchmark` directory, enter the Julia REPL, and run the following commands.
-
-```julia-repl
-julia> using PkgBenchmark, CliqueTrees
-
-julia> script = joinpath("benchmark", "exact", "benchmarks.jl");
-
-julia> resultfile = joinpath(@__DIR__, "exact", "results.json");
-
-julia> benchmarkpkg(CliqueTrees; script, resultfile)
-PkgBenchmark: Running benchmarks...
 ```
 
 ![](exact/figure.png)

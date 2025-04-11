@@ -1,7 +1,6 @@
 using CairoMakie
 using CSV
 using DataFrames
-using Dates
 using PkgBenchmark
 using PkgBenchmark: benchmarkgroup
 
@@ -41,12 +40,18 @@ function makereadme()
     open("README.md"; write=true) do io
         println(io, "# CliqueTrees.jl Benchmarks")
         println(io)
-        println(io, "This file was automatically generated on $(today()). To regenerate it, navigate to the `benchmark` directory and run the following command.")
+        println(io, "To regenerate this file, navigate to the `benchmark` directory and run the following command.")
         println(io, "```")
         println(io, "julia --project make.jl")
         println(io, "```")
         println(io)
         println(io, "## Exact Treewidth")
+        println(io)
+        println(io, "To run the exact treewidth benchmarks, navigate to the `benchmark` directory and run the following command.")
+        println(io)
+        println(io, "```")
+        println(io, "julia --project exact/make.jl")
+        println(io, "```")
         println(io)
         println(io, "The algorithms `bt` and `sat` are benchmarked on the DIMACS graph coloring instances.")
         println(io, "```julia-repl")
@@ -62,19 +67,6 @@ function makereadme()
         println(io, "    SAT{CryptoMiniSat_jll, MMW, MF}:")
         println(io, "        MMW")
         println(io, "        MF")
-        println(io, "```")
-        println(io)
-        println(io, "To run these benchmarks, navigate to the `benchmark` directory, enter the Julia REPL, and run the following commands.")
-        println(io)
-        println(io, "```julia-repl")
-        println(io, "julia> using PkgBenchmark, CliqueTrees")
-        println(io)
-        println(io, "julia> script = joinpath(\"benchmark\", \"exact\", \"benchmarks.jl\");")
-        println(io)
-        println(io, "julia> resultfile = joinpath(@__DIR__, \"exact\", \"results.json\");")
-        println(io)
-        println(io, "julia> benchmarkpkg(CliqueTrees; script, resultfile)")
-        println(io, "PkgBenchmark: Running benchmarks...")
         println(io, "```")
         println(io)
         println(io, "![](exact/figure.png)")
