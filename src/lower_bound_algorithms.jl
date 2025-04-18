@@ -169,7 +169,7 @@ function mmw!(graph::Graph{V}, ::Val{S}) where {V, S}
             delete!(set(mindegree), v)
 
             if !iszero(eltypedegree(graph, v))
-                tag, w = mmwnbr!(graph, label, tag, v, Val(S)) 
+                tag, w = mmwnbr!(graph, label, tag, v, Val(S))
                 delete!(set(eltypedegree(graph, w)), w)
                 rem_edge!(graph, v, w)
 
@@ -258,7 +258,7 @@ function mmw!(weights::AbstractVector{W}, graph::Graph{V}, ::Val{S}) where {W, V
         v = argmin(heap)
         delete!(heap, v)
         maxminweight = max(maxminweight, heap[v])
-        tag, w = mmwnbr!(heap, weights, graph, label, tag, v, Val(S)) 
+        tag, w = mmwnbr!(heap, weights, graph, label, tag, v, Val(S))
 
         if ispositive(w)
             rem_edge!(graph, v, w)
@@ -305,7 +305,7 @@ function mmwnbr!(graph::Graph{V}, label::Vector{V}, tag::V, v::V, ::Val{1}) wher
             w, nw = ww, nww
         end
     end
-   
+
     return tag, w
 end
 
@@ -321,7 +321,7 @@ function mmwnbr!(heap::Heap{V, W}, weights::AbstractVector{W}, graph::Graph{V}, 
             w, nw = ww, nww
         end
     end
-   
+
     return tag, w
 end
 
@@ -337,7 +337,7 @@ function mmwnbr!(graph::Graph{V}, label::Vector{V}, tag::V, v::V, ::Val{2}) wher
             w, nw = ww, nww
         end
     end
-  
+
     return tag, w
 end
 
@@ -353,7 +353,7 @@ function mmwnbr!(heap::Heap{V, W}, weights::AbstractVector{W}, graph::Graph{V}, 
             w, nw = ww, nww
         end
     end
-   
+
     return tag, w
 end
 
@@ -376,7 +376,7 @@ function mmwnbr!(graph::Graph{V}, label::Vector{V}, tag::V, v::V, ::Val{3}) wher
             w, nw = ww, nww
         end
     end
-  
+
     return tag, w
 end
 
@@ -401,7 +401,7 @@ function mmwnbr!(heap::Heap{V, W}, weights::AbstractVector{W}, graph::Graph{V}, 
             end
         end
     end
-  
+
     return tag, w
 end
 

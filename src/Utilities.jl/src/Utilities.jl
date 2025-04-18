@@ -24,7 +24,7 @@ const MAX_ITEMS_PRINTED = 5
 #     v ≤ w iif v < w + tol
 # for all weights v and w.
 function tolerance(::Type{W}) where {W <: AbstractFloat}
-    return W(1e-5)
+    return W(1.0e-5)
 end
 
 function tolerance(::Type{W}) where {W <: Integer}

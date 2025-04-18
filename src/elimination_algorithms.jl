@@ -2082,7 +2082,7 @@ function mf(graph::AbstractGraph{V}) where {V}
 end
 
 function mf(weights::AbstractVector, graph)
-    mf(weights, BipartiteGraph(graph))
+    return mf(weights, BipartiteGraph(graph))
 end
 
 function mf(weights::AbstractVector, graph::AbstractGraph)
@@ -2476,7 +2476,7 @@ function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integ
     end
 
     order = Vector{V}(undef, n)
-    sortperm!(order, oneto(n); lt=(i, j) -> matrix[i, j])
+    sortperm!(order, oneto(n); lt = (i, j) -> matrix[i, j])
     return order, width
 end
 
@@ -2507,7 +2507,7 @@ function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) 
                 ii += one(Int32)
                 var[ii] = i
             end
-        end 
+        end
 
         # base encoding
         for j in oneto(n)
@@ -3826,7 +3826,7 @@ function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, type::Val
     E = etype(graph)
     cgraph = BipartiteGraph{V, E}(cn, cn, m)
     pointers(cgraph)[begin] = p = one(E)
-  
+
     for i in vertices(partition)
         marker[i] = tag += one(V)
 
@@ -3985,7 +3985,7 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
     return components, subgraphs
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::A) where A <: EliminationAlgorithm
+function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: EliminationAlgorithm}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "$A")
     return

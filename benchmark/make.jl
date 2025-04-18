@@ -9,18 +9,18 @@ function makeplots()
 
     times = Dict(
         "bt" => Float64[],
-        "cms"=> Float64[],
-    ) 
+        "cms" => Float64[],
+    )
 
     for file in readdir(joinpath(@__DIR__, "exact", "graphs"))
         if endswith(file, ".gr")
-            name = file[begin:end - 3]
+            name = file[begin:(end - 3)]
             group = results[name]
 
             for (alg, vector) in times
                 if haskey(group, alg)
                     trial = group[alg]
-                    t = time(minimum(trial)) / 1e9
+                    t = time(minimum(trial)) / 1.0e9
                 else
                     t = 100.0
                 end
@@ -34,22 +34,24 @@ function makeplots()
     permute!(times["bt"], perm)
     permute!(times["cms"], perm)
 
-    figure = Figure(size=(450, 250))
-    axis = Axis(figure[1, 1], ylabel = "time (s)", yscale = log10, xticksvisible=false, xticklabelsvisible=false)
-    bt_plot = scatter!(axis, times["bt"]; marker=:circle, color = :red)
-    cms_plot = scatter!(axis, times["cms"]; marker=:cross, color = :blue)
+    figure = Figure(size = (450, 250))
+    axis = Axis(figure[1, 1], ylabel = "time (s)", yscale = log10, xticksvisible = false, xticklabelsvisible = false)
+    bt_plot = scatter!(axis, times["bt"]; marker = :circle, color = :red)
+    cms_plot = scatter!(axis, times["cms"]; marker = :cross, color = :blue)
 
-    Legend(figure[1, 2],
+    Legend(
+        figure[1, 2],
         [bt_plot, cms_plot],
-        ["BT", "SAT"])
+        ["BT", "SAT"]
+    )
 
-    save("exact/figure.png", figure)
+    return save("exact/figure.png", figure)
 end
 
 function makereadme()
     makeplots()
 
-    open("README.md"; write=true) do io
+    return open("README.md"; write = true) do io
         println(io, "# Benchmarks")
         println(io)
         println(io, "To regenerate this file, navigate to the `benchmark` directory and run the following command.")

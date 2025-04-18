@@ -581,6 +581,8 @@ end
                 @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.pr3(graph, lowerbound(graph))
                 @inferred CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
+                @inferred CliqueTrees.pr4(graph, lowerbound(graph))
+                @inferred CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
@@ -612,6 +614,8 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(graph, lowerbound(graph))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
@@ -655,6 +659,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(graph, lowerbound(graph))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
@@ -1042,12 +1048,19 @@ end
             graph2 = G(__graph2)
 
             width1 = V(4)
-            lb1 = lowerbound(graph1)
+            lb11 = lowerbound(graph1, MMW{1}())
+            lb12 = lowerbound(graph1, MMW{2}())
+            lb13 = lowerbound(graph1, MMW{3}())
             ub1 = treewidth(graph1)
 
-            @test isa(lb1, V)
+            @test isa(lb11, V)
+            @test isa(lb12, V)
+            @test isa(lb13, V)
             @test isa(ub1, V)
-            @test lb1 <= width1 <= ub1
+            @test lb11 <= width1
+            @test lb12 <= width1
+            @test lb13 <= width1
+            @test width1 <= ub1
             #@test treewidth(graph1; alg=ConnectedComponents(BT())) === width1
             @test treewidth(graph1; alg = SAT{libpicosat_jll}()) === width1
             @test treewidth(graph1; alg = SAT{Lingeling_jll}()) === width1
@@ -1065,23 +1078,37 @@ end
             @test treewidth(graph1; alg = SafeSeparators(SAT{CryptoMiniSat_jll}())) === width1
 
             width1 = 5.0
-            lb1 = lowerbound(weights1, graph1)
+            lb11 = lowerbound(weights1, graph1, MMW{1}())
+            lb12 = lowerbound(weights1, graph1, MMW{2}())
+            lb13 = lowerbound(weights1, graph1, MMW{3}())
             ub1 = treewidth(weights1, graph1)
 
-            @test isa(lb1, Float64)
+            @test isa(lb11, Float64)
+            @test isa(lb12, Float64)
+            @test isa(lb13, Float64)
             @test isa(ub1, Float64)
-            @test lb1 <= width1 <= ub1
+            @test lb11 <= width1
+            @test lb12 <= width1
+            @test lb13 <= width1
+            @test width1 <= ub1
             #@test treewidth(weights1, graph1; alg=ConnectedComponents(BT())) === width1
             #@test treewidth(weights1, graph1; alg=SafeRules(ConnectedComponents(BT()))) === width1
             @test treewidth(weights1, graph1; alg = SafeSeparators(BT())) === width1
 
             width2 = V(9)
-            lb2 = lowerbound(graph2)
+            lb21 = lowerbound(graph2, MMW{1}())
+            lb22 = lowerbound(graph2, MMW{2}())
+            lb23 = lowerbound(graph2, MMW{3}())
             ub2 = treewidth(graph2)
 
-            @test isa(lb2, V)
+            @test isa(lb21, V)
+            @test isa(lb22, V)
+            @test isa(lb23, V)
             @test isa(ub2, V)
-            @test lb2 <= width2 <= ub2
+            @test lb21 <= width2
+            @test lb22 <= width2
+            @test lb23 <= width2
+            @test width2 <= ub2
             @test treewidth(graph2; alg = BT()) === width2
             @test treewidth(graph2; alg = SAT{libpicosat_jll}()) === width2
             @test treewidth(graph2; alg = SAT{Lingeling_jll}()) === width2
@@ -1099,12 +1126,19 @@ end
             @test treewidth(graph2; alg = SafeSeparators(SAT{CryptoMiniSat_jll}())) === width2
 
             width2 = 19.169925001442312
-            lb2 = lowerbound(weights2, graph2)
+            lb21 = lowerbound(weights2, graph2, MMW{1}())
+            lb22 = lowerbound(weights2, graph2, MMW{2}())
+            lb23 = lowerbound(weights2, graph2, MMW{3}())
             ub2 = treewidth(weights2, graph2)
 
-            @test isa(lb2, Float64)
+            @test isa(lb21, Float64)
+            @test isa(lb22, Float64)
+            @test isa(lb23, Float64)
             @test isa(ub2, Float64)
-            @test lb2 <= width2 <= ub2
+            @test lb21 <= width2
+            @test lb22 <= width2
+            @test lb23 <= width2
+            @test width2 <= ub2
             @test treewidth(weights2, graph2; alg = BT()) === width2
             @test treewidth(weights2, graph2; alg = SafeRules(BT())) === width2
             @test treewidth(weights2, graph2; alg = SafeSeparators(BT())) === width2
