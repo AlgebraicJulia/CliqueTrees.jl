@@ -81,8 +81,8 @@ approximating these values. The [`AMD`](@ref) algorithm is the state-of-the-prac
 These algorithm minimizes the treewidth of the completed graph.
 
 !!! warning
-    This is an NP-hard problem. I recommend wrapping exact treewidth algorithms with preprocessors like
-    [`SafeRules`](@ref) or [`ConnectedComponents`](@ref). 
+    This is an NP-hard problem. Consider wrapping exact treewidth algorithms with preprocessors like
+    [`SafeRules`](@ref) or [`SafeSeparators`](@ref). 
 
 # Meta Algorithms
 
@@ -766,9 +766,9 @@ julia> treewidth(graph; alg)
 struct BT <: EliminationAlgorithm end
 
 """
-    SAT{H, L, U} <: EliminationAlgorithm
+    SAT{H, A} <: EliminationAlgorithm
 
-    SAT{H}(lb::WidthOrAlgorithn, ub::PermutationOrAlgorithm)
+    SAT{H}(alg::PermutationOrAlgorithm)
 
     SAT{H}()
 
@@ -788,24 +788,20 @@ julia> graph = [
            0 0 1 0 0 0 1 0
        ];
 
-julia> alg = SAT{libpicosat_jll}(MMW(), MF()) # picosat
-SAT{libpicosat_jll, MMW, MF}:
-    MMW
+julia> alg = SAT{libpicosat_jll}(MF()) # picosat
+SAT{libpicosat_jll, MF}:
     MF
 
-julia> alg = SAT{PicoSAT_jll}(MMW(), MF()) # picosat
-SAT{PicoSAT_jll, MMW, MF}:
-    MMW
+julia> alg = SAT{PicoSAT_jll}(MF()) # picosat
+SAT{PicoSAT_jll, MF}:
     MF
 
-julia> alg = SAT{CryptoMiniSat_jll}(MMW(), MF()) # cryptominisat
-SAT{CryptoMiniSat_jll, MMW, MF}:
-    MMW
+julia> alg = SAT{CryptoMiniSat_jll}(MF()) # cryptominisat
+SAT{CryptoMiniSat_jll, MF}:
     MF
 
 julia> alg = SAT{Lingeling_jll}(MMW(), MF()) # lingeling
-SAT{Lingeling_jll, MMW, MF}:
-    MMW
+SAT{Lingeling_jll, MF}:
     MF
 
 julia> treewidth(graph; alg)
@@ -814,8 +810,7 @@ julia> treewidth(graph; alg)
 
 ### Parameters
 
-  - `lb`: lower bound algorithm
-  - `ub`: upper bound algorithm
+  - `alg`: elimination algorithm
 
 ## References
 
@@ -823,18 +818,16 @@ julia> treewidth(graph; alg)
   - Berg, Jeremias, and Matti Järvisalo. "SAT-based approaches to treewidth computation: An evaluation." *2014 IEEE 26th international conference on tools with artificial intelligence.* IEEE, 2014.
   - Bannach, Max, Sebastian Berndt, and Thorsten Ehlers. "Jdrasil: A modular library for computing tree decompositions." *16th International Symposium on Experimental Algorithms (SEA 2017)*. Schloss Dagstuhl–Leibniz-Zentrum fuer Informatik, 2017.
 """
-struct SAT{H, L <: WidthOrAlgorithm, U <: PermutationOrAlgorithm} <: EliminationAlgorithm
-    handle::Val{H}
-    lb::L
-    ub::U
+struct SAT{H, A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    alg::A
 end
 
-function SAT{H}(lb::WidthOrAlgorithm, ub::PermutationOrAlgorithm) where {H}
-    return SAT(Val(H), lb, ub)
+function SAT{H}(alg::A) where {H, A <: PermutationOrAlgorithm}
+    return SAT{H, A}(alg)
 end
 
 function SAT{H}() where {H}
-    return SAT{H}(DEFAULT_LOWER_BOUND_ALGORITHM, DEFAULT_ELIMINATION_ALGORITHM)
+    return SAT{H}(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -956,9 +949,9 @@ function CompositeRotations(clique::AbstractVector)
 end
 
 """
-    SafeRules{L, U} <: EliminationAlgorithm
+    SafeRules{A, L, U} <: EliminationAlgorithm
 
-    SafeRules(lb::WidthOrAlgorithm, ub::EliminationAlgororithm)
+    SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgororithm)
 
     SafeRules()
 
@@ -982,24 +975,26 @@ julia> graph = [
 julia> alg1 = BT()
 BT
 
-julia> alg2 = SafeRules(MMW(), BT())
-SafeRules{MMW, BT}:
-    MMW
+julia> alg2 = SafeRules(BT(), MMW(), MF())
+SafeRules{BT, MMW, MF}:
     BT
+    MMW
+    MF
 
-julia> @time treewidth(graph; alg=alg1) # slower
+julia> @time treewidth(graph; alg=alg1) # slow
   0.000177 seconds (1.41 k allocations: 90.031 KiB)
 2
 
-julia> @time treewidth(graph; alg=alg2) # faster
-  0.000066 seconds (237 allocations: 16.875 KiB)
+julia> @time treewidth(graph; alg=alg2) # fast
+  0.000044 seconds (282 allocations: 15.969 KiB)
 2
 ```
 
 ### Parameters
 
-  - `lb`: lower bound algorithm
-  - `ub`: elimination algorithm
+  - `alg`: elimination algorithm
+  - `lb`: lower bound algorithm (used to lower bound the treiwidth)
+  - `ub`: elimination algorithm (used to upper bound the treewidth)
 
 ### References
 
@@ -1007,13 +1002,18 @@ julia> @time treewidth(graph; alg=alg2) # faster
   - Bodlaender, Hans L., Arie M.C.A. Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
   - van den Eijkhof, Frank, Hans L. Bodlaender, and Arie M.C.A. Koster. "Safe reduction rules for weighted treewidth." *Algorithmica* 47 (2007): 139-158. 
 """
-struct SafeRules{L <: WidthOrAlgorithm, U <: EliminationAlgorithm} <: EliminationAlgorithm
+struct SafeRules{A <: EliminationAlgorithm, L <: WidthOrAlgorithm, U <: EliminationAlgorithm} <: EliminationAlgorithm
+    alg::A
     lb::L
     ub::U
 end
 
+function SafeRules(alg::PermutationOrAlgorithm, lb::WidthOrAlgorithm)
+    return SafeRules(alg, lb, DEFAULT_ELIMINATION_ALGORITHM)
+end
+
 function SafeRules(alg::PermutationOrAlgorithm)
-    return SafeRules(DEFAULT_LOWER_BOUND_ALGORITHM, alg)
+    return SafeRules(alg, DEFAULT_LOWER_BOUND_ALGORITHM)
 end
 
 function SafeRules()
@@ -1021,44 +1021,49 @@ function SafeRules()
 end
 
 # deprecated
-const RuleReduction{U} = SafeRules{MMW, U}
-RuleReduction(alg) = SafeRules(MMW(), alg)
+const RuleReduction{A} = SafeRules{A, MMW{3}, MF}
+RuleReduction(alg) = SafeRules(alg, MMW(), MF())
 
 """
     SafeSeparators{M, A} <: EliminationAlgorithm
 
-    SafeSeparators(min::PermutationOrAlgorithm, alg::EliminationAlgorithm)
+    SafeSeparators(alg::EliminationAlgorithm, min::PermutationOrAlgorithm)
 
-    SeparatorReducton()
+    SafeSeparators(alg::EliminationAlgorithm)
+
+    SafeSeparators()
 
 Apple an elimination algorithm to the atoms of an almost-clique separator decomposition. The algorithm
 `min` is used to compute the decomposition.
 
 !!! warning
-    The algorithm `min` must compute a *minimimal* ordering. I recommend wrapping a heuristic algorithm
-    with `MinimalChordal`. 
+    The algorithm `min` must compute a *minimimal* ordering. This property is guaranteed by the following
+    algorithms:
+      - [`MCSM`](@ref)
+      - [`LexM`](@ref)
+      - [`MinimalChordal`](@ref)
 
 ### Parameters
 
-  - `min`: minimal elimination algorithm
   - `alg`: elimination algorithm
+  - `min`: minimal elimination algorithm
 
 ### References
 
   - Bodlaender, Hans L., and Arie MCA Koster. "Safe separators for treewidth." *Discrete Mathematics* 306.3 (2006): 337-350.
   - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." arXiv preprint arXiv:2108.07551 (2021).
 """
-struct SafeSeparators{M <: PermutationOrAlgorithm, A <: EliminationAlgorithm} <: EliminationAlgorithm
-    min::M
+struct SafeSeparators{A <: EliminationAlgorithm, M <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
+    min::M
 end
 
-function SafeSeparators(min::PermutationOrAlgorithm)
-    return SafeSeparators(min, DEFAULT_ELIMINATION_ALGORITHM)
+function SafeSeparators(alg::EliminationAlgorithm)
+    return SafeSeparators(alg, MinimalChordal())
 end
 
 function SafeSeparators()
-    return SafeSeparators(MinimalChordal())
+    return SafeSeparators(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -1311,22 +1316,24 @@ function permutation(graph, alg::MF)
     return order, invperm(order)
 end
 
+function permutation(weights::AbstractVector, graph, alg::MF)
+    order = mf(weights, graph)
+    return order, invperm(order)
+end
+
 function permutation(graph, alg::MMD)
     index = mmd(graph; delta = alg.delta)
     return invperm(index), index
 end
 
 function permutation(graph, alg::SAT{H}) where {H}
-    order, index = permutation(graph, alg.ub)
-    lb = lowerbound(graph, alg.lb)
-    ub = treewidth(graph, order)
+    order, width = sat(graph, treewidth(graph, alg.alg), Val(H))
+    return order, invperm(order)
+end
 
-    if lb < ub
-        order, width = sat(graph, H, lb, ub)
-        index = invperm(order)
-    end
-
-    return order, index
+function permutation(weights::AbstractVector, graph, alg::SAT{H}) where {H}
+    order, width = sat(weights, graph, treewidth(weights, graph, alg.alg), Val(H))
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::MinimalChordal)
@@ -1360,16 +1367,34 @@ function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
 end
 
 function permutation(graph, alg::SafeRules)
-    kernel, stack, label, width = pr4(graph, lowerbound(graph, alg.lb))
-    order, index = permutation(kernel, alg.ub)
-    append!(stack, view(label, order))
+    width = lowerbound(graph, alg.lb)
+    weights, graph, stack, index, width = saferules(graph, width)
+    order, _ = permutation(weights, graph, alg.ub)
+
+    if width < treewidth(weights, graph, order)
+        order, _ = permutation(weights, graph, alg.alg)
+    end
+
+    for v in order
+        append!(stack, neighbors(index, v))
+    end
+
     return stack, invperm(stack)
 end
 
 function permutation(weights::AbstractVector, graph, alg::SafeRules)
-    kernel, stack, label, width = pr4(weights, graph, lowerbound(weights, graph, alg.lb))
-    order, index = permutation(view(weights, label), kernel, alg.ub)
-    append!(stack, view(label, order))
+    width = lowerbound(weights, graph, alg.lb)
+    weights, graph, stack, index, width = saferules(weights, graph, width)
+    order, _ = permutation(weights, graph, alg.ub)
+
+    if width < treewidth(weights, graph, order)
+        order, _ = permutation(weights, graph, alg.alg)
+    end
+
+    for v in order
+        append!(stack, neighbors(index, v))
+    end
+
     return stack, invperm(stack)
 end
 
@@ -1378,7 +1403,8 @@ function permutation(graph, alg::SafeSeparators)
     graph, label, tree = almosttree(graph, alg.min)
 
     # permute graph
-    graph = Graph(sympermute(graph, invperm(label), Reverse))
+    V = eltype(graph)
+    graph = Graph{V}(permute!(sparse(graph), label, label))
 
     # compute ordering
     order = cliquedissect(graph, tree, alg.alg)
@@ -1396,7 +1422,8 @@ function permutation(weights::AbstractVector, graph, alg::SafeSeparators)
 
     # permute graph
     weights = weights[label]
-    graph = Graph(sympermute(graph, invperm(label), Reverse))
+    V = eltype(graph)
+    graph = Graph{V}(permute!(sparse(graph), label, label))
 
     # compute ordering
     order = cliquedissect(weights, graph, tree, alg.alg)
@@ -2045,101 +2072,76 @@ function mcsm(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
     return alpha
 end
 
-"""
-    mf(graph)
-
-Compute the greedy minimum-fill ordering of a simple graph.
-Returns the permutation and its inverse.
-"""
-function mf(graph, issorted::Val = Val(false))
-    return mf(BipartiteGraph(graph), issorted)
+function mf(graph)
+    return mf(BipartiteGraph(graph))
 end
 
-function mf(graph::SparseMatrixCSC)
-    return mf(BipartiteGraph(graph), Val(true))
+function mf(graph::AbstractGraph{V}) where {V}
+    weights = ones(V, nv(graph))
+    return mf(weights, graph)
 end
 
-function mf(graph::AbstractSimpleGraph)
-    return mf(graph, Val(true))
+function mf(weights::AbstractVector, graph)
+    mf(weights, BipartiteGraph(graph))
 end
 
-function mf(graph::AbstractGraph{V}, ::Val{false}) where {V}
-    degrees = Vector{V}(undef, nv(graph))
-    scratch = Vector{V}(undef, Δout(graph))
-    lists = Vector{Vector{V}}(undef, nv(graph))
+function mf(weights::AbstractVector, graph::AbstractGraph)
+    return mf!(weights, Graph(graph))
+end
 
-    for v in vertices(graph)
-        i = zero(V)
-        list = Vector{V}(undef, eltypedegree(graph, v))
+# Probabilistic Graphical Models: Principles and Techniques
+# Koller and Friedman
+# Algorithm 9.4 Greedy search for constructing an elimination ordering
+# (Weighted Min-Fill)
+function mf!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
+    n = nv(graph)
+    order = Vector{V}(undef, n)
+    label = zeros(Int, n); tag = 0
 
-        for w in outneighbors(graph, v)
-            if v != w
-                i += one(V)
-                list[i] = w
-            end
-        end
-
-        degrees[v] = i
-        lists[v] = sort!(resize!(list, i); scratch)
+    # remove self edges
+    @inbounds for v in vertices(graph)
+        rem_edge!(graph, v, v)
     end
 
-    return mf!(nv(graph), degrees, lists)
-end
+    # compute neighbor weights
+    nweights = Vector{W}(undef, n)
 
-function mf(graph::AbstractGraph{V}, ::Val{true}) where {V}
-    degrees = Vector{V}(undef, nv(graph))
-    lists = Vector{Vector{V}}(undef, nv(graph))
+    @inbounds for v in vertices(graph)
+        nweight = weights[v]
 
-    for v in vertices(graph)
-        i = zero(V)
-        list = Vector{V}(undef, eltypedegree(graph, v))
-
-        for w in outneighbors(graph, v)
-            if v != w
-                i += one(V)
-                list[i] = w
-            end
+        for w in neighbors(graph, v)
+            nweight += weights[w]
         end
 
-        degrees[v] = i
-        lists[v] = resize!(list, i)
+        nweights[v] = nweight
     end
-
-    return mf!(nv(graph), degrees, lists)
-end
-
-function mf!(
-        nv::V, degrees::AbstractVector{V}, lists::AbstractVector{<:AbstractVector{V}}
-    ) where {V}
-    order = Vector{V}(undef, nv)
-    label = zeros(Int, nv); tag = 0
 
     # construct stack data structure
     snum = zero(V) # size of stack
-    stack = Vector{V}(undef, nv)
+    stack = Vector{V}(undef, n)
 
     # construct min-heap data structure
-    heap = Heap{V, V}(nv)
+    heap = Heap{V, W}(n)
 
-    @inbounds for v in oneto(nv)
-        count = zero(V)
-        degree = degrees[v]
-        list = lists[v]
+    @inbounds for v in oneto(n)
+        cost = zero(W)
 
-        for j in oneto(degree)
-            w = list[j]
-            label[lists[w]] .= tag += 1
+        for w in neighbors(graph, v)
+            label[neighbors(graph, w)] .= tag += 1
+            wcost = zero(W)
 
-            for jj in (j + 1):degree
-                ww = list[jj]
+            for ww in neighbors(graph, v)
+                w == ww && break
 
-                if label[ww] != tag
-                    count += one(V)
+                if label[ww] < tag
+                    wcost += weights[ww]
                 end
             end
+
+            cost += wcost * weights[w]
         end
 
-        push!(heap, v => count)
+        push!(heap, v => cost)
     end
 
     hfall!(heap)
@@ -2147,25 +2149,27 @@ function mf!(
     # run algorithm
     i = one(V)
 
-    @inbounds while i <= nv
+    @inbounds while i <= n
         # select vertex from heap
-        v = order[i] = argmin(heap)
-        list = lists[v]
-        degree = degrees[v]
-        label[list] .= label[v] = tag += 1
+        order[i] = v = argmin(heap)
+        label[neighbors(graph, v)] .= tag += 1
+        degree = eltypedegree(graph, v)
+        weight = weights[v]
+        nweight = nweights[v]
 
         # append distinguishable neighbors to the stack
         snum = zero(V)
+        sweight = zero(W)
         ii = i + one(V)
 
-        for w in list
+        for w in neighbors(graph, v)
             flag = false
 
-            if degrees[w] == degree
+            if eltypedegree(graph, w) == degree
                 flag = true
 
-                for x in lists[w]
-                    if label[x] < tag
+                for vv in neighbors(graph, w)
+                    if vv != v && label[vv] < tag
                         flag = false
                         break
                     end
@@ -2178,14 +2182,18 @@ function mf!(
                 ii += one(V)
             else
                 snum += one(V)
+                sweight += weights[w]
                 stack[snum] = w
             end
         end
 
         # remove vertex from graph
-        for w in take(stack, snum)
-            list = lists[w]
-            degrees[w] -= one(V)
+        graph.ne -= snum
+
+        for j in oneto(snum)
+            w = stack[j]
+            list = neighbors(graph, w)
+            nweights[w] -= weight
             deleteat!(list, searchsortedfirst(list, v))
         end
 
@@ -2193,55 +2201,63 @@ function mf!(
         if ii > i + one(V)
             tag += 1
 
-            for w in take(stack, snum)
-                list = lists[w]
+            for j in oneto(snum)
+                w = stack[j]
+                list = neighbors(graph, w)
                 count = zero(V)
+                cost = weights[w]
 
-                for j in oneto(degrees[w])
-                    x = list[j]
-
-                    if label[x] == tag
+                for x in neighbors(graph, w)
+                    if label[x] < tag
                         count += one(V)
-                    else
-                        list[j - count] = x
+                        cost += weights[x]
+                        list[count] = x
                     end
                 end
 
-                resize!(list, degrees[w] -= count)
+                graph.ne -= (eltypedegree(graph, w) - count)
+                nweights[w] = cost
+                resize!(list, count)
             end
         end
 
         # remove vertex and indistinguishable neighbors from heap
+        graph.ne -= half((ii - i) * (ii - i - one(V)))
+
         for j in i:(ii - one(V))
-            delete!(heap, order[j])
+            w = order[j]
+            delete!(heap, w)
+            empty!(neighbors(graph, w))
+            nweights[w] = weights[w]
         end
 
         # update deficiencies
-        if heap[order[i]] > zero(V)
+        if ispositive(heap[v])
             for j in oneto(snum)
                 w = stack[j]
-                label[lists[w]] .= tag += 1
+                wweight = weights[w]
+                label[neighbors(graph, w)] .= tag += 1
 
                 for jj in (j + one(V)):snum
                     ww = stack[jj]
+                    wwweight = weights[ww]
 
-                    if label[ww] != tag
-                        count = zero(V)
+                    if label[ww] < tag
+                        cost = wweight + wwweight
 
-                        for xx in lists[ww]
+                        for xx in neighbors(graph, ww)
                             if label[xx] == tag
-                                heap[xx] -= one(V)
+                                heap[xx] -= wweight * wwweight
                                 hrise!(heap, xx)
-                                count += one(V)
+                                cost += weights[xx]
                             end
                         end
 
-                        heap[w] += degrees[w] - count
-                        heap[ww] += degrees[ww] - count
-                        insert!(lists[w], searchsortedfirst(lists[w], ww), ww)
-                        insert!(lists[ww], searchsortedfirst(lists[ww], w), w)
-                        degrees[w] += one(V)
-                        degrees[ww] += one(V)
+                        nweights[w] += wwweight
+                        nweights[ww] += wweight
+                        heap[w] += wwweight * (nweights[w] - cost)
+                        heap[ww] += wweight * (nweights[ww] - cost)
+                        add_edge!(graph, w, ww)
                         label[ww] = tag
                     end
                 end
@@ -2250,7 +2266,7 @@ function mf!(
 
         # update heap
         for w in take(stack, snum)
-            heap[w] -= (ii - i) * (degrees[w] - snum + one(V))
+            heap[w] -= (nweight - sweight) * (nweights[w] - sweight)
             hrise!(heap, w)
             hfall!(heap, w)
         end
@@ -2277,8 +2293,18 @@ function MMDLib.mmd(graph::BipartiteGraph; kwargs...)
     return mmd(pointers(graph), targets(graph); kwargs...)
 end
 
-function sat(graph, H::Module, lowerbound::Integer, upperbound::Integer)
-    return sat(BipartiteGraph(graph), H, lowerbound, upperbound)
+function sat(graph, upperbound::Integer, ::Val{H}) where {H}
+    return sat(BipartiteGraph(graph), upperbound, Val(H))
+end
+
+function sat(graph::AbstractGraph, upperbound::I, ::Val{H}) where {I <: Integer, H}
+    weights = ones(Int32, nv(graph))
+    order, width = sat(weights, graph, upperbound + one(I), Val(H))
+    return order, width - one(Int32)
+end
+
+function sat(weights::AbstractVector, graph, upperbound::Integer, ::Val{H}) where {H}
+    return sat(weights, BipartiteGraph(graph), upperbound, Val(H))
 end
 
 # Encoding Treewidth into SAT
@@ -2289,37 +2315,55 @@ end
 #
 # Jdrasil: A Modular Library for Computing Tree Decompositions
 # Bannach, Berndt, and Ehlers
-function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound::Integer) where {V}
-    @argcheck !isnegative(lowerbound) && lowerbound <= upperbound <= nv(graph)
+function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integer, ::Val{H}) where {V, H}
+    @argcheck !isnegative(upperbound)
+    n = Int32(nv(graph))
 
     # compute a maximal clique
-    clique = maximalclique(graph, H)
-
-    # compute true twins
-    truesets, truelist = twins(graph, Val(true))
+    clique = maximalclique(weights, graph, Val(H))
 
     # compute false twins
-    falsesets, falselist = twins(graph, Val(false))
+    partition = twins(graph, Val(false))
 
     # run solver
-    order, width = open(Solver{H}) do solver
-        n = Int32(nv(graph))
+    matrix, width = open(Solver{H}) do solver
+        # compute total weight
+        m = zero(Int32)
+
+        for i in oneto(n)
+            m += Int32(weights[i])
+        end
+
         ord = Matrix{Int32}(undef, n, n)
-        arc = Matrix{Int32}(undef, n, n)
+        arc = Matrix{Int32}(undef, n, m)
 
         # define ord and arc variables
-        for i in oneto(n), j in oneto(n)
-            if i < j
-                resize!(solver, length(solver) + one(Int32))
-                ord[i, j] = length(solver)
-            elseif i > j
-                ord[i, j] = -ord[j, i]
-            else
-                ord[i, j] = zero(Int32)
-            end
+        for i in oneto(n)
+            jj = n
 
-            resize!(solver, length(solver) + one(Int32))
-            arc[i, j] = length(solver)
+            for j in oneto(n)
+                # ord variables
+                if i < j
+                    resize!(solver, length(solver) + one(Int32))
+                    ord[i, j] = length(solver)
+                elseif i > j
+                    ord[i, j] = -ord[j, i]
+                else
+                    ord[i, j] = zero(Int32)
+                end
+
+                # arc variables
+                resize!(solver, length(solver) + one(Int32))
+                arc[i, j] = length(solver)
+
+                # duplicate arc variables
+                weight = Int32(weights[j])
+
+                for _ in oneto(weight - one(Int32))
+                    jj += one(Int32)
+                    arc[i, jj] = length(solver)
+                end
+            end
         end
 
         # base encoding
@@ -2328,8 +2372,8 @@ function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound
                 # ord(i, j) ∧ ord(j, k) → ord(i, k)
                 clause!(solver, -ord[i, j], -ord[j, k], ord[i, k])
 
-                # arc(k, i) ∧ arc(k, j) → arc(i, j) ∨ arc(j, i)
-                clause!(solver, -arc[k, i], -arc[k, j], arc[i, j], arc[j, i])
+                # arc(i, j) ∧ arc(i, k) → arc(j, k) ∨ arc(k, j)
+                clause!(solver, -arc[i, j], -arc[i, k], arc[j, k], arc[k, j])
             end
         end
 
@@ -2341,61 +2385,42 @@ function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound
         end
 
         for i in oneto(n)
-            # ¬arc(i, i)
-            clause!(solver, -arc[i, i])
+            # arc(i, i)
+            clause!(solver, arc[i, i])
 
             for j in oneto(n)
                 if i != j
-                    # ord(i, j) → ¬arc(j, i)
+                    # ord(i, j) → -arc(j, i)
                     clause!(solver, -ord[i, j], -arc[j, i])
 
-                    # arc(i, j) → ¬arc(j, i)
-                    clause!(solver, -arc[i, j], -arc[j, i])
+                    if i < j
+                        # ord(i, j) → ¬ord(j, i)
+                        clause!(solver, -ord[i, j], -ord[j, i])
+                    end
                 end
             end
         end
 
         # encode maximal clique
-        label = zeros(Int, n); tag = 1
+        label = zeros(Bool, n)
+        label[clique] .= true
 
-        for j in clique
-            label[j] = tag
-
-            for i in oneto(n)
-                if label[i] < tag
-                    # ord(i, j)
-                    clause!(solver, ord[i, j])
-                end
+        for j in clique, i in oneto(n)
+            if !label[i]
+                # ord(i, j)
+                clause!(solver, ord[i, j])
+            elseif i < j
+                # arc(i, j)
+                clause!(solver, arc[i, j])
             end
         end
 
-        # encode twins
-        for (sets, list) in ((truesets, truelist), (falsesets, falselist))
-            for p in list
-                set = sets(p); tag += 1
-
-                for k in set
-                    if iszero(label[k])
-                        label[k] = tag
-                    else
-                        delete!(set, k)
-                    end
-                end
-
-                for k in set
-                    for j in set
-                        j == k && break
-
-                        # ord(j, k)
-                        clause!(solver, ord[j, k])
-
-                        for i in oneto(n)
-                            if label[i] < tag
-                                # ord(i, k) → ord(i, j)
-                                clause!(solver, -ord[i, k], ord[i, j])
-                            end
-                        end
-                    end
+        # encode false twins
+        for p in vertices(partition)
+            for k in neighbors(partition, p), j in neighbors(partition, p)
+                if j < k && !label[j] && !label[k]
+                    # ord(j, k)
+                    clause!(solver, ord[j, k])
                 end
             end
         end
@@ -2410,26 +2435,26 @@ function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound
         cache = Matrix{Bool}(undef, n, n)
 
         # initialize assumption
-        count = upperbound
+        count = min(Int32(upperbound), m - one(Int32))
 
         for i in oneto(n)
             # Σ { arc(i, j) : j } <= count
-            solver[arc[i, n - count]] = -one(Int32)
+            solver[arc[i, m - count]] = -one(Int32)
         end
 
         state = solve!(solver)
 
-        if state != :sat
-            error("no solutions found")
-        end
-
         # decrement count until unsatisfiable
-        while state == :sat && lowerbound <= count
+        while state == :sat && !isnegative(count)
             # update cache
             for i in oneto(n), j in oneto(n)
-                cache[i, j] = i < j ? !isnegative(solver[ord[i, j]]) :
-                    i > j ? !cache[j, i] :
-                    false
+                if i < j
+                    cache[i, j] = ispositive(solver[ord[i, j]])
+                elseif i > j
+                    cache[i, j] = !cache[j, i]
+                else
+                    cache[i, j] = false
+                end
             end
 
             # update assumption
@@ -2437,7 +2462,7 @@ function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound
 
             for i in oneto(n)
                 # Σ { arc(i, j) : j } <= count
-                solver[arc[i, n - count]] = -one(Int32)
+                solver[arc[i, m - count]] = -one(Int32)
             end
 
             state = solve!(solver)
@@ -2447,18 +2472,42 @@ function sat(graph::AbstractGraph{V}, H::Module, lowerbound::Integer, upperbound
             count += one(Int32)
         end
 
-        return sort(vertices(graph); lt = (i, j) -> cache[i, j]), count
+        return cache, count
     end
 
+    order = Vector{V}(undef, n)
+    sortperm!(order, oneto(n); lt=(i, j) -> matrix[i, j])
     return order, width
 end
 
 # compute a maximal clique
-function maximalclique(graph::AbstractGraph, H::Module)
+function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) where {H}
     clique = open(Solver{H}, nv(graph)) do solver
         n = length(solver)
-        variables = collect(oneto(n))
         label = zeros(Int32, n); tag = zero(Int32)
+
+        # compute total weight
+        m = zero(Int32)
+
+        for i in oneto(n)
+            m += Int32(weights[i])
+        end
+
+        # define variables
+        var = Vector{Int32}(undef, m)
+        ii = n
+
+        for i in oneto(n)
+            var[i] = i
+
+            # duplicate variables
+            weight = Int32(weights[i])
+
+            for _ in oneto(weight - one(Int32))
+                ii += one(Int32)
+                var[ii] = i
+            end
+        end 
 
         # base encoding
         for j in oneto(n)
@@ -2477,7 +2526,7 @@ function maximalclique(graph::AbstractGraph, H::Module)
         end
 
         # encode sorting network
-        sortingnetwork!(solver, variables)
+        sortingnetwork!(solver, var)
 
         # initialize stack
         num = zero(Int32)
@@ -2486,8 +2535,8 @@ function maximalclique(graph::AbstractGraph, H::Module)
         # initialize assumption
         count = zero(Int32)
 
-        # Σ { variables(i) : i } > count
-        solver[variables[n - count]] = one(Int32)
+        # Σ { var(i) : i } > count
+        solver[var[m - count]] = one(Int32)
         state = solve!(solver)
 
         if state != :sat
@@ -2509,8 +2558,8 @@ function maximalclique(graph::AbstractGraph, H::Module)
             # update assumption
             count += one(Int32)
 
-            # Σ { variables(i) : i } > count
-            solver[variables[n - count]] = one(Int32)
+            # Σ { var(i) : i } > count
+            solver[var[m - count]] = one(Int32)
             state = solve!(solver)
         end
 
@@ -2520,7 +2569,10 @@ function maximalclique(graph::AbstractGraph, H::Module)
     return clique
 end
 
-# partition a graph into (false) twins
+# A Synthetis on Partition Refinement: A Useful Routine
+# for Strings, Graphs, Boolean Matrices, and Automata
+# Habib, Paul, and Viennot
+# Algorithm 2: Computing twins
 function twins(graph::AbstractGraph{V}, ::Val{T}) where {V, T}
     n = nv(graph)
 
@@ -2530,7 +2582,7 @@ function twins(graph::AbstractGraph{V}, ::Val{T}) where {V, T}
     next = Vector{V}(undef, n)
 
     function set(i)
-        h = @view head[i]
+        @inbounds h = @view head[i]
         return DoublyLinkedList(h, prev, next)
     end
 
@@ -2546,17 +2598,19 @@ function twins(graph::AbstractGraph{V}, ::Val{T}) where {V, T}
     label = zeros(V, n)
 
     # run algorithm
-    for i in oneto(n)
+    @inbounds for i in oneto(n)
         pnum += one(V)
         pstack[pnum] = i
     end
 
-    i = pstack[pnum]
-    pnum -= one(V)
-    pushfirst!(list, i)
-    prepend!(set(i), vertices(graph))
+    if ispositive(n)
+        i = pstack[pnum]
+        pnum -= one(V)
+        pushfirst!(list, i)
+        prepend!(set(i), vertices(graph))
+    end
 
-    for v in vertices(graph)
+    @inbounds for v in vertices(graph)
         tag += one(V)
 
         if T
@@ -2564,7 +2618,9 @@ function twins(graph::AbstractGraph{V}, ::Val{T}) where {V, T}
         end
 
         for w in neighbors(graph, v)
-            label[w] = tag
+            if v != w
+                label[w] = tag
+            end
         end
 
         # refine partition
@@ -2614,7 +2670,21 @@ function twins(graph::AbstractGraph{V}, ::Val{T}) where {V, T}
         end
     end
 
-    return set, list
+    # represent twin partition as a bipartite graph
+    partition = BipartiteGraph{V, V}(n, n - pnum, n)
+    pointers(partition)[begin] = p = j = one(V)
+
+    @inbounds for i in list
+        for v in set(i)
+            targets(partition)[p] = v
+            p += one(V)
+        end
+
+        j += one(V)
+        pointers(partition)[j] = p
+    end
+
+    return partition
 end
 
 function minimalchordal(graph, order::AbstractVector, index::AbstractVector = invperm(order))
@@ -3186,7 +3256,7 @@ end
 
 function pr3!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V}
     n = nv(graph)
-    tol = tolerance(weights)
+    tol = tolerance(W)
 
     @inbounds for v in vertices(graph)
         rem_edge!(graph, v, v)
@@ -3582,7 +3652,7 @@ function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
 
     # apply simplicial and almost simplicial rules
     n = nv(graph)
-    tol = tolerance(weights)
+    tol = tolerance(W)
     marker = zeros(Int, n); tag = 0
 
     # neighbor weights
@@ -3705,6 +3775,161 @@ function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
     keepat!(_label, rem_vertices!(graph, stack; keep_order = true))
     return _stack, _label, width
 end
+
+function compress(graph, type::Val)
+    return compress(BipartiteGraph(graph), type)
+end
+
+function compress(graph::AbstractGraph{V}, type::Val) where {V}
+    weights = ones(V, nv(graph))
+    return compress(weights, graph, type)
+end
+
+function compress(weights::AbstractVector, graph, type::Val)
+    return compress(weights, BipartiteGraph(graph), type)
+end
+
+# Engineering Data Reduction for Nested Dissection
+# Ost, Schulz, Strash
+# Reduction 2 (Indistinguishable node reduction)
+# Reduction 3 (Twin Reduction)
+function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, type::Val) where {W, V}
+    n = nv(graph)
+    m = ne(graph)
+
+    if !is_directed(graph)
+        m = twice(m)
+    end
+
+    marker = zeros(V, n); tag = zero(V)
+
+    # compute twins
+    partition = twins(graph, type)
+
+    # compute weights and projection
+    cn = nv(partition)
+    project = Vector{V}(undef, n)
+    cweights = Vector{W}(undef, cn)
+
+    for i in vertices(partition)
+        weight = zero(W)
+
+        for v in neighbors(partition, i)
+            project[v] = i
+            weight += weights[v]
+        end
+
+        cweights[i] = weight
+    end
+
+    # compress graph
+    E = etype(graph)
+    cgraph = BipartiteGraph{V, E}(cn, cn, m)
+    pointers(cgraph)[begin] = p = one(E)
+  
+    for i in vertices(partition)
+        marker[i] = tag += one(V)
+
+        @assert !isempty(neighbors(partition, i))
+
+        for w in neighbors(graph, first(neighbors(partition, i)))
+            k = project[w]
+
+            if marker[k] < tag
+                marker[k] = tag
+                targets(cgraph)[p] = k
+                p += one(E)
+            end
+        end
+
+        pointers(cgraph)[i + one(V)] = p
+    end
+
+    resize!(targets(cgraph), p - one(E))
+    return cweights, cgraph, partition
+end
+
+function saferules(graph, width::Integer)
+    return saferules(BipartiteGraph(graph), width)
+end
+
+function saferules(graph::AbstractGraph{V}, width::Integer) where {V}
+    weights = ones(V, nv(graph))
+    return saferules(weights, graph, V(width) + one(V))
+end
+
+function saferules(weights::AbstractVector{<:Number}, graph, width::Number)
+    return saferules(weights, BipartiteGraph(graph), width)
+end
+
+function saferules(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::Number) where {W <: Number, V}
+    return saferules(weights, graph, W(width))
+end
+
+function saferules(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V}
+    # initialize hi
+    hi = n = nv(graph)
+
+    # apply rules
+    rgraph, stack, inject, width = pr4(weights, graph, width)
+
+    # compress graph
+    weights, graph, project = compress(view(weights, inject), rgraph, Val(true))
+
+    # initialize lo
+    lo = nv(project); m = ne(project)
+
+    # initialize index
+    index = BipartiteGraph{V, V}(n, lo, m)
+    pointers(index)[begin] = p = one(V)
+
+    for v in vertices(project)
+        for w in neighbors(project, v)
+            targets(index)[p] = inject[w]
+            p += one(V)
+        end
+
+        pointers(index)[v + one(V)] = p
+    end
+
+    # repeat until exhaustion
+    while lo < hi
+        # update hi
+        hi = lo
+
+        # apply rules
+        rgraph, newstack, inject, width = pr4(weights, graph, width)
+
+        # update stack
+        for w in newstack, x in neighbors(index, w)
+            push!(stack, x); m -= one(V)
+        end
+
+        # compress graph
+        weights, graph, project = compress(view(weights, inject), rgraph, Val(true))
+
+        # update lo
+        lo = nv(project)
+
+        # update index
+        newindex = BipartiteGraph{V, V}(n, lo, m)
+        pointers(newindex)[begin] = p = one(V)
+
+        for v in vertices(project)
+            for w in neighbors(project, v), x in neighbors(index, inject[w])
+                targets(newindex)[p] = x
+                p += one(V)
+            end
+
+            pointers(newindex)[v + one(V)] = p
+        end
+
+        index = newindex
+    end
+
+    return weights, graph, stack, index, width
+end
+
 
 function connectedcomponents(graph)
     return connectedcomponents(BipartiteGraph(graph))
@@ -3849,11 +4074,10 @@ function Base.show(io::IO, ::MIME"text/plain", alg::FlowCutter)
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::SAT{H, L, U}) where {H, L, U}
+function Base.show(io::IO, ::MIME"text/plain", alg::SAT{H, A}) where {H, A}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "SAT{$H, $L, $U}:")
-    show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
-    show(IOContext(io, :indent => indent + 4), "text/plain", alg.ub)
+    println(io, " "^indent * "SAT{$H, $A}:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
 end
 
@@ -3872,19 +4096,20 @@ function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) wh
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{L, U}) where {L, U}
+function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{A, L, U}) where {A, L, U}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "SafeRules{$L, $U}:")
+    println(io, " "^indent * "SafeRules{$A, $L, $U}:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.ub)
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::SafeSeparators{M, A}) where {M, A}
+function Base.show(io::IO, ::MIME"text/plain", alg::SafeSeparators{A, M}) where {A, M}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "SafeSeparators{$M, $A}:")
-    show(IOContext(io, :indent => indent + 4), "text/plain", alg.min)
+    println(io, " "^indent * "SafeSeparators{$A, $M}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.min)
     return
 end
 

@@ -19,16 +19,15 @@ export MAX_ITEMS_PRINTED, printiterator
 
 const MAX_ITEMS_PRINTED = 5
 
-# `tol = tolerance(weights)` should satisfy
+# `tol = tolerance(W)` should satisfy
 #     v < w iff v ≤ w - tol
 #     v ≤ w iif v < w + tol
 # for all weights v and w.
-function tolerance(weights::AbstractVector{W}) where {W <: AbstractFloat}
-    tol::W = 1.0e-5
-    return tol
+function tolerance(::Type{W}) where {W <: AbstractFloat}
+    return W(1e-5)
 end
 
-function tolerance(weights::AbstractVector{W}) where {W <: Integer}
+function tolerance(::Type{W}) where {W <: Integer}
     return one(W)
 end
 

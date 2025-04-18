@@ -74,8 +74,7 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
     for (j, bag) in enumerate(tree)
         subgraph, order = induced_subgraph(graph, bag)
         perm, utree, upper = eliminationtree(view(weights, order), subgraph, alg)
-        permute!(order, perm)
-        index[order] = vertices(upper)
+        permute!(order, perm); index[order] = vertices(upper)
 
         for i in childindices(tree, j)
             invpermute!(
@@ -171,39 +170,40 @@ function almosttree!(graph::Graph{V}, alg::PermutationOrAlgorithm) where {V}
 
         for bag in tree
             sep = separator(bag)
-            len = convert(V, length(sep))
-            i = zero(V)
-            isalmostclique = false
+            num = convert(V, length(sep))
+            ww = zero(V); tag += 1
 
-            while !isalmostclique && i < len
-                i += one(V)
-                ii = zero(V)
-                v = label[sep[i]]
-                isalmostclique = true
+            for v in sep
+                marker[label[v]] = tag
+            end
 
-                while isalmostclique && ii < len
-                    iii = ii += one(V)
-                    vv = label[sep[ii]]
-                    marker[neighbors(graph, vv)] .= tag += 1
+            for v in sep
+                count = num - one(V)
 
-                    while isalmostclique && iii < len
-                        iii += one(V)
-                        vvv = label[sep[iii]]
+                for w in neighbors(graph, label[v])
+                    if marker[w] == tag
+                        count -= one(V)
+                    end
+                end
 
-                        if v != vvv && marker[vvv] < tag
-                            isalmostclique = false
-                        end
+                if ispositive(count)
+                    if ispositive(ww)
+                        ww = zero(V)
+                        break
+                    else
+                        ww = label[v]
                     end
                 end
             end
 
-            if isalmostclique
-                v = label[sep[i]]
+            if ispositive(ww)
+                flag = true
 
-                for ii in oneto(len)
-                    if i != ii
-                        vv = label[sep[ii]]
-                        flag = add_edge!(graph, v, vv) || flag
+                for v in sep
+                    w = label[v]
+
+                    if w != ww
+                        add_edge!(graph, w, ww)
                     end
                 end
             end
