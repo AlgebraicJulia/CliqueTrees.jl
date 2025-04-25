@@ -110,6 +110,20 @@ function residuals(tree::SupernodeTree)
     return tree.res
 end
 
+function Base.copy(tree::SupernodeTree)
+    return SupernodeTree(copy(tree.tree), copy(tree.res))
+end
+
+function Base.copy!(dst::SupernodeTree, src::SupernodeTree)
+    copy!(dst.tree, src.tree)
+    copy!(dst.res, src.res)
+    return dst
+end
+
+function Base.:(==)(left::SupernodeTree, right::SupernodeTree)
+    return left.tree == right.tree && left.res == right.res
+end
+
 ##########################
 # Indexed Tree Interface #
 ##########################

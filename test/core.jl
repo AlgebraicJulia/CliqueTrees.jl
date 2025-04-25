@@ -2,7 +2,7 @@ using AbstractTrees
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: DoublyLinkedList, sympermute
+using CliqueTrees: DoublyLinkedList, sympermute, cliquetree!
 using Graphs
 using Graphs: SimpleEdge
 using JET
@@ -287,12 +287,7 @@ end
         @test dst.(edges(filledgraph)) == [6, 7, 6, 8, 5, 7, 5, 8, 7, 8, 7, 8, 8]
 
         @test neighbors(filledgraph, 5) == [7, 8]
-        @test collect(inneighbors(filledgraph, 5)) == [3, 4]
-        @test collect(all_neighbors(filledgraph, 5)) == [3, 4, 7, 8]
-
         @test outdegree(filledgraph, 5) === Int8(2)
-        @test indegree(filledgraph, 5) === Int8(2)
-        @test degree(filledgraph, 5) === Int8(4)
     end
 end
 
@@ -356,6 +351,54 @@ end
         @test isempty(list)
         @test collect(list) == []
     end
+end
+
+@testset "clique tree" begin
+    matrix = [
+        0 1 1 0 0 0 0 0
+        1 0 1 0 1 1 1 0
+        1 1 0 1 1 0 0 0
+        0 0 1 0 1 0 0 0
+        0 1 1 1 0 0 1 1
+        0 1 0 0 0 0 1 0
+        0 1 0 0 1 1 0 1
+        0 0 0 0 1 0 1 0
+    ]
+
+    label1, tree1 = cliquetree(matrix)
+    label2 = copy(label1)
+    tree2 = copy(tree1)
+    permute!(label2, cliquetree!(tree2, 1))
+    isomorphism = Int[]
+
+    for bag1 in tree1
+        bag1 = label1[bag1]
+
+        for (i, bag2) in enumerate(tree2)
+            bag2 = label2[bag2]
+
+            if issetequal(bag1, bag2)
+                push!(isomorphism, i)
+                break
+            end
+        end
+    end
+
+    graph1 = Graph(length(tree1))
+    graph2 = Graph(length(tree2))
+
+    for j in Tree(tree1), i in childindices(tree1, j)
+        add_edge!(graph1, isomorphism[i], isomorphism[j])
+    end
+
+    for j in Tree(tree2), i in childindices(tree2, j)
+        add_edge!(graph2, i, j)
+    end
+
+    @test tree1 == tree1
+    @test tree2 == tree2
+    @test tree1 != tree2
+    @test graph1 == graph2
 end
 
 @testset "representation" begin

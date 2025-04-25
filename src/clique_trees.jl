@@ -6,7 +6,6 @@ This type implements the [indexed tree interface](https://juliacollections.githu
 """
 struct CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
     tree::SupernodeTree{V}
-    count::Vector{V}
     sep::BipartiteGraph{V, E, Vector{E}, Vector{V}}
 end
 
@@ -145,22 +144,22 @@ function isu!(graph::AbstractGraph{V}, order::AbstractVector{V}, index::Abstract
     return subgraph
 end
 
-function almosttree(graph; alg::PermutationOrAlgorithm = MinimalChordal())
-    return almosttree(graph, alg)
+function safetree(graph; alg::PermutationOrAlgorithm = MinimalChordal())
+    return safetree(graph, alg)
 end
 
-function almosttree(graph, alg::PermutationOrAlgorithm)
-    return almosttree(BipartiteGraph(graph), alg)
+function safetree(graph, alg::PermutationOrAlgorithm)
+    return safetree(BipartiteGraph(graph), alg)
 end
 
-function almosttree(graph::AbstractGraph, alg::PermutationOrAlgorithm)
+function safetree(graph::AbstractGraph, alg::PermutationOrAlgorithm)
     graph = Graph(graph)
-    return graph, almosttree!(graph, alg)...
+    return graph, safetree!(graph, alg)...
 end
 
 # A Heuristic for Listing Almost-Clique Minimal Separators of a Graph
 # Tamaki
-function almosttree!(graph::Graph{V}, alg::PermutationOrAlgorithm) where {V}
+function safetree!(graph::Graph{V}, alg::PermutationOrAlgorithm) where {V}
     n = nv(graph)
     marker = zeros(Int, n); tag = 0; flag = true
 
@@ -312,7 +311,6 @@ function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::Cliqu
     end
 
     # construct separators
-    count = zeros(V, n)
     sepval = Vector{V}(undef, b)
     sepptr = Vector{E}(undef, a + one(V))
     sepptr[begin] = q = one(E)
@@ -321,7 +319,6 @@ function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::Cliqu
         set = ainv[aa]
 
         for v in separator(tree, last(set))
-            count[index[v]] += (sndptr[aa + one(V)] - sndptr[aa])
             sepval[q] = index[v]
             q += one(V)
         end
@@ -332,7 +329,7 @@ function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::Cliqu
     # return atom tree
     invpermute!(label, index)
     stree = SupernodeTree(atree, BipartiteGraph(n, sndptr, oneto(n)))
-    ctree = CliqueTree(stree, count, BipartiteGraph(n, sepptr, sepval))
+    ctree = CliqueTree(stree, BipartiteGraph(n, sepptr, sepval))
     return label, ctree
 end
 
@@ -441,7 +438,89 @@ end
     end
 
     # construct clique tree
-    return label, CliqueTree(tree, invpermute!(count, index), sep)
+    return label, CliqueTree(tree, sep)
+end
+
+function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V <: Signed, E <: Signed}
+    return cliquetree(tree, V(root))
+end
+
+function cliquetree(tree::CliqueTree{V, E}, root::V) where {V <: Signed, E <: Signed}
+    n = V(length(tree)); h = root
+    parent = Vector{V}(undef, n)
+
+    for i in Tree(tree)
+        j = parentindex(tree, i)
+
+        if isnothing(j)
+            j = zero(V)
+
+            if h == i
+                i = root
+            end
+        else
+            if h == i
+                h = j; j = i; i = h
+            end
+        end
+
+        parent[i] = j
+    end
+
+    root = h
+    sv = nov(tree.sep); rv = nov(tree.tree.res)
+    se = ne(tree.sep); re = ne(tree.tree.res)
+    etree = Tree(parent)
+    eindex = postorder!(etree)
+    eorder = invperm(eindex)
+    sepval = Vector{V}(undef, se)
+    index = Vector{V}(undef, re)
+    sepptr = Vector{E}(undef, n + one(V))
+    sndptr = Vector{V}(undef, n + one(V))
+    sepptr[begin] = p = one(E)
+    sndptr[begin] = q = one(V)
+
+    for ii in etree
+        i = j = eorder[ii]
+
+        if h == i
+            jj = parentindex(etree, ii)
+
+            if isnothing(jj)
+                j = root
+            else
+                h = j = eorder[jj]
+            end
+        end
+
+        sep = separator(tree, j)
+        len = V(length(sep)); s = one(V)
+
+        for v in tree[i]
+            if s <= len && v == sep[s]
+                sepval[p] = v
+                p += one(E)
+                s += one(V)
+            else
+                index[v] = q
+                q += one(V)
+            end
+        end
+
+        sepptr[ii + one(V)] = p
+        sndptr[ii + one(V)] = q
+    end
+
+    sepval = index[sepval]; sndval = oneto(rv)
+    stree = SupernodeTree(etree, BipartiteGraph(rv, sndptr, sndval))
+    ctree = CliqueTree(stree, BipartiteGraph(sv, sepptr, sepval))
+    return invperm(index), ctree
+end
+
+function cliquetree!(tree::CliqueTree, root::Integer)
+    label, _tree = cliquetree(tree, root)
+    copy!(tree, _tree)
+    return label
 end
 
 """
@@ -556,6 +635,20 @@ function relatives(tree::CliqueTree{V}) where {V}
     end
 
     return graph
+end
+
+function Base.copy(tree::CliqueTree)
+    return CliqueTree(copy(tree.tree), copy(tree.sep))
+end
+
+function Base.copy!(dst::CliqueTree, src::CliqueTree)
+    copy!(dst.tree, src.tree)
+    copy!(dst.sep, src.sep)
+    return dst
+end
+
+function Base.:(==)(left::CliqueTree, right::CliqueTree)
+    return left.tree == right.tree && left.sep == right.sep
 end
 
 ##########################

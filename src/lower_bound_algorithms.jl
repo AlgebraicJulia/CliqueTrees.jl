@@ -142,6 +142,11 @@ function mmw!(graph::Graph{V}, ::Val{S}) where {V, S}
     n = nv(graph)
     label = zeros(V, n); tag = zero(V)
 
+    # remove self-loops
+    for v in vertices(graph)
+        rem_edge!(graph, v, v)
+    end
+
     # bucket queue data structure
     head = zeros(V, n)
     prev = Vector{V}(undef, n)

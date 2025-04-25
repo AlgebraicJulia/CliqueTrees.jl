@@ -51,22 +51,32 @@ function BipartiteGraph{V, E}(graph::FilledGraph) where {V, E}
 end
 
 function Graphs.Graph{V}(graph::FilledGraph) where {V}
-    count = Vector{V}(undef, nv(graph))
-    fadjlist = Vector{Vector{V}}(undef, nv(graph))
+    n = nv(graph)
+    count = Vector{V}(undef, n)
+    fadjlist = Vector{Vector{V}}(undef, n)
 
-    @inbounds for v in vertices(graph)
+    @inbounds for v in reverse(vertices(graph))
         count[v] = zero(V)
-        fadjlist[v] = Vector{V}(undef, degree(graph, v))
+
+        for w in neighbors(graph, v)
+            count[w] += one(V)
+        end
     end
 
     @inbounds for v in vertices(graph)
-        j = count[v]
+        fadjlist[v] = Vector{V}(undef, count[v] + outdegree(graph, v))
+        count[v] = zero(V)
+    end
+
+    @inbounds for v in vertices(graph)
+        i = count[v]
 
         for w in neighbors(graph, v)
-            i = count[w] += one(V)
-            fadjlist[w][i] = v
-            j += one(V)
-            fadjlist[v][j] = w
+            count[w] += one(V)
+            fadjlist[w][count[w]] = v
+
+            i += one(V)
+            fadjlist[v][i] = w
         end
     end
 
@@ -74,24 +84,34 @@ function Graphs.Graph{V}(graph::FilledGraph) where {V}
 end
 
 function Graphs.DiGraph{V}(graph::FilledGraph) where {V}
-    count = Vector{V}(undef, nv(graph))
-    fadjlist = Vector{Vector{V}}(undef, nv(graph))
-    badjlist = Vector{Vector{V}}(undef, nv(graph))
+    n = nv(graph)
+    count = Vector{V}(undef, n)
+    fadjlist = Vector{Vector{V}}(undef, n)
+    badjlist = Vector{Vector{V}}(undef, n)
 
-    @inbounds for v in vertices(graph)
+    @inbounds for v in reverse(vertices(graph))
         count[v] = zero(V)
-        fadjlist[v] = Vector{V}(undef, outdegree(graph, v))
-        badjlist[v] = Vector{V}(undef, indegree(graph, v))
+
+        for w in neighbors(graph, v)
+            count[w] += one(V)
+        end
     end
 
     @inbounds for v in vertices(graph)
-        j = zero(V)
+        fadjlist[v] = Vector{V}(undef, outdegree(graph, v))
+        badjlist[v] = Vector{V}(undef, count[v])
+        count[v] = zero(V)
+    end
+
+    @inbounds for v in vertices(graph)
+        i = zero(V)
 
         for w in neighbors(graph, v)
-            i = count[w] += one(V)
-            badjlist[w][i] = v
-            j += one(V)
-            fadjlist[v][j] = w
+            count[w] += one(V)
+            badjlist[w][count[w]] = v
+
+            i += one(V)
+            fadjlist[v][i] = w
         end
     end
 
@@ -178,26 +198,9 @@ end
     return Clique{V, E}((i + 1):last(residual(clique)), separator(clique))
 end
 
-# slow
-function Graphs.inneighbors(graph::FilledGraph, i::Integer)
-    return Iterators.filter(oneto(i)) do j
-        has_edge(graph, j, i)
-    end
-end
-
-function Graphs.all_neighbors(graph::FilledGraph, i::Integer)
-    return Iterators.flatten((inneighbors(graph, i), neighbors(graph, i)))
-end
-
 @propagate_inbounds function Graphs.outdegree(graph::FilledGraph{V}, i::Integer) where {V}
     @boundscheck checkbounds(graph.index, i)
     clique = graph.tree[graph.index[i]]
     n::V = last(residual(clique)) + length(separator(clique)) - i
-    return n
-end
-
-@propagate_inbounds function Graphs.indegree(graph::FilledGraph{V}, i::Integer) where {V}
-    @boundscheck checkbounds(graph.tree.count, i)
-    n::V = graph.tree.count[i] - 1
     return n
 end

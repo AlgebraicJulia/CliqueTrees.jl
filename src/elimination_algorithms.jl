@@ -1400,7 +1400,7 @@ end
 
 function permutation(graph, alg::SafeSeparators)
     # construct almost-clique separator decomposition
-    graph, label, tree = almosttree(graph, alg.min)
+    graph, label, tree = safetree(graph, alg.min)
 
     # permute graph
     V = eltype(graph)
@@ -1418,7 +1418,7 @@ end
 
 function permutation(weights::AbstractVector, graph, alg::SafeSeparators)
     # construct almost-clique separator decomposition
-    graph, label, tree = almosttree(graph, alg.min)
+    graph, label, tree = safetree(graph, alg.min)
 
     # permute graph
     weights = weights[label]

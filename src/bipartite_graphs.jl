@@ -308,10 +308,6 @@ function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) wh
     return result
 end
 
-function Base.copy(graph::BipartiteGraph)
-    return BipartiteGraph(nov(graph), copy(pointers(graph)), copy(targets(graph)))
-end
-
 function pointers(graph::BipartiteGraph)
     return graph.ptr
 end
@@ -340,6 +336,24 @@ function Base.:(==)(left::BipartiteGraph, right::BipartiteGraph)
     return nov(left) == nov(right) &&
         pointers(left) == pointers(right) &&
         targets(left) == targets(right)
+end
+
+function Base.copy(graph::BipartiteGraph)
+    return BipartiteGraph(nov(graph), copy(pointers(graph)), copy(targets(graph)))
+end
+
+function Base.copy!(dst::BipartiteGraph, src::BipartiteGraph)
+    @argcheck nov(dst) == nov(src)
+    copy!(pointers(dst), pointers(src))
+    copy!(targets(dst), targets(src))
+    return dst
+end
+
+function Base.copy!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGraph) where {V <: Signed, E <: Signed, Ptr <: AbstractVector{E}}
+    @argcheck nov(dst) == nov(src)
+    @argcheck targets(dst) == targets(src)
+    copy!(pointers(dst), pointers(src))
+    return dst
 end
 
 #############################

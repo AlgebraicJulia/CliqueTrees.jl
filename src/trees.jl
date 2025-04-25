@@ -408,6 +408,22 @@ function Base.isequal(left::Tree, right::Tree)
         isequal(left.brother, right.brother)
 end
 
+function Base.copy(tree::Tree)
+    return Tree(copy(tree.parent), copy(tree.root), copy(tree.child), copy(tree.brother))
+end
+
+function Base.copy!(dst::Tree, src::Tree)
+    copy!(dst.parent, src.parent)
+    copy!(dst.root, src.root)
+    copy!(dst.child, src.child)
+    copy!(dst.brother, src.brother)
+    return dst
+end
+
+function Base.:(==)(left::Tree, right::Tree)
+    return left.parent == right.parent && left.root == right.root
+end
+
 ##########################
 # Indexed Tree Interface #
 ##########################
