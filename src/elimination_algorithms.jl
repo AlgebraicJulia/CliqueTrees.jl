@@ -645,6 +645,19 @@ julia> treewidth(graph; alg)
     ufactor::Int = -1
 end
 
+struct IND{A <: EliminationAlgorithm} <: EliminationAlgorithm
+    alg::A
+    limit::Int
+end
+
+function IND(alg::EliminationAlgorithm)
+    return IND(alg, 200)
+end
+
+function IND()
+    return IND(DEFAULT_ELIMINATION_ALGORITHM)
+end
+
 """
     Spectral <: EliminationAlgorithm
 
@@ -2265,7 +2278,8 @@ function mf!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
         end
 
         # update heap
-        for w in take(stack, snum)
+        for j in oneto(snum)
+            w = stack[j]
             heap[w] -= (nweight - sweight) * (nweights[w] - sweight)
             hrise!(heap, w)
             hfall!(heap, w)
