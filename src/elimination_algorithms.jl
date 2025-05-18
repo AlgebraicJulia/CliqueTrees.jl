@@ -648,6 +648,11 @@ end
 struct IND{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
     limit::Int
+    metis::METIS
+end
+
+function IND(alg::EliminationAlgorithm, limit::Integer)
+    return IND(alg, limit, METIS())
 end
 
 function IND(alg::EliminationAlgorithm)

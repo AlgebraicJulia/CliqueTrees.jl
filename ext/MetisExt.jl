@@ -163,17 +163,17 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V
     end
 
     resize!(targets(new), p - one(INT))
-    order::Vector{V} = indissect(vertices(new), oneto(zero(INT)), zero(INT), weights, new, INT(alg.limit), alg.alg)
+    order::Vector{V} = indissect(vertices(new), oneto(zero(INT)), zero(INT), weights, new, alg.alg, INT(alg.limit), alg.metis)
     return order, invperm(order)
 end
 
-function indissect(label::AbstractVector{INT}, clique::AbstractVector{INT}, delta::INT, weights::AbstractVector, graph::AbstractGraph{INT}, limit::INT, alg::EliminationAlgorithm)
+function indissect(label::AbstractVector{INT}, clique::AbstractVector{INT}, delta::INT, weights::AbstractVector, graph::AbstractGraph{INT}, alg::EliminationAlgorithm, limit::INT, metis::METIS)
     n = nv(graph)
 
     if n <= limit + delta
         order = first(permutation(weights, graph; alg = CompositeRotations(clique, alg)))
     else
-        project = separator(weights, graph)
+        project = separator(weights, graph, metis)
         project0 = Vector{INT}(undef, n)
         project1 = Vector{INT}(undef, n)
         n0 = n1 = n2 = zero(INT)
@@ -291,8 +291,8 @@ function indissect(label::AbstractVector{INT}, clique::AbstractVector{INT}, delt
             end
         end
 
-        order0 = indissect(label0, view(project0, label2), n2, weights0, graph0, limit + delta, alg)
-        order1 = indissect(label1, view(project1, label2), n2, weights1, graph1, limit + delta, alg)
+        order0 = indissect(label0, view(project0, label2), n2, weights0, graph0, alg, limit + delta, metis)
+        order1 = indissect(label1, view(project1, label2), n2, weights1, graph1, alg, limit + delta, metis)
         order = first(permutation(graph; alg = CompositeRotations(clique, [order0; order1; label2])))
     end
 
@@ -303,13 +303,22 @@ function indissect(label::AbstractVector{INT}, clique::AbstractVector{INT}, delt
     return resize!(order, n - delta)
 end
 
-function separator(weights::AbstractVector, graph::BipartiteGraph{INT, INT, Vector{INT}, Vector{INT}})
+function separator(weights::AbstractVector, graph::BipartiteGraph{INT, INT, Vector{INT}, Vector{INT}}, alg::METIS)
     n = nv(graph)
 
     # construct options
     options = Vector{INT}(undef, Metis.METIS_NOPTIONS)
     options .= -1 # null
+    options[Metis.METIS_OPTION_CTYPE + 1] = alg.ctype
+    options[Metis.METIS_OPTION_RTYPE + 1] = alg.rtype
+    options[Metis.METIS_OPTION_NSEPS + 1] = alg.nseps
     options[Metis.METIS_OPTION_NUMBERING + 1] = 1
+    options[Metis.METIS_OPTION_NITER + 1] = alg.niter
+    options[Metis.METIS_OPTION_SEED + 1] = alg.seed
+    options[Metis.METIS_OPTION_COMPRESS + 1] = alg.compress
+    options[Metis.METIS_OPTION_CCORDER + 1] = alg.ccorder
+    options[Metis.METIS_OPTION_PFACTOR + 1] = alg.pfactor
+    options[Metis.METIS_OPTION_UFACTOR + 1] = alg.ufactor
 
     # construct METIS graph
     xadj = pointers(graph) .- one(INT)
