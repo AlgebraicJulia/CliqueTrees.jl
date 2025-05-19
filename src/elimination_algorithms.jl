@@ -2262,130 +2262,164 @@ end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND) where {V}
     simple = simplegraph(graph)
-    return dissect(weights, simple, vertices(simple), oneto(zero(V)), zero(V), alg)
+    return dissect(weights, simple, vertices(simple), vertices(simple), zero(V), alg)
 end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:EliminationAlgorithm, METISND}) where {V}
     simple = simplegraph(Int32, Int32, graph)
-    order::Vector{V} = dissect(weights, simple, vertices(simple), oneto(zero(Int32)), zero(Int32), alg)
+    order::Vector{V} = dissect(weights, simple, vertices(simple), vertices(simple), zero(Int32), alg)
     return order
 end
 
-function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, clique::AbstractVector{V}, level::V, alg::ND) where {W, V, E}
-    n = nv(graph)
+function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, project::AbstractVector{V}, level::V, alg::ND) where {W, V, E}
+    parents = Int[]; degrees = Int[]; separators = Vector{V}[]
 
-    if n <= alg.limit || level > alg.level
-        order, index = permutation(weights, graph, CompositeRotations(clique, alg.alg))
-    else
-        # V = W ∪ B
-        project = separator(weights, graph, alg.dis)
-        n0 = zero(V); m0 = zero(E); project0 = Vector{V}(undef, n)
-        n1 = zero(V); m1 = zero(E); project1 = Vector{V}(undef, n)
-        n2 = zero(V)
+    nodes = Tuple{
+        Vector{W},                                  # weights
+        BipartiteGraph{V, E, Vector{E}, Vector{V}}, # graph
+        Vector{V},                                  # label
+        Vector{V},                                  # project
+        V,                                          # level
+    }[]
 
-        @inbounds for v in vertices(graph)
-            vv = project[v]
+    push!(parents, 0)
+    push!(nodes, (weights, graph, label, project, level))
 
-            if iszero(vv)    # v ∈ W - B
-                project0[v] = n0 += one(V); m0 += convert(E, eltypedegree(graph, v))
-            elseif isone(vv) # v ∈ B - W
-                project1[v] = n1 += one(V); m1 += convert(E, eltypedegree(graph, v))
-            else             # v ∈ W ∩ B
-                project0[v] = n0 += one(V); m0 += convert(E, twice(n2))
-                project1[v] = n1 += one(V); m1 += convert(E, twice(n2))
-                n2 += one(V)
+    @inbounds for (i, (weights, graph, label, project, level)) in enumerate(nodes)
+        n = nv(graph)
 
-                for w in outneighbors(graph, v)
-                    ww = project[w]
+        if n <= alg.limit || level > alg.level
+            push!(degrees, 0); push!(separators, V[])
+        else
+            # V = W ∪ B
+            part = separator(weights, graph, alg.dis)
+            n0 = zero(V); m0 = zero(E); project0 = Vector{V}(undef, n)
+            n1 = zero(V); m1 = zero(E); project1 = Vector{V}(undef, n)
+            n2 = zero(V)
 
-                    if iszero(ww)    # w ∈ W - B
-                        m0 += one(E)
-                    elseif isone(ww) # w ∈ B - W
-                        m1 += one(E)
-                    end
-                end
-            end
-        end
-
-        if ispositive(n0) && ispositive(n1)
-            t0 = zero(V); label0 = Vector{V}(undef, n0)
-            t1 = zero(V); label1 = Vector{V}(undef, n1)
-            t2 = zero(V); label2 = Vector{V}(undef, n2)
-
-            @inbounds for v in vertices(graph)
-                vv = project[v]
+            for v in vertices(graph)
+                vv = part[v]
 
                 if iszero(vv)    # v ∈ W - B
-                    t0 += one(V); label0[t0] = v
+                    project0[v] = n0 += one(V); m0 += convert(E, eltypedegree(graph, v))
                 elseif isone(vv) # v ∈ B - W
-                    t1 += one(V); label1[t1] = v
+                    project1[v] = n1 += one(V); m1 += convert(E, eltypedegree(graph, v))
                 else             # v ∈ W ∩ B
-                    t0 += one(V); label0[t0] = v
-                    t1 += one(V); label1[t1] = v
-                    t2 += one(V); label2[t2] = v
-                end
-            end
+                    project0[v] = n0 += one(V); m0 += convert(E, twice(n2))
+                    project1[v] = n1 += one(V); m1 += convert(E, twice(n2))
+                    n2 += one(V)
 
-            weights0 = Vector{W}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
-            weights1 = Vector{W}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
-            t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
-            t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
+                    for w in outneighbors(graph, v)
+                        ww = part[w]
 
-            @inbounds for v in vertices(graph)
-                vv = project[v]
-                wt = weights[v]
-
-                if iszero(vv)    # v ∈ W - B
-                    for w in neighbors(graph, v) # w ∈ W
-                        targets(graph0)[p0] = project0[w]; p0 += one(E)
-                    end
-
-                    weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-                elseif isone(vv) # v ∈ B - W
-                    for w in neighbors(graph, v) # w ∈ B
-                        targets(graph1)[p1] = project1[w]; p1 += one(E)
-                    end
-
-                    weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
-                else             # v ∈ W ∩ B
-                    for w in neighbors(graph, v)
-                        ww = project[w]
-
-                        if iszero(ww)            # w ∈ W - B
-                            targets(graph0)[p0] = project0[w]; p0 += one(E)
-                        elseif isone(ww)         # w ∈ B - W
-                            targets(graph1)[p1] = project1[w]; p1 += one(E)
+                        if iszero(ww)    # w ∈ W - B
+                            m0 += one(E)
+                        elseif isone(ww) # w ∈ B - W
+                            m1 += one(E)
                         end
                     end
-
-                    for w in label2              # w ∈ W ∩ B
-                        v == w && continue
-                        targets(graph0)[p0] = project0[w]; p0 += one(E)
-                        targets(graph1)[p1] = project1[w]; p1 += one(E)
-                    end
-
-                    weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-                    weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
                 end
             end
 
-            clique0 = project0[label2]
-            clique1 = project1[label2]
-            order0 = dissect(weights0, graph0, label0, clique0, level + one(V), alg)
-            order1 = dissect(weights1, graph1, label1, clique1, level + one(V), alg)
-            order, index = permutation(graph, CompositeRotations(clique, BestWidth([order0; order1; label2], alg.alg)))
-        else
-            order = dissect(weights, graph, label, clique, level + one(V), alg)
+            if iszero(n0) || iszero(n1)
+                push!(parents, i); push!(degrees, 1); push!(separators, V[])
+                push!(nodes, (weights, graph, label, project, level + one(V)))
+            else
+                t0 = zero(V); label0 = Vector{V}(undef, n0)
+                t1 = zero(V); label1 = Vector{V}(undef, n1)
+                t2 = zero(V); label2 = Vector{V}(undef, n2)
+
+                for v in vertices(graph)
+                    vv = part[v]
+
+                    if iszero(vv)    # v ∈ W - B
+                        t0 += one(V); label0[t0] = v
+                    elseif isone(vv) # v ∈ B - W
+                        t1 += one(V); label1[t1] = v
+                    else             # v ∈ W ∩ B
+                        t0 += one(V); label0[t0] = v
+                        t1 += one(V); label1[t1] = v
+                        t2 += one(V); label2[t2] = v
+                    end
+                end
+
+                weights0 = Vector{W}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
+                weights1 = Vector{W}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
+                t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
+                t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
+
+                for v in vertices(graph)
+                    vv = part[v]
+                    wt = weights[v]
+
+                    if iszero(vv)    # v ∈ W - B
+                        for w in neighbors(graph, v) # w ∈ W
+                            targets(graph0)[p0] = project0[w]; p0 += one(E)
+                        end
+
+                        weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+                    elseif isone(vv) # v ∈ B - W
+                        for w in neighbors(graph, v) # w ∈ B
+                            targets(graph1)[p1] = project1[w]; p1 += one(E)
+                        end
+
+                        weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+                    else             # v ∈ W ∩ B
+                        for w in neighbors(graph, v)
+                            ww = part[w]
+
+                            if iszero(ww)            # w ∈ W - B
+                                targets(graph0)[p0] = project0[w]; p0 += one(E)
+                            elseif isone(ww)         # w ∈ B - W
+                                targets(graph1)[p1] = project1[w]; p1 += one(E)
+                            end
+                        end
+
+                        for w in label2              # w ∈ W ∩ B
+                            v == w && continue
+                            targets(graph0)[p0] = project0[w]; p0 += one(E)
+                            targets(graph1)[p1] = project1[w]; p1 += one(E)
+                        end
+
+                        weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+                        weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+                    end
+                end
+
+                push!(parents, i, i), push!(degrees, 2); push!(separators, label2)
+                push!(nodes, (weights0, graph0, label0, project0, level + one(V)))
+                push!(nodes, (weights1, graph1, label1, project1, level + one(V)))
+            end
         end
     end
 
-    nn = n - convert(V, length(clique))
+    stack = Tuple{Int, Vector{V}}[]
 
-    @inbounds for i in oneto(nn)
-        order[i] = label[order[i]]
+    @inbounds for i in invperm(postorder(Tree(parents)))
+        degree = degrees[i]; order2 = separators[i]
+        weights, graph, label, project, level = nodes[i] 
+
+        if iszero(degree)
+            order, index = permutation(weights, graph, alg.alg)
+        elseif isone(degree)
+            i0, order0 = pop!(stack)
+            order = order0
+        else
+            i0, order0 = pop!(stack)
+            i1, order1 = pop!(stack)
+            weights0, graph0, label0, project0, level0 = nodes[i0]
+            weights1, graph1, label1, project1, level1 = nodes[i1] 
+            order0, index0 = permutation(graph0, CompositeRotations(project0[order2], order0))
+            order1, index1 = permutation(graph1, CompositeRotations(project1[order2], order1))
+            resize!(order0, length(order0) - length(order2))
+            resize!(order1, length(order1) - length(order2))
+            order, index = permutation(graph, BestWidth([label0[order0]; label1[order1]; order2], alg.alg))
+        end
+
+        push!(stack, (i, order))
     end
 
-    return resize!(order, nn)
+    return last(only(stack))
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
