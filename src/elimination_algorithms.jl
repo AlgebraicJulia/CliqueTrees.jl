@@ -17,6 +17,7 @@ of the completed graph.
 | [`AMF`](@ref)                 | approximate minimum fill                     | O(mn)    | O(m + n) |
 | [`MF`](@ref)                  | minimum fill                                 | O(mn²)   |          |
 | [`MMD`](@ref)                 | multiple minimum degree                      | O(mn²)   | O(m + n) |
+| [`ND`](@ref)                  | nested dissection                            |          |          |
 | [`MinimalChordal`](@ref)      | MinimalChordal                               |          |          |
 | [`CompositeRotations`](@ref)  | elimination tree rotation                    | O(m + n) | O(m + n) |
 | [`SafeRules`](@ref)           | treewith-safe rule-based reduction           |          |          |    
@@ -655,6 +656,33 @@ end
     ND(; limit=200, level=6)
 
 The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
+
+```julia-repl
+julia> using CliqueTrees, Metis
+
+julia> graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia> alg = ND(MF(), METISND(); limit=0, level=2)
+ND{MF, METISND}:
+    MF
+    METISND:
+        seed: -1
+        ufactor: -1
+    limit: 0
+    level: 2
+
+julia> treewidth(graph; alg)
+2
+```
 
 ### Parameters
 

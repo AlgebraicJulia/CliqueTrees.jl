@@ -12,6 +12,13 @@ lowerbound
 DEFAULT_LOWER_BOUND_ALGORITHM
 ```
 
+## Dissection Algorithms
+```@docs
+DissectionAlgorithm
+METISND
+DEFAULT_DISSECTION_ALGORITHM
+```
+
 ## Elimination Algorithms
 
 ```@docs
@@ -32,6 +39,7 @@ AMF
 MF
 MMD
 METIS
+ND
 Spectral
 FlowCutter
 BT
