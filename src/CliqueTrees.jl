@@ -26,6 +26,7 @@ using .MMDLib
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
+const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
 
 # Linked Lists
 export SinglyLinkedList

@@ -648,11 +648,11 @@ end
 """
     ND{A, D} <: EliminationAlgorithm
 
-    ND(alg::EliminationAlgorithm, dis::DissectionAlgorithm; limit=200, level=5)
+    ND(alg::EliminationAlgorithm, dis::DissectionAlgorithm; limit=200, level=6)
 
-    ND(alg::EliminationAlgorithm; limit=200, level=5)
+    ND(alg::EliminationAlgorithm; limit=200, level=6)
 
-    ND(; limit=200, level=5)
+    ND(; limit=200, level=6)
 
 The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
 
@@ -670,7 +670,7 @@ struct ND{A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlg
     level::Int
 end
 
-function ND(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, dis::DissectionAlgorithm = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 5)
+function ND(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, dis::DissectionAlgorithm = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 6)
     return ND(alg, dis, limit, level)
 end
 
@@ -2272,29 +2272,41 @@ function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:Eli
 end
 
 function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, project::AbstractVector{V}, level::V, alg::ND) where {W, V, E}
-    parents = Int[]; degrees = Int[]; separators = Vector{V}[]
+    n = nv(graph); m = ne(graph); nn = n + one(V)
+    parents = Int[]; leaves = Bool[]; separators = View{V, Int}[]
 
     nodes = Tuple{
-        Vector{W},                                  # weights
-        BipartiteGraph{V, E, Vector{E}, Vector{V}}, # graph
-        Vector{V},                                  # label
-        Vector{V},                                  # project
-        V,                                          # level
+        BipartiteGraph{V, E, View{E, Int}, View{V, Int}}, # graph
+        View{W, Int},                                     # weights
+        View{V, Int},                                     # label
+        View{V, Int},                                     # project
+        V,                                                # level
     }[]
 
-    push!(parents, 0)
-    push!(nodes, (weights, graph, label, project, level))
+    wwork = W[]
+    vwork = V[]
+    ework = E[]
 
-    @inbounds for (i, (weights, graph, label, project, level)) in enumerate(nodes)
+    node = (
+        copy!(BipartiteGraph(n, allocate!(ework, nn), allocate!(vwork, m)), graph),
+        copy!(allocate!(wwork, n), weights),
+        copy!(allocate!(vwork, n), label),
+        copy!(allocate!(vwork, n), project),
+        level,
+    )
+
+    push!(parents, 0); push!(nodes, node)
+
+    @inbounds for (i, (graph, weights, label, project, level)) in enumerate(nodes)
         n = nv(graph)
 
-        if n <= alg.limit || level > alg.level
-            push!(degrees, 0); push!(separators, V[])
+        if n <= alg.limit || level >= alg.level
+            push!(leaves, true); push!(separators, allocate!(vwork, zero(V)))
         else
             # V = W ∪ B
             part = separator(weights, graph, alg.dis)
-            n0 = zero(V); m0 = zero(E); project0 = Vector{V}(undef, n)
-            n1 = zero(V); m1 = zero(E); project1 = Vector{V}(undef, n)
+            n0 = zero(V); m0 = zero(E); project0 = allocate!(vwork, n)
+            n1 = zero(V); m1 = zero(E); project1 = allocate!(vwork, n)
             n2 = zero(V)
 
             for v in vertices(graph)
@@ -2321,13 +2333,48 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
                 end
             end
 
-            if iszero(n0) || iszero(n1)
-                push!(parents, i); push!(degrees, 1); push!(separators, V[])
-                push!(nodes, (weights, graph, label, project, level + one(V)))
+            level += one(V)
+
+            while (iszero(n0) || iszero(n1)) && level < alg.level
+                # V = W ∪ B
+                part = separator(weights, graph, alg.dis)
+                n0 = zero(V); m0 = zero(E)
+                n1 = zero(V); m1 = zero(E)
+                n2 = zero(V)
+
+                for v in vertices(graph)
+                    vv = part[v]
+
+                    if iszero(vv)    # v ∈ W - B
+                        project0[v] = n0 += one(V); m0 += convert(E, eltypedegree(graph, v))
+                    elseif isone(vv) # v ∈ B - W
+                        project1[v] = n1 += one(V); m1 += convert(E, eltypedegree(graph, v))
+                    else             # v ∈ W ∩ B
+                        project0[v] = n0 += one(V); m0 += convert(E, twice(n2))
+                        project1[v] = n1 += one(V); m1 += convert(E, twice(n2))
+                        n2 += one(V)
+
+                        for w in outneighbors(graph, v)
+                            ww = part[w]
+
+                            if iszero(ww)    # w ∈ W - B
+                                m0 += one(E)
+                            elseif isone(ww) # w ∈ B - W
+                                m1 += one(E)
+                            end
+                        end
+                    end
+                end
+
+                level += one(V)
+            end
+
+            if level > alg.level
+                push!(leaves, true); push!(separators, allocate!(vwork, zero(V)))
             else
-                t0 = zero(V); label0 = Vector{V}(undef, n0)
-                t1 = zero(V); label1 = Vector{V}(undef, n1)
-                t2 = zero(V); label2 = Vector{V}(undef, n2)
+                t0 = zero(V); label0 = allocate!(vwork, n0)
+                t1 = zero(V); label1 = allocate!(vwork, n1)
+                t2 = zero(V); label2 = allocate!(vwork, n2)
 
                 for v in vertices(graph)
                     vv = part[v]
@@ -2343,10 +2390,12 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
                     end
                 end
 
-                weights0 = Vector{W}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
-                weights1 = Vector{W}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
+                nn0 = n0 + one(V); graph0 = BipartiteGraph(n0, allocate!(ework, nn0), allocate!(vwork, m0))
+                nn1 = n1 + one(V); graph1 = BipartiteGraph(n1, allocate!(ework, nn1), allocate!(vwork, m1))
                 t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
                 t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
+                weights0 = allocate!(wwork, n0)
+                weights1 = allocate!(wwork, n1)
 
                 for v in vertices(graph)
                     vv = part[v]
@@ -2386,9 +2435,9 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
                     end
                 end
 
-                push!(parents, i, i), push!(degrees, 2); push!(separators, label2)
-                push!(nodes, (weights0, graph0, label0, project0, level + one(V)))
-                push!(nodes, (weights1, graph1, label1, project1, level + one(V)))
+                push!(parents, i, i), push!(leaves, false); push!(separators, label2)
+                push!(nodes, (graph0, weights0, label0, project0, level))
+                push!(nodes, (graph1, weights1, label1, project1, level))
             end
         end
     end
@@ -2396,19 +2445,16 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
     stack = Tuple{Int, Vector{V}}[]
 
     @inbounds for i in invperm(postorder(Tree(parents)))
-        degree = degrees[i]; order2 = separators[i]
-        weights, graph, label, project, level = nodes[i] 
+        leaf = leaves[i]; order2 = separators[i]
+        graph, weights, label, project, level = nodes[i] 
 
-        if iszero(degree)
+        if leaf
             order, index = permutation(weights, graph, alg.alg)
-        elseif isone(degree)
-            i0, order0 = pop!(stack)
-            order = order0
         else
             i0, order0 = pop!(stack)
             i1, order1 = pop!(stack)
-            weights0, graph0, label0, project0, level0 = nodes[i0]
-            weights1, graph1, label1, project1, level1 = nodes[i1] 
+            graph0, weights0, label0, project0, level0 = nodes[i0]
+            graph1, weights1, label1, project1, level1 = nodes[i1] 
             order0, index0 = permutation(graph0, CompositeRotations(project0[order2], order0))
             order1, index1 = permutation(graph1, CompositeRotations(project1[order2], order1))
             resize!(order0, length(order0) - length(order2))
@@ -2420,6 +2466,12 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
     end
 
     return last(only(stack))
+end
+
+function allocate!(work::Vector, n::Integer)
+    m::Int = n
+    resize!(work, length(work) + m)
+    return @view work[end - m + 1:end]
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
@@ -4068,8 +4120,8 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
     E = etype(graph)
     n = nv(graph)
     m = is_directed(graph) ? ne(graph) : twice(ne(graph))
-    components = SubArray{V, 1, Vector{V}, Tuple{UnitRange{V}}, true}[]
-    subgraphs = BipartiteGraph{V, E, SubArray{E, 1, Vector{E}, Tuple{UnitRange{V}}, true}, SubArray{V, 1, Vector{V}, Tuple{UnitRange{E}}, true}}[]
+    components = View{V, V}[]
+    subgraphs = BipartiteGraph{V, E, View{E, V}, View{V, E}}[]
     projection = Vector{V}(undef, n)
 
     # initialize work arrays
