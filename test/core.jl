@@ -416,7 +416,7 @@ end
             MF(),
             MMD(),
             METIS(),
-            IND(),
+            ND(),
             Spectral(),
             # FlowCutter(),
             BT(),
@@ -425,6 +425,7 @@ end
             SafeRules(),
             SafeSeparators(),
             ConnectedComponents(),
+            BestWidth(MMD(), MF()),
         )
         @test isa(repr("text/plain", alg), String)
     end
@@ -492,6 +493,7 @@ end
             SafeRules(),
             SafeSeparators(),
             ConnectedComponents(),
+            BestWidth(MMD(), MF()),
         )
         @test permutation(graph; alg) == ([], [])
     end
@@ -527,7 +529,7 @@ end
             MF(),
             MMD(),
             METIS(),
-            IND(),
+            ND(),
             # Spectral,
             # FlowCutter(),
             BT(),
@@ -535,6 +537,7 @@ end
             SafeRules(),
             SafeSeparators(),
             ConnectedComponents(),
+            BestWidth(MMD(), MF()),
         )
         @test permutation(graph; alg) == ([1], [1])
     end
@@ -623,6 +626,7 @@ end
                 @inferred CliqueTrees.amf(graph)
                 @inferred CliqueTrees.mf(graph)
                 @inferred CliqueTrees.mmd(graph)
+                @inferred CliqueTrees.dissect(graph, ND())
                 @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.pr3(graph, lowerbound(graph))
                 @inferred CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
@@ -656,6 +660,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND())
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
@@ -701,6 +706,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND())
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
@@ -773,7 +779,7 @@ end
                         MF(),
                         MMD(),
                         METIS(),
-                        IND(),
+                        ND(),
                         Spectral(),
                         # FlowCutter(),
                         BT(),
@@ -782,6 +788,7 @@ end
                         SafeRules(),
                         SafeSeparators(),
                         ConnectedComponents(),
+                        BestWidth(MMD(), MF()),
                     )
                     order, index = permutation(graph; alg)
                     order, index = permutation(ones(17), graph; alg)

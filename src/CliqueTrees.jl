@@ -36,6 +36,9 @@ export BipartiteGraph, BipartiteEdgeIter, pointers, targets
 # Lower Bound Algorithms
 export MMW, lowerbound
 
+# Dissection Algorithms
+export METISND
+
 # Elimination Algorithms
 export BFS,
     MCS,
@@ -51,7 +54,7 @@ export BFS,
     AMD,
     SymAMD,
     METIS,
-    IND,
+    ND,
     Spectral,
     FlowCutter,
     BT,
@@ -61,6 +64,7 @@ export BFS,
     SafeRules,
     SafeSeparators,
     ConnectedComponents,
+    BestWidth,
     permutation,
     mcs
 
@@ -92,6 +96,7 @@ include("doubly_linked_lists.jl")
 include("bipartite_graphs.jl")
 include("bipartite_edge_iter.jl")
 include("lower_bound_algorithms.jl")
+include("dissection_algorithms.jl")
 include("elimination_algorithms.jl")
 include("trees.jl")
 include("supernode_types.jl")
@@ -102,5 +107,6 @@ include("abstract_trees.jl")
 include("filled_graphs.jl")
 include("filled_edge_iter.jl")
 include("chordal_graphs.jl")
+include("ambiguities.jl")
 
 end

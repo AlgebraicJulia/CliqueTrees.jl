@@ -79,11 +79,6 @@ function eliminationtree(weights::AbstractVector, graph; alg::PermutationOrAlgor
     return label, tree
 end
 
-# method ambiguity
-function eliminationtree(weights::AbstractVector, alg::PermutationOrAlgorithm)
-    error()
-end
-
 function eliminationtree(graph, alg::PermutationOrAlgorithm)
     return eliminationtree(graph, permutation(graph, alg)...)
 end

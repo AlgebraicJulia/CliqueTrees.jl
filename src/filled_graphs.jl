@@ -142,14 +142,14 @@ function SparseArrays.SparseMatrixCSC(graph::FilledGraph)
 end
 
 # Construct the adjacency matrix of a graph.
-function SparseArrays.sparse(T::Type, I::Type, graph::FilledGraph)
+function SparseArrays.sparse(::Type{T}, ::Type{I}, graph::FilledGraph) where {T, I}
     matrix = SparseMatrixCSC{T, I}(graph)
     fill!(nonzeros(matrix), 1)
     return matrix
 end
 
 # See above.
-function SparseArrays.sparse(T::Type, graph::FilledGraph)
+function SparseArrays.sparse(::Type{T}, graph::FilledGraph) where {T}
     return sparse(T, Int, graph)
 end
 

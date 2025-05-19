@@ -46,14 +46,17 @@ function BipartiteGraph{V, E, Ptr, Tgt}(graph::BipartiteGraph) where {V, E, Ptr,
 end
 
 function BipartiteGraph{V, E}(graph::AbstractGraph) where {V, E}
-    result = BipartiteGraph{V, E}(nv(graph), nv(graph), ne(graph) * (2 - is_directed(graph)))
-    pointers(result)[begin] = 1
+    n = nv(graph); m = de(graph)
+    result = BipartiteGraph{V, E}(n, n, m)
+    pointers(result)[begin] = one(E)
 
     for j in vertices(graph)
-        pointers(result)[j + 1] = pointers(result)[j] + outdegree(graph, j)
-        neighbors(result, j) .= neighbors(graph, j)
+        jj = j + one(V)
+        pointers(result)[jj] = pointers(result)[j] + convert(E, eltypedegree(graph, j))
+        copyto!(neighbors(result, j), neighbors(graph, j))
     end
 
+    resize!(targets(result), last(pointers(result)) - one(E))
     return result
 end
 
@@ -133,7 +136,7 @@ function SparseArrays.SparseMatrixCSC(graph::BipartiteGraph)
 end
 
 # Construct the adjacency matrix of a graph.
-function SparseArrays.sparse(T::Type, I::Type, graph::BipartiteGraph)
+function SparseArrays.sparse(::Type{T}, ::Type{I}, graph::BipartiteGraph) where {T, I}
     # sort adjacency lists
     graph = reverse(reverse(graph))
 
@@ -145,7 +148,7 @@ function SparseArrays.sparse(T::Type, I::Type, graph::BipartiteGraph)
 end
 
 # See above.
-function SparseArrays.sparse(T::Type, graph::BipartiteGraph{V, E}) where {V, E}
+function SparseArrays.sparse(::Type{T}, graph::BipartiteGraph{V, E}) where {T, V, E}
     I = promote_type(V, E)
     return sparse(T, I, graph)
 end
@@ -280,9 +283,9 @@ function Base.reverse(graph::BipartiteGraph{V, E}) where {V, E}
 end
 
 function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
-    nv(graph) != nov(result) && throw(ArgumentError("niv(graph) != nov(result)"))
-    ne(graph) != ne(result) && throw(ArgumentError("ne(graph) != ne(result)"))
-    nov(graph) != nv(result) && throw(ArgumentError("nov(graph) != niv(result)"))
+    @argcheck nv(graph) == nov(result)
+    @argcheck ne(graph) == ne(result)
+    @argcheck nov(graph) == nv(result)
 
     # compute column counts
     count = Vector{E}(undef, nov(graph) + one(V))
@@ -306,6 +309,36 @@ function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) wh
     end
 
     return result
+end
+
+function simplegraph(::Type{V}, ::Type{E}, graph::AbstractGraph{VV}) where {V, E, VV}
+    m = de(graph); n = nv(graph)
+    simple = BipartiteGraph{V, E}(n, n, m)
+    pointers(simple)[begin] = p = one(E)
+
+    @inbounds for v in vertices(graph)
+        for w in neighbors(graph, v)
+            if v != w
+                targets(simple)[p] = w
+                p += one(E)
+            end
+        end
+
+        vv = v + one(VV)
+        pointers(simple)[vv] = p
+    end
+
+    pp = p - one(E)
+    resize!(targets(simple), pp)
+    return simple
+end
+
+function simplegraph(::Type{V}, graph::AbstractGraph) where {V}
+    return simplegraph(V, etype(graph), graph)
+end
+
+function simplegraph(graph::AbstractGraph{V}) where {V}
+    return simplegraph(V, graph)
 end
 
 function pointers(graph::BipartiteGraph)

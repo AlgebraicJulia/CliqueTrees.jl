@@ -9,7 +9,7 @@ using Graphs
 export tolerance, twice, half, two, three, four, ispositive, isnegative, istwo, isthree
 
 # graphs
-export eltypedegree
+export eltypedegree, de
 
 # sorted collections
 export mergesorted!, indexinsorted!, swap!
@@ -82,6 +82,16 @@ end
 function eltypedegree(graph::AbstractGraph{V}, i::Integer) where {V}
     n::V = outdegree(graph, i)
     return n
+end
+
+function de(graph::AbstractGraph)
+    m = ne(graph)
+
+    if !is_directed(graph)
+        m = twice(m)
+    end
+
+    return m
 end
 
 # Compute the union of sorted sets `source1` and `source2`.

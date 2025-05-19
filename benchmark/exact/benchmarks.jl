@@ -4,6 +4,8 @@ using CryptoMiniSat_jll
 using TreeWidthSolver
 using Graphs
 
+import Metis
+
 const EXCLUDE = Dict(
     "bt" => [
         "DyckGraph",
@@ -72,8 +74,10 @@ function readgraph(io::IO)
 end
 
 path = joinpath(@__DIR__, "graphs")
-bt = SafeRules(BT(), MMW(), MF())
-cms = SafeRules(SAT{CryptoMiniSat_jll}(MF()), MMW(), MF())
+lb = MMW()
+ub = ND(MF(); limit = 0)
+bt = SafeRules(BT(), lb, ub)
+cms = SafeRules(SAT{CryptoMiniSat_jll}(ub), lb, ub)
 
 for file in readdir(path)
     if endswith(file, ".gr")

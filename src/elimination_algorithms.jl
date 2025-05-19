@@ -645,22 +645,33 @@ julia> treewidth(graph; alg)
     ufactor::Int = -1
 end
 
-struct IND{A <: EliminationAlgorithm} <: EliminationAlgorithm
+"""
+    ND{A, D} <: EliminationAlgorithm
+
+    ND(alg::EliminationAlgorithm, dis::DissectionAlgorithm; limit=200, level=5)
+
+    ND(alg::EliminationAlgorithm; limit=200, level=5)
+
+    ND(; limit=200, level=5)
+
+The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
+
+### Parameters
+
+  - `alg`: elimination algorithm
+  - `dis`: dissection algorithm
+  - `limit`: smallest subgraph
+  - `level`: maximum depth
+"""
+struct ND{A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
     alg::A
+    dis::D
     limit::Int
-    metis::METIS
+    level::Int
 end
 
-function IND(alg::EliminationAlgorithm, limit::Integer)
-    return IND(alg, limit, METIS())
-end
-
-function IND(alg::EliminationAlgorithm)
-    return IND(alg, 200)
-end
-
-function IND()
-    return IND(DEFAULT_ELIMINATION_ALGORITHM)
+function ND(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, dis::DissectionAlgorithm = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 5)
+    return ND(alg, dis, limit, level)
 end
 
 """
@@ -1109,6 +1120,24 @@ end
 # deprecated
 const ComponentReduction = ConnectedComponents
 
+struct BestWidth{A <: Tuple} <: EliminationAlgorithm
+    algs::A
+end
+
+function BestWidth(algs::PermutationOrAlgorithm...)
+    return BestWidth(algs)
+end
+
+function permutation(graph, alg::BestWidth)
+    first, rest... = alg.algs
+    return bestwidth(graph, first, rest)
+end
+
+function permutation(weights::AbstractVector, graph, alg::BestWidth)
+    first, rest... = alg.algs
+    return bestwidth(weights, graph, first, rest)
+end
+
 """
     permutation([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
@@ -1152,121 +1181,6 @@ end
 
 function permutation(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return permutation(weights, graph, alg)
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::EliminationAlgorithm)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::AbstractVector)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::BFS)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::MCS)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::LexBFS)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::RCMMD)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::RCMGL)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::LexM)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::MCSM)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::AMF)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::MF)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::MMD)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::AMD)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::SymAMD)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::METIS)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::Spectral)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::BT)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::SAT)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::MinimalChordal)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::CompositeRotations)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::SafeRules)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::SafeSeparators)
-    error()
-end
-
-# method ambiguity
-function permutation(weights::AbstractVector, alg::ConnectedComponents)
-    error()
 end
 
 function permutation(graph, alg::EliminationAlgorithm)
@@ -1342,6 +1256,16 @@ end
 function permutation(graph, alg::MMD)
     index = mmd(graph; delta = alg.delta)
     return invperm(index), index
+end
+
+function permutation(graph, alg::ND)
+    order = dissect(graph, alg)
+    return order, invperm(order)
+end
+
+function permutation(weights::AbstractVector, graph, alg::ND)
+    order = dissect(weights, graph, alg)
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::SAT{H}) where {H}
@@ -2310,6 +2234,158 @@ end
 
 function MMDLib.mmd(graph::BipartiteGraph; kwargs...)
     return mmd(pointers(graph), targets(graph); kwargs...)
+end
+
+# Algorithms for Sparse Linear Systems
+# Scott and Tuma
+# Algorithm 8.6: Nested Dissection Algorithm
+function dissect(graph, alg::ND)
+    return dissect(BipartiteGraph(graph), alg)
+end
+
+function dissect(graph::AbstractGraph{V}, alg::ND) where {V}
+    weights = ones(V, nv(graph))
+    return dissect(weights, graph, alg)
+end
+
+function dissect(graph::AbstractGraph{V}, alg::ND{<:EliminationAlgorithm, METISND}) where {V}
+    weights = ones(Int32, nv(graph))
+    return dissect(weights, graph, alg)
+end
+
+# Algorithms for Sparse Linear Systems
+# Scott and Tuma
+# Algorithm 8.6: Nested Dissection Algorithm
+function dissect(weights::AbstractVector, graph, alg::ND)
+    return dissect(weights, BipartiteGraph(graph), alg)
+end
+
+function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND) where {V}
+    simple = simplegraph(graph)
+    return dissect(weights, simple, vertices(simple), oneto(zero(V)), zero(V), alg)
+end
+
+function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:EliminationAlgorithm, METISND}) where {V}
+    simple = simplegraph(Int32, Int32, graph)
+    order::Vector{V} = dissect(weights, simple, vertices(simple), oneto(zero(Int32)), zero(Int32), alg)
+    return order
+end
+
+function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, clique::AbstractVector{V}, level::V, alg::ND) where {W, V, E}
+    n = nv(graph)
+
+    if n <= alg.limit || level > alg.level
+        order, index = permutation(weights, graph, CompositeRotations(clique, alg.alg))
+    else
+        # V = W ∪ B
+        project = separator(weights, graph, alg.dis)
+        n0 = zero(V); m0 = zero(E); project0 = Vector{V}(undef, n)
+        n1 = zero(V); m1 = zero(E); project1 = Vector{V}(undef, n)
+        n2 = zero(V)
+
+        @inbounds for v in vertices(graph)
+            vv = project[v]
+
+            if iszero(vv)    # v ∈ W - B
+                project0[v] = n0 += one(V); m0 += convert(E, eltypedegree(graph, v))
+            elseif isone(vv) # v ∈ B - W
+                project1[v] = n1 += one(V); m1 += convert(E, eltypedegree(graph, v))
+            else             # v ∈ W ∩ B
+                project0[v] = n0 += one(V); m0 += convert(E, twice(n2))
+                project1[v] = n1 += one(V); m1 += convert(E, twice(n2))
+                n2 += one(V)
+
+                for w in outneighbors(graph, v)
+                    ww = project[w]
+
+                    if iszero(ww)    # w ∈ W - B
+                        m0 += one(E)
+                    elseif isone(ww) # w ∈ B - W
+                        m1 += one(E)
+                    end
+                end
+            end
+        end
+
+        if ispositive(n0) && ispositive(n1)
+            t0 = zero(V); label0 = Vector{V}(undef, n0)
+            t1 = zero(V); label1 = Vector{V}(undef, n1)
+            t2 = zero(V); label2 = Vector{V}(undef, n2)
+
+            @inbounds for v in vertices(graph)
+                vv = project[v]
+
+                if iszero(vv)    # v ∈ W - B
+                    t0 += one(V); label0[t0] = v
+                elseif isone(vv) # v ∈ B - W
+                    t1 += one(V); label1[t1] = v
+                else             # v ∈ W ∩ B
+                    t0 += one(V); label0[t0] = v
+                    t1 += one(V); label1[t1] = v
+                    t2 += one(V); label2[t2] = v
+                end
+            end
+
+            weights0 = Vector{W}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
+            weights1 = Vector{W}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
+            t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
+            t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
+
+            @inbounds for v in vertices(graph)
+                vv = project[v]
+                wt = weights[v]
+
+                if iszero(vv)    # v ∈ W - B
+                    for w in neighbors(graph, v) # w ∈ W
+                        targets(graph0)[p0] = project0[w]; p0 += one(E)
+                    end
+
+                    weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+                elseif isone(vv) # v ∈ B - W
+                    for w in neighbors(graph, v) # w ∈ B
+                        targets(graph1)[p1] = project1[w]; p1 += one(E)
+                    end
+
+                    weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+                else             # v ∈ W ∩ B
+                    for w in neighbors(graph, v)
+                        ww = project[w]
+
+                        if iszero(ww)            # w ∈ W - B
+                            targets(graph0)[p0] = project0[w]; p0 += one(E)
+                        elseif isone(ww)         # w ∈ B - W
+                            targets(graph1)[p1] = project1[w]; p1 += one(E)
+                        end
+                    end
+
+                    for w in label2              # w ∈ W ∩ B
+                        v == w && continue
+                        targets(graph0)[p0] = project0[w]; p0 += one(E)
+                        targets(graph1)[p1] = project1[w]; p1 += one(E)
+                    end
+
+                    weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+                    weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+                end
+            end
+
+            clique0 = project0[label2]
+            clique1 = project1[label2]
+            order0 = dissect(weights0, graph0, label0, clique0, level + one(V), alg)
+            order1 = dissect(weights1, graph1, label1, clique1, level + one(V), alg)
+            order, index = permutation(graph, CompositeRotations(clique, BestWidth([order0; order1; label2], alg.alg)))
+        else
+            order = dissect(weights, graph, label, clique, level + one(V), alg)
+        end
+    end
+
+    nn = n - convert(V, length(clique))
+
+    @inbounds for i in oneto(nn)
+        order[i] = label[order[i]]
+    end
+
+    return resize!(order, nn)
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
@@ -4004,6 +4080,38 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
     return components, subgraphs
 end
 
+function bestwidth(graph, alg::PermutationOrAlgorithm, algs::Tuple)
+    minorder, minindex = permutation(graph, alg)
+    minwidth = treewidth(graph, minorder)
+
+    for alg in algs
+        order, index = permutation(graph, alg)
+        width = treewidth(graph, order)
+
+        if width < minwidth
+            minorder, minindex, minwidth = order, index, width
+        end
+    end
+
+    return minorder, minindex
+end
+
+function bestwidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, algs::Tuple)
+    minorder, minindex = permutation(weights, graph, alg)
+    minwidth = treewidth(weights, graph, minorder)
+
+    for alg in algs
+        order, index = permutation(weights, graph, alg)
+        width = treewidth(weights, graph, order)
+
+        if width < minwidth
+            minorder, minindex, minwidth = order, index, width
+        end
+    end
+
+    return minorder, minindex
+end
+
 function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: EliminationAlgorithm}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "$A")
@@ -4078,6 +4186,16 @@ function Base.show(io::IO, ::MIME"text/plain", alg::METIS)
     return
 end
 
+function Base.show(io::IO, ::MIME"text/plain", alg::ND{A, D}) where {A, D}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "ND{$A, $D}:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.dis)
+    println(io, " "^indent * "    limit: $(alg.limit)")
+    println(io, " "^indent * "    level: $(alg.level)")
+    return
+end
+
 function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "Spectral:")
@@ -4136,6 +4254,17 @@ function Base.show(io::IO, ::MIME"text/plain", alg::ConnectedComponents{A}) wher
     indent = get(io, :indent, 0)
     println(io, " "^indent * "ConnectedComponents{$A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::BestWidth{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "BestWidth{$A}:")
+
+    for alg in alg.algs
+        show(IOContext(io, :indent => indent + 4), "text/plain", alg)
+    end
+
     return
 end
 

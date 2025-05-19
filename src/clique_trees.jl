@@ -576,12 +576,6 @@ function treewidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
     return treewidth(view(weights, label), tree)
 end
 
-# method ambiguity
-function treewidth(weights::AbstractVector, alg::PermutationOrAlgorithm)
-    error()
-end
-
-
 """
     residual(tree::CliqueTree, i::Integer)
 
