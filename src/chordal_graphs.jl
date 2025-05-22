@@ -29,17 +29,18 @@ end
 function isperfect(
         graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}
     ) where {V}
+    n = nv(graph)
+
     # validate arguments
     @argcheck vertices(graph) == eachindex(index)
     @argcheck vertices(graph) == eachindex(order)
 
     # run algorithm
-    f = Vector{V}(undef, nv(graph))
-    findex = Vector{V}(undef, nv(graph))
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
 
-    for (i, w) in enumerate(order)
-        f[w] = w
-        findex[w] = i
+    for i in oneto(n)
+        w = order[i]; f[w] = w; findex[w] = i
 
         for v in neighbors(graph, w)
             if index[v] < i

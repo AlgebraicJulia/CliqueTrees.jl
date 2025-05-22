@@ -2,17 +2,8 @@ struct FilledEdgeIter{V, E} <: AbstractEdgeIter
     graph::FilledGraph{V, E}
 end
 
-function Base.show(io::IO, iter::I) where {I <: FilledEdgeIter}
-    n = length(iter)
-    println(io, "$n-element $I:")
-
-    for (i, edge) in enumerate(take(iter, MAX_ITEMS_PRINTED + 1))
-        if i <= MAX_ITEMS_PRINTED
-            println(io, " $edge")
-        else
-            println(io, " ⋮")
-        end
-    end
+function Base.show(io::IO, iter::FilledEdgeIter)
+    printiterator(io, iter)
     return
 end
 
@@ -32,25 +23,37 @@ end
 # Iteration Interface #
 #######################
 
-function Base.iterate(
-        iter::FilledEdgeIter{V}, (i, p)::Tuple{V, V} = (one(V), one(V))
-    ) where {V}
-    return if i <= nv(iter.graph)
-        clique = neighbors(iter.graph, i)
+function Base.iterate(iter::FilledEdgeIter{V}, (i, p)::Tuple{V, V} = (one(V), one(V))) where {V}
+    graph = iter.graph; ii = i + one(V); pp = p + one(V)
+    result = nothing
 
-        if p <= length(clique)
-            edge = SimpleEdge(i, clique[p])
-            state = p < length(clique) ? (i, p + one(V)) : (i + one(V), one(V))
-            return edge, state
+    if i <= nv(graph)
+        @inbounds clique = neighbors(graph, i)
+        @inbounds degree = eltypedegree(graph, i)
+
+        if p <= degree
+            @inbounds j = clique[p]
+            edge = SimpleEdge(i, j)
+
+            if p < degree
+                state = (i, pp)
+            else
+                state = (ii, one(V))
+            end
+
+            result = (edge, state)
         else
-            state = (i + one(V), one(V))
-            return iterate(iter, state)
+            state = (ii, one(V))
+            result = iterate(iter, state)
         end
     end
+
+    return result
 end
 
 function Base.length(iter::FilledEdgeIter)
-    return ne(iter.graph)
+    m::Int = ne(iter.graph)
+    return m
 end
 
 function Base.eltype(::Type{<:FilledEdgeIter{V}}) where {V}

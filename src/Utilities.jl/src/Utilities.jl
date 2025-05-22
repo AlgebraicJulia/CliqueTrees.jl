@@ -6,7 +6,7 @@ using Base.Order
 using Graphs
 
 # arithmetic
-export tolerance, twice, half, two, three, four, ispositive, isnegative, istwo, isthree
+export tolerance, twice, half, two, three, four, ispositive, isnegative, istwo, isthree, isfour
 
 # graphs
 export eltypedegree, de
@@ -69,6 +69,10 @@ end
 
 function isnegative(i::I) where {I}
     return i < zero(I)
+end
+
+function isfour(i::I) where {I}
+    return i == four(I)
 end
 
 function isthree(i::I) where {I}
@@ -174,13 +178,33 @@ end
 end
 
 function printiterator(io::IO, iterator::T) where {T}
-    print(io, "$T:")
+    return printiterator(io, iterator, Base.IteratorSize(T))
+end
 
-    for (i, v) in enumerate(take(iterator, MAX_ITEMS_PRINTED + 1))
-        if i <= MAX_ITEMS_PRINTED
+function printiterator(io::IO, iterator::T, ::Any) where {T}
+    print(io, "$T:")
+    printelements(io, iterator)
+    return
+end
+
+function printiterator(io::IO, iterator::T, ::Base.HasLength) where {T}
+    n = length(iterator)
+    print(io, "$n-element $T:")
+    printelements(io, iterator)
+    return
+end
+
+function printelements(io::IO, iterator)
+    count = 0
+
+    for v in iterator
+        count += 1
+
+        if count <= MAX_ITEMS_PRINTED
             print(io, "\n $v")
         else
             print(io, "\n ⋮")
+            break
         end
     end
 

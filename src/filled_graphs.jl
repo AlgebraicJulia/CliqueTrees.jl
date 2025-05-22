@@ -6,20 +6,25 @@ A filled graph.
 struct FilledGraph{V, E} <: AbstractGraph{V}
     tree::CliqueTree{V, E}
     index::Vector{V}
-    ne::Int
+    ne::E
 end
 
 function FilledGraph{V, E}(tree::CliqueTree) where {V, E}
-    index = Vector{V}(undef, pointers(residuals(tree))[end] - 1)
-    ne = 0
+    n = pointers(residuals(tree))[end] - one(V)
+    m = zero(E); i = zero(V)
+    index = Vector{V}(undef, n)
 
-    for (i, clique) in enumerate(tree)
-        index[residual(clique)] .= i
-        ne += length(separator(clique)) * length(residual(clique))
-        ne += (length(residual(clique)) - 1) * length(residual(clique)) ÷ 2
+    @inbounds for bag in tree
+        res = residual(bag)
+        sep = separator(bag)
+        nres = convert(E, length(res))
+        nsep = convert(E, length(sep))
+
+        index[res] .= i += one(V)
+        m += nsep * nres + half(nres * (nres - one(E)))
     end
 
-    return FilledGraph(tree, index, ne)
+    return FilledGraph{V, E}(tree, index, m)
 end
 
 function FilledGraph{V}(tree::CliqueTree{<:Any, E}) where {V, E}
@@ -31,19 +36,24 @@ function FilledGraph(tree::CliqueTree{V}) where {V}
 end
 
 function BipartiteGraph{V, E}(graph::FilledGraph) where {V, E}
-    result = BipartiteGraph{V, E}(nv(graph), nv(graph), ne(graph))
-    pointers(result)[begin] = one(E)
-    j = zero(V)
+    n = nv(graph); m = ne(graph)
+    result = BipartiteGraph{V, E}(n, n, m)
+    j = one(V); pointers(result)[j] = p = one(E)
 
-    @inbounds for clique in graph.tree
-        m = convert(V, length(residual(clique)))
-        n = convert(V, length(separator(clique)))
+    @inbounds for bag in graph.tree
+        res = residual(bag)
+        sep = separator(bag)
+        nres = convert(V, length(res))
+        nsep = convert(V, length(sep))
 
-        for i in oneto(m)
-            j += one(V)
-            pointers(result)[j + one(V)] = pointers(result)[j] + m - i + n
-            neighbors(result, j)[one(V):(m - i)] = residual(clique)[(i + one(V)):m]
-            neighbors(result, j)[(m - i + one(V)):(m - i + n)] = separator(clique)
+        for i in oneto(nres)
+            src = i + one(V); num = nres - i
+            copyto!(targets(result), p, res, src, num)
+
+            p += convert(E, num); src = one(V); num = nsep
+            copyto!(targets(result), p, sep, src, num)
+
+            j += one(V); pointers(result)[j] = p += convert(E, num)
         end
     end
 
@@ -80,7 +90,8 @@ function Graphs.Graph{V}(graph::FilledGraph) where {V}
         end
     end
 
-    return Graph{V}(ne(graph), fadjlist)
+    m = Int(ne(graph))
+    return Graph{V}(m, fadjlist)
 end
 
 function Graphs.DiGraph{V}(graph::FilledGraph) where {V}
@@ -115,7 +126,8 @@ function Graphs.DiGraph{V}(graph::FilledGraph) where {V}
         end
     end
 
-    return DiGraph{V}(ne(graph), fadjlist, badjlist)
+    m = Int(ne(graph))
+    return DiGraph{V}(m, fadjlist, badjlist)
 end
 
 function Base.Matrix{T}(graph::FilledGraph) where {T}
@@ -132,8 +144,9 @@ function SparseArrays.SparseMatrixCSC{T, I}(graph::FilledGraph) where {T, I}
 end
 
 # See above.
-function SparseArrays.SparseMatrixCSC{T}(graph::FilledGraph) where {T}
-    return SparseMatrixCSC{T, Int}(graph)
+function SparseArrays.SparseMatrixCSC{T}(graph::FilledGraph{V, E}) where {T, V, E}
+    I = promote_type(V, E)
+    return SparseMatrixCSC{T, I}(graph)
 end
 
 # See above.
@@ -144,13 +157,14 @@ end
 # Construct the adjacency matrix of a graph.
 function SparseArrays.sparse(::Type{T}, ::Type{I}, graph::FilledGraph) where {T, I}
     matrix = SparseMatrixCSC{T, I}(graph)
-    fill!(nonzeros(matrix), 1)
+    fill!(nonzeros(matrix), one(T))
     return matrix
 end
 
 # See above.
-function SparseArrays.sparse(::Type{T}, graph::FilledGraph) where {T}
-    return sparse(T, Int, graph)
+function SparseArrays.sparse(::Type{T}, graph::FilledGraph{V, E}) where {T, V, E}
+    I = promote_type(V, E)
+    return sparse(T, I, graph)
 end
 
 # See above.
@@ -173,8 +187,7 @@ function Graphs.is_directed(::Type{<:FilledGraph})
 end
 
 function Graphs.nv(graph::FilledGraph{V}) where {V}
-    n::V = pointers(residuals(graph.tree))[end] - 1
-    return n
+    return pointers(residuals(graph.tree))[end] - one(V)
 end
 
 function Graphs.ne(graph::FilledGraph)
@@ -183,24 +196,27 @@ end
 
 @propagate_inbounds function Graphs.has_edge(graph::FilledGraph, i::Integer, j::Integer)
     @boundscheck checkbounds(graph.index, i)
-    return i < j && j in graph.tree[graph.index[i]]
+    @inbounds bag = graph.tree[graph.index[i]]
+    return i < j && j in bag
 end
 
 function Graphs.vertices(graph::FilledGraph{V}) where {V}
     return oneto(nv(graph))
 end
 
-@propagate_inbounds function Graphs.outneighbors(
-        graph::FilledGraph{V, E}, i::Integer
-    ) where {V, E}
+@propagate_inbounds function Graphs.outneighbors(graph::FilledGraph{V, E}, i::Integer) where {V, E}
+    ii = convert(V, i) + one(V)
     @boundscheck checkbounds(graph.index, i)
-    clique = graph.tree[graph.index[i]]
-    return Clique{V, E}((i + 1):last(residual(clique)), separator(clique))
+    @inbounds bag = graph.tree[graph.index[i]]
+    res = residual(bag)
+    sep = separator(bag)
+    return Clique{V, E}(ii:last(res), sep)
 end
 
 @propagate_inbounds function Graphs.outdegree(graph::FilledGraph{V}, i::Integer) where {V}
     @boundscheck checkbounds(graph.index, i)
-    clique = graph.tree[graph.index[i]]
-    n::V = last(residual(clique)) + length(separator(clique)) - i
-    return n
+    @inbounds bag = graph.tree[graph.index[i]]
+    res = residual(bag)
+    sep = separator(bag)
+    return convert(Int, last(res)) + length(sep) - convert(Int, i)
 end

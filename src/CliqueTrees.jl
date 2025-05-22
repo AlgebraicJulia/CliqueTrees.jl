@@ -66,6 +66,7 @@ export BFS,
     SafeSeparators,
     ConnectedComponents,
     BestWidth,
+    BestFill,
     permutation,
     mcs
 
@@ -82,7 +83,7 @@ export SupernodeTree, supernodetree, residuals
 export Clique, separator, residual
 
 # Clique Trees
-export CliqueTree, cliquetree, treewidth, separators, relatives
+export CliqueTree, cliquetree, treewidth, treefill, separators, relatives
 
 # Abstract Trees
 export firstchildindex, rootindices, ancestorindices

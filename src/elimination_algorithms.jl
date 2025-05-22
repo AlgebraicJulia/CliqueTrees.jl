@@ -1,108 +1,87 @@
 """
     EliminationAlgorithm
 
-A *graph elimination algorithm* computes a permutation of the vertices of a graph, which induces a chordal completion
-of the graph. The algorithms below generally seek to minimize the *fill* (number of edges) or *width* (largest clique)
-of the completed graph.
+A *graph elimination algorithm* computes a total ordering of the vertices of a graph. 
+The algorithms implemented in CliqueTrees.jl can be divided into five categories.
 
-| type                          | name                                         | time     | space    |
-|:----------------------------- |:-------------------------------------------- |:-------- |:-------- |
-| [`BFS`](@ref)                 | breadth-first search                         | O(m + n) | O(n)     |
-| [`MCS`](@ref)                 | maximum cardinality search                   | O(m + n) | O(n)     |
-| [`LexBFS`](@ref)              | lexicographic breadth-first search           | O(m + n) | O(m + n) |
-| [`RCMMD`](@ref)               | reverse Cuthill-Mckee (minimum degree)       | O(m + n) | O(m + n) |
-| [`RCMGL`](@ref)               | reverse Cuthill-Mckee (George-Liu)           | O(m + n) | O(m + n) |
-| [`MCSM`](@ref)                | maximum cardinality search (minimal)         | O(mn)    | O(n)     |
-| [`LexM`](@ref)                | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |
-| [`AMF`](@ref)                 | approximate minimum fill                     | O(mn)    | O(m + n) |
-| [`MF`](@ref)                  | minimum fill                                 | O(mn²)   |          |
-| [`MMD`](@ref)                 | multiple minimum degree                      | O(mn²)   | O(m + n) |
-| [`ND`](@ref)                  | nested dissection                            |          |          |
-| [`MinimalChordal`](@ref)      | MinimalChordal                               |          |          |
-| [`CompositeRotations`](@ref)  | elimination tree rotation                    | O(m + n) | O(m + n) |
-| [`SafeRules`](@ref)           | treewith-safe rule-based reduction           |          |          |    
-| [`SafeSeparators`](@ref)      | treewith-safe separator decomposition        |          |          |    
-| [`ConnectedComponents`](@ref) | connected component decomposition            |          |          |
+  - triangulation recognition algorithms
+  - bandwidth reduction algorithms
+  - greedy algorithms
+  - nested dissection algorithms
+  - exact treewidth algorithms
 
-The following additional algorithms are implemented as package extensions and require loading an additional package.
+# Triangulation Recognition Algorithms
 
-| type                             | name                              | time  | space    | package                                                                                   |
-|:-------------------------------- |:--------------------------------- |:----- |:-------- |:----------------------------------------------------------------------------------------- |
-| [`AMD`](@ref)                    | approximate minimum degree        | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)                                 |
-| [`SymAMD`](@ref)                 | column approximate minimum degree | O(mn) | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl)                                 |
-| [`METIS`](@ref)                  | multilevel nested dissection      |       |          | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)                                       |
-| [`Spectral`](@ref)               | spectral ordering                 |       |          | [Laplacians.jl](https://github.com/danspielman/Laplacians.jl)                             |
-| [`FlowCutter`](@ref)             | FlowCutter                        |       |          | [FlowCutterPACE17_jll.jl](https://github.com/JuliaBinaryWrappers/FlowCutterPACE17_jll.jl) |
-| [`BT`](@ref)                     | Bouchitte-Todinca                 |       |          | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl)                   |
-| [`SAT{libpicosat_jll}`](@ref)    | SAT encoding (picosat)            |       |          | [libpicosat_jll.jl](https://github.com/JuliaBinaryWrappers/libpicosat_jll.jl)             |
-| [`SAT{PicoSAT_jll}`](@ref)       | SAT encoding (picosat)            |       |          | [PicoSAT_jll.jl](https://github.com/JuliaBinaryWrappers/PicoSAT_jll.jl)                   |
-| [`SAT{Lingeling_jll}`](@ref)     | SAT encoding (lingeling)          |       |          | [Lingeling_jll.jl](https://github.com/JuliaBinaryWrappers/Lingeling_jll.jl)               |
-| [`SAT{CryptoMiniSat_jll}`](@ref) | SAT encoding (cryptominisat)      |       |          | [CryptoMiniSat_jll.jl](https://github.com/JuliaBinaryWrappers/CryptoMiniSat_jll.jl)       |
+| type             | name                                         | time     | space    | package |
+|:-----------------|:-------------------------------------------- |:-------- |:-------- | :------ |
+| [`MCS`](@ref)    | maximum cardinality search                   | O(m + n) | O(n)     |         |
+| [`LexBFS`](@ref) | lexicographic breadth-first search           | O(m + n) | O(m + n) |         |
+| [`MCSM`](@ref)   | maximum cardinality search (minimal)         | O(mn)    | O(n)     |         |
+| [`LexM`](@ref)   | lexicographic breadth-first search (minimal) | O(mn)    | O(n)     |         |
 
-# Triangulation Recognition Heuristics
+These algorithms will compute perfect orderings when applied to chordal graphs.
 
-  - [`MCS`](@ref)
-  - [`LexBFS`](@ref)
-  - [`MCSM`](@ref)
-  - [`LexM`](@ref)
+# Bandwidth and Envelope Minimization Algorithms
 
-These algorithms are guaranteed to compute perfect elimination orderings for chordal graphs. [`MCSM`](@ref) and [`LexM`](@ref)
-are variants of [`MCS`](@ref) and [`LexBFS`](@ref) that compute minimal orderings. The Lex algorithms were pubished first,
-and the MCS algorithms were introducd later as simplications. In practice, these algorithms work poorly on non-chordal graphs.
+| type            | name                                   | time     | space    | package |
+|:----------------|:---------------------------------------|:-------- |:-------- | :------ |
+| [`RCMMD`](@ref) | reverse Cuthill-Mckee (minimum degree) | O(m + n) | O(m + n) |         | 
+| [`RCMGL`](@ref) | reverse Cuthill-Mckee (George-Liu)     | O(m + n) | O(m + n) |         |
 
-# Bandwidth and Envelope Reduction Heuristics
+These algorithms try to minimize the *bandwidth* and *envelope* of the ordered graph.
 
-  - [`RCMMD`](@ref)
-  - [`RCMGL`](@ref)
-  - [`Spectral`](@ref)
+# Greedy Algorithms
 
-These algorithms seek to minimize the *bandwidth* and *profile* of the permuted graph, quantities that upper bound the width
-and fill of theinduced chordal completion. [`RCMMD`](@ref) and [`RCMGL`](@ref) are two variants of the reverse Cuthill-McKee
-algorithm, a type of breadth-first search. They differ in in their choice of starting vertex. In practice, these algorithms work
-better than the triangulation recognition heuristics and worse than the greedy heuristics.
+| type             | name                              | time   | space    | package                                                   |
+|:-----------------|:----------------------------------|:-------|:-------- | :-------------------------------------------------------- |
+| [`MMD`](@ref)    | multiple minimum degree           | O(mn²) | O(m + n) |                                                           |
+| [`MF`](@ref)     | minimum fill                      | O(mn²) |          |                                                           |
+| [`AMD`](@ref)    | approximate minimum degree        | O(mn)  | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl) |
+| [`SymAMD`](@ref) | column approximate minimum degree | O(mn)  | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl) |
+| [`AMF`](@ref)    | approximate minimum fill          | O(mn)  | O(m + n) |                                                           |
 
-# Greedy Heuristics
+These algorithms simulate the graph elimination process, greedily eliminating
+vertices that minimize a cost function. They are faster then the nested dissection
+algorithms, but have worse results.
 
-  - [`MMD`](@ref)
-  - [`MF`](@ref)
-  - [`AMD`](@ref)
-  - [`SymAMD`](@ref)
-  - [`AMF`](@ref)
+# Nested Dissection Algorithms
 
-These algorithms simulate the elimination process, greedity selecting vertices to eliminate. [`MMD`](@ref) selects a vertex
-of minimum degree, and [`MF`](@ref) selects a vertex that induces the least fill. Updating the degree or fill of every vertex
-after elimination is costly; the algorithms [`AMD`](@ref), [`SymAMD`](@ref), and [`AMF`](@ref) are relaxations that work by
-approximating these values. The [`AMD`](@ref) algorithm is the state-of-the-practice for sparse matrix ordering.
+| type             | name              | time   | space | package                                             |
+|:-----------------|:------------------|:-------|:----- | :-------------------------------------------------- |
+| [`METIS`](@ref)  | nested dissection |        |       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl) |
+| [`ND`](@ref)     | nested dissection |        |       |                                                     |
+
+These algorithms recursively partition a graph, then call a greedy algorithm on the leaves.
+These are slower than the greedy algorithms, but have better results.
 
 # Exact Treewidth Algorithms
 
-  - [`BT`](@ref)
-  - [`SAT`](@ref)
+| type          | name              | time  | space | package                                                                 |
+|:--------------|:------------------|:------|:------| :---------------------------------------------------------------------- |
+| [`BT`](@ref)  | Bouchitte-Todinca |       |       | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl) |
+| [`SAT`](@ref) | SAT encoding      |       |       |                                                                         |
 
-These algorithm minimizes the treewidth of the completed graph.
+The orderings computed by these algorithms induce minimum-width tree decompositions.
 
 !!! warning
-    This is an NP-hard problem. Consider wrapping exact treewidth algorithms with preprocessors like
-    [`SafeRules`](@ref) or [`SafeSeparators`](@ref). 
-
-# Meta Algorithms
-
-  - [`MinimalChordal`](@ref)
-  - [`CompositeRotations`](@ref)
-  - [`SafeRules`](@ref)
-  - [`ConnectedComponents`](@ref)
-
-These algorithms are parametrized by another algorithm and work by transforming its input or output. 
-
+    This is an NP-hard problem.
 """
 abstract type EliminationAlgorithm end
 
 """
-    PermutationOrAlgorithm = Union{AbstractVector, EliminationAlgorithm}
+    PermutationOrAlgorithm = Union{
+    AbstractVector,
+    Tuple{AbstractVector, AbstractVector},
+    EliminationAlgorithm,
+}
 
 Either a permutation or an algorithm.
 """
-const PermutationOrAlgorithm = Union{AbstractVector, EliminationAlgorithm}
+const PermutationOrAlgorithm = Union{
+    AbstractVector,
+    Tuple{AbstractVector, AbstractVector},
+    EliminationAlgorithm,
+}
 
 """
     BFS <: EliminationAlgorithm
@@ -691,15 +670,19 @@ julia> treewidth(graph; alg)
   - `limit`: smallest subgraph
   - `level`: maximum depth
 """
-struct ND{A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
+struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
     alg::A
     dis::D
     limit::Int
     level::Int
 end
 
+function ND{S}(alg::A = DEFAULT_ELIMINATION_ALGORITHM, dis::D = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 6) where {S, A <: EliminationAlgorithm, D <: DissectionAlgorithm}
+    return ND{S, A, D}(alg, dis, limit, level)
+end
+
 function ND(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, dis::DissectionAlgorithm = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 6)
-    return ND(alg, dis, limit, level)
+    return ND{1}(alg, dis; limit, level)
 end
 
 """
@@ -1148,22 +1131,19 @@ end
 # deprecated
 const ComponentReduction = ConnectedComponents
 
-struct BestWidth{A <: Tuple} <: EliminationAlgorithm
+struct Best{S, A <: Tuple} <: EliminationAlgorithm
     algs::A
 end
 
-function BestWidth(algs::PermutationOrAlgorithm...)
-    return BestWidth(algs)
+const BestWidth = Best{1}
+const BestFill = Best{2}
+
+function Best{S}(algs::A) where {S, A <: Tuple}
+    return Best{S, A}(algs)
 end
 
-function permutation(graph, alg::BestWidth)
-    first, rest... = alg.algs
-    return bestwidth(graph, first, rest)
-end
-
-function permutation(weights::AbstractVector, graph, alg::BestWidth)
-    first, rest... = alg.algs
-    return bestwidth(weights, graph, first, rest)
+function Best{S}(algs::PermutationOrAlgorithm...) where {S}
+    return Best{S}(algs)
 end
 
 """
@@ -1223,13 +1203,23 @@ function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm
     return permutation(graph, alg)
 end
 
-function permutation(graph, alg::AbstractVector)
-    return permutation(BipartiteGraph(graph), alg)
+function permutation(graph, order::AbstractVector)
+    return permutation(BipartiteGraph(graph), order)
 end
 
-function permutation(graph::AbstractGraph{V}, alg::AbstractVector) where {V}
-    order = Vector{V}(alg)
+function permutation(graph, (order, index)::Tuple{AbstractVector, AbstractVector})
+    return permutation(BipartiteGraph(graph), (order, index))
+end
+
+function permutation(graph::AbstractGraph{V}, order::AbstractVector) where {V}
+    order = Vector{V}(order)
     return order, invperm(order)
+end
+
+function permutation(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector, AbstractVector}) where {V}
+    order = Vector{V}(order)
+    index = Vector{V}(index)
+    return order, index
 end
 
 function permutation(graph, alg::BFS)
@@ -1287,13 +1277,11 @@ function permutation(graph, alg::MMD)
 end
 
 function permutation(graph, alg::ND)
-    order = dissect(graph, alg)
-    return order, invperm(order)
+    return dissect(graph, alg)
 end
 
 function permutation(weights::AbstractVector, graph, alg::ND)
-    order = dissect(weights, graph, alg)
-    return order, invperm(order)
+    return dissect(weights, graph, alg)
 end
 
 function permutation(graph, alg::SAT{H}) where {H}
@@ -1428,6 +1416,26 @@ function permutation(weights::AbstractVector, graph, alg::ConnectedComponents)
     end
 
     return order, invperm(order)
+end
+
+function permutation(graph, alg::BestWidth)
+    first, rest... = alg.algs
+    return bestwidth(graph, first, rest)
+end
+
+function permutation(graph, alg::BestFill)
+    first, rest... = alg.algs
+    return bestfill(graph, first, rest)
+end
+
+function permutation(weights::AbstractVector, graph, alg::BestWidth)
+    first, rest... = alg.algs
+    return bestwidth(weights, graph, first, rest)
+end
+
+function permutation(weights::AbstractVector, graph, alg::BestFill)
+    first, rest... = alg.algs
+    return bestfill(weights, graph, first, rest)
 end
 
 function bfs(graph)
@@ -2276,7 +2284,7 @@ function dissect(graph::AbstractGraph{V}, alg::ND) where {V}
     return dissect(weights, graph, alg)
 end
 
-function dissect(graph::AbstractGraph{V}, alg::ND{<:EliminationAlgorithm, METISND}) where {V}
+function dissect(graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
     weights = ones(Int32, nv(graph))
     return dissect(weights, graph, alg)
 end
@@ -2293,13 +2301,13 @@ function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND) wher
     return dissect(weights, simple, vertices(simple), vertices(simple), zero(V), alg)
 end
 
-function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:EliminationAlgorithm, METISND}) where {V}
+function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
     simple = simplegraph(Int32, Int32, graph)
-    order::Vector{V} = dissect(weights, simple, vertices(simple), vertices(simple), zero(Int32), alg)
-    return order
+    order::Vector{V}, index::Vector{V} = dissect(weights, simple, vertices(simple), vertices(simple), zero(Int32), alg)
+    return order, index
 end
 
-function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, project::AbstractVector{V}, level::V, alg::ND) where {W, V, E}
+function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, project::AbstractVector{V}, level::V, alg::ND{S}) where {W, V, E, S}
     n = nv(graph); m = ne(graph); nn = n + one(V)
     parents = Int[]; leaves = Bool[]; separators = View{V, Int}[]
 
@@ -2311,9 +2319,9 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
         V,                                                # level
     }[]
 
-    wwork = W[]
-    vwork = V[]
-    ework = E[]
+    wwork = sizehint!(W[], n * alg.level)
+    vwork = sizehint!(V[], n * alg.level + n * alg.level + m * alg.level)
+    ework = sizehint!(E[], n * alg.level + alg.level)
 
     node = (
         copy!(BipartiteGraph(n, allocate!(ework, nn), allocate!(vwork, m)), graph),
@@ -2470,36 +2478,114 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
         end
     end
 
-    stack = Tuple{Int, Vector{V}}[]
+    ntree = Tree(parents)
+    nindex = postorder(ntree)
+    invpermute!(leaves, nindex)
+    invpermute!(separators, nindex)
+    invpermute!(nodes, nindex)
+    return dissectdp(leaves, separators, nodes, alg)
+end
 
-    @inbounds for i in invperm(postorder(Tree(parents)))
-        leaf = leaves[i]; order2 = separators[i]
-        graph, weights, label, project, level = nodes[i] 
+function dissectdp(
+        leaves::Vector{Bool},
+        separators::Vector{View{V, Int}},
+        nodes::Vector{
+            Tuple{
+                BipartiteGraph{V, E, View{E, Int}, View{V, Int}}, # graph
+                View{W, Int},                                     # weights
+                View{V, Int},                                     # label
+                View{V, Int},                                     # project
+                V,                                                # level
+            },
+        },
+        alg::ND{S},
+    ) where {W, V, E, S}
 
+    graph = nodes[begin][begin]
+    n = nv(graph); m = ne(graph); nn = n + one(V)
+    tree = Tree{V}(n)
+    vwork1 = Vector{V}(undef, n)
+    vwork2 = Vector{V}(undef, half(m))
+    vwork3 = Vector{V}(undef, half(m))
+    ework1 = Vector{E}(undef, nn)
+    ework2 = Vector{E}(undef, nn)
+    ework3 = Vector{E}(undef, nn)
+    stack = Tuple{Int, Vector{V}, Vector{V}}[]
+
+    if isone(S)
+        wwork1 = Vector{W}(undef, n)
+    end
+
+    @inbounds for (i, (leaf, order2, (graph, weights, label, project, level))) in enumerate(zip(leaves, separators, nodes))
         if leaf
             order, index = permutation(weights, graph, alg.alg)
         else
-            i0, order0 = pop!(stack)
-            i1, order1 = pop!(stack)
-            graph0, weights0, label0, project0, level0 = nodes[i0]
-            graph1, weights1, label1, project1, level1 = nodes[i1] 
-            order0, index0 = permutation(graph0, CompositeRotations(project0[order2], order0))
-            order1, index1 = permutation(graph1, CompositeRotations(project1[order2], order1))
-            resize!(order0, length(order0) - length(order2))
-            resize!(order1, length(order1) - length(order2))
-            order, index = permutation(graph, BestWidth([label0[order0]; label1[order1]; order2], alg.alg))
+            n = nv(graph)
+            n2 = convert(V, length(order2))
+            t = zero(V); order = Vector{V}(undef, n); index = Vector{V}(undef, n)
+
+            for (i0, order0, index0) in (pop!(stack), pop!(stack))
+                #      i
+                #    ↗   ↖
+                # i0       i1
+                graph0, weights0, label0, project0, level0 = nodes[i0]
+                n0 = nv(graph0); m0 = ne(graph0); nn0 = n0 + one(V)
+
+                # permute graph
+                count0 = resize!(ework1, nn0)
+                upper0 = BipartiteGraph(n0, resize!(ework2, nn0), resize!(vwork2, half(m0)))
+                lower0 = BipartiteGraph(n0, resize!(ework3, nn0), resize!(vwork3, half(m0)))
+                sympermute!(count0, upper0, graph0, index0, Forward)
+                reverse!(count0, lower0, upper0)
+
+                # construct elimination tree
+                tree0 = resize!(tree, n0)
+                etree!(tree0, resize!(vwork1, n0), upper0)
+
+                # construct clique
+                t0 = zero(V); clique0 = resize!(vwork1, n2)
+
+                for v in order2
+                    t0 += one(V); clique0[t0] = index0[project0[v]]
+                end
+
+                # move clique to end of ordering
+                invpermute!(order0, compositerotations(lower0, tree0, clique0))
+
+                # append to parent ordering
+                for t0 in oneto(n0 - n2)
+                    v = label0[order0[t0]]
+                    t += one(V); order[t] = v; index[v] = t
+                end
+            end
+
+            # append separator to ordering
+            for v in order2
+                t += one(V); order[t] = v; index[v] = t
+            end
+
+            # run inner algorithm and choose the best ordering
+            f = resize!(vwork2, n); findex = resize!(vwork3, n)
+
+            if isone(S)
+                counts = resize!(wwork1, n)
+                order, index = bestwidth!(f, findex, counts, weights, graph, (order, index), (alg.alg,))
+            elseif istwo(S)
+                order, index = bestfill!(f, findex, weights, graph, (order, index), (alg.alg,))
+            end
         end
 
-        push!(stack, (i, order))
+        push!(stack, (i, order, index))
     end
 
-    return last(only(stack))
+    i, order, index = only(stack)
+    return order, index
 end
 
 function allocate!(work::Vector, n::Integer)
     m::Int = n
     resize!(work, length(work) + m)
-    return @view work[end - m + 1:end]
+    return @view work[(end - m + 1):end]
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
@@ -4195,12 +4281,32 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
 end
 
 function bestwidth(graph, alg::PermutationOrAlgorithm, algs::Tuple)
+    return bestwidth(BipartiteGraph(graph), alg, algs)
+end
+
+function bestwidth(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    counts = Vector{V}(undef, n)
+    return bestwidth!(f, findex, counts, graph, alg, algs)
+end
+
+function bestwidth!(
+        f::Vector{V},
+        findex::Vector{V},
+        counts::Vector{V},
+        graph::AbstractGraph{V},
+        alg::PermutationOrAlgorithm,
+        algs::Tuple
+    ) where {V}
+
     minorder, minindex = permutation(graph, alg)
-    minwidth = treewidth(graph, minorder)
+    minwidth = treewidth!(f, findex, counts, graph, minorder, minindex)
 
     for alg in algs
         order, index = permutation(graph, alg)
-        width = treewidth(graph, order)
+        width = treewidth!(f, findex, counts, graph, order, index)
 
         if width < minwidth
             minorder, minindex, minwidth = order, index, width
@@ -4211,15 +4317,105 @@ function bestwidth(graph, alg::PermutationOrAlgorithm, algs::Tuple)
 end
 
 function bestwidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, algs::Tuple)
+    return bestwidth(weights, BipartiteGraph(graph), alg, algs)
+end
+
+function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {W, V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    counts = Vector{W}(undef, n)
+    return bestwidth!(f, findex, counts, weights, graph, alg, algs)
+end
+
+function bestwidth!(
+        f::Vector{V},
+        findex::Vector{V},
+        counts::Vector{W},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        alg::PermutationOrAlgorithm,
+        algs::Tuple
+    ) where {W, V}
+
     minorder, minindex = permutation(weights, graph, alg)
-    minwidth = treewidth(weights, graph, minorder)
+    minwidth = treewidth!(f, findex, counts, weights, graph, minorder, minindex)
 
     for alg in algs
         order, index = permutation(weights, graph, alg)
-        width = treewidth(weights, graph, order)
+        width = treewidth!(f, findex, counts, weights, graph, order, index)
 
         if width < minwidth
             minorder, minindex, minwidth = order, index, width
+        end
+    end
+
+    return minorder, minindex
+end
+
+function bestfill(graph, alg::PermutationOrAlgorithm, algs::Tuple)
+    return bestfill(BipartiteGraph(graph), alg, algs)
+end
+
+function bestfill(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    return bestfill!(f, findex, graph, alg, algs)
+end
+
+function bestfill!(
+        f::Vector{V},
+        findex::Vector{V},
+        graph::AbstractGraph{V},
+        alg::PermutationOrAlgorithm,
+        algs::Tuple
+    ) where {V}
+
+    minorder, minindex = permutation(graph, alg)
+    minfill = treefill!(f, findex, graph, minorder, minindex)
+
+    for alg in algs
+        order, index = permutation(graph, alg)
+        fill = treefill!(f, findex, graph, order, index)
+
+        if fill < minfill
+            minorder, minindex, minfill = order, index, fill
+        end
+    end
+
+    return minorder, minindex
+end
+
+function bestfill(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, algs::Tuple)
+    return bestfill(weights, BipartiteGraph(graph), alg, algs)
+end
+
+function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {W, V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    return bestfill!(f, findex, weights, graph, alg, algs)
+end
+
+function bestfill!(
+        f::Vector{V},
+        findex::Vector{V},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        alg::PermutationOrAlgorithm,
+        algs::Tuple
+    ) where {W, V}
+
+    minorder, minindex = permutation(weights, graph, alg)
+    minfill = treefill!(f, findex, weights, graph, minorder, minindex)
+
+    for alg in algs
+        order, index = permutation(weights, graph, alg)
+        fill = treefill!(f, findex, weights, graph, order, index)
+
+        if fill < minfill
+            minorder, minindex, minfill = order, index, fill
         end
     end
 
@@ -4300,9 +4496,9 @@ function Base.show(io::IO, ::MIME"text/plain", alg::METIS)
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::ND{A, D}) where {A, D}
+function Base.show(io::IO, ::MIME"text/plain", alg::ND{S, A, D}) where {S, A, D}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "ND{$A, $D}:")
+    println(io, " "^indent * "ND{$S, $A, $D}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.dis)
     println(io, " "^indent * "    limit: $(alg.limit)")

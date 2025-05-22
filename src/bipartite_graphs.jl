@@ -229,12 +229,20 @@ function sympermute!(
         index::AbstractVector,
         order::Ordering,
     ) where {V, E}
-    # validate arguments
     @argcheck vertices(graph) == vertices(result)
     @argcheck vertices(graph) == eachindex(index)
-
-    # compute column counts
     count = Vector{E}(undef, nv(graph) + one(V))
+    return sympermute!(count, result, graph, index, order)
+end
+
+function sympermute!(
+        count::Vector{E},
+        result::BipartiteGraph{V, E},
+        graph::AbstractGraph,
+        index::AbstractVector,
+        order::Ordering,
+    ) where {V, E}
+    # compute column counts
     count[one(V)] = one(E)
     count[two(V):(nv(graph) + one(V))] .= zero(E)
 
@@ -286,9 +294,12 @@ function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) wh
     @argcheck nv(graph) == nov(result)
     @argcheck ne(graph) == ne(result)
     @argcheck nov(graph) == nv(result)
-
-    # compute column counts
     count = Vector{E}(undef, nov(graph) + one(V))
+    return reverse!(count, result, graph)
+end
+
+function Base.reverse!(count::Vector{E}, result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
+    # compute column counts
     count[one(V)] = one(E)
     count[two(V):(nov(graph) + one(V))] .= zero(E)
 
@@ -444,12 +455,13 @@ function Graphs.vertices(graph::BipartiteGraph{V}) where {V}
     return oneto(nv(graph))
 end
 
-@propagate_inbounds function Graphs.outneighbors(
-        graph::BipartiteGraph{<:Any, E}, i::Integer
-    ) where {E}
+@propagate_inbounds function Graphs.outneighbors(graph::BipartiteGraph{<:Any, E}, i::I) where {E, I <: Integer}
+    ii = i + one(I)
     @boundscheck checkbounds(pointers(graph), i)
-    @boundscheck checkbounds(pointers(graph), i + 1)
-    return @inbounds @view targets(graph)[pointers(graph)[i]:(pointers(graph)[i + 1] - one(E))]
+    @boundscheck checkbounds(pointers(graph), ii)
+    @inbounds p = pointers(graph)[i]
+    @inbounds pp = pointers(graph)[ii]
+    return @view targets(graph)[p:(pp - one(E))]
 end
 
 # slow
@@ -459,23 +471,24 @@ function Graphs.inneighbors(graph::BipartiteGraph, i::Integer)
     end
 end
 
-@propagate_inbounds function Graphs.outdegree(
-        graph::BipartiteGraph{V}, i::Integer
-    ) where {V}
+@propagate_inbounds function Graphs.outdegree(graph::BipartiteGraph, i::I) where {I <: Integer}
+    ii = i + one(I)
     @boundscheck checkbounds(pointers(graph), i)
-    @boundscheck checkbounds(pointers(graph), i + 1)
-    @inbounds n::V = pointers(graph)[i + 1] - pointers(graph)[i]
+    @boundscheck checkbounds(pointers(graph), ii)
+    @inbounds p = pointers(graph)[i]
+    @inbounds pp = pointers(graph)[ii]
+    n::Int = pp - p
     return n
 end
 
 # slow
 function Graphs.indegree(graph::BipartiteGraph{V}, i::Integer) where {V}
-    n::V = sum(j -> has_edge(graph, j, i), vertices(graph))
+    n::Int = sum(j -> has_edge(graph, j, i), vertices(graph))
     return n
 end
 
-function Graphs.Δout(graph::BipartiteGraph{V}) where {V}
-    return maximum(vertices(graph); init = zero(V)) do i
+function Graphs.Δout(graph::BipartiteGraph)
+    return maximum(vertices(graph); init = 0) do i
         outdegree(graph, i)
     end
 end

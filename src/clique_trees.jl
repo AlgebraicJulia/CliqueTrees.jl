@@ -527,6 +527,27 @@ end
     treewidth([weights, ]tree::CliqueTree)
 
 Compute the [width](https://en.wikipedia.org/wiki/Treewidth) of a clique tree.
+
+```jldoctest
+julia> using CliqueTrees
+
+julia> graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia> label, tree = cliquetree(graph);
+
+julia> treewidth(tree)
+2
+```
+
 """
 function treewidth(tree::CliqueTree{V}) where {V}
     n::V = maximum(length, tree; init = 1) - 1
@@ -554,26 +575,332 @@ end
     treewidth([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
 
-Compute an upper bound to the [tree width](https://en.wikipedia.org/wiki/Treewidth) of a simple graph.
+Compute the [width](https://en.wikipedia.org/wiki/Treewidth) induced by an elimination
+algorithm.
+
+```julia-repl
+julia> using CliqueTrees, TreeWidthSolver
+
+julia> graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia> treewidth(graph; alg=MCS())
+3
+
+julia> treewidth(graph; alg=BT()) # exact treewidth
+2
+```
 """
 function treewidth(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return treewidth(graph, alg)
+end
+
+function treewidth(graph, alg::PermutationOrAlgorithm)
+    return treewidth(BipartiteGraph(graph), alg)
+end
+
+# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
+# Tarjan and Yannakakis
+# Fill-In computation
+#
+# Compute the width of an elimination ordering.
+# The complexity is O(m' + n), where m' = |E'| and n = |V|.
+function treewidth(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
+    order, index = permutation(graph, alg)
+    return treewidth(graph, (order, index))
+end
+
+function treewidth(graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
+    index = invperm(order)
+    return treewidth(graph, (order, index))
+end
+
+function treewidth(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    counts = Vector{V}(undef, n)
+    return treewidth!(f, findex, counts, graph, order, index)
+end
+
+function treewidth!(
+        f::Vector{V},
+        findex::Vector{V},
+        counts::Vector{V},
+        graph::AbstractGraph{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+    ) where {V}
+
+    n = nv(graph); width = zero(V)
+
+    @inbounds for i in oneto(n)
+        w = order[i]; f[w] = w; findex[w] = i
+        counts[w] = zero(V)
+
+        for v in neighbors(graph, w)
+            if index[v] < i
+                x = v
+
+                while findex[x] < i
+                    findex[x] = i
+                    width = max(width, counts[x] += one(V))
+                    x = f[x]
+                end
+
+                if f[x] == x
+                    f[x] = w
+                end
+            end
+        end
+    end
+
+    return width
 end
 
 function treewidth(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return treewidth(weights, graph, alg)
 end
 
-function treewidth(graph, alg::PermutationOrAlgorithm)
-    label, tree, upper = eliminationtree(graph, alg)
-    rowcount, colcount = supcnt(reverse(upper), tree)
-    V = eltype(colcount)
-    return maximum(colcount; init = one(V)) - one(V)
+function treewidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    return treewidth(weights, BipartiteGraph(graph), alg)
 end
 
-function treewidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
-    label, tree = cliquetree(weights, graph; alg)
-    return treewidth(view(weights, label), tree)
+# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
+# Tarjan and Yannakakis
+# Fill-In computation
+#
+# Compute the weighted width of an elimination ordering.
+# The complexity is O(m' + n), where m' = |E'| and n = |V|.
+function treewidth(weights::AbstractVector, graph::AbstractGraph, alg::PermutationOrAlgorithm)
+    order, index = permutation(weights, graph, alg)
+    return treewidth(weights, graph, (order, index))
+end
+
+function treewidth(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
+    index = invperm(order)
+    return treewidth(weights, graph, (order, index))
+end
+
+function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {W, V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    counts = Vector{W}(undef, n)
+    return treewidth!(f, findex, counts, weights, graph, order, index)
+end
+
+function treewidth!(
+        f::Vector{V},
+        findex::Vector{V},
+        counts::Vector{W},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+    ) where {W, V}
+
+    n = nv(graph); width = zero(W)
+
+    for i in oneto(n)
+        w = order[i]; f[w] = w; findex[w] = i
+        weight = counts[w] = weights[w]
+        width = max(width, weight)
+
+        for v in neighbors(graph, w)
+            if index[v] < i
+                x = v
+
+                while findex[x] < i
+                    findex[x] = i
+                    width = max(width, counts[x] += weight)
+                    x = f[x]
+                end
+
+                if f[x] == x
+                    f[x] = w
+                end
+            end
+        end
+    end
+
+    return width
+end
+
+function treefill(tree::CliqueTree{<:Any, E}) where {E}
+    fill = zero(E)
+
+    @inbounds for bag in tree
+        res = residual(bag)
+
+        for vv in bag
+            for v in res
+                v == vv && break
+                fill += one(E)
+            end
+        end
+    end
+
+    return fill
+end
+
+function treefill(weights::AbstractVector{W}, tree::CliqueTree) where {W}
+    fill = zero(W)
+
+    @inbounds for bag in tree
+        res = residual(bag)
+
+        for vv in bag
+            wvv = weights[vv]
+
+            for v in res
+                v > vv && break
+                wv = weights[v]
+                fill += wvv * wv
+            end
+        end
+    end
+
+    return fill
+end
+
+function treefill(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
+    return treefill(graph, alg)
+end
+
+function treefill(graph, alg::PermutationOrAlgorithm)
+    return treefill(BipartiteGraph(graph), alg)
+end
+
+# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
+# Tarjan and Yannakakis
+# Fill-In computation
+#
+# Compute the fill-in of an elimination ordering.
+# The complexity is O(m' + n), where m' = |E'| and n = |V|.
+function treefill(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
+    order, index = permutation(graph, alg)
+    return treefill(graph, (order, index))
+end
+
+function treefill(graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
+    index = invperm(order)
+    return treefill(graph, (order, index))
+end
+
+function treefill(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    return treefill!(f, findex, graph, order, index)
+end
+
+function treefill!(
+        f::Vector{V},
+        findex::Vector{V},
+        graph::AbstractGraph{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+    ) where {V}
+
+    E = etype(graph)
+    n = nv(graph); fill = zero(E)
+
+    @inbounds for i in oneto(n)
+        w = order[i]; f[w] = w; findex[w] = i
+
+        for v in neighbors(graph, w)
+            if index[v] < i
+                x = v
+
+                while findex[x] < i
+                    findex[x] = i
+                    fill += one(E)
+                    x = f[x]
+                end
+
+                if f[x] == x
+                    f[x] = w
+                end
+            end
+        end
+    end
+
+    return fill
+end
+
+function treefill(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
+    return treefill(weights, graph, alg)
+end
+
+function treefill(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    return treefill(weights, BipartiteGraph(graph), alg)
+end
+
+# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
+# Tarjan and Yannakakis
+# Fill-In computation
+#
+# Compute the weighted fill-in of an elimination ordering.
+# The complexity is O(m' + n), where m' = |E'| and n = |V|.
+function treefill(weights::AbstractVector, graph::AbstractGraph, alg::PermutationOrAlgorithm)
+    order, index = permutation(weights, graph, alg)
+    return treefill(weights, graph, (order, index))
+end
+
+function treefill(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
+    index = invperm(order)
+    return treefill(weights, graph, (order, index))
+end
+
+function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {W, V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    return treefill!(f, findex, weights, graph, order, index)
+end
+
+function treefill!(
+        f::Vector{V},
+        findex::Vector{V},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+    ) where {W, V}
+
+    n = nv(graph); fill = zero(W)
+
+    for i in oneto(n)
+        w = order[i]; f[w] = w; findex[w] = i
+        weight = weights[w]; fill += weight * weight
+
+        for v in neighbors(graph, w)
+            if index[v] < i
+                x = v
+
+                while findex[x] < i
+                    findex[x] = i
+                    fill += weights[x] * weight
+                    x = f[x]
+                end
+
+                if f[x] == x
+                    f[x] = w
+                end
+            end
+        end
+    end
+
+    return fill
 end
 
 """

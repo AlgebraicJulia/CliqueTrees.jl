@@ -31,6 +31,14 @@ function Tree{V}(tree::Tree) where {V}
     return Tree{V}(tree.parent, tree.root, tree.child, tree.brother)
 end
 
+function Tree{V}(n::Integer) where {V}
+    parent = Vector{V}(undef, n)
+    root = Scalar{V}(undef)
+    child = Vector{V}(undef, n)
+    brother = Vector{V}(undef, n)
+    return Tree{V}(parent, root, child, brother)
+end
+
 function Tree(tree::Tree)
     return Tree(tree.parent, tree.root, tree.child, tree.brother)
 end
@@ -99,8 +107,14 @@ end
 # Construct the elimination tree of an ordered graph.
 # The complexity is O(mlogn), where m = |E| and n = |V|.
 function etree(upper::AbstractGraph{V}) where {V}
-    parent = Vector{V}(undef, nv(upper))
-    ancestor = Vector{V}(undef, nv(upper))
+    n = nv(upper)
+    tree = Tree{V}(n)
+    ancestor = Vector{V}(undef, n)
+    return etree!(tree, ancestor, upper)
+end
+
+function etree!(tree::Tree{V}, ancestor::Vector{V}, upper::AbstractGraph{V}) where {V}
+    parent = tree.parent
 
     @inbounds for i in vertices(upper)
         parent[i] = zero(V)
@@ -122,7 +136,7 @@ function etree(upper::AbstractGraph{V}) where {V}
         end
     end
 
-    return Tree(parent)
+    return lcrs!(tree)
 end
 
 # An Efficient Algorithm to Compute Row and Column Counts for Sparse Cholesky Factorization
@@ -401,6 +415,13 @@ function Base.isequal(left::Tree, right::Tree)
         isequal(left.root, right.root) &&
         isequal(left.child, right.child) &&
         isequal(left.brother, right.brother)
+end
+
+function Base.resize!(tree::Tree, n::Integer)
+    resize!(tree.parent, n)
+    resize!(tree.child, n)
+    resize!(tree.brother, n)
+    return tree
 end
 
 function Base.copy(tree::Tree)

@@ -1,15 +1,53 @@
 using AbstractTrees
-using Base: oneto
+using Base: @kwdef, oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: DoublyLinkedList, sympermute, cliquetree!
+using CliqueTrees: DoublyLinkedList, EliminationAlgorithm, sympermute, cliquetree!
+using CliqueTrees.Utilities
 using Graphs
 using Graphs: SimpleEdge
 using JET
 using LinearAlgebra
+using MatrixMarket
 using SparseArrays
+using SuiteSparseMatrixCollection
 using Test
 
+@testset "errors" begin
+    weights = [1]
+    @test_throws Exception lowerbound(weights, 1)
+    @test_throws Exception lowerbound(weights, MMW())
+    @test_throws Exception permutation(weights, [1])
+    @test_throws Exception permutation(weights, ([1], [1]))
+    @test_throws Exception permutation(weights, BFS())
+    @test_throws Exception permutation(weights, MCS())
+    @test_throws Exception permutation(weights, LexBFS())
+    @test_throws Exception permutation(weights, RCMMD())
+    @test_throws Exception permutation(weights, RCMGL())
+    @test_throws Exception permutation(weights, LexM())
+    @test_throws Exception permutation(weights, MCSM())
+    @test_throws Exception permutation(weights, AMF())
+    @test_throws Exception permutation(weights, MF())
+    @test_throws Exception permutation(weights, MMD())
+    @test_throws Exception permutation(weights, AMD())
+    @test_throws Exception permutation(weights, SymAMD())
+    @test_throws Exception permutation(weights, METIS())
+    @test_throws Exception permutation(weights, ND())
+    @test_throws Exception permutation(weights, Spectral())
+    @test_throws Exception permutation(weights, BT())
+    @test_throws Exception permutation(weights, SAT{CryptoMiniSat_jll}())
+    @test_throws Exception permutation(weights, MinimalChordal())
+    @test_throws Exception permutation(weights, CompositeRotations([1]))
+    @test_throws Exception permutation(weights, SafeRules())
+    @test_throws Exception permutation(weights, SafeSeparators())
+    @test_throws Exception permutation(weights, ConnectedComponents())
+    @test_throws Exception permutation(weights, BestWidth())
+    @test_throws Exception permutation(weights, BestFill())
+    @test_throws Exception eliminationtree(weights, [1])
+    @test_throws Exception treewidth(weights, [1])
+    @test_throws Exception treefill(weights, LexM())
+end
+    
 import Catlab
 import libpicosat_jll
 import CryptoMiniSat_jll
@@ -33,6 +71,23 @@ const TYPES = (
     (Catlab.SymmetricGraph, Int, Int),
 )
 
+@kwdef struct SafeFlowCutter <: EliminationAlgorithm
+    time::Int = 5
+    seed::Int = 0
+end
+
+function CliqueTrees.permutation(graph, alg::SafeFlowCutter)
+    time = alg.time
+    seed = alg.seed
+
+    try
+        return permutation(graph, FlowCutter(; time, seed))
+    catch
+        @warn "FlowCutter failed"
+        return permutation(graph)
+    end
+end
+
 @testset "errors" begin
     matrix = [
         0 1 1 0 0 0 0 0
@@ -52,10 +107,10 @@ const TYPES = (
     @test_throws ArgumentError permutation(matrix; alg = BT())
 end
 
-using AMD: AMD as AMDJL
-using Laplacians: Laplacians
-using Metis: Metis
-using TreeWidthSolver: TreeWidthSolver
+import AMD as AMDLib
+import Laplacians
+import Metis
+import TreeWidthSolver
 
 @testset "trees" begin
     @testset "interface" begin
@@ -228,9 +283,9 @@ end
         @test collect(inneighbors(graph, 1)) == [2, 3]
         @test all_neighbors(graph, 1) == [2, 3]
 
-        @test outdegree(graph, 1) === Int8(2)
-        @test indegree(graph, 1) === Int8(2)
-        @test degree(graph, 1) === Int8(4)
+        @test outdegree(graph, 1) === 2
+        @test indegree(graph, 1) === 2
+        @test degree(graph, 1) === 4
     end
 end
 
@@ -272,7 +327,7 @@ end
     @testset "interface" begin
         @test is_directed(filledgraph)
         @test nv(filledgraph) === Int8(8)
-        @test ne(filledgraph) === 13
+        @test ne(filledgraph) === Int16(13)
         @test eltype(filledgraph) === Int8
         @test edgetype(filledgraph) === SimpleEdge{Int8}
 
@@ -287,7 +342,7 @@ end
         @test dst.(edges(filledgraph)) == [6, 7, 6, 8, 5, 7, 5, 8, 7, 8, 7, 8, 8]
 
         @test neighbors(filledgraph, 5) == [7, 8]
-        @test outdegree(filledgraph, 5) === Int8(2)
+        @test outdegree(filledgraph, 5) === 2
     end
 end
 
@@ -366,8 +421,7 @@ end
     ]
 
     label1, tree1 = cliquetree(matrix)
-    label2 = copy(label1)
-    tree2 = copy(tree1)
+    label2 = copy(label1); tree2 = copy(tree1)
     permute!(label2, cliquetree!(tree2, 1))
     isomorphism = Int[]
 
@@ -416,16 +470,19 @@ end
             MF(),
             MMD(),
             METIS(),
-            ND(; limit=5),
+            ND{1}(; limit = 5),
+            ND{2}(; limit = 5),
             Spectral(),
-            # FlowCutter(),
+            FlowCutter(; time=1),
             BT(),
+            SAT{CryptoMiniSat_jll}(),
             MinimalChordal(),
             CompositeRotations([1, 2, 3]),
             SafeRules(),
             SafeSeparators(),
             ConnectedComponents(),
-            BestWidth(MMD(), MF()),
+            BestWidth(MCS(), MF()),
+            BestFill(MCS(), MF()),
         )
         @test isa(repr("text/plain", alg), String)
     end
@@ -467,9 +524,17 @@ end
 end
 
 @testset "null graph" begin
-    graph = spzeros(0, 0)
+    weights = Float64[]; graph = spzeros(0, 0)
     @test ischordal(graph)
-    @test iszero(treewidth(graph))
+
+    for alg in (
+            MMW{1}(),
+            MMW{2}(),
+            MMW{3}(),
+        )
+        @test iszero(lowerbound(graph))
+        @test iszero(lowerbound(weights, graph))
+    end
 
     for alg in (
             BFS(),
@@ -486,16 +551,22 @@ end
             MMD(),
             # METIS(),
             # Spectral(),
-            # FlowCutter(),
+            SafeFlowCutter(; time=1),
             BT(),
             MinimalChordal(),
             CompositeRotations([]),
             SafeRules(),
             SafeSeparators(),
             ConnectedComponents(),
-            BestWidth(MMD(), MF()),
+            BestWidth(MCS(), MF()),
         )
+
         @test permutation(graph; alg) == ([], [])
+        @test permutation(weights, graph; alg) == ([], [])
+        @test iszero(treewidth(graph; alg))
+        @test iszero(treewidth(weights, graph; alg))
+        @test iszero(treefill(graph; alg))
+        @test iszero(treefill(weights, graph; alg))
     end
 
     for S in (Nodal, Maximal, Fundamental)
@@ -504,15 +575,24 @@ end
         @test iszero(length(tree))
         @test isnothing(rootindex(tree))
         @test iszero(treewidth(tree))
+        @test iszero(treefill(tree))
         @test iszero(nv(filledgraph))
         @test iszero(ne(filledgraph))
     end
 end
 
 @testset "singleton graph" begin
-    graph = spzeros(1, 1)
+    weights = Float64[2]; graph = spzeros(1, 1)
     @test ischordal(graph)
-    @test iszero(treewidth(graph))
+
+    for alg in (
+            MMW{1}(),
+            MMW{2}(),
+            MMW{3}(),
+        )
+        @test iszero(lowerbound(graph))
+        @test istwo(lowerbound(weights, graph))
+    end
 
     for alg in (
             BFS(),
@@ -529,17 +609,24 @@ end
             MF(),
             MMD(),
             METIS(),
-            ND(; limit=5),
+            ND{1}(; limit = 5),
+            ND{2}(; limit = 5),
             # Spectral,
-            # FlowCutter(),
+            SafeFlowCutter(; time=1),
             BT(),
             CompositeRotations([1]),
             SafeRules(),
             SafeSeparators(),
             ConnectedComponents(),
-            BestWidth(MMD(), MF()),
+            BestWidth(MCS(), MF()),
+            BestFill(MCS(), MF()),
         )
         @test permutation(graph; alg) == ([1], [1])
+        @test permutation(weights, graph; alg) == ([1], [1])
+        @test iszero(treewidth(graph; alg))
+        @test istwo(treewidth(weights, graph; alg))
+        @test iszero(treefill(graph; alg))
+        @test isfour(treefill(weights, graph; alg))
     end
 
     for S in (Nodal, Maximal, Fundamental)
@@ -548,6 +635,7 @@ end
         @test isone(length(tree))
         @test isone(rootindex(tree))
         @test iszero(treewidth(tree))
+        @test iszero(treefill(tree))
         @test isone(nv(filledgraph))
         @test iszero(ne(filledgraph))
         @test isnothing(parentindex(tree, 1))
@@ -562,6 +650,8 @@ end
 # Chordal Graphs and Semidefinite Optimization
 # Vandenberghe and Andersen
 @testset "vandenberghe and andersen" begin
+    weights = Float64[1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1]
+
     __graph = BipartiteGraph(
         [
             0 0 1 1 1 0 0 0 0 0 0 0 0 0 1 0 0
@@ -626,14 +716,16 @@ end
                 @inferred CliqueTrees.amf(graph)
                 @inferred CliqueTrees.mf(graph)
                 @inferred CliqueTrees.mmd(graph)
-                @inferred CliqueTrees.dissect(graph, ND(; limit=5))
+                @inferred CliqueTrees.dissect(graph, ND{1}(; limit = 5))
+                @inferred CliqueTrees.dissect(graph, ND{2}(; limit = 5))
                 @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.pr3(graph, lowerbound(graph))
-                @inferred CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
+                @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.pr4(graph, lowerbound(graph))
-                @inferred CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
+                @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
                 @inferred treewidth(graph; alg = 1:17)
+                @inferred treefill(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
                 @inferred supernodetree(graph; alg = 1:17, snd = Nodal())
                 @inferred supernodetree(graph; alg = 1:17, snd = Maximal())
@@ -660,14 +752,16 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND(; limit=5))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(; limit = 5))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(; limit = 5))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(graph, lowerbound(graph))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
+                @test_call target_modules = (CliqueTrees,) treefill(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) supernodetree(
                     graph; alg = 1:17, snd = Nodal()
@@ -706,7 +800,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND(; limit=5))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(; limit = 5))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(; limit = 5))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
@@ -714,6 +809,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
+                @test_opt target_modules = (CliqueTrees,) treefill(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) supernodetree(
                     graph; alg = 1:17, snd = Nodal()
@@ -764,7 +860,19 @@ end
                 end
             end
 
+            uwidth = treewidth(graph; alg=BT())
+            wwidth = treewidth(weights, graph; alg=BT())
+
             @testset "permutations" begin
+                for alg in (
+                        MMW{1}(),
+                        MMW{2}(),
+                        MMW{3}(),
+                    )
+                    @test lowerbound(graph; alg) <= uwidth
+                    @test lowerbound(weights, graph; alg) <= wwidth
+                end
+
                 for alg in (
                         BFS(),
                         MCS(),
@@ -779,23 +887,36 @@ end
                         MF(),
                         MMD(),
                         METIS(),
-                        ND(; limit=5),
+                        ND{1}(; limit = 5),
+                        ND{2}(; limit = 5),
                         Spectral(),
-                        # FlowCutter(),
+                        SafeFlowCutter(; time=1),
                         BT(),
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
                         SafeRules(),
                         SafeSeparators(),
                         ConnectedComponents(),
-                        BestWidth(MMD(), MF()),
+                        BestWidth(MCS(), MF()),
+                        BestFill(MCS(), MF()),
                     )
                     order, index = permutation(graph; alg)
-                    order, index = permutation(ones(17), graph; alg)
                     @test isa(order, Vector{V})
                     @test isa(index, Vector{V})
                     @test length(order) == 17
                     @test order[index] == 1:17
+
+                    order, index = permutation(weights, graph; alg)
+                    @test isa(order, Vector{V})
+                    @test isa(index, Vector{V})
+                    @test length(order) == 17
+                    @test order[index] == 1:17
+
+                    @test treewidth(graph; alg) >= uwidth
+                    @test treewidth(weights, graph; alg) >= wwidth
+
+                    @test isa(treefill(graph; alg), E)
+                    @test isa(treefill(weights, graph; alg), Float64)
                 end
             end
 
@@ -810,8 +931,9 @@ end
                     @test length(tree) == 17
                     @test rootindex(tree) === V(17)
                     @test treewidth(tree) === V(4)
+                    @test treefill(tree) === E(42)
                     @test nv(filledgraph) === V(17)
-                    @test ne(filledgraph) === 42
+                    @test ne(filledgraph) === E(42)
                     @test Symmetric(sparse(filledgraph), :L) ==
                         sparse(__completion)[label, label]
 
@@ -903,8 +1025,9 @@ end
                     @test length(tree) == 8
                     @test rootindex(tree) === V(8)
                     @test treewidth(tree) === V(4)
+                    @test treefill(tree) === E(42)
                     @test nv(filledgraph) === V(17)
-                    @test ne(filledgraph) === 42
+                    @test ne(filledgraph) === E(42)
                     @test Symmetric(sparse(filledgraph), :L) ==
                         sparse(__completion)[label, label]
 
@@ -961,8 +1084,9 @@ end
                     @test length(tree) == 12
                     @test rootindex(tree) === V(12)
                     @test treewidth(tree) === V(4)
+                    @test treefill(tree) === E(42)
                     @test nv(filledgraph) === V(17)
-                    @test ne(filledgraph) === 42
+                    @test ne(filledgraph) === E(42)
                     @test Symmetric(sparse(filledgraph), :L) ==
                         sparse(__completion)[label, label]
 
@@ -1033,8 +1157,65 @@ end
     end
 end
 
-@testset "treewidth" begin
-    __graph1 = BipartiteGraph(
+@testset "fill" begin
+    ssmc = ssmc_db()
+
+    algs = (
+        MMD(),
+        MMD(; delta=5),
+        AMF(; speed=1),
+        AMF(; speed=2),
+        AMF(; speed=3),
+        ND{2}(),
+        MF(),
+    )
+
+    matrices = (
+        ("bcspwr09", 5200),
+        ("bcspwr10", 25300),
+        ("bcsstk08", 30800),
+    )
+
+    for (name, fill) in matrices
+        matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format="MM")[1], "$(name).mtx"))
+
+        for alg in algs
+            @test treefill(matrix; alg) <= fill
+        end
+    end
+
+    name = "mycielskian14"; fill = 14000000
+    matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format="MM")[1], "$(name).mtx"))
+    @test treefill(matrix; alg=AMF()) <= fill
+end
+
+@testset "exact treewidth" begin
+    lalgs = (
+        MMW{1}(),
+        MMW{2}(),
+        MMW{3}(),
+    )
+
+    ualgs = (
+        SAT{libpicosat_jll}(),
+        SAT{Lingeling_jll}(),
+        SAT{PicoSAT_jll}(),
+        SAT{CryptoMiniSat_jll}(),
+        SafeRules(SAT{CryptoMiniSat_jll}()),
+        SafeSeparators(SAT{CryptoMiniSat_jll}()),
+        SafeRules(SafeSeparators(BT())),
+        SafeSeparators(BT()),
+    )
+
+    walgs = (
+        SafeRules(SafeSeparators(BT())),
+        SafeSeparators(BT()),
+    )
+
+    weights1 = log2.([2, 2, 4, 2, 4, 2, 2, 2, 2, 2, 4, 2, 4, 2, 4, 2])
+    weights2 = log2.([4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4])
+
+    graph1 = BipartiteGraph(
         [
             0 1 0 1 0 1 1 0 0 0 0 0 0 0 0 0
             1 0 1 0 1 0 1 0 0 0 0 0 0 0 0 0
@@ -1055,7 +1236,7 @@ end
         ]
     )
 
-    __graph2 = BipartiteGraph(
+    graph2 = BipartiteGraph(
         [
             0 1 1 0 1 1 0 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
             1 0 1 1 1 1 1 0 0 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
@@ -1092,109 +1273,47 @@ end
         ]
     )
 
-    weights1 = log2.([2, 2, 4, 2, 4, 2, 2, 2, 2, 2, 4, 2, 4, 2, 4, 2])
-    weights2 = log2.([4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4, 4, 3, 4, 3, 4, 4, 3, 4])
+    graphs = (
+        (weights1, graph1, 4, 0,  0,  5.0,                0,  0 ),
+        (weights2, graph2, 9, 21, 94, 19.169925001442312, 21, 94),
+    )
 
     for (G, V, E) in TYPES
         @testset "$(nameof(G))" begin
-            graph1 = G(__graph1)
-            graph2 = G(__graph2)
+            for (weights, graph, uwidth, un, um, wwidth, wn, wm) in graphs
+                graph = G(graph); uwidth = V(uwidth); un = V(un); wn = V(wn)
+            
+                ukernel, urest... = CliqueTrees.pr4(graph, lowerbound(graph))
+                wkernel, wrest... = CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
+                @test nv(ukernel) === un
+                @test nv(wkernel) === wn
+                @test ne(ukernel) === um
+                @test ne(wkernel) === wm
 
-            width1 = V(4)
-            lb11 = lowerbound(graph1, MMW{1}())
-            lb12 = lowerbound(graph1, MMW{2}())
-            lb13 = lowerbound(graph1, MMW{3}())
-            ub1 = treewidth(graph1)
-
-            @test isa(lb11, V)
-            @test isa(lb12, V)
-            @test isa(lb13, V)
-            @test isa(ub1, V)
-            @test lb11 <= width1
-            @test lb12 <= width1
-            @test lb13 <= width1
-            @test width1 <= ub1
-            #@test treewidth(graph1; alg=ConnectedComponents(BT())) === width1
-            @test treewidth(graph1; alg = SAT{libpicosat_jll}()) === width1
-            @test treewidth(graph1; alg = SAT{Lingeling_jll}()) === width1
-            @test treewidth(graph1; alg = SAT{PicoSAT_jll}()) === width1
-            @test treewidth(graph1; alg = SAT{CryptoMiniSat_jll}()) === width1
-            #@test treewidth(graph1; alg=SafeRules(ConnectedComponents(BT()))) === width1
-            @test treewidth(graph1; alg = SafeRules(SAT{libpicosat_jll}())) === width1
-            @test treewidth(graph1; alg = SafeRules(SAT{Lingeling_jll}())) === width1
-            @test treewidth(graph1; alg = SafeRules(SAT{PicoSAT_jll}())) === width1
-            @test treewidth(graph1; alg = SafeRules(SAT{CryptoMiniSat_jll}())) === width1
-            @test treewidth(graph1; alg = SafeSeparators(BT())) === width1
-            @test treewidth(graph1; alg = SafeSeparators(SAT{libpicosat_jll}())) === width1
-            @test treewidth(graph1; alg = SafeSeparators(SAT{Lingeling_jll}())) === width1
-            @test treewidth(graph1; alg = SafeSeparators(SAT{PicoSAT_jll}())) === width1
-            @test treewidth(graph1; alg = SafeSeparators(SAT{CryptoMiniSat_jll}())) === width1
-
-            width1 = 5.0
-            lb11 = lowerbound(weights1, graph1, MMW{1}())
-            lb12 = lowerbound(weights1, graph1, MMW{2}())
-            lb13 = lowerbound(weights1, graph1, MMW{3}())
-            ub1 = treewidth(weights1, graph1)
-
-            @test isa(lb11, Float64)
-            @test isa(lb12, Float64)
-            @test isa(lb13, Float64)
-            @test isa(ub1, Float64)
-            @test lb11 <= width1
-            @test lb12 <= width1
-            @test lb13 <= width1
-            @test width1 <= ub1
-            #@test treewidth(weights1, graph1; alg=ConnectedComponents(BT())) === width1
-            #@test treewidth(weights1, graph1; alg=SafeRules(ConnectedComponents(BT()))) === width1
-            @test treewidth(weights1, graph1; alg = SafeSeparators(BT())) === width1
-
-            width2 = V(9)
-            lb21 = lowerbound(graph2, MMW{1}())
-            lb22 = lowerbound(graph2, MMW{2}())
-            lb23 = lowerbound(graph2, MMW{3}())
-            ub2 = treewidth(graph2)
-
-            @test isa(lb21, V)
-            @test isa(lb22, V)
-            @test isa(lb23, V)
-            @test isa(ub2, V)
-            @test lb21 <= width2
-            @test lb22 <= width2
-            @test lb23 <= width2
-            @test width2 <= ub2
-            @test treewidth(graph2; alg = BT()) === width2
-            @test treewidth(graph2; alg = SAT{libpicosat_jll}()) === width2
-            @test treewidth(graph2; alg = SAT{Lingeling_jll}()) === width2
-            @test treewidth(graph2; alg = SAT{PicoSAT_jll}()) === width2
-            @test treewidth(graph2; alg = SAT{CryptoMiniSat_jll}()) === width2
-            @test treewidth(graph2; alg = SafeRules(BT())) === width2
-            @test treewidth(graph2; alg = SafeRules(SAT{libpicosat_jll}())) === width2
-            @test treewidth(graph2; alg = SafeRules(SAT{Lingeling_jll}())) === width2
-            @test treewidth(graph2; alg = SafeRules(SAT{PicoSAT_jll}())) === width2
-            @test treewidth(graph2; alg = SafeRules(SAT{CryptoMiniSat_jll}())) === width2
-            @test treewidth(graph2; alg = SafeSeparators(BT())) === width2
-            @test treewidth(graph2; alg = SafeSeparators(SAT{libpicosat_jll}())) === width2
-            @test treewidth(graph2; alg = SafeSeparators(SAT{Lingeling_jll}())) === width2
-            @test treewidth(graph2; alg = SafeSeparators(SAT{PicoSAT_jll}())) === width2
-            @test treewidth(graph2; alg = SafeSeparators(SAT{CryptoMiniSat_jll}())) === width2
-
-            width2 = 19.169925001442312
-            lb21 = lowerbound(weights2, graph2, MMW{1}())
-            lb22 = lowerbound(weights2, graph2, MMW{2}())
-            lb23 = lowerbound(weights2, graph2, MMW{3}())
-            ub2 = treewidth(weights2, graph2)
-
-            @test isa(lb21, Float64)
-            @test isa(lb22, Float64)
-            @test isa(lb23, Float64)
-            @test isa(ub2, Float64)
-            @test lb21 <= width2
-            @test lb22 <= width2
-            @test lb23 <= width2
-            @test width2 <= ub2
-            @test treewidth(weights2, graph2; alg = BT()) === width2
-            @test treewidth(weights2, graph2; alg = SafeRules(BT())) === width2
-            @test treewidth(weights2, graph2; alg = SafeSeparators(BT())) === width2
+                for alg in lalgs
+                    u = lowerbound(graph; alg)
+                    w = lowerbound(weights, graph; alg)
+                    @test isa(u, V)
+                    @test isa(w, Float64)
+                    @test u <= uwidth
+                    @test w <= wwidth
+                end
+               
+                for alg in ualgs
+                    order, tree = cliquetree(graph; alg)
+                    @test treewidth(graph; alg=order) === uwidth
+                    @test treewidth(tree) === uwidth
+                    @test treefill(graph; alg=order) === treefill(tree)
+                end
+ 
+                 for alg in walgs
+                    order, tree = cliquetree(weights, graph; alg)
+                    @test treewidth(weights, graph; alg=order) === wwidth
+                    @test treewidth(view(weights, order), tree) === wwidth
+                    @test treefill(weights, graph; alg=order) ≈ treefill(view(weights, order), tree)
+                end
+            end
         end
     end
 end
+

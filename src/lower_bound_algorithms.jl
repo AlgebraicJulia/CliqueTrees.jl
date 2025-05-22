@@ -91,16 +91,6 @@ function lowerbound(weights::AbstractVector, graph; alg::WidthOrAlgorithm = DEFA
     return lowerbound(weights, graph, alg)
 end
 
-# method ambiguity
-function lowerbound(weights::AbstractVector, ::Number)
-    error()
-end
-
-# method ambiguity
-function lowerbound(weights::AbstractVector, ::MMW)
-    error()
-end
-
 function lowerbound(graph, alg::Number)
     return lowerbound(BipartiteGraph(graph), alg)
 end
