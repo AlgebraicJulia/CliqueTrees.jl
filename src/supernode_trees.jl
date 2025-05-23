@@ -5,16 +5,12 @@ A supernodal elimination tree with vertices of type `V`.
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
 struct SupernodeTree{V} <: AbstractVector{UnitRange{V}}
-    tree::Tree{V}
+    tree::Tree{V, Vector{V}, Scalar{V}, Vector{V}, Vector{V}}
     res::BipartiteGraph{V, V, Vector{V}, OneTo{V}}
 end
 
 function Tree(tree::SupernodeTree)
     return Tree(tree.tree)
-end
-
-function Tree{V}(tree::SupernodeTree) where {V}
-    return Tree{V}(tree.tree)
 end
 
 """

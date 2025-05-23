@@ -626,13 +626,9 @@ julia> treewidth(graph; alg)
 end
 
 """
-    ND{A, D} <: EliminationAlgorithm
+    ND{S, A, D} <: EliminationAlgorithm
 
-    ND(alg::EliminationAlgorithm, dis::DissectionAlgorithm; limit=200, level=6)
-
-    ND(alg::EliminationAlgorithm; limit=200, level=6)
-
-    ND(; limit=200, level=6)
+    ND{S}(alg::EliminationAlgorithm, dis::DissectionAlgorithm; limit=200, level=6)
 
 The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
 
@@ -650,8 +646,8 @@ julia> graph = [
            0 0 1 0 0 0 1 0
        ];
 
-julia> alg = ND(MF(), METISND(); limit=0, level=2)
-ND{MF, METISND}:
+julia> alg = ND{1}(MF(), METISND(); limit=0, level=2)
+ND{1, MF, METISND}:
     MF
     METISND:
         seed: -1
@@ -668,7 +664,7 @@ julia> treewidth(graph; alg)
   - `alg`: elimination algorithm
   - `dis`: dissection algorithm
   - `limit`: smallest subgraph
-  - `level`: maximum depth
+  - `level`: search depth
 """
 struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -2353,9 +2349,10 @@ function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, 
     )
 
     push!(parents, 0); push!(nodes, node)
+    nmax = n; mmax = m
 
     for (i, (graph, weights, label, width, level)) in enumerate(nodes)
-        n = nv(graph); m = ne(graph)
+        n = nv(graph); m = ne(graph); mmax = max(mmax, m)
 
         if width <= alg.limit || level >= alg.level
             push!(separators, view(vwork, (vn + 1):vn))
@@ -2479,10 +2476,15 @@ function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, 
     end
 
     ntree = Tree(parents)
-    return dissectdp(ntree, separators, nodes, alg)
+    nindex = postorder!(ntree)
+    invpermute!(separators, nindex)
+    invpermute!(nodes, nindex)
+    return dissectdp(nmax, mmax, ntree, separators, nodes, alg)
 end
 
 function dissectdp(
+        n::V,
+        m::E,
         ntree::AbstractVector{Int},
         separators::Vector{View{V, Int}},
         nodes::Vector{
@@ -2497,13 +2499,8 @@ function dissectdp(
         alg::ND{S},
     ) where {W, V, E, S}
 
-    graph = nodes[begin][begin]
-    nindex = postorder!(ntree)
-    invpermute!(separators, nindex)
-    invpermute!(nodes, nindex)
-
-    n = nv(graph); m = ne(graph); nn = n + one(V)
-    tree = Tree{V}(n)
+    nn = n + one(V)
+    twork = Tree{V}(n)
     vwork1 = Vector{V}(undef, n)
     vwork2 = Vector{V}(undef, half(m))
     vwork3 = Vector{V}(undef, half(m))
@@ -2532,18 +2529,24 @@ function dissectdp(
                 n0 = nv(graph0); m0 = ne(graph0); nn0 = n0 + one(V)
 
                 # permute graph
-                count0 = resize!(ework1, nn0)
-                upper0 = BipartiteGraph(n0, resize!(ework2, nn0), resize!(vwork2, half(m0)))
-                lower0 = BipartiteGraph(n0, resize!(ework3, nn0), resize!(vwork3, half(m0)))
+                count0 = view(ework1, oneto(nn0))
+                upper0 = BipartiteGraph(n0, view(ework2, oneto(nn0)), view(vwork2, oneto(half(m0))))
+                lower0 = BipartiteGraph(n0, view(ework3, oneto(nn0)), view(vwork3, oneto(half(m0))))
                 sympermute!(count0, upper0, graph0, index0, Forward)
                 reverse!(count0, lower0, upper0)
 
                 # construct elimination tree
-                tree0 = resize!(tree, n0)
-                etree!(tree0, resize!(vwork1, n0), upper0)
+                tree0 = Tree(
+                    view(twork.parent, oneto(n0)),
+                    twork.root,
+                    view(twork.child, oneto(n0)),
+                    view(twork.brother, oneto(n0)),
+                )
+
+                etree!(tree0, view(vwork1, oneto(n0)), upper0)
 
                 # construct clique
-                t0 = zero(V); clique0 = resize!(vwork1, n2); project0 = resize!(vwork2, n)
+                t0 = zero(V); clique0 = view(vwork1, oneto(n2)); project0 = view(vwork2, oneto(n))
 
                 for v in vertices(graph0)
                     project0[label0[v]] = v
@@ -2569,7 +2572,7 @@ function dissectdp(
             end
 
             # run inner algorithm and choose the best ordering
-            f = resize!(vwork2, n); findex = resize!(vwork3, n)
+            f = view(vwork2, oneto(n)); findex = view(vwork3, oneto(n))
 
             if isone(S)
                 counts = resize!(wwork1, n)
@@ -4291,9 +4294,9 @@ function bestwidth(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::T
 end
 
 function bestwidth!(
-        f::Vector{V},
-        findex::Vector{V},
-        counts::Vector{V},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
+        counts::AbstractVector{V},
         graph::AbstractGraph{V},
         alg::PermutationOrAlgorithm,
         algs::Tuple
@@ -4327,9 +4330,9 @@ function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::Per
 end
 
 function bestwidth!(
-        f::Vector{V},
-        findex::Vector{V},
-        counts::Vector{W},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
+        counts::AbstractVector{W},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         alg::PermutationOrAlgorithm,
@@ -4363,8 +4366,8 @@ function bestfill(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tu
 end
 
 function bestfill!(
-        f::Vector{V},
-        findex::Vector{V},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
         graph::AbstractGraph{V},
         alg::PermutationOrAlgorithm,
         algs::Tuple
@@ -4397,8 +4400,8 @@ function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::Perm
 end
 
 function bestfill!(
-        f::Vector{V},
-        findex::Vector{V},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         alg::PermutationOrAlgorithm,

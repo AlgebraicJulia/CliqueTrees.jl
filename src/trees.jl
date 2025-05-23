@@ -8,18 +8,24 @@
 A rooted forest with vertices of type `V`.
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
-struct Tree{V <: Signed} <: AbstractUnitRange{V}
-    parent::Vector{V}  # vector of parents
-    root::Scalar{V}    # root
-    child::Vector{V}   # vector of left-children
-    brother::Vector{V} # vector of right-siblings
+struct Tree{
+        V <: Integer,
+        Parent <: AbstractVector{V},
+        Root <: AbstractScalar{V},
+        Child <: AbstractVector{V},
+        Brother <: AbstractVector{V},
+    } <: AbstractUnitRange{V}
+    parent::Parent   # vector of parents
+    root::Root       # root
+    child::Child     # vector of left-children
+    brother::Brother # vector of right-siblings
 end
 
 function Tree{V}(parent::AbstractVector) where {V}
     root = Scalar{V}(undef)
     child = Vector{V}(undef, length(parent))
     brother = Vector{V}(undef, length(parent))
-    tree = Tree{V}(parent, root, child, brother)
+    tree = Tree(parent, root, child, brother)
     return lcrs!(tree)
 end
 
@@ -27,16 +33,12 @@ function Tree(parent::AbstractVector{V}) where {V}
     return Tree{V}(parent)
 end
 
-function Tree{V}(tree::Tree) where {V}
-    return Tree{V}(tree.parent, tree.root, tree.child, tree.brother)
-end
-
 function Tree{V}(n::Integer) where {V}
     parent = Vector{V}(undef, n)
     root = Scalar{V}(undef)
     child = Vector{V}(undef, n)
     brother = Vector{V}(undef, n)
-    return Tree{V}(parent, root, child, brother)
+    return Tree(parent, root, child, brother)
 end
 
 function Tree(tree::Tree)
@@ -66,7 +68,7 @@ julia> graph = [
 julia> label, tree = eliminationtree(graph);
 
 julia> tree
-8-element Tree{Int64}:
+8-element Tree{Int64, Vector{Int64}, Array{Int64, 0}, Vector{Int64}, Vector{Int64}}:
  8
  └─ 7
     ├─ 5
@@ -113,7 +115,7 @@ function etree(upper::AbstractGraph{V}) where {V}
     return etree!(tree, ancestor, upper)
 end
 
-function etree!(tree::Tree{V}, ancestor::Vector{V}, upper::AbstractGraph{V}) where {V}
+function etree!(tree::Tree{V}, ancestor::AbstractVector{V}, upper::AbstractGraph{V}) where {V}
     parent = tree.parent
 
     @inbounds for i in vertices(upper)
@@ -415,13 +417,6 @@ function Base.isequal(left::Tree, right::Tree)
         isequal(left.root, right.root) &&
         isequal(left.child, right.child) &&
         isequal(left.brother, right.brother)
-end
-
-function Base.resize!(tree::Tree, n::Integer)
-    resize!(tree.parent, n)
-    resize!(tree.child, n)
-    resize!(tree.brother, n)
-    return tree
 end
 
 function Base.copy(tree::Tree)

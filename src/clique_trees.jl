@@ -13,10 +13,6 @@ function Tree(tree::CliqueTree)
     return Tree(tree.tree)
 end
 
-function Tree{V}(tree::CliqueTree) where {V}
-    return Tree{V}(tree.tree)
-end
-
 function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::EliminationAlgorithm) where {V}
     orders = Vector{Vector{V}}(undef, length(tree))
     index = Vector{V}(undef, nv(graph))
@@ -632,9 +628,9 @@ function treewidth(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector
 end
 
 function treewidth!(
-        f::Vector{V},
-        findex::Vector{V},
-        counts::Vector{V},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
+        counts::AbstractVector{V},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
         index::AbstractVector{V},
@@ -699,9 +695,9 @@ function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, (order, 
 end
 
 function treewidth!(
-        f::Vector{V},
-        findex::Vector{V},
-        counts::Vector{W},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
+        counts::AbstractVector{W},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
@@ -804,8 +800,8 @@ function treefill(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{
 end
 
 function treefill!(
-        f::Vector{V},
-        findex::Vector{V},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
         index::AbstractVector{V},
@@ -869,8 +865,8 @@ function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, (order, i
 end
 
 function treefill!(
-        f::Vector{V},
-        findex::Vector{V},
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         order::AbstractVector{V},

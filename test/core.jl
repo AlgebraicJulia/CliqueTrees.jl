@@ -142,15 +142,12 @@ import TreeWidthSolver
 
         label, tree = eliminationtree(graph; alg = 1:8)
         @test isequal(Tree(tree), tree)
-        @test isequal(Tree{Int32}(tree), tree)
 
         label, tree = supernodetree(graph; alg = 1:8)
         @test isequal(Tree(tree), tree.tree)
-        @test isequal(Tree{Int32}(tree), tree.tree)
 
         label, tree = cliquetree(graph; alg = 1:8)
         @test isequal(Tree(tree), tree.tree.tree)
-        @test isequal(Tree{Int32}(tree), tree.tree.tree)
     end
 end
 

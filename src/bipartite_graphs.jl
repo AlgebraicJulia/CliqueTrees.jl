@@ -236,7 +236,7 @@ function sympermute!(
 end
 
 function sympermute!(
-        count::Vector{E},
+        count::AbstractVector{E},
         result::BipartiteGraph{V, E},
         graph::AbstractGraph,
         index::AbstractVector,
@@ -298,7 +298,7 @@ function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) wh
     return reverse!(count, result, graph)
 end
 
-function Base.reverse!(count::Vector{E}, result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
+function Base.reverse!(count::AbstractVector{E}, result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
     # compute column counts
     count[one(V)] = one(E)
     count[two(V):(nov(graph) + one(V))] .= zero(E)
