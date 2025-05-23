@@ -1,6 +1,7 @@
 module LaplaciansExt
 
 using CliqueTrees
+using CliqueTrees: simplegraph
 using Graphs
 using Laplacians
 using SparseArrays
@@ -9,7 +10,7 @@ function CliqueTrees.permutation(graph, alg::Spectral)
     return permutation(BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(graph::BipartiteGraph{V}, alg::Spectral) where {V}
+function CliqueTrees.permutation(graph::AbstractGraph, alg::Spectral)
     order = spectralorder(graph; tol = alg.tol)
     return order, invperm(order)
 end
@@ -19,10 +20,9 @@ end
 # Algorithm 1: Spectral Algorithm
 #
 # Compute the spectral ordering of a graph.
-function spectralorder(graph::BipartiteGraph{V}; tol::Float64 = 0.0) where {V}
+function spectralorder(graph::AbstractGraph{V}; tol::Float64 = 0.0) where {V}
     order = Vector{V}(undef, nv(graph))
-    matrix = SparseMatrixCSC{Float64}(graph)
-    fill!(nonzeros(fkeep!((i, j, v) -> i != j, matrix)), 1)
+    matrix = sparse(Float64, simplegraph(graph))
     value, vector = fiedler(matrix; tol)
     return sortperm!(order, reshape(vector, size(matrix, 2)))
 end

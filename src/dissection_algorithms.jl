@@ -8,7 +8,7 @@ abstract type DissectionAlgorithm end
 """
     METISND <: DissectionAlgorithm
 
-Compute a vertex separator using METIS.
+Compute a vertex separator using `METIS_computeVertexSeparator`.
 """
 @kwdef struct METISND <: DissectionAlgorithm
     ufactor::Int = -1
@@ -23,12 +23,8 @@ end
 #     project(i) = 0 iff i ∈ W - B
 #     project(i) = 1 iff i ∈ B - W
 #     project(i) = 2 iff i ∈ W ∩ B
-function separator(weights::AbstractVector, graph::AbstractGraph, alg::DissectionAlgorithm)
-    throw(
-        ArgumentError(
-            "Algorithm $alg not implemented. You may need to load an additional package."
-        ),
-    )
+function separator!(sepsize::AbstractScalar, part::AbstractVector, weights::AbstractVector, graph::AbstractGraph, alg::DissectionAlgorithm)
+    throw(ArgumentError("Algorithm $alg not implemented. You may need to load an additional package."))
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::METISND)

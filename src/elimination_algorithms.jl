@@ -30,7 +30,7 @@ These algorithms will compute perfect orderings when applied to chordal graphs.
 
 These algorithms try to minimize the *bandwidth* and *envelope* of the ordered graph.
 
-# Greedy Algorithms
+# Local Algorithms
 
 | type             | name                              | time   | space    | package                                                   |
 |:-----------------|:----------------------------------|:-------|:-------- | :-------------------------------------------------------- |
@@ -44,15 +44,15 @@ These algorithms simulate the graph elimination process, greedily eliminating
 vertices that minimize a cost function. They are faster then the nested dissection
 algorithms, but have worse results.
 
-# Nested Dissection Algorithms
+# Global Algorithms
 
 | type             | name              | time   | space | package                                             |
 |:-----------------|:------------------|:-------|:----- | :-------------------------------------------------- |
 | [`METIS`](@ref)  | nested dissection |        |       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl) |
 | [`ND`](@ref)     | nested dissection |        |       |                                                     |
 
-These algorithms recursively partition a graph, then call a greedy algorithm on the leaves.
-These are slower than the greedy algorithms, but have better results.
+These algorithms recursively partition a graph, then call a local algorithm on the leaves.
+These are slower than the local algorithms, but have better results.
 
 # Exact Treewidth Algorithms
 
@@ -677,12 +677,16 @@ struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: Elimination
     level::Int
 end
 
-function ND{S}(alg::A = DEFAULT_ELIMINATION_ALGORITHM, dis::D = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 6) where {S, A <: EliminationAlgorithm, D <: DissectionAlgorithm}
+function ND{S}(
+        alg::A = DEFAULT_ELIMINATION_ALGORITHM, dis::D = DEFAULT_DISSECTION_ALGORITHM;
+        limit::Int = 200,
+        level::Int = 6,
+    ) where {S, A, D}
     return ND{S, A, D}(alg, dis, limit, level)
 end
 
-function ND(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, dis::DissectionAlgorithm = DEFAULT_DISSECTION_ALGORITHM; limit::Int = 200, level::Int = 6)
-    return ND{1}(alg, dis; limit, level)
+function ND(args...; kwargs...)
+    return ND{1}(args...; kwargs...)
 end
 
 """
@@ -2298,63 +2302,80 @@ end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND) where {V}
     simple = simplegraph(graph)
-    return dissect(weights, simple, vertices(simple), vertices(simple), zero(V), alg)
+    return dissectsimple(weights, simple, alg)
+end
+
+function dissect(weights::AbstractVector{<:Integer}, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
+    weights::Vector{Int32} = weights
+    simple = simplegraph(Int32, Int32, graph)
+    order::Vector{V}, index::Vector{V} = dissectsimple(weights, simple, alg)
+    return order, index
 end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
     simple = simplegraph(Int32, Int32, graph)
-    order::Vector{V}, index::Vector{V} = dissect(weights, simple, vertices(simple), vertices(simple), zero(Int32), alg)
+    order::Vector{V}, index::Vector{V} = dissectsimple(weights, simple, alg)
     return order, index
 end
 
-function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label::AbstractVector{V}, project::AbstractVector{V}, level::V, alg::ND{S}) where {W, V, E, S}
+function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, alg::ND{S}) where {W, V, E, S}
     n = nv(graph); m = ne(graph); nn = n + one(V)
-    parents = Int[]; leaves = Bool[]; separators = View{V, Int}[]
+    parents = Int[]; separators = View{V, Int}[]
+
+    sepsize = Scalar{V}(undef)
+    part = Vector{V}(undef, n)
+    project0 = Vector{V}(undef, n)
+    project1 = Vector{V}(undef, n)
 
     nodes = Tuple{
         BipartiteGraph{V, E, View{E, Int}, View{V, Int}}, # graph
         View{W, Int},                                     # weights
         View{V, Int},                                     # label
-        View{V, Int},                                     # project
+        W,                                                # width
         V,                                                # level
     }[]
 
-    wwork = sizehint!(W[], n * alg.level)
-    vwork = sizehint!(V[], n * alg.level + n * alg.level + m * alg.level)
-    ework = sizehint!(E[], n * alg.level + alg.level)
+    wn = 0; wwork = Vector{W}(undef, n + n * alg.level)
+    vn = 0; vwork = Vector{V}(undef, n + n * alg.level + m + m * alg.level)
+    en = 0; ework = Vector{E}(undef, n + n * alg.level + 2^(alg.level + 1) - 1)
+
+    enn = en + Int(nn); _ptr = view(ework, (en + 1):enn); en = enn
+    vnn = vn + Int(m);  _tgt = view(vwork, (vn + 1):vnn); vn = vnn
+    wnn = wn + Int(n);  _weights = view(wwork, (wn + 1):wnn); wn = wnn
+    vnn = vn + Int(n);  _label = view(vwork, (vn + 1):vnn); vn = vnn
 
     node = (
-        copy!(BipartiteGraph(n, allocate!(ework, nn), allocate!(vwork, m)), graph),
-        copy!(allocate!(wwork, n), weights),
-        copy!(allocate!(vwork, n), label),
-        copy!(allocate!(vwork, n), project),
-        level,
+        copy!(BipartiteGraph(n, _ptr, _tgt), graph),
+        copy!(_weights, weights),
+        copy!(_label, vertices(graph)),
+        sum(weights),
+        zero(V),
     )
 
     push!(parents, 0); push!(nodes, node)
 
-    @inbounds for (i, (graph, weights, label, project, level)) in enumerate(nodes)
-        n = nv(graph)
+    for (i, (graph, weights, label, width, level)) in enumerate(nodes)
+        n = nv(graph); m = ne(graph)
 
-        if n <= alg.limit || level >= alg.level
-            push!(leaves, true); push!(separators, allocate!(vwork, zero(V)))
+        if width <= alg.limit || level >= alg.level
+            push!(separators, view(vwork, (vn + 1):vn))
         else
             # V = W ∪ B
-            part = separator(weights, graph, alg.dis)
-            n0 = zero(V); m0 = zero(E); project0 = allocate!(vwork, n)
-            n1 = zero(V); m1 = zero(E); project1 = allocate!(vwork, n)
+            separator!(sepsize, part, weights, graph, alg.dis)
+            n0 = zero(V); m0 = zero(E)
+            n1 = zero(V); m1 = zero(E)
             n2 = zero(V)
 
             for v in vertices(graph)
                 vv = part[v]
 
                 if iszero(vv)    # v ∈ W - B
-                    project0[v] = n0 += one(V); m0 += convert(E, eltypedegree(graph, v))
+                    n0 += one(V); m0 += convert(E, outdegree(graph, v))
                 elseif isone(vv) # v ∈ B - W
-                    project1[v] = n1 += one(V); m1 += convert(E, eltypedegree(graph, v))
+                    n1 += one(V); m1 += convert(E, outdegree(graph, v))
                 else             # v ∈ W ∩ B
-                    project0[v] = n0 += one(V); m0 += convert(E, twice(n2))
-                    project1[v] = n1 += one(V); m1 += convert(E, twice(n2))
+                    n0 += one(V); m0 += convert(E, twice(n2))
+                    n1 += one(V); m1 += convert(E, twice(n2))
                     n2 += one(V)
 
                     for w in outneighbors(graph, v)
@@ -2369,132 +2390,107 @@ function dissect(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, label:
                 end
             end
 
-            level += one(V)
+            m2 = m0 + m1 - m; delta = alg.level - level
+            resize!(wwork, length(wwork) + n2 * delta)
+            resize!(vwork, length(vwork) + n2 * delta + m2 * delta + n2)
+            resize!(ework, length(ework) + n2 * delta)
 
-            while (iszero(n0) || iszero(n1)) && level < alg.level
-                # V = W ∪ B
-                part = separator(weights, graph, alg.dis)
-                n0 = zero(V); m0 = zero(E)
-                n1 = zero(V); m1 = zero(E)
-                n2 = zero(V)
+            t0 = zero(V); vnn = vn + Int(n0); label0 = view(vwork, (vn + 1):vnn); vn = vnn
+            t1 = zero(V); vnn = vn + Int(n1); label1 = view(vwork, (vn + 1):vnn); vn = vnn
+            t2 = zero(V); vnn = vn + Int(n2); label2 = view(vwork, (vn + 1):vnn); vn = vnn
 
-                for v in vertices(graph)
-                    vv = part[v]
+            for v in vertices(graph)
+                vv = part[v]
 
-                    if iszero(vv)    # v ∈ W - B
-                        project0[v] = n0 += one(V); m0 += convert(E, eltypedegree(graph, v))
-                    elseif isone(vv) # v ∈ B - W
-                        project1[v] = n1 += one(V); m1 += convert(E, eltypedegree(graph, v))
-                    else             # v ∈ W ∩ B
-                        project0[v] = n0 += one(V); m0 += convert(E, twice(n2))
-                        project1[v] = n1 += one(V); m1 += convert(E, twice(n2))
-                        n2 += one(V)
-
-                        for w in outneighbors(graph, v)
-                            ww = part[w]
-
-                            if iszero(ww)    # w ∈ W - B
-                                m0 += one(E)
-                            elseif isone(ww) # w ∈ B - W
-                                m1 += one(E)
-                            end
-                        end
-                    end
+                if iszero(vv)    # v ∈ W - B
+                    project0[v] = t0 += one(V); label0[t0] = v
+                elseif isone(vv) # v ∈ B - W
+                    project1[v] = t1 += one(V); label1[t1] = v
+                else             # v ∈ W ∩ B
+                    project0[v] = t0 += one(V); label0[t0] = v
+                    project1[v] = t1 += one(V); label1[t1] = v
+                    t2 += one(V); label2[t2] = v
                 end
-
-                level += one(V)
             end
 
-            if level > alg.level
-                push!(leaves, true); push!(separators, allocate!(vwork, zero(V)))
-            else
-                t0 = zero(V); label0 = allocate!(vwork, n0)
-                t1 = zero(V); label1 = allocate!(vwork, n1)
-                t2 = zero(V); label2 = allocate!(vwork, n2)
+            nn0 = n0 + one(V)
+            nn1 = n1 + one(V)
 
-                for v in vertices(graph)
-                    vv = part[v]
+            enn = en + Int(nn0); _ptr0 = view(ework, (en + 1):enn); en = enn
+            enn = en + Int(nn1); _ptr1 = view(ework, (en + 1):enn); en = enn
 
-                    if iszero(vv)    # v ∈ W - B
-                        t0 += one(V); label0[t0] = v
-                    elseif isone(vv) # v ∈ B - W
-                        t1 += one(V); label1[t1] = v
-                    else             # v ∈ W ∩ B
-                        t0 += one(V); label0[t0] = v
-                        t1 += one(V); label1[t1] = v
-                        t2 += one(V); label2[t2] = v
+            vnn = vn + Int(m0);  _tgt0 = view(vwork, (vn + 1):vnn); vn = vnn
+            vnn = vn + Int(m1);  _tgt1 = view(vwork, (vn + 1):vnn); vn = vnn
+
+            graph0 = BipartiteGraph(n0, _ptr0, _tgt0)
+            graph1 = BipartiteGraph(n1, _ptr1, _tgt1)
+
+            t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
+            t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
+
+            wnn = wn + Int(n0); weights0 = view(wwork, (wn + 1):wnn); wn = wnn
+            wnn = wn + Int(n1); weights1 = view(wwork, (wn + 1):wnn); wn = wnn
+
+            width0 = zero(W)
+            width1 = zero(W)
+
+            for v in vertices(graph)
+                vv = part[v]
+                wt = weights[v]
+
+                if iszero(vv)    # v ∈ W - B
+                    for w in neighbors(graph, v) # w ∈ W
+                        targets(graph0)[p0] = project0[w]; p0 += one(E)
                     end
-                end
 
-                nn0 = n0 + one(V); graph0 = BipartiteGraph(n0, allocate!(ework, nn0), allocate!(vwork, m0))
-                nn1 = n1 + one(V); graph1 = BipartiteGraph(n1, allocate!(ework, nn1), allocate!(vwork, m1))
-                t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
-                t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
-                weights0 = allocate!(wwork, n0)
-                weights1 = allocate!(wwork, n1)
+                    width0 += wt; weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+                elseif isone(vv) # v ∈ B - W
+                    for w in neighbors(graph, v) # w ∈ B
+                        targets(graph1)[p1] = project1[w]; p1 += one(E)
+                    end
 
-                for v in vertices(graph)
-                    vv = part[v]
-                    wt = weights[v]
+                    width1 += wt; weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+                else             # v ∈ W ∩ B
+                    for w in neighbors(graph, v)
+                        ww = part[w]
 
-                    if iszero(vv)    # v ∈ W - B
-                        for w in neighbors(graph, v) # w ∈ W
+                        if iszero(ww)            # w ∈ W - B
                             targets(graph0)[p0] = project0[w]; p0 += one(E)
-                        end
-
-                        weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-                    elseif isone(vv) # v ∈ B - W
-                        for w in neighbors(graph, v) # w ∈ B
+                        elseif isone(ww)         # w ∈ B - W
                             targets(graph1)[p1] = project1[w]; p1 += one(E)
                         end
-
-                        weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
-                    else             # v ∈ W ∩ B
-                        for w in neighbors(graph, v)
-                            ww = part[w]
-
-                            if iszero(ww)            # w ∈ W - B
-                                targets(graph0)[p0] = project0[w]; p0 += one(E)
-                            elseif isone(ww)         # w ∈ B - W
-                                targets(graph1)[p1] = project1[w]; p1 += one(E)
-                            end
-                        end
-
-                        for w in label2              # w ∈ W ∩ B
-                            v == w && continue
-                            targets(graph0)[p0] = project0[w]; p0 += one(E)
-                            targets(graph1)[p1] = project1[w]; p1 += one(E)
-                        end
-
-                        weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-                        weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
                     end
-                end
 
-                push!(parents, i, i), push!(leaves, false); push!(separators, label2)
-                push!(nodes, (graph0, weights0, label0, project0, level))
-                push!(nodes, (graph1, weights1, label1, project1, level))
+                    for w in label2              # w ∈ W ∩ B
+                        v == w && continue
+                        targets(graph0)[p0] = project0[w]; p0 += one(E)
+                        targets(graph1)[p1] = project1[w]; p1 += one(E)
+                    end
+
+                    width0 += wt; weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+                    width1 += wt; weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+                end
             end
+
+            push!(parents, i, i), push!(separators, label2)
+            push!(nodes, (graph0, weights0, label0, width0, level + one(V)))
+            push!(nodes, (graph1, weights1, label1, width1, level + one(V)))
         end
     end
 
     ntree = Tree(parents)
-    nindex = postorder(ntree)
-    invpermute!(leaves, nindex)
-    invpermute!(separators, nindex)
-    invpermute!(nodes, nindex)
-    return dissectdp(leaves, separators, nodes, alg)
+    return dissectdp(ntree, separators, nodes, alg)
 end
 
 function dissectdp(
-        leaves::Vector{Bool},
+        ntree::AbstractVector{Int},
         separators::Vector{View{V, Int}},
         nodes::Vector{
             Tuple{
                 BipartiteGraph{V, E, View{E, Int}, View{V, Int}}, # graph
                 View{W, Int},                                     # weights
                 View{V, Int},                                     # label
-                View{V, Int},                                     # project
+                W,                                                # width
                 V,                                                # level
             },
         },
@@ -2502,6 +2498,10 @@ function dissectdp(
     ) where {W, V, E, S}
 
     graph = nodes[begin][begin]
+    nindex = postorder!(ntree)
+    invpermute!(separators, nindex)
+    invpermute!(nodes, nindex)
+
     n = nv(graph); m = ne(graph); nn = n + one(V)
     tree = Tree{V}(n)
     vwork1 = Vector{V}(undef, n)
@@ -2516,8 +2516,8 @@ function dissectdp(
         wwork1 = Vector{W}(undef, n)
     end
 
-    @inbounds for (i, (leaf, order2, (graph, weights, label, project, level))) in enumerate(zip(leaves, separators, nodes))
-        if leaf
+    @inbounds for (i, order2, (graph, weights, label, width, level)) in zip(ntree, separators, nodes)
+        if isempty(childindices(ntree, i))
             order, index = permutation(weights, graph, alg.alg)
         else
             n = nv(graph)
@@ -2528,7 +2528,7 @@ function dissectdp(
                 #      i
                 #    ↗   ↖
                 # i0       i1
-                graph0, weights0, label0, project0, level0 = nodes[i0]
+                graph0, weights0, label0, width0, level0 = nodes[i0]
                 n0 = nv(graph0); m0 = ne(graph0); nn0 = n0 + one(V)
 
                 # permute graph
@@ -2543,7 +2543,11 @@ function dissectdp(
                 etree!(tree0, resize!(vwork1, n0), upper0)
 
                 # construct clique
-                t0 = zero(V); clique0 = resize!(vwork1, n2)
+                t0 = zero(V); clique0 = resize!(vwork1, n2); project0 = resize!(vwork2, n)
+
+                for v in vertices(graph0)
+                    project0[label0[v]] = v
+                end
 
                 for v in order2
                     t0 += one(V); clique0[t0] = index0[project0[v]]
@@ -2580,12 +2584,6 @@ function dissectdp(
 
     i, order, index = only(stack)
     return order, index
-end
-
-function allocate!(work::Vector, n::Integer)
-    m::Int = n
-    resize!(work, length(work) + m)
-    return @view work[(end - m + 1):end]
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
@@ -4301,11 +4299,11 @@ function bestwidth!(
         algs::Tuple
     ) where {V}
 
-    minorder, minindex = permutation(graph, alg)
+    minorder, minindex = permutation_nocopy(graph, alg)
     minwidth = treewidth!(f, findex, counts, graph, minorder, minindex)
 
     for alg in algs
-        order, index = permutation(graph, alg)
+        order, index = permutation_nocopy(graph, alg)
         width = treewidth!(f, findex, counts, graph, order, index)
 
         if width < minwidth
@@ -4338,11 +4336,11 @@ function bestwidth!(
         algs::Tuple
     ) where {W, V}
 
-    minorder, minindex = permutation(weights, graph, alg)
+    minorder, minindex = permutation_nocopy(weights, graph, alg)
     minwidth = treewidth!(f, findex, counts, weights, graph, minorder, minindex)
 
     for alg in algs
-        order, index = permutation(weights, graph, alg)
+        order, index = permutation_nocopy(weights, graph, alg)
         width = treewidth!(f, findex, counts, weights, graph, order, index)
 
         if width < minwidth
@@ -4372,11 +4370,11 @@ function bestfill!(
         algs::Tuple
     ) where {V}
 
-    minorder, minindex = permutation(graph, alg)
+    minorder, minindex = permutation_nocopy(graph, alg)
     minfill = treefill!(f, findex, graph, minorder, minindex)
 
     for alg in algs
-        order, index = permutation(graph, alg)
+        order, index = permutation_nocopy(graph, alg)
         fill = treefill!(f, findex, graph, order, index)
 
         if fill < minfill
@@ -4407,11 +4405,11 @@ function bestfill!(
         algs::Tuple
     ) where {W, V}
 
-    minorder, minindex = permutation(weights, graph, alg)
+    minorder, minindex = permutation_nocopy(weights, graph, alg)
     minfill = treefill!(f, findex, weights, graph, minorder, minindex)
 
     for alg in algs
-        order, index = permutation(weights, graph, alg)
+        order, index = permutation_nocopy(weights, graph, alg)
         fill = treefill!(f, findex, weights, graph, order, index)
 
         if fill < minfill
@@ -4420,6 +4418,22 @@ function bestfill!(
     end
 
     return minorder, minindex
+end
+
+function permutation_nocopy(graph, alg::PermutationOrAlgorithm)
+    return permutation(graph, alg)
+end
+
+function permutation_nocopy(graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V}, Vector{V}}) where {V}
+    return order, index
+end
+
+function permutation_nocopy(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    return permutation(weights, graph, alg)
+end
+
+function permutation_nocopy(weights::AbstractVector, graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V}, Vector{V}}) where {V}
+    return order, index
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: EliminationAlgorithm}

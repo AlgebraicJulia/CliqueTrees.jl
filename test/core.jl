@@ -47,7 +47,7 @@ using Test
     @test_throws Exception treewidth(weights, [1])
     @test_throws Exception treefill(weights, LexM())
 end
-    
+
 import Catlab
 import libpicosat_jll
 import CryptoMiniSat_jll
@@ -473,7 +473,7 @@ end
             ND{1}(; limit = 5),
             ND{2}(; limit = 5),
             Spectral(),
-            FlowCutter(; time=1),
+            FlowCutter(; time = 1),
             BT(),
             SAT{CryptoMiniSat_jll}(),
             MinimalChordal(),
@@ -551,7 +551,7 @@ end
             MMD(),
             # METIS(),
             # Spectral(),
-            SafeFlowCutter(; time=1),
+            SafeFlowCutter(; time = 1),
             BT(),
             MinimalChordal(),
             CompositeRotations([]),
@@ -612,7 +612,7 @@ end
             ND{1}(; limit = 5),
             ND{2}(; limit = 5),
             # Spectral,
-            SafeFlowCutter(; time=1),
+            SafeFlowCutter(; time = 1),
             BT(),
             CompositeRotations([1]),
             SafeRules(),
@@ -860,8 +860,8 @@ end
                 end
             end
 
-            uwidth = treewidth(graph; alg=BT())
-            wwidth = treewidth(weights, graph; alg=BT())
+            uwidth = treewidth(graph; alg = BT())
+            wwidth = treewidth(weights, graph; alg = BT())
 
             @testset "permutations" begin
                 for alg in (
@@ -890,7 +890,7 @@ end
                         ND{1}(; limit = 5),
                         ND{2}(; limit = 5),
                         Spectral(),
-                        SafeFlowCutter(; time=1),
+                        SafeFlowCutter(; time = 1),
                         BT(),
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
@@ -1162,10 +1162,10 @@ end
 
     algs = (
         MMD(),
-        MMD(; delta=5),
-        AMF(; speed=1),
-        AMF(; speed=2),
-        AMF(; speed=3),
+        MMD(; delta = 5),
+        AMF(; speed = 1),
+        AMF(; speed = 2),
+        AMF(; speed = 3),
         ND{2}(),
         MF(),
     )
@@ -1177,7 +1177,7 @@ end
     )
 
     for (name, fill) in matrices
-        matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format="MM")[1], "$(name).mtx"))
+        matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format = "MM")[1], "$(name).mtx"))
 
         for alg in algs
             @test treefill(matrix; alg) <= fill
@@ -1185,8 +1185,8 @@ end
     end
 
     name = "mycielskian14"; fill = 14000000
-    matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format="MM")[1], "$(name).mtx"))
-    @test treefill(matrix; alg=AMF()) <= fill
+    matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format = "MM")[1], "$(name).mtx"))
+    @test treefill(matrix; alg = AMF()) <= fill
 end
 
 @testset "exact treewidth" begin
@@ -1274,7 +1274,7 @@ end
     )
 
     graphs = (
-        (weights1, graph1, 4, 0,  0,  5.0,                0,  0 ),
+        (weights1, graph1, 4, 0, 0, 5.0, 0, 0),
         (weights2, graph2, 9, 21, 94, 19.169925001442312, 21, 94),
     )
 
@@ -1282,7 +1282,7 @@ end
         @testset "$(nameof(G))" begin
             for (weights, graph, uwidth, un, um, wwidth, wn, wm) in graphs
                 graph = G(graph); uwidth = V(uwidth); un = V(un); wn = V(wn)
-            
+
                 ukernel, urest... = CliqueTrees.pr4(graph, lowerbound(graph))
                 wkernel, wrest... = CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test nv(ukernel) === un
@@ -1298,22 +1298,21 @@ end
                     @test u <= uwidth
                     @test w <= wwidth
                 end
-               
+
                 for alg in ualgs
                     order, tree = cliquetree(graph; alg)
-                    @test treewidth(graph; alg=order) === uwidth
+                    @test treewidth(graph; alg = order) === uwidth
                     @test treewidth(tree) === uwidth
-                    @test treefill(graph; alg=order) === treefill(tree)
+                    @test treefill(graph; alg = order) === treefill(tree)
                 end
- 
-                 for alg in walgs
+
+                for alg in walgs
                     order, tree = cliquetree(weights, graph; alg)
-                    @test treewidth(weights, graph; alg=order) === wwidth
+                    @test treewidth(weights, graph; alg = order) === wwidth
                     @test treewidth(view(weights, order), tree) === wwidth
-                    @test treefill(weights, graph; alg=order) ≈ treefill(view(weights, order), tree)
+                    @test treefill(weights, graph; alg = order) ≈ treefill(view(weights, order), tree)
                 end
             end
         end
     end
 end
-

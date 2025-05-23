@@ -1,6 +1,6 @@
 # A simple bipartite graph (U, V, E). If U = V, then you can think of this as a directed graph.
 # This type implements the abstract graph interface.
-struct BipartiteGraph{V <: Signed, E <: Signed, Ptr <: AbstractVector{E}, Tgt <: AbstractVector{V}} <:
+struct BipartiteGraph{V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt <: AbstractVector{V}} <:
     AbstractGraph{V}
     nov::V
     ptr::Ptr
@@ -322,6 +322,10 @@ function Base.reverse!(count::Vector{E}, result::BipartiteGraph{V, E}, graph::Ab
     return result
 end
 
+function simplegraph(::Type{V}, ::Type{E}, graph) where {V, E}
+    return simplegraph(V, E, BipartiteGraph(graph))
+end
+
 function simplegraph(::Type{V}, ::Type{E}, graph::AbstractGraph{VV}) where {V, E, VV}
     m = de(graph); n = nv(graph)
     simple = BipartiteGraph{V, E}(n, n, m)
@@ -344,8 +348,16 @@ function simplegraph(::Type{V}, ::Type{E}, graph::AbstractGraph{VV}) where {V, E
     return simple
 end
 
+function simplegraph(::Type{V}, graph) where {V}
+    return simplegraph(V, BipartiteGraph(graph))
+end
+
 function simplegraph(::Type{V}, graph::AbstractGraph) where {V}
     return simplegraph(V, etype(graph), graph)
+end
+
+function simplegraph(graph)
+    return simplegraph(BipartiteGraph(graph))
 end
 
 function simplegraph(graph::AbstractGraph{V}) where {V}
@@ -393,7 +405,7 @@ function Base.copy!(dst::BipartiteGraph, src::BipartiteGraph)
     return dst
 end
 
-function Base.copy!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGraph) where {V <: Signed, E <: Signed, Ptr <: AbstractVector{E}}
+function Base.copy!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGraph) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}}
     @argcheck nov(dst) == nov(src)
     @argcheck targets(dst) == targets(src)
     copy!(pointers(dst), pointers(src))

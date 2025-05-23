@@ -1,9 +1,11 @@
 module MetisExt
 
+using ArgCheck
 using CliqueTrees
-using CliqueTrees: simplegraph
+using CliqueTrees: Scalar, View, simplegraph
 using Graphs
-using Metis: Metis
+
+import Metis
 
 const INT = Metis.idx_t
 
@@ -100,12 +102,14 @@ function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where {V}
     return order, index
 end
 
-function CliqueTrees.separator(weights::AbstractVector, graph::BipartiteGraph{INT, INT}, alg::METISND)
-    return CliqueTrees.separator(trunc.(INT, weights), graph, alg)
+function CliqueTrees.separator!(sepsize::Scalar{INT}, part::Vector{INT}, weights::AbstractVector, graph::BipartiteGraph{INT, INT}, alg::METISND)
+    return CliqueTrees.separator!(sepsize, part, trunc.(INT, weights), graph, alg)
 end
 
-function CliqueTrees.separator(weights::Vector{INT}, graph::BipartiteGraph{INT, INT}, alg::METISND)
+function CliqueTrees.separator!(sepsize::Scalar{INT}, part::Vector{INT}, weights::Union{View{INT}, Vector{INT}}, graph::BipartiteGraph{INT, INT}, alg::METISND)
     m = ne(graph); n = nv(graph); nn = n + one(INT)
+    @argcheck n <= length(part)
+    @argcheck n <= length(weights)
 
     # construct options
     options = Vector{INT}(undef, Metis.METIS_NOPTIONS)
@@ -115,14 +119,11 @@ function CliqueTrees.separator(weights::Vector{INT}, graph::BipartiteGraph{INT, 
     options[Metis.METIS_OPTION_UFACTOR + 1] = alg.ufactor
 
     # construct METIS graph
-    xadj = pointers(graph) .- one(INT)
-    adjncy = targets(graph) .- one(INT)
+    xadj = pointers(graph); xadj .-= one(INT)
+    adjncy = targets(graph); adjncy .-= one(INT)
     vwght = weights
 
     # construct separator
-    part = Vector{INT}(undef, n)
-    sepsize = fill(zero(INT), 1)
-
     Metis.@check Metis.METIS_ComputeVertexSeparator(
         Ref{INT}(n),
         xadj,
@@ -133,7 +134,9 @@ function CliqueTrees.separator(weights::Vector{INT}, graph::BipartiteGraph{INT, 
         part,
     )
 
-    return part
+    xadj .+= one(INT)
+    adjncy .+= one(INT)
+    return
 end
 
 end
