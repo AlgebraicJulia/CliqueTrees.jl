@@ -66,14 +66,15 @@ function mmd!(
     ) where {V, E}
     # initialization for the minimum degree algorithm.
     invp = zeros(V, neqns)
-    deghead = zeros(V, neqns + one(V))
     marker = zeros(Int, neqns)
     mergeparent = zeros(V, neqns)
     needsupdate = zeros(V, neqns)
-    degnext = Vector{V}(undef, neqns)
-    degprev = Vector{V}(undef, neqns)
     supersize = ones(V, neqns)
     elimnext = zeros(V, neqns)
+
+    deghead = zeros(V, neqns + one(V))
+    degnext = Vector{V}(undef, neqns)
+    degprev = Vector{V}(undef, neqns)
 
     @inbounds for node in oneto(neqns)
         ndeg = convert(V, xadj[node + one(V)] - xadj[node])
@@ -81,7 +82,7 @@ function mmd!(
         deghead[ndeg + one(V)] = node
         degnext[node] = fnode
 
-        if fnode > zero(V)
+        if ispositive(fnode)
             degprev[fnode] = node
         end
 
@@ -102,18 +103,18 @@ function mmd!(
     end
 
     deghead[begin] = zero(V)
-    tag = 1
-    mindeg = one(V)
 
     # search for node of the minimum degree
     # - `mindeg` is the current minimum degree
     # - `tag` is used to facilitate marking nodes
+    tag = 1; mindeg = one(V)
+
     @inbounds while num <= neqns
         while !ispositive(deghead[mindeg + one(V)])
             mindeg += one(V)
         end
 
-        # use value of delta to set up `mindeglimit`, which governs
+        # use value of `delta` to set up `mindeglimit`, which governs
         # when a degree update is to be performed.
         mindeglimit = max(mindeg, mindeg + delta)
         elimhead = zero(V)

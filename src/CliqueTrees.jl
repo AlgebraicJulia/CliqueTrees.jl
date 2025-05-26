@@ -7,7 +7,6 @@ using Base.Iterators
 using Base.Order
 using Base.Sort: DEFAULT_UNSTABLE, Algorithm as SortingAlgorithm
 using Base.Threads: @threads
-using DataStructures: IntDisjointSets, find_root!, root_union!
 using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra
@@ -91,6 +90,7 @@ export firstchildindex, rootindices, ancestorindices
 # Filled Graphs
 export FilledGraph, FilledEdgeIter, ischordal, isperfect
 
+include("union_find.jl")
 include("heaps.jl")
 include("abstract_linked_lists.jl")
 include("singly_linked_lists.jl")

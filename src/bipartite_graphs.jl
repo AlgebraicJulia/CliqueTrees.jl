@@ -229,58 +229,65 @@ function sympermute!(
         index::AbstractVector,
         order::Ordering,
     ) where {V, E}
-    @argcheck vertices(graph) == vertices(result)
-    @argcheck vertices(graph) == eachindex(index)
-    count = Vector{E}(undef, nv(graph) + one(V))
-    return sympermute!(count, result, graph, index, order)
+    n = nv(graph); nn = n + one(V)
+    count = Vector{E}(undef, nn)
+    sympermute!_impl!(count, result, graph, index, order)
+    return result
 end
 
-function sympermute!(
+function sympermute!_impl!(
         count::AbstractVector{E},
-        result::BipartiteGraph{V, E},
-        graph::AbstractGraph,
+        target::BipartiteGraph{V, E},
+        source::AbstractGraph,
         index::AbstractVector,
         order::Ordering,
     ) where {V, E}
-    # compute column counts
-    count[one(V)] = one(E)
-    count[two(V):(nv(graph) + one(V))] .= zero(E)
+    @argcheck nv(target) == nv(source)
+    @argcheck nv(target) <= length(count)
+    @argcheck nv(target) <= length(index)
+    n = nv(target); nn = n + one(V)
+    fill!(view(count, oneto(nn)), zero(E))
 
-    @inbounds for j in vertices(graph)
-        for i in neighbors(graph, j)
+    @inbounds for j in vertices(source)
+        jj = index[j]
+
+        for i in neighbors(source, j)
             if lt(order, i, j)
-                u = index[i]
-                v = index[j]
+                ii = index[i]
+                kk = jj
 
-                if lt(order, v, u)
-                    u, v = v, u
+                if lt(order, kk, ii)
+                    kk = ii
                 end
 
-                count[v + one(V)] += one(E)
+                count[kk + one(V)] += one(E)
             end
         end
     end
 
-    # permute graph
-    count .= cumsum!(pointers(result), count)
+    count[begin] = one(E)
+    cumsum!(pointers(target), count)
+    copyto!(count, one(V), pointers(target), one(V), nn)
 
-    @inbounds for j in vertices(graph)
-        for i in neighbors(graph, j)
+    @inbounds for j in vertices(source)
+        jj = index[j]
+
+        for i in neighbors(source, j)
             if lt(order, i, j)
-                u = index[i]
-                v = index[j]
+                ii = index[i]
+                kk = jj
 
-                if lt(order, v, u)
-                    u, v = v, u
+                if lt(order, kk, ii)
+                    ii, kk = kk, ii
                 end
 
-                targets(result)[count[v]] = u
-                count[v] += one(E)
+                targets(target)[count[kk]] = ii
+                count[kk] += one(E)
             end
         end
     end
 
-    return result
+    return
 end
 
 # Compute the transpose of a graph.
@@ -291,35 +298,37 @@ function Base.reverse(graph::BipartiteGraph{V, E}) where {V, E}
 end
 
 function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
-    @argcheck nv(graph) == nov(result)
-    @argcheck ne(graph) == ne(result)
-    @argcheck nov(graph) == nv(result)
-    count = Vector{E}(undef, nov(graph) + one(V))
-    return reverse!(count, result, graph)
+    n = nov(graph); nn = n + one(V)
+    count = Vector{E}(undef, nn)
+    reverse!_impl!(count, result, graph)
+    return result
 end
 
-function Base.reverse!(count::AbstractVector{E}, result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
-    # compute column counts
-    count[one(V)] = one(E)
-    count[two(V):(nov(graph) + one(V))] .= zero(E)
+function reverse!_impl!(
+        count::AbstractVector{E},
+        target::BipartiteGraph{V, E},
+        source::AbstractGraph{V},
+    ) where {V, E}
+    @argcheck nov(target) == nv(source)
+    @argcheck nov(source) == nv(target)
+    @argcheck nov(source) <= length(count)
+    n = nv(target); nn = n + one(V)
+    fill!(view(count, oneto(nn)), zero(E))
 
-    @inbounds for j in vertices(graph)
-        for i in neighbors(graph, j)
-            count[i + one(V)] += one(E)
-        end
+    @inbounds for j in vertices(source), i in neighbors(source, j)
+        ii = i + one(V); count[ii] += one(E)
     end
 
-    # permute graph
-    count .= cumsum!(pointers(result), count)
+    count[begin] = one(E)
+    cumsum!(pointers(target), count)
+    copyto!(count, one(V), pointers(target), one(V), nn)
 
-    @inbounds for j in vertices(graph)
-        for i in neighbors(graph, j)
-            targets(result)[count[i]] = j
-            count[i] += one(E)
-        end
+    @inbounds for j in vertices(source), i in neighbors(source, j)
+        targets(target)[count[i]] = j
+        count[i] += one(E)
     end
 
-    return result
+    return
 end
 
 function simplegraph(::Type{V}, ::Type{E}, graph) where {V, E}

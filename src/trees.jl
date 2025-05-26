@@ -112,10 +112,17 @@ function etree(upper::AbstractGraph{V}) where {V}
     n = nv(upper)
     tree = Tree{V}(n)
     ancestor = Vector{V}(undef, n)
-    return etree!(tree, ancestor, upper)
+    etree_impl!(tree, ancestor, upper)
+    return tree
 end
 
-function etree!(tree::Tree{V}, ancestor::AbstractVector{V}, upper::AbstractGraph{V}) where {V}
+function etree_impl!(
+        tree::Tree{V},
+        ancestor::AbstractVector{V},
+        upper::AbstractGraph{V},
+    ) where {V}
+    @argcheck nv(upper) == length(tree)
+    @argcheck nv(upper) <= length(ancestor)
     parent = tree.parent
 
     @inbounds for i in vertices(upper)
@@ -138,7 +145,8 @@ function etree!(tree::Tree{V}, ancestor::AbstractVector{V}, upper::AbstractGraph
         end
     end
 
-    return lcrs!(tree)
+    lcrs!(tree)
+    return
 end
 
 # An Efficient Algorithm to Compute Row and Column Counts for Sparse Cholesky Factorization
@@ -158,17 +166,17 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
     level = levels(tree)
 
     # construct disjoint set forest
-    sets = IntDisjointSets{V}(length(tree))
+    sets = UnionFind{V}(length(tree))
     root = Vector{V}(tree)
     repr = Vector{V}(tree)
 
     function find(u)
-        v = @inbounds repr[find_root!(sets, u)]
+        v = @inbounds repr[find!(sets, u)]
         return v
     end
 
     function union(u, v)
-        @inbounds root[v] = root_union!(sets, root[u], root[v])
+        @inbounds root[v] = rootunion!(sets, root[u], root[v])
         @inbounds repr[root[v]] = v
         return nothing
     end
@@ -228,6 +236,29 @@ function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
     return rc, cc
 end
 
+function compositerotations(graph, clique::AbstractVector, alg::PermutationOrAlgorithm)
+    return compositerotations(BipartiteGraph(graph), clique, alg)
+end
+
+function compositerotations(graph::AbstractGraph{V}, clique::AbstractVector, alg::PermutationOrAlgorithm) where {V}
+    clique::AbstractVector{V} = clique
+    return compositerotations(graph, clique, alg)
+end
+
+function compositerotations(graph::AbstractGraph{V}, clique::AbstractVector{V}, alg::PermutationOrAlgorithm) where {V}
+    order, alpha = permutation(graph, alg)
+    upper = sympermute(graph, alpha, Forward)
+    E = etype(upper); n = nv(upper); m = ne(upper); nn = n + one(V)
+    index = Vector{V}(undef, n)
+    fdesc = Vector{V}(undef, n)
+    count = Vector{E}(undef, nn)
+    lower = BipartiteGraph{V, E}(n, n, m)
+    tree = Tree{V}(n)
+    compositerotations_impl!(alpha, order, index, fdesc, count, lower, tree, upper, clique)
+    order[alpha] = oneto(n)
+    return order, alpha
+end
+
 # Equivalent Sparse Matrix Reorderings by Elimination Tree Rotations
 # Liu
 # Algorithm 3.2: Composite_Rotations
@@ -235,22 +266,38 @@ end
 # Fast Computation of Minimal Fill Inside a Given Elimination Ordering
 # Heggernes and Peyton
 # Change_Root
-function compositerotations(
-        graph::AbstractGraph{V}, tree::Tree{V}, clique::AbstractVector{V}
-    ) where {V}
-    index = postorder(tree)
-    order = invperm(index)
-    fdesc = firstdescendants(tree, Perm(Forward, index))
+function compositerotations_impl!(
+        alpha::AbstractVector{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+        fdesc::AbstractVector{V},
+        count::AbstractVector{E},
+        lower::BipartiteGraph{V, E},
+        tree::Tree{V},
+        upper::AbstractGraph{V},
+        clique::AbstractVector{V},
+    ) where {V, E}
+    @argcheck nv(upper) <= length(alpha)
+    @argcheck nv(upper) <= length(order)
+    @argcheck nv(upper) <= length(index)
+    @argcheck nv(upper) <= length(fdesc)
+    @argcheck nv(upper) == nv(lower)
+    n = nv(upper)
+    etree_impl!(tree, alpha, upper)
+    reverse!_impl!(count, lower, upper)
+    postorder_impl!(index, alpha, order, tree)
+    firstdescendants_impl!(fdesc, tree, Perm(Forward, index))
 
-    n = nv(graph)
-    alpha = zeros(V, n)
+    @inbounds for v in vertices(lower)
+        order[index[v]] = v
+        alpha[v] = zero(V)
+    end
 
     if ispositive(n)
         y = n
 
-        @inbounds for v in reverse(clique)
-            alpha[v] = n
-            n -= one(V)
+        @inbounds for v in Iterators.reverse(clique)
+            alpha[v] = n; n -= one(V)
 
             if v < y
                 y = v
@@ -264,25 +311,15 @@ function compositerotations(
             ystart = index[fdesc[y]]
             ystop = index[y]
 
-            for i in ystart:(xstart - one(V))
-                v = order[i]
-
-                for w in neighbors(graph, v)
-                    if y < w && iszero(alpha[w])
-                        alpha[w] = n
-                        n -= one(V)
-                    end
+            for v in view(order, ystart:(xstart - one(V))), w in neighbors(lower, v)
+                if y < w && iszero(alpha[w])
+                    alpha[w] = n; n -= one(V)
                 end
             end
 
-            for i in (xstop + one(V)):ystop
-                v = order[i]
-
-                for w in neighbors(graph, v)
-                    if y < w && iszero(alpha[w])
-                        alpha[w] = n
-                        n -= one(V)
-                    end
+            for v in view(order, (xstop + one(V)):ystop), w in neighbors(lower, v)
+                if y < w && iszero(alpha[w])
+                    alpha[w] = n; n -= one(V)
                 end
             end
 
@@ -290,93 +327,154 @@ function compositerotations(
             y = z
         end
 
-        @inbounds for v in reverse(vertices(graph))
+        @inbounds for v in reverse(vertices(lower))
             if iszero(alpha[v])
-                alpha[v] = n
-                n -= one(V)
+                alpha[v] = n; n -= one(V)
             end
         end
     end
 
-    return alpha
+    return
 end
 
-# Compute a postordering of a forest.
-function postorder(tree::Tree{V}) where {V}
-    index = Vector{V}(undef, length(tree))
+"""
+    postorder(tree::Tree)
 
-    # construct bucket queue data structure
-    child = copy(tree.child)
+Compute a postordering of a forest.
+"""
+function postorder(tree::Tree{V}) where {V}
+    n = length(tree)
+    index = Vector{V}(undef, n)
+    child = Vector{V}(undef, n)
+    stack = Vector{V}(undef, n)
+    postorder_impl!(index, child, stack, tree)
+    return index
+end
+
+function postorder_impl!(
+        index::AbstractVector{V},
+        child::AbstractVector{V},
+        stack::AbstractVector{V},
+        tree::Tree{V},
+    ) where {V}
+    @argcheck length(tree) <= length(index)
+    @argcheck length(tree) <= length(child)
+    @argcheck length(tree) <= length(stack) 
+    n = length(tree); num = zero(V)
 
     function set(i)
         @inbounds head = @view child[i]
         return SinglyLinkedList(head, tree.brother)
     end
 
-    # construct stack data structure
-    n = zero(V)
-    stack = Vector{V}(undef, length(tree))
+    if child !== tree.child
+        copyto!(child, 1, tree.child, 1, n)
+    end
 
-    # run algorithm
     @inbounds for j in rootindices(tree)
-        n += one(V)
-        stack[n] = j
+        num += one(V); stack[num] = j
     end
 
     @inbounds for i in tree
-        j = stack[n]
-        n -= one(V)
+        j = stack[num]; num -= one(V)
 
         while !isempty(set(j))
-            n += one(V)
-            stack[n] = j
+            num += one(V); stack[num] = j
             j = popfirst!(set(j))
         end
 
         index[j] = i
     end
 
+    return
+end
+
+"""
+    postorder!(tree::Tree)
+
+Postorder a forest.
+"""
+function postorder!(tree::Tree{V}) where {V}
+    n = length(tree)
+    index = Vector{V}(undef, n)
+    stack = Vector{V}(undef, n)
+    postorder!_impl!(index, stack, tree)
     return index
 end
 
-# postorder a forest
-function postorder!(tree::Tree)
-    index = postorder(tree)
-    invpermute!(tree, index)
-    return index
+function postorder!_impl!(
+        index::AbstractVector{V},
+        stack::AbstractVector{V},
+        tree::Tree{V},
+    ) where {V}
+    child = tree.child; postorder_impl!(index, child, stack, tree)
+    parent = stack; invpermute!_impl!(parent, tree, index)
+    return tree
 end
 
-# Get the level of every vertex in a topologically ordered tree.
+"""
+    levels(tree::Tree)
+
+Get the level of every vertex of a toplogically ordered forest.
+"""
 function levels(tree::Tree{V}) where {V}
-    level = Vector{V}(undef, length(tree))
-
-    for i in reverse(tree)
-        j = parentindex(tree, i)
-        level[i] = isnothing(j) ? zero(V) : level[j] + one(V)
-    end
-
+    n = length(tree); level = Vector{V}(undef, n)
+    levels_impl!(level, tree)
     return level
 end
 
-# Get the first descendant of every vertex in a topologically ordered forest.
+function levels_impl!(
+        level::AbstractVector{V},
+        tree::Tree{V},
+    ) where {V}
+    @argcheck length(tree) <= length(level)
+
+    @inbounds for i in reverse(tree)
+        j = parentindex(tree, i)
+
+        if isnothing(j)
+            level[i] = zero(V)
+        else
+            level[i] = level[j] + one(V)
+        end
+    end
+
+    return
+end
+
+"""
+    firstdescendants(tree::Tree[, ordering::Ordering])
+
+Get the first descendant of every vertex of atopologically ordered forest.
+"""
 function firstdescendants(tree::Tree{V}, order::Ordering = Forward) where {V}
-    fdesc = Vector{V}(undef, length(tree))
+    n = length(tree); fdesc = Vector{V}(undef, n)
+    firstdescendants_impl!(fdesc, tree, order)
+    return fdesc
+end
+
+function firstdescendants_impl!(
+        fdesc::AbstractVector{V},
+        tree::Tree{V},
+        order::Ordering,
+    ) where {V}
+    @argcheck length(tree) <= length(tree)
 
     @inbounds for j in tree
-        v = j
+        jj = j
 
         for i in childindices(tree, j)
-            u = fdesc[i]
+            ii = fdesc[i]
 
-            if lt(order, u, v)
-                v = u
+            if lt(order, ii, jj)
+                jj = ii
             end
         end
 
-        fdesc[j] = v
+        fdesc[j] = jj
     end
 
-    return fdesc
+    return
 end
 
 # Compute the `root`, `child`, and `brother` fields of a forest.
@@ -399,17 +497,39 @@ function lcrs!(tree::Tree{V}) where {V}
     return tree
 end
 
-# Permute the vertices of a forest.
-function Base.invpermute!(tree::Tree{V}, index::AbstractVector{V}) where {V}
-    # validate arguments
-    @argcheck tree == eachindex(index)
+"""
+    invpermute!(tree::Tree, index::AbstractVector)
 
-    # run algorithm
-    tree.parent[index] = map(tree.parent) do i
-        iszero(i) ? i : index[i]
+Permute the vertices of a forest.
+"""
+function Base.invpermute!(tree::Tree{V}, index::AbstractVector{V}) where {V}
+    n = length(tree); parent = Vector{V}(undef, n)
+    invpermute!_impl!(parent, tree, index)
+    return tree
+end
+
+function invpermute!_impl!(
+        parent::AbstractVector{V},
+        tree::Tree{V},
+        index::AbstractVector{V},
+    ) where {V}
+    @argcheck length(tree) <= length(parent)
+    @argcheck length(tree) <= length(index)
+    n = length(tree)
+
+    @inbounds for i in tree
+        j = parentindex(tree, i)
+
+        if isnothing(j)
+            parent[index[i]] = zero(V)
+        else
+            parent[index[i]] = index[j]
+        end
     end
 
-    return lcrs!(tree)
+    copyto!(tree.parent, 1, parent, 1, n)
+    lcrs!(tree)
+    return
 end
 
 function Base.isequal(left::Tree, right::Tree)

@@ -1131,7 +1131,7 @@ end
 # deprecated
 const ComponentReduction = ConnectedComponents
 
-struct Best{S, A <: Tuple} <: EliminationAlgorithm
+struct Best{S, A <: NTuple{<:Any, PermutationOrAlgorithm}} <: EliminationAlgorithm
     algs::A
 end
 
@@ -1303,25 +1303,11 @@ function permutation(weights::AbstractVector, graph, alg::MinimalChordal)
 end
 
 function permutation(graph, alg::CompositeRotations)
-    order, index = permutation(graph, alg.alg)
-    upper = sympermute(graph, index, Forward)
-
-    invpermute!(
-        order, compositerotations(reverse(upper), etree(upper), view(index, alg.clique))
-    )
-
-    return order, invperm(order)
+    return compositerotations(graph, alg.clique, alg.alg)
 end
 
 function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
-    order, index = permutation(weights, graph, alg.alg)
-    upper = sympermute(graph, index, Forward)
-
-    invpermute!(
-        order, compositerotations(reverse(upper), etree(upper), view(index, alg.clique))
-    )
-
-    return order, invperm(order)
+    return compositerotations(graph, alg.clique, alg.alg)
 end
 
 function permutation(graph, alg::SafeRules)
@@ -1419,23 +1405,19 @@ function permutation(weights::AbstractVector, graph, alg::ConnectedComponents)
 end
 
 function permutation(graph, alg::BestWidth)
-    first, rest... = alg.algs
-    return bestwidth(graph, first, rest)
+    return bestwidth(graph, alg.algs)
 end
 
 function permutation(graph, alg::BestFill)
-    first, rest... = alg.algs
-    return bestfill(graph, first, rest)
+    return bestfill(graph, alg.algs)
 end
 
 function permutation(weights::AbstractVector, graph, alg::BestWidth)
-    first, rest... = alg.algs
-    return bestwidth(weights, graph, first, rest)
+    return bestwidth(weights, graph, alg.algs)
 end
 
 function permutation(weights::AbstractVector, graph, alg::BestFill)
-    first, rest... = alg.algs
-    return bestfill(weights, graph, first, rest)
+    return bestfill(weights, graph, alg.algs)
 end
 
 function bfs(graph)
@@ -2504,6 +2486,9 @@ function dissectdp(
     vwork1 = Vector{V}(undef, n)
     vwork2 = Vector{V}(undef, half(m))
     vwork3 = Vector{V}(undef, half(m))
+    vwork4 = Vector{V}(undef, n)
+    vwork5 = Vector{V}(undef, n)
+    vwork6 = Vector{V}(undef, n)
     ework1 = Vector{E}(undef, nn)
     ework2 = Vector{E}(undef, nn)
     ework3 = Vector{E}(undef, nn)
@@ -2528,24 +2513,6 @@ function dissectdp(
                 graph0, weights0, label0, width0, level0 = nodes[i0]
                 n0 = nv(graph0); m0 = ne(graph0); nn0 = n0 + one(V)
 
-                # permute graph
-                count0 = view(ework1, oneto(nn0))
-                upper0 = BipartiteGraph(n0, view(ework2, oneto(nn0)), view(vwork2, oneto(half(m0))))
-                lower0 = BipartiteGraph(n0, view(ework3, oneto(nn0)), view(vwork3, oneto(half(m0))))
-                sympermute!(count0, upper0, graph0, index0, Forward)
-                reverse!(count0, lower0, upper0)
-
-                # construct elimination tree
-                tree0 = Tree(
-                    view(twork.parent, oneto(n0)),
-                    twork.root,
-                    view(twork.child, oneto(n0)),
-                    view(twork.brother, oneto(n0)),
-                )
-
-                etree!(tree0, view(vwork1, oneto(n0)), upper0)
-
-                # construct clique
                 t0 = zero(V); clique0 = view(vwork1, oneto(n2)); project0 = view(vwork2, oneto(n))
 
                 for v in vertices(graph0)
@@ -2556,10 +2523,32 @@ function dissectdp(
                     t0 += one(V); clique0[t0] = index0[project0[v]]
                 end
 
-                # move clique to end of ordering
-                invpermute!(order0, compositerotations(lower0, tree0, clique0))
+                count0 = view(ework1, oneto(nn0))
+                upper0 = BipartiteGraph(n0, view(ework2, oneto(nn0)), view(vwork2, oneto(half(m0))))
+                lower0 = BipartiteGraph(n0, view(ework3, oneto(nn0)), view(vwork3, oneto(half(m0))))
+                sympermute!_impl!(count0, upper0, graph0, index0, Forward)
 
-                # append to parent ordering
+                tree0 = Tree(
+                    view(twork.parent, oneto(n0)),
+                    twork.root,
+                    view(twork.child, oneto(n0)),
+                    view(twork.brother, oneto(n0)),
+                )
+
+                compositerotations_impl!(
+                    index0,
+                    view(vwork4, oneto(n0)),
+                    view(vwork5, oneto(n0)),
+                    view(vwork6, oneto(n0)),
+                    count0,
+                    lower0,
+                    tree0,
+                    upper0,
+                    clique0,
+                )
+
+                invpermute!(order0, index0)
+
                 for t0 in oneto(n0 - n2)
                     v = label0[order0[t0]]
                     t += one(V); order[t] = v; index[v] = t
@@ -2572,13 +2561,15 @@ function dissectdp(
             end
 
             # run inner algorithm and choose the best ordering
-            f = view(vwork2, oneto(n)); findex = view(vwork3, oneto(n))
+            f = view(vwork4, oneto(n)); findex = view(vwork5, oneto(n))
 
             if isone(S)
                 counts = resize!(wwork1, n)
-                order, index = bestwidth!(f, findex, counts, weights, graph, (order, index), (alg.alg,))
+                pairs = ((order, index), permutation(graph, alg.alg))
+                order, index = bestwidth_impl!(f, findex, counts, weights, graph, pairs)
             elseif istwo(S)
-                order, index = bestfill!(f, findex, weights, graph, (order, index), (alg.alg,))
+                pairs = ((order, index), permutation(graph, alg.alg))
+                order, index = bestfill_impl!(f, findex, weights, graph, pairs)
             end
         end
 
@@ -4281,162 +4272,130 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
     return components, subgraphs
 end
 
-function bestwidth(graph, alg::PermutationOrAlgorithm, algs::Tuple)
-    return bestwidth(BipartiteGraph(graph), alg, algs)
+function bestwidth(graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestwidth(BipartiteGraph(graph), algs)
 end
 
-function bestwidth(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {V}
+function bestwidth(graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
     counts = Vector{V}(undef, n)
-    return bestwidth!(f, findex, counts, graph, alg, algs)
+    return bestwidth_impl!(f, findex, counts, graph, map(alg -> permutation(graph, alg), algs))
 end
 
-function bestwidth!(
-        f::AbstractVector{V},
-        findex::AbstractVector{V},
-        counts::AbstractVector{V},
-        graph::AbstractGraph{V},
-        alg::PermutationOrAlgorithm,
-        algs::Tuple
-    ) where {V}
-
-    minorder, minindex = permutation_nocopy(graph, alg)
-    minwidth = treewidth!(f, findex, counts, graph, minorder, minindex)
-
-    for alg in algs
-        order, index = permutation_nocopy(graph, alg)
-        width = treewidth!(f, findex, counts, graph, order, index)
-
-        if width < minwidth
-            minorder, minindex, minwidth = order, index, width
-        end
-    end
-
-    return minorder, minindex
+function bestwidth(weights::AbstractVector, graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestwidth(weights, BipartiteGraph(graph), algs)
 end
 
-function bestwidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, algs::Tuple)
-    return bestwidth(weights, BipartiteGraph(graph), alg, algs)
-end
-
-function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {W, V}
+function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
     counts = Vector{W}(undef, n)
-    return bestwidth!(f, findex, counts, weights, graph, alg, algs)
+    return bestwidth_impl!(f, findex, counts, weights, graph, map(alg -> permutation(weights, graph, alg), algs))
 end
 
-function bestwidth!(
+function bestwidth_impl!(
+        f::AbstractVector{V},
+        findex::AbstractVector{V},
+        counts::AbstractVector{V},
+        graph::AbstractGraph{V},
+        pairs::NTuple{N, NTuple{2, Vector{V}}},
+    ) where {V, N}
+    minindex = zero(N); minwidth = typemax(V)
+
+    for index in oneto(N)
+        width = treewidth_impl!(f, findex, counts, graph, pairs[index]...)
+
+        if width < minwidth
+            minindex, minwidth = index, width
+        end
+    end
+
+    return pairs[minindex]
+end
+
+function bestwidth_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         counts::AbstractVector{W},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
-        alg::PermutationOrAlgorithm,
-        algs::Tuple
-    ) where {W, V}
+        pairs::NTuple{N, NTuple{2, Vector{V}}},
+    ) where {W, V, N}
+    minindex = zero(N); minwidth = typemax(W)
 
-    minorder, minindex = permutation_nocopy(weights, graph, alg)
-    minwidth = treewidth!(f, findex, counts, weights, graph, minorder, minindex)
-
-    for alg in algs
-        order, index = permutation_nocopy(weights, graph, alg)
-        width = treewidth!(f, findex, counts, weights, graph, order, index)
+    for index in oneto(N)
+        width = treewidth_impl!(f, findex, counts, weights, graph, pairs[index]...)
 
         if width < minwidth
-            minorder, minindex, minwidth = order, index, width
+            minindex, minwidth = index, width
         end
     end
 
-    return minorder, minindex
+    return pairs[minindex]
 end
 
-function bestfill(graph, alg::PermutationOrAlgorithm, algs::Tuple)
-    return bestfill(BipartiteGraph(graph), alg, algs)
+function bestfill(graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestfill(BipartiteGraph(graph), algs)
 end
 
-function bestfill(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {V}
+function bestfill(graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
-    return bestfill!(f, findex, graph, alg, algs)
+    return bestfill_impl!(f, findex, graph, map(alg -> permutation(graph, alg), algs))
 end
 
-function bestfill!(
+function bestfill(weights::AbstractVector, graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestfill(weights, BipartiteGraph(graph), algs)
+end
+
+function bestfill(weights::AbstractVector, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {V}
+    n = nv(graph)
+    f = Vector{V}(undef, n)
+    findex = Vector{V}(undef, n)
+    return bestfill_impl!(f, findex, graph, map(alg -> permutation(weights, graph, alg), algs))
+end
+
+function bestfill_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         graph::AbstractGraph{V},
-        alg::PermutationOrAlgorithm,
-        algs::Tuple
-    ) where {V}
+        pairs::NTuple{N, NTuple{2, Vector{V}}},
+    ) where {V, N}
+    E = etype(graph); minindex = zero(N); minfill = typemax(E)
 
-    minorder, minindex = permutation_nocopy(graph, alg)
-    minfill = treefill!(f, findex, graph, minorder, minindex)
-
-    for alg in algs
-        order, index = permutation_nocopy(graph, alg)
-        fill = treefill!(f, findex, graph, order, index)
+    for index in oneto(N)
+        fill = treefill_impl!(f, findex, graph, pairs[index]...)
 
         if fill < minfill
-            minorder, minindex, minfill = order, index, fill
+            minindex, minfill = index, fill
         end
     end
 
-    return minorder, minindex
+    return pairs[minindex]
 end
 
-function bestfill(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, algs::Tuple)
-    return bestfill(weights, BipartiteGraph(graph), alg, algs)
-end
-
-function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, algs::Tuple) where {W, V}
-    n = nv(graph)
-    f = Vector{V}(undef, n)
-    findex = Vector{V}(undef, n)
-    return bestfill!(f, findex, weights, graph, alg, algs)
-end
-
-function bestfill!(
+function bestfill_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
-        alg::PermutationOrAlgorithm,
-        algs::Tuple
-    ) where {W, V}
+        pairs::NTuple{N, NTuple{2, Vector{V}}},
+    ) where {W, V, N}
+    minindex = zero(N); minfill = typemax(W)
 
-    minorder, minindex = permutation_nocopy(weights, graph, alg)
-    minfill = treefill!(f, findex, weights, graph, minorder, minindex)
-
-    for alg in algs
-        order, index = permutation_nocopy(weights, graph, alg)
-        fill = treefill!(f, findex, weights, graph, order, index)
+    for index in oneto(N)
+        fill = treefill_impl!(f, findex, weights, graph, pairs[index]...)
 
         if fill < minfill
-            minorder, minindex, minfill = order, index, fill
+            minindex, minfill = index, fill
         end
     end
 
-    return minorder, minindex
-end
-
-function permutation_nocopy(graph, alg::PermutationOrAlgorithm)
-    return permutation(graph, alg)
-end
-
-function permutation_nocopy(graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V}, Vector{V}}) where {V}
-    return order, index
-end
-
-function permutation_nocopy(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
-    return permutation(weights, graph, alg)
-end
-
-function permutation_nocopy(weights::AbstractVector, graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V}, Vector{V}}) where {V}
-    return order, index
+    return pairs[minindex]
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: EliminationAlgorithm}

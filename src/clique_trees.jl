@@ -14,37 +14,81 @@ function Tree(tree::CliqueTree)
 end
 
 function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::EliminationAlgorithm) where {V}
+    E = etype(graph); n = nv(graph); m = half(de(graph)); nn = n + one(V)
     orders = Vector{Vector{V}}(undef, length(tree))
-    index = Vector{V}(undef, nv(graph))
+    index = Vector{V}(undef, n)
+
+    vwork1 = Vector{V}(undef, n)
+    vwork2 = Vector{V}(undef, n)
+    vwork3 = Vector{V}(undef, n)
+    vwork4 = Vector{V}(undef, n)
+    ework1 = Vector{E}(undef, nn)
+    lwork1 = BipartiteGraph{V, E}(n, n, m)
+    twork1 = Tree{V}(n)
 
     for (j, bag) in enumerate(tree)
         subgraph, order = induced_subgraph(graph, bag)
-        perm, utree, upper = eliminationtree(subgraph, alg)
-        permute!(order, perm); index[order] = vertices(upper)
+        perm, invp = permutation(subgraph, alg)
+        upper = sympermute(subgraph, invp, Forward)
+        invpermute!(order, invp); index[order] = vertices(upper)
 
         for i in childindices(tree, j)
-            invpermute!(
-                order,
-                compositerotations(
-                    reverse(upper),
-                    utree,
-                    view(index, separator(tree, i)),
-                )
-            )
+            n = nv(upper); m = ne(upper); nn = n + one(V)
+            alpha = view(vwork1, oneto(n))
+            clique = view(index, separator(tree, i))            
 
+            compositerotations_impl!(
+                alpha,
+                view(vwork2, oneto(n)),
+                view(vwork3, oneto(n)),
+                view(vwork4, oneto(n)),
+                view(ework1, oneto(nn)),
+                BipartiteGraph(
+                    n,
+                    view(lwork1.ptr, oneto(nn)),
+                    view(lwork1.tgt, oneto(m)),
+                ),
+                Tree(
+                    view(twork1.parent, oneto(n)),
+                    twork1.root,
+                    view(twork1.child, oneto(n)),
+                    view(twork1.brother, oneto(n)),
+                ),
+                upper,
+                clique,
+            )
+            
+            invpermute!(order, alpha)
             prepend!(order, orders[i])
             upper = isu!(graph, order, index)
-            utree = etree(upper)
         end
 
-        invpermute!(
-            order,
-            compositerotations(
-                reverse(upper),
-                utree,
-                view(index, separator(tree, j)),
-            )
+        n = nv(upper); m = ne(upper); nn = n + one(V)
+        alpha = view(vwork1, oneto(n))
+        clique = view(index, separator(tree, j)) 
+
+        compositerotations_impl!(
+            alpha,
+            view(vwork2, oneto(n)),
+            view(vwork3, oneto(n)),
+            view(vwork4, oneto(n)),
+            view(ework1, oneto(nn)),
+            BipartiteGraph(
+                n,
+                view(lwork1.ptr, oneto(nn)),
+                view(lwork1.tgt, oneto(m)),
+            ),
+            Tree(
+                view(twork1.parent, oneto(n)),
+                twork1.root,
+                view(twork1.child, oneto(n)),
+                view(twork1.brother, oneto(n)),
+            ),
+            upper,
+            clique,
         )
+            
+        invpermute!(order, alpha)    
 
         for _ in separator(tree, j)
             pop!(order)
@@ -63,37 +107,81 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
 end
 
 function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::EliminationAlgorithm) where {V}
+    E = etype(graph); n = nv(graph); m = half(de(graph)); nn = n + one(V)
     orders = Vector{Vector{V}}(undef, length(tree))
-    index = Vector{V}(undef, nv(graph))
+    index = Vector{V}(undef, n)
+
+    vwork1 = Vector{V}(undef, n)
+    vwork2 = Vector{V}(undef, n)
+    vwork3 = Vector{V}(undef, n)
+    vwork4 = Vector{V}(undef, n)
+    ework1 = Vector{E}(undef, nn)
+    lwork1 = BipartiteGraph{V, E}(n, n, m)
+    twork1 = Tree{V}(n)
 
     for (j, bag) in enumerate(tree)
         subgraph, order = induced_subgraph(graph, bag)
-        perm, utree, upper = eliminationtree(view(weights, order), subgraph, alg)
-        permute!(order, perm); index[order] = vertices(upper)
+        perm, invp = permutation(view(weights, order), subgraph, alg)
+        upper = sympermute(subgraph, invp, Forward)
+        invpermute!(order, invp); index[order] = vertices(upper)
 
         for i in childindices(tree, j)
-            invpermute!(
-                order,
-                compositerotations(
-                    reverse(upper),
-                    utree,
-                    view(index, separator(tree, i)),
-                )
-            )
+            n = nv(upper); m = ne(upper); nn = n + one(V)
+            alpha = view(vwork1, oneto(n))
+            clique = view(index, separator(tree, i))            
 
+            compositerotations_impl!(
+                alpha,
+                view(vwork2, oneto(n)),
+                view(vwork3, oneto(n)),
+                view(vwork4, oneto(n)),
+                view(ework1, oneto(nn)),
+                BipartiteGraph(
+                    n,
+                    view(lwork1.ptr, oneto(nn)),
+                    view(lwork1.tgt, oneto(m)),
+                ),
+                Tree(
+                    view(twork1.parent, oneto(n)),
+                    twork1.root,
+                    view(twork1.child, oneto(n)),
+                    view(twork1.brother, oneto(n)),
+                ),
+                upper,
+                clique,
+            )
+            
+            invpermute!(order, alpha)
             prepend!(order, orders[i])
             upper = isu!(graph, order, index)
-            utree = etree(upper)
         end
 
-        invpermute!(
-            order,
-            compositerotations(
-                reverse(upper),
-                utree,
-                view(index, separator(tree, j)),
-            )
+        n = nv(upper); m = ne(upper); nn = n + one(V)
+        alpha = view(vwork1, oneto(n))
+        clique = view(index, separator(tree, j)) 
+
+        compositerotations_impl!(
+            alpha,
+            view(vwork2, oneto(n)),
+            view(vwork3, oneto(n)),
+            view(vwork4, oneto(n)),
+            view(ework1, oneto(nn)),
+            BipartiteGraph(
+                n,
+                view(lwork1.ptr, oneto(nn)),
+                view(lwork1.tgt, oneto(m)),
+            ),
+            Tree(
+                view(twork1.parent, oneto(n)),
+                twork1.root,
+                view(twork1.child, oneto(n)),
+                view(twork1.brother, oneto(n)),
+            ),
+            upper,
+            clique,
         )
+            
+        invpermute!(order, alpha)    
 
         for _ in separator(tree, j)
             pop!(order)
@@ -610,24 +698,14 @@ end
 # Compute the width of an elimination ordering.
 # The complexity is O(m' + n), where m' = |E'| and n = |V|.
 function treewidth(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
-    order, index = permutation(graph, alg)
-    return treewidth(graph, (order, index))
-end
-
-function treewidth(graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
-    index = invperm(order)
-    return treewidth(graph, (order, index))
-end
-
-function treewidth(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
     counts = Vector{V}(undef, n)
-    return treewidth!(f, findex, counts, graph, order, index)
+    return treewidth_impl!(f, findex, counts, graph, permutation(graph, alg)...)
 end
 
-function treewidth!(
+function treewidth_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         counts::AbstractVector{V},
@@ -635,11 +713,18 @@ function treewidth!(
         order::AbstractVector{V},
         index::AbstractVector{V},
     ) where {V}
+    @argcheck nv(graph) <= length(f)
+    @argcheck nv(graph) <= length(findex)
+    @argcheck nv(graph) <= length(counts)
+    @argcheck nv(graph) <= length(order)
+    @argcheck nv(graph) <= length(index)
+    width = zero(V)
 
-    n = nv(graph); width = zero(V)
+    @inbounds for i in vertices(graph)
+        w = order[i]
+        f[w] = w
+        findex[w] = i
 
-    @inbounds for i in oneto(n)
-        w = order[i]; f[w] = w; findex[w] = i
         counts[w] = zero(V)
 
         for v in neighbors(graph, w)
@@ -676,25 +761,15 @@ end
 #
 # Compute the weighted width of an elimination ordering.
 # The complexity is O(m' + n), where m' = |E'| and n = |V|.
-function treewidth(weights::AbstractVector, graph::AbstractGraph, alg::PermutationOrAlgorithm)
-    order, index = permutation(weights, graph, alg)
-    return treewidth(weights, graph, (order, index))
-end
-
-function treewidth(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
-    index = invperm(order)
-    return treewidth(weights, graph, (order, index))
-end
-
-function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {W, V}
+function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
     counts = Vector{W}(undef, n)
-    return treewidth!(f, findex, counts, weights, graph, order, index)
+    return treewidth_impl!(f, findex, counts, weights, graph, permutation(weights, graph, alg)...)
 end
 
-function treewidth!(
+function treewidth_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         counts::AbstractVector{W},
@@ -703,11 +778,19 @@ function treewidth!(
         order::AbstractVector{V},
         index::AbstractVector{V},
     ) where {W, V}
+    @argcheck nv(graph) <= length(f)
+    @argcheck nv(graph) <= length(findex)
+    @argcheck nv(graph) <= length(counts)
+    @argcheck nv(graph) <= length(weights)
+    @argcheck nv(graph) <= length(order)
+    @argcheck nv(graph) <= length(index)
+    width = zero(W)
 
-    n = nv(graph); width = zero(W)
+    @inbounds for i in vertices(graph)
+        w = order[i]
+        f[w] = w
+        findex[w] = i
 
-    for i in oneto(n)
-        w = order[i]; f[w] = w; findex[w] = i
         weight = counts[w] = weights[w]
         width = max(width, weight)
 
@@ -783,35 +866,29 @@ end
 # Compute the fill-in of an elimination ordering.
 # The complexity is O(m' + n), where m' = |E'| and n = |V|.
 function treefill(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
-    order, index = permutation(graph, alg)
-    return treefill(graph, (order, index))
-end
-
-function treefill(graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
-    index = invperm(order)
-    return treefill(graph, (order, index))
-end
-
-function treefill(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
-    return treefill!(f, findex, graph, order, index)
+    return treefill_impl!(f, findex, graph, permutation(graph, alg)...)
 end
 
-function treefill!(
+function treefill_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
         index::AbstractVector{V},
     ) where {V}
+    @argcheck nv(graph) <= length(f)
+    @argcheck nv(graph) <= length(findex)
+    @argcheck nv(graph) <= length(order)
+    @argcheck nv(graph) <= length(index)
+    E = etype(graph); fill = zero(E)
 
-    E = etype(graph)
-    n = nv(graph); fill = zero(E)
-
-    @inbounds for i in oneto(n)
-        w = order[i]; f[w] = w; findex[w] = i
+    @inbounds for i in vertices(graph)
+        w = order[i]
+        f[w] = w
+        findex[w] = i
 
         for v in neighbors(graph, w)
             if index[v] < i
@@ -847,24 +924,14 @@ end
 #
 # Compute the weighted fill-in of an elimination ordering.
 # The complexity is O(m' + n), where m' = |E'| and n = |V|.
-function treefill(weights::AbstractVector, graph::AbstractGraph, alg::PermutationOrAlgorithm)
-    order, index = permutation(weights, graph, alg)
-    return treefill(weights, graph, (order, index))
-end
-
-function treefill(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector{V}) where {V}
-    index = invperm(order)
-    return treefill(weights, graph, (order, index))
-end
-
-function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector{V}, AbstractVector{V}}) where {W, V}
+function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
     n = nv(graph)
     f = Vector{V}(undef, n)
     findex = Vector{V}(undef, n)
-    return treefill!(f, findex, weights, graph, order, index)
+    return treefill_impl!(f, findex, weights, graph, permutation(weights, graph, alg)...)
 end
 
-function treefill!(
+function treefill_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         weights::AbstractVector{W},
@@ -872,11 +939,18 @@ function treefill!(
         order::AbstractVector{V},
         index::AbstractVector{V},
     ) where {W, V}
+    @argcheck nv(graph) <= length(f)
+    @argcheck nv(graph) <= length(findex)
+    @argcheck nv(graph) <= length(weights)
+    @argcheck nv(graph) <= length(order)
+    @argcheck nv(graph) <= length(index)
+    fill = zero(W)
 
-    n = nv(graph); fill = zero(W)
+    @inbounds for i in vertices(graph)
+        w = order[i]
+        f[w] = w
+        findex[w] = i
 
-    for i in oneto(n)
-        w = order[i]; f[w] = w; findex[w] = i
         weight = weights[w]; fill += weight * weight
 
         for v in neighbors(graph, w)
