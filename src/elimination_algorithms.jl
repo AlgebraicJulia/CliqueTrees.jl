@@ -1277,11 +1277,13 @@ function permutation(graph, alg::MMD)
 end
 
 function permutation(graph, alg::ND)
-    return dissect(graph, alg)
+    order = dissect(graph, alg)
+    return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph, alg::ND)
-    return dissect(weights, graph, alg)
+    order = dissect(weights, graph, alg)
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::SAT{H}) where {H}
@@ -2286,298 +2288,317 @@ end
 function dissect(weights::AbstractVector{<:Integer}, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
     weights::Vector{Int32} = weights
     simple = simplegraph(Int32, Int32, graph)
-    order::Vector{V}, index::Vector{V} = dissectsimple(weights, simple, alg)
-    return order, index
+    order::Vector{V} = dissectsimple(weights, simple, alg)
+    return order
 end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
     simple = simplegraph(Int32, Int32, graph)
-    order::Vector{V}, index::Vector{V} = dissectsimple(weights, simple, alg)
-    return order, index
+    order::Vector{V} = dissectsimple(weights, simple, alg)
+    return order
 end
 
 function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, alg::ND{S}) where {W, V, E, S}
     n = nv(graph); m = ne(graph); nn = n + one(V)
-    parents = Int[]; separators = View{V, Int}[]
 
-    sepsize = Scalar{V}(undef)
-    part = Vector{V}(undef, n)
-    project0 = Vector{V}(undef, n)
-    project1 = Vector{V}(undef, n)
-
-    nodes = Tuple{
-        BipartiteGraph{V, E, View{E, Int}, View{V, Int}}, # graph
-        View{W, Int},                                     # weights
-        View{V, Int},                                     # label
-        W,                                                # width
-        V,                                                # level
-    }[]
-
-    wn = 0; wwork = Vector{W}(undef, n + n * alg.level)
-    vn = 0; vwork = Vector{V}(undef, n + n * alg.level + m + m * alg.level)
-    en = 0; ework = Vector{E}(undef, n + n * alg.level + 2^(alg.level + 1) - 1)
-
-    enn = en + Int(nn); _ptr = view(ework, (en + 1):enn); en = enn
-    vnn = vn + Int(m);  _tgt = view(vwork, (vn + 1):vnn); vn = vnn
-    wnn = wn + Int(n);  _weights = view(wwork, (wn + 1):wnn); wn = wnn
-    vnn = vn + Int(n);  _label = view(vwork, (vn + 1):vnn); vn = vnn
-
-    node = (
-        copy!(BipartiteGraph(n, _ptr, _tgt), graph),
-        copy!(_weights, weights),
-        copy!(_label, vertices(graph)),
-        sum(weights),
-        zero(V),
-    )
-
-    push!(parents, 0); push!(nodes, node)
-    nmax = n; mmax = m
-
-    for (i, (graph, weights, label, width, level)) in enumerate(nodes)
-        n = nv(graph); m = ne(graph); mmax = max(mmax, m)
-
-        if width <= alg.limit || level >= alg.level
-            push!(separators, view(vwork, (vn + 1):vn))
-        else
-            # V = W ∪ B
-            separator!(sepsize, part, weights, graph, alg.dis)
-            n0 = zero(V); m0 = zero(E)
-            n1 = zero(V); m1 = zero(E)
-            n2 = zero(V)
-
-            for v in vertices(graph)
-                vv = part[v]
-
-                if iszero(vv)    # v ∈ W - B
-                    n0 += one(V); m0 += convert(E, outdegree(graph, v))
-                elseif isone(vv) # v ∈ B - W
-                    n1 += one(V); m1 += convert(E, outdegree(graph, v))
-                else             # v ∈ W ∩ B
-                    n0 += one(V); m0 += convert(E, twice(n2))
-                    n1 += one(V); m1 += convert(E, twice(n2))
-                    n2 += one(V)
-
-                    for w in outneighbors(graph, v)
-                        ww = part[w]
-
-                        if iszero(ww)    # w ∈ W - B
-                            m0 += one(E)
-                        elseif isone(ww) # w ∈ B - W
-                            m1 += one(E)
-                        end
-                    end
-                end
-            end
-
-            m2 = m0 + m1 - m; delta = alg.level - level
-            resize!(wwork, length(wwork) + n2 * delta)
-            resize!(vwork, length(vwork) + n2 * delta + m2 * delta + n2)
-            resize!(ework, length(ework) + n2 * delta)
-
-            t0 = zero(V); vnn = vn + Int(n0); label0 = view(vwork, (vn + 1):vnn); vn = vnn
-            t1 = zero(V); vnn = vn + Int(n1); label1 = view(vwork, (vn + 1):vnn); vn = vnn
-            t2 = zero(V); vnn = vn + Int(n2); label2 = view(vwork, (vn + 1):vnn); vn = vnn
-
-            for v in vertices(graph)
-                vv = part[v]
-
-                if iszero(vv)    # v ∈ W - B
-                    project0[v] = t0 += one(V); label0[t0] = v
-                elseif isone(vv) # v ∈ B - W
-                    project1[v] = t1 += one(V); label1[t1] = v
-                else             # v ∈ W ∩ B
-                    project0[v] = t0 += one(V); label0[t0] = v
-                    project1[v] = t1 += one(V); label1[t1] = v
-                    t2 += one(V); label2[t2] = v
-                end
-            end
-
-            nn0 = n0 + one(V)
-            nn1 = n1 + one(V)
-
-            enn = en + Int(nn0); _ptr0 = view(ework, (en + 1):enn); en = enn
-            enn = en + Int(nn1); _ptr1 = view(ework, (en + 1):enn); en = enn
-
-            vnn = vn + Int(m0);  _tgt0 = view(vwork, (vn + 1):vnn); vn = vnn
-            vnn = vn + Int(m1);  _tgt1 = view(vwork, (vn + 1):vnn); vn = vnn
-
-            graph0 = BipartiteGraph(n0, _ptr0, _tgt0)
-            graph1 = BipartiteGraph(n1, _ptr1, _tgt1)
-
-            t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
-            t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
-
-            wnn = wn + Int(n0); weights0 = view(wwork, (wn + 1):wnn); wn = wnn
-            wnn = wn + Int(n1); weights1 = view(wwork, (wn + 1):wnn); wn = wnn
-
-            width0 = zero(W)
-            width1 = zero(W)
-
-            for v in vertices(graph)
-                vv = part[v]
-                wt = weights[v]
-
-                if iszero(vv)    # v ∈ W - B
-                    for w in neighbors(graph, v) # w ∈ W
-                        targets(graph0)[p0] = project0[w]; p0 += one(E)
-                    end
-
-                    width0 += wt; weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-                elseif isone(vv) # v ∈ B - W
-                    for w in neighbors(graph, v) # w ∈ B
-                        targets(graph1)[p1] = project1[w]; p1 += one(E)
-                    end
-
-                    width1 += wt; weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
-                else             # v ∈ W ∩ B
-                    for w in neighbors(graph, v)
-                        ww = part[w]
-
-                        if iszero(ww)            # w ∈ W - B
-                            targets(graph0)[p0] = project0[w]; p0 += one(E)
-                        elseif isone(ww)         # w ∈ B - W
-                            targets(graph1)[p1] = project1[w]; p1 += one(E)
-                        end
-                    end
-
-                    for w in label2              # w ∈ W ∩ B
-                        v == w && continue
-                        targets(graph0)[p0] = project0[w]; p0 += one(E)
-                        targets(graph1)[p1] = project1[w]; p1 += one(E)
-                    end
-
-                    width0 += wt; weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-                    width1 += wt; weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
-                end
-            end
-
-            push!(parents, i, i), push!(separators, label2)
-            push!(nodes, (graph0, weights0, label0, width0, level + one(V)))
-            push!(nodes, (graph1, weights1, label1, width1, level + one(V)))
-        end
-    end
-
-    ntree = Tree(parents)
-    nindex = postorder!(ntree)
-    invpermute!(separators, nindex)
-    invpermute!(nodes, nindex)
-    return dissectdp(nmax, mmax, ntree, separators, nodes, alg)
-end
-
-function dissectdp(
-        n::V,
-        m::E,
-        ntree::AbstractVector{Int},
-        separators::Vector{View{V, Int}},
-        nodes::Vector{
-            Tuple{
-                BipartiteGraph{V, E, View{E, Int}, View{V, Int}}, # graph
-                View{W, Int},                                     # weights
-                View{V, Int},                                     # label
-                W,                                                # width
-                V,                                                # level
-            },
-        },
-        alg::ND{S},
-    ) where {W, V, E, S}
-
-    nn = n + one(V)
-    twork = Tree{V}(n)
-    vwork1 = Vector{V}(undef, n)
+    swork = Scalar{V}(undef)
+    vwork1 = Vector{V}(undef, half(m))
     vwork2 = Vector{V}(undef, half(m))
-    vwork3 = Vector{V}(undef, half(m))
+    vwork3 = Vector{V}(undef, n)
     vwork4 = Vector{V}(undef, n)
     vwork5 = Vector{V}(undef, n)
     vwork6 = Vector{V}(undef, n)
+    vwork7 = Vector{V}(undef, n)
+    vwork8 = Vector{V}(undef, n)
     ework1 = Vector{E}(undef, nn)
     ework2 = Vector{E}(undef, nn)
     ework3 = Vector{E}(undef, nn)
-    stack = Tuple{Int, Vector{V}, Vector{V}}[]
 
     if isone(S)
         wwork1 = Vector{W}(undef, n)
     end
 
-    @inbounds for (i, order2, (graph, weights, label, width, level)) in zip(ntree, separators, nodes)
-        if isempty(childindices(ntree, i))
-            order, index = permutation(weights, graph, alg.alg)
-        else
-            n = nv(graph)
-            n2 = convert(V, length(order2))
-            t = zero(V); order = Vector{V}(undef, n); index = Vector{V}(undef, n)
+    orders = Vector{V}[]
 
-            for (i0, order0, index0) in (pop!(stack), pop!(stack))
-                #      i
-                #    ↗   ↖
-                # i0       i1
-                graph0, weights0, label0, width0, level0 = nodes[i0]
-                n0 = nv(graph0); m0 = ne(graph0); nn0 = n0 + one(V)
+    nodes = Tuple{
+        BipartiteGraph{V, E, Vector{E}, Vector{V}}, # graph
+        Vector{W},                                  # weights
+        Vector{V},                                  # label
+        Vector{V},                                  # clique
+        Vector{V},                                  # separator
+        W,                                          # width
+        Int,                                        # level
+    }[]
 
-                t0 = zero(V); clique0 = view(vwork1, oneto(n2)); project0 = view(vwork2, oneto(n))
+    clique = V[]
+    push!(nodes, (graph, weights, collect(oneto(n)), clique, clique, sum(weights), 0))
 
-                for v in vertices(graph0)
-                    project0[label0[v]] = v
-                end
+    @inbounds while !isempty(nodes)
+        graph, weights, label, clique, separator, width, level = pop!(nodes)
+        n = nv(graph); m = ne(graph); nn = n + one(V)
+        k = convert(V, length(clique))
 
-                for v in order2
-                    t0 += one(V); clique0[t0] = index0[project0[v]]
-                end
-
-                count0 = view(ework1, oneto(nn0))
-                upper0 = BipartiteGraph(n0, view(ework2, oneto(nn0)), view(vwork2, oneto(half(m0))))
-                lower0 = BipartiteGraph(n0, view(ework3, oneto(nn0)), view(vwork3, oneto(half(m0))))
-                sympermute!_impl!(count0, upper0, graph0, index0, Forward)
-
-                tree0 = Tree(
-                    view(twork.parent, oneto(n0)),
-                    twork.root,
-                    view(twork.child, oneto(n0)),
-                    view(twork.brother, oneto(n0)),
+        if !isnegative(level) # unprocessed
+            if width <= alg.limit || level >= alg.level # leaf
+                push!(nodes, (graph, weights, label, clique, clique, width, -1))
+            else                                        # branch
+                separator, (graph0, weights0, label0, clique0, width0), (graph1, weights1, label1, clique1, width1) = partition!(
+                    swork,
+                    vwork3,
+                    vwork4,
+                    vwork5,
+                    weights,
+                    graph,
+                    alg.dis,
                 )
 
-                compositerotations_impl!(
-                    index0,
-                    view(vwork4, oneto(n0)),
-                    view(vwork5, oneto(n0)),
-                    view(vwork6, oneto(n0)),
-                    count0,
-                    lower0,
-                    tree0,
-                    upper0,
-                    clique0,
-                )
+                push!(nodes, (graph, weights, label, clique, separator, width, -2))
+                push!(nodes, (graph0, weights0, label0, clique0, clique0, width0, level + 1))
+                push!(nodes, (graph1, weights1, label1, clique1, clique1, width1, level + 1))
+            end
+        else             # processed
+            state = -level
 
-                invpermute!(order0, index0)
+            if isone(state)                             # leaf
+                order, index = permutation(graph, alg.alg)
+            else                                        # branch
+                order0 = pop!(orders)
+                order1 = pop!(orders)
 
-                for t0 in oneto(n0 - n2)
-                    v = label0[order0[t0]]
-                    t += one(V); order[t] = v; index[v] = t
+                order = [
+                    order0
+                    order1
+                    separator
+                ]
+
+                index = invperm(order)
+
+                if isone(S) || istwo(S)
+                    f = view(vwork3, oneto(n))
+                    findex = view(vwork4, oneto(n))
+                    pairs = ((order, index), permutation(graph, alg.alg))
+
+                    if isone(S)
+                        counts = view(wwork1, oneto(n))
+                        order, index = bestwidth_impl!(f, findex, counts, weights, graph, pairs)
+                    else
+                        order, index = bestfill_impl!(f, findex, weights, graph, pairs)
+                    end
                 end
             end
 
-            # append separator to ordering
-            for v in order2
-                t += one(V); order[t] = v; index[v] = t
+            count = view(ework1, oneto(nn))
+            upper = BipartiteGraph(n, view(ework2, oneto(nn)), view(vwork1, oneto(half(m))))
+            lower = BipartiteGraph(n, view(ework3, oneto(nn)), view(vwork2, oneto(half(m))))
+            sympermute!_impl!(count, upper, graph, index, Forward)
+
+            tree = Tree(
+                view(vwork6, oneto(n)),
+                swork,
+                view(vwork7, oneto(n)),
+                view(vwork8, oneto(n)),
+            )
+
+            for i in oneto(k)
+                clique[i] = index[clique[i]]
             end
 
-            # run inner algorithm and choose the best ordering
-            f = view(vwork4, oneto(n)); findex = view(vwork5, oneto(n))
+            compositerotations_impl!(
+                index,
+                view(vwork3, oneto(n)),
+                view(vwork4, oneto(n)),
+                view(vwork5, oneto(n)),
+                count,
+                lower,
+                tree,
+                upper,
+                clique,
+            )
 
-            if isone(S)
-                counts = resize!(wwork1, n)
-                pairs = ((order, index), permutation(graph, alg.alg))
-                order, index = bestwidth_impl!(f, findex, counts, weights, graph, pairs)
-            elseif istwo(S)
-                pairs = ((order, index), permutation(graph, alg.alg))
-                order, index = bestfill_impl!(f, findex, weights, graph, pairs)
+            invpermute!(order, index)
+            resize!(order, n - k)
+
+            for i in oneto(n - k)
+                order[i] = label[order[i]]
             end
+
+            push!(orders, order)
         end
-
-        push!(stack, (i, order, index))
     end
 
-    i, order, index = only(stack)
-    return order, index
+    return only(orders)
+end
+
+function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, alg::ND{S, MMD}) where {W, V, E, S}
+    n = nv(graph); m = ne(graph); nn = n + one(V)
+
+    swork = Scalar{V}(undef)
+    iwork = Vector{Int}(undef, n)
+    vwork1 = Vector{V}(undef, m)
+    vwork2 = Vector{V}(undef, half(m))
+    vwork3 = Vector{V}(undef, n)
+    vwork4 = Vector{V}(undef, n)
+    vwork5 = Vector{V}(undef, n)
+    vwork6 = Vector{V}(undef, n)
+    vwork7 = Vector{V}(undef, n)
+    vwork8 = Vector{V}(undef, n)
+    vwork9 = Vector{V}(undef, n)
+    vwork10 = Vector{V}(undef, n)
+    vwork11 = Vector{V}(undef, n)
+    ework1 = Vector{E}(undef, nn)
+    ework2 = Vector{E}(undef, nn)
+    ework3 = Vector{E}(undef, nn)
+
+    if isone(S)
+        wwork1 = Vector{W}(undef, n)
+    end
+
+    orders = Vector{V}[]
+
+    nodes = Tuple{
+        BipartiteGraph{V, E, Vector{E}, Vector{V}}, # graph
+        Vector{W},                                  # weights
+        Vector{V},                                  # label
+        Vector{V},                                  # clique
+        Vector{V},                                  # separator
+        W,                                          # width
+        Int,                                        # level
+    }[]
+
+    clique = V[]
+    push!(nodes, (graph, weights, collect(oneto(n)), clique, clique, sum(weights), 0))
+
+    @inbounds while !isempty(nodes)
+        graph, weights, label, clique, separator, width, level = pop!(nodes)
+        n = nv(graph); m = ne(graph); nn = n + one(V)
+        k = convert(V, length(clique))
+
+        if !isnegative(level) # unprocessed
+            if width <= alg.limit || level >= alg.level # leaf
+                push!(nodes, (graph, weights, label, clique, clique, width, -1))
+            else                                        # branch
+                separator, (graph0, weights0, label0, clique0, width0), (graph1, weights1, label1, clique1, width1) = partition!(
+                    swork,
+                    vwork3,
+                    vwork4,
+                    vwork5,
+                    weights,
+                    graph,
+                    alg.dis,
+                )
+
+                push!(nodes, (graph, weights, label, clique, separator, width, -2))
+                push!(nodes, (graph0, weights0, label0, clique0, clique0, width0, level + 1))
+                push!(nodes, (graph1, weights1, label1, clique1, clique1, width1, level + 1))
+            end
+        else             # processed
+            state = -level
+
+            if isone(state)                             # leaf
+                index = view(vwork10, oneto(n))
+
+                MMDLib.mmd_impl!(
+                    index,
+                    iwork,
+                    vwork3,
+                    vwork4,
+                    vwork5,
+                    vwork6,
+                    vwork7,
+                    vwork8,
+                    vwork9,
+                    n,
+                    convert(V, alg.alg.delta),
+                    pointers(graph),
+                    copyto!(vwork1, targets(graph)),
+                )
+
+                order = invperm(index)
+            else                                        # branch
+                order0 = pop!(orders)
+                order1 = pop!(orders)
+
+                order = [
+                    order0
+                    order1
+                    separator
+                ]
+
+                index = view(vwork10, oneto(n)); index[order] = oneto(n)
+
+                if isone(S) || istwo(S)
+                    mmdindex = view(vwork11, oneto(n))
+
+                    MMDLib.mmd_impl!(
+                        mmdindex,
+                        iwork,
+                        vwork3,
+                        vwork4,
+                        vwork5,
+                        vwork6,
+                        vwork7,
+                        vwork8,
+                        vwork9,
+                        n,
+                        convert(V, alg.alg.delta),
+                        pointers(graph),
+                        copyto!(vwork1, targets(graph)),
+                    )
+
+                    mmdorder = invperm(mmdindex)
+                    f = view(vwork3, oneto(n))
+                    findex = view(vwork4, oneto(n))
+                    pairs = ((order, index), (mmdorder, mmdindex))
+
+                    if isone(S)
+                        counts = view(wwork1, oneto(n))
+                        order, index = bestwidth_impl!(f, findex, counts, weights, graph, pairs)
+                    else
+                        order, index = bestfill_impl!(f, findex, weights, graph, pairs)
+                    end
+                end
+            end
+
+            count = view(ework1, oneto(nn))
+            upper = BipartiteGraph(n, view(ework2, oneto(nn)), view(vwork1, oneto(half(m))))
+            lower = BipartiteGraph(n, view(ework3, oneto(nn)), view(vwork2, oneto(half(m))))
+            sympermute!_impl!(count, upper, graph, index, Forward)
+
+            tree = Tree(
+                view(vwork6, oneto(n)),
+                swork,
+                view(vwork7, oneto(n)),
+                view(vwork8, oneto(n)),
+            )
+
+            for i in oneto(k)
+                clique[i] = index[clique[i]]
+            end
+
+            compositerotations_impl!(
+                index,
+                view(vwork3, oneto(n)),
+                view(vwork4, oneto(n)),
+                view(vwork5, oneto(n)),
+                count,
+                lower,
+                tree,
+                upper,
+                clique,
+            )
+
+            invpermute!(order, index)
+            resize!(order, n - k)
+
+            for i in oneto(n - k)
+                order[i] = label[order[i]]
+            end
+
+            push!(orders, order)
+        end
+    end
+
+    return only(orders)
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
@@ -4301,7 +4322,7 @@ function bestwidth_impl!(
         findex::AbstractVector{V},
         counts::AbstractVector{V},
         graph::AbstractGraph{V},
-        pairs::NTuple{N, NTuple{2, Vector{V}}},
+        pairs::NTuple{N},
     ) where {V, N}
     minindex = zero(N); minwidth = typemax(V)
 
@@ -4322,7 +4343,7 @@ function bestwidth_impl!(
         counts::AbstractVector{W},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
-        pairs::NTuple{N, NTuple{2, Vector{V}}},
+        pairs::NTuple{N},
     ) where {W, V, N}
     minindex = zero(N); minwidth = typemax(W)
 
@@ -4363,7 +4384,7 @@ function bestfill_impl!(
         f::AbstractVector{V},
         findex::AbstractVector{V},
         graph::AbstractGraph{V},
-        pairs::NTuple{N, NTuple{2, Vector{V}}},
+        pairs::NTuple{N},
     ) where {V, N}
     E = etype(graph); minindex = zero(N); minfill = typemax(E)
 
@@ -4383,7 +4404,7 @@ function bestfill_impl!(
         findex::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
-        pairs::NTuple{N, NTuple{2, Vector{V}}},
+        pairs::NTuple{N},
     ) where {W, V, N}
     minindex = zero(N); minfill = typemax(W)
 
