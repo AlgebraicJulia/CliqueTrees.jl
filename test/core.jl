@@ -469,6 +469,8 @@ end
             METIS(),
             ND{1}(; limit = 5),
             ND{2}(; limit = 5),
+            ND{1}(MCS(); limit = 5),
+            ND{2}(MCS(); limit = 5),
             Spectral(),
             FlowCutter(; time = 1),
             BT(),
@@ -547,6 +549,10 @@ end
             MF(),
             MMD(),
             # METIS(),
+            ND{1}(; limit = 5),
+            ND{2}(; limit = 5),
+            ND{1}(MCS(); limit = 5),
+            ND{2}(MCS(); limit = 5),
             # Spectral(),
             SafeFlowCutter(; time = 1),
             BT(),
@@ -608,6 +614,8 @@ end
             METIS(),
             ND{1}(; limit = 5),
             ND{2}(; limit = 5),
+            ND{1}(MCS(); limit = 5),
+            ND{2}(MCS(); limit = 5),
             # Spectral,
             SafeFlowCutter(; time = 1),
             BT(),
@@ -715,6 +723,8 @@ end
                 @inferred CliqueTrees.mmd(graph)
                 @inferred CliqueTrees.dissect(graph, ND{1}(; limit = 5))
                 @inferred CliqueTrees.dissect(graph, ND{2}(; limit = 5))
+                @inferred CliqueTrees.dissect(graph, ND{1}(MCS(); limit = 5))
+                @inferred CliqueTrees.dissect(graph, ND{2}(MCS(); limit = 5))
                 @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.pr3(graph, lowerbound(graph))
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -751,6 +761,8 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(; limit = 5))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(; limit = 5))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(MCS(); limit = 5))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(MCS(); limit = 5))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -799,6 +811,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(; limit = 5))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(; limit = 5))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(MCS(); limit = 5))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(MCS(); limit = 5))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
@@ -886,6 +900,8 @@ end
                         METIS(),
                         ND{1}(; limit = 5),
                         ND{2}(; limit = 5),
+                        ND{1}(MCS(); limit = 5),
+                        ND{2}(MCS(); limit = 5),
                         Spectral(),
                         SafeFlowCutter(; time = 1),
                         BT(),

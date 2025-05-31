@@ -17,11 +17,35 @@ export mmd
 
 const MAXINT = typemax(Int) - 100000
 
-function mmd(
-        xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0
-    ) where {V, E}
-    neqns = convert(V, length(xadj) - 1)
-    return mmd!(neqns, xadj, Vector{V}(adjncy), convert(V, delta))
+function mmd(xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
+    neqns = length(xadj) - 1
+    invp = Vector{V}(undef, neqns)
+    marker = Vector{Int}(undef, neqns)
+    mergeparent = Vector{V}(undef, neqns)
+    needsupdate = Vector{V}(undef, neqns)
+    supersize = Vector{V}(undef, neqns)
+    elimnext = Vector{V}(undef, neqns)
+    deghead = Vector{V}(undef, neqns)
+    degnext = Vector{V}(undef, neqns)
+    degprev = Vector{V}(undef, neqns)
+
+    mmd_impl!(
+        invp,
+        marker,
+        mergeparent,
+        needsupdate,
+        supersize,
+        elimnext,
+        deghead,
+        degnext,
+        degprev,
+        convert(V, neqns),
+        convert(V, delta),
+        xadj,
+        Vector{V}(adjncy),
+    )
+
+    return invp
 end
 
 """
@@ -61,20 +85,32 @@ working arrays:
   - `mergeparent`: the parent map for the merged forest
   - `needsupdate`: positive iff node needs a degree update (0 otherwise)
 """
-function mmd!(
-        neqns::V, xadj::AbstractVector{E}, adjncy::Vector{V}, delta::V
+function mmd_impl!(
+        invp::AbstractVector{V},
+        marker::AbstractVector{Int},
+        mergeparent::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+        supersize::AbstractVector{V},
+        elimnext::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        neqns::V, 
+        delta::V,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
     ) where {V, E}
-    # initialization for the minimum degree algorithm.
-    invp = zeros(V, neqns)
-    marker = zeros(Int, neqns)
-    mergeparent = zeros(V, neqns)
-    needsupdate = zeros(V, neqns)
-    supersize = ones(V, neqns)
-    elimnext = zeros(V, neqns)
 
-    deghead = zeros(V, neqns + one(V))
-    degnext = Vector{V}(undef, neqns)
-    degprev = Vector{V}(undef, neqns)
+    # initialization for the minimum degree algorithm.
+    @inbounds for node in oneto(neqns)
+        invp[node] = zero(V)
+        marker[node] = 0
+        mergeparent[node] = zero(V)
+        needsupdate[node] = zero(V)
+        supersize[node] = one(V)
+        elimnext[node] = zero(V)
+        deghead[node] = zero(V)
+    end
 
     @inbounds for node in oneto(neqns)
         ndeg = convert(V, xadj[node + one(V)] - xadj[node])
@@ -93,16 +129,18 @@ function mmd!(
     num = one(V)
 
     # eliminate all isolated nodes
-    mdnode = deghead[begin]
+    if ispositive(neqns)
+        mdnode = deghead[begin]
 
-    @inbounds while ispositive(mdnode)
-        marker[mdnode] = MAXINT
-        invp[mdnode] = num
-        num += one(V)
-        mdnode = degnext[mdnode]
+        @inbounds while ispositive(mdnode)
+            marker[mdnode] = MAXINT
+            invp[mdnode] = num
+            num += one(V)
+            mdnode = degnext[mdnode]
+        end
+
+        deghead[begin] = zero(V)
     end
-
-    deghead[begin] = zero(V)
 
     # search for node of the minimum degree
     # - `mindeg` is the current minimum degree
@@ -252,17 +290,17 @@ updated parameters:
 function mmdelim!(
         mdnode::V,
         xadj::AbstractVector{E},
-        adjncy::Vector{V},
-        deghead::Vector{V},
-        degnext::Vector{V},
-        degprev::Vector{V},
-        supersize::Vector{V},
-        elimnext::Vector{V},
-        marker::Vector{Int},
+        adjncy::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        supersize::AbstractVector{V},
+        elimnext::AbstractVector{V},
+        marker::AbstractVector{Int},
         tag::Int,
-        mergeparent::Vector{V},
-        needsupdate::Vector{V},
-        invp::Vector{V},
+        mergeparent::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+        invp::AbstractVector{V},
     ) where {V, E}
     # find reachable set and place in data structure
     marker[mdnode] = tag
@@ -458,19 +496,19 @@ updated parameters:
 function mmdupdate!(
         elimhead::V,
         xadj::AbstractVector{E},
-        adjncy::Vector{V},
+        adjncy::AbstractVector{V},
         delta::V,
         mindeg::V,
-        deghead::Vector{V},
-        degnext::Vector{V},
-        degprev::Vector{V},
-        supersize::Vector{V},
-        elimnext::Vector{V},
-        marker::Vector{Int},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        supersize::AbstractVector{V},
+        elimnext::AbstractVector{V},
+        marker::AbstractVector{Int},
         tag::Int,
-        mergeparent::Vector{V},
-        needsupdate::Vector{V},
-        invp::Vector{V},
+        mergeparent::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+        invp::AbstractVector{V},
     ) where {V, E}
     mindeglimit = mindeg + delta
     deg = enode = zero(V)
@@ -686,11 +724,11 @@ function updateexternaldegree!(
         deg::V,
         mindeg::V,
         enode::V,
-        supersize::Vector{V},
-        deghead::Vector{V},
-        degnext::Vector{V},
-        degprev::Vector{V},
-        needsupdate::Vector{V},
+        supersize::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        needsupdate::AbstractVector{V},
     ) where {V}
     @inbounds begin
         deg -= supersize[enode]
@@ -730,7 +768,7 @@ working arrays:
 
   - `mergelastnum`: last number used for a merged tree rooted at r
 """
-function mmdnumber!(neqns::V, invp::Vector{V}, mergeparent::Vector{V}) where {V}
+function mmdnumber!(neqns::V, invp::AbstractVector{V}, mergeparent::AbstractVector{V}) where {V}
     mergelastnum = zeros(V, neqns)
 
     @inbounds for i in oneto(neqns)
