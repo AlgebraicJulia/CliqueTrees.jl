@@ -2302,8 +2302,8 @@ function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, 
     n = nv(graph); m = ne(graph); nn = n + one(V)
 
     swork = Scalar{V}(undef)
-    vwork1 = Vector{V}(undef, half(m))
-    vwork2 = Vector{V}(undef, half(m))
+    vwork1 = Vector{V}(undef, m)
+    vwork2 = Vector{V}(undef, m)
     vwork3 = Vector{V}(undef, n)
     vwork4 = Vector{V}(undef, n)
     vwork5 = Vector{V}(undef, n)
@@ -2337,6 +2337,11 @@ function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, 
         graph, weights, label, clique, separator, width, level = pop!(nodes)
         n = nv(graph); m = ne(graph); nn = n + one(V)
         k = convert(V, length(clique))
+
+        if m > length(vwork1)
+            resize!(vwork1, m)
+            resize!(vwork2, m)
+        end
 
         if !isnegative(level) # unprocessed
             if width <= alg.limit || level >= alg.level # leaf
@@ -2435,7 +2440,7 @@ function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, 
     swork = Scalar{V}(undef)
     iwork = Vector{Int}(undef, n)
     vwork1 = Vector{V}(undef, m)
-    vwork2 = Vector{V}(undef, half(m))
+    vwork2 = Vector{V}(undef, m)
     vwork3 = Vector{V}(undef, n)
     vwork4 = Vector{V}(undef, n)
     vwork5 = Vector{V}(undef, n)
@@ -2472,6 +2477,11 @@ function dissectsimple(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}, 
         graph, weights, label, clique, separator, width, level = pop!(nodes)
         n = nv(graph); m = ne(graph); nn = n + one(V)
         k = convert(V, length(clique))
+
+        if m > length(vwork1)
+            resize!(vwork1, m)
+            resize!(vwork2, m)
+        end
 
         if !isnegative(level) # unprocessed
             if width <= alg.limit || level >= alg.level # leaf
