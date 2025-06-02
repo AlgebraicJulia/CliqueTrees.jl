@@ -2982,11 +2982,13 @@ function twins_impl!(
         @inbounds h = @view head[i]
         return DoublyLinkedList(h, prev, next)
     end
-    
-    s = popfirst!(free); m += one(V)
-    @inbounds prepend!(set(s), oneto(n)); size[s] = n
-    fill!(svar, s)
-    
+
+    if ispositive(n)    
+        s = popfirst!(free); m += one(V)
+        @inbounds prepend!(set(s), oneto(n)); size[s] = n
+        fill!(svar, s)
+    end    
+
     @inbounds for j in oneto(n)
         for i in neighbors(graph, j)
             if i != j
