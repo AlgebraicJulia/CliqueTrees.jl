@@ -10,6 +10,7 @@
 
 module MMDLib
 
+using ArgCheck
 using Base: oneto
 using ..Utilities
 
@@ -17,15 +18,30 @@ export mmd
 
 const MAXINT = typemax(Int) - 100000
 
-function mmd(xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
-    neqns = length(xadj) - 1
+function mmd(xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
+    vwght = ones(V, length(xadj) - 1)
+    return mmd(vwght, xadj, adjncy)
+end
+
+function mmd(vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
+    return mmd(trunc.(V, vwght), xadj, adjncy; kwargs...)
+end
+
+function mmd(vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
+    neqns = length(xadj) - 1; total = zero(V)
+
+    @inbounds for node in oneto(neqns)
+        total += vwght[node]
+    end
+
     invp = Vector{V}(undef, neqns)
     marker = Vector{Int}(undef, neqns)
     mergeparent = Vector{V}(undef, neqns)
     needsupdate = Vector{V}(undef, neqns)
     supersize = Vector{V}(undef, neqns)
+    superwght = Vector{V}(undef, neqns)
     elimnext = Vector{V}(undef, neqns)
-    deghead = Vector{V}(undef, neqns)
+    deghead = Vector{V}(undef, total)
     degnext = Vector{V}(undef, neqns)
     degprev = Vector{V}(undef, neqns)
 
@@ -35,12 +51,15 @@ function mmd(xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer 
         mergeparent,
         needsupdate,
         supersize,
+        superwght,
         elimnext,
         deghead,
         degnext,
         degprev,
+        total,
         convert(V, neqns),
         convert(V, delta),
+        vwght,
         xadj,
         Vector{V}(adjncy),
     )
@@ -91,15 +110,30 @@ function mmd_impl!(
         mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
         supersize::AbstractVector{V},
+        superwght::AbstractVector{V},
         elimnext::AbstractVector{V},
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
+        total::V,
         neqns::V, 
         delta::V,
+        vwght::AbstractVector{V},
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
     ) where {V, E}
+    @argcheck neqns <= length(invp)
+    @argcheck neqns <= length(marker)
+    @argcheck neqns <= length(mergeparent)
+    @argcheck neqns <= length(needsupdate)
+    @argcheck neqns <= length(supersize)
+    @argcheck neqns <= length(superwght)
+    @argcheck neqns <= length(elimnext)
+    @argcheck total <= length(deghead)
+    @argcheck neqns <= length(degnext)
+    @argcheck neqns <= length(degprev)
+    @argcheck neqns <= length(vwght)
+    @argcheck neqns < length(xadj)
 
     # initialization for the minimum degree algorithm.
     @inbounds for node in oneto(neqns)
@@ -108,47 +142,48 @@ function mmd_impl!(
         mergeparent[node] = zero(V)
         needsupdate[node] = zero(V)
         supersize[node] = one(V)
+        superwght[node] = vwght[node]
         elimnext[node] = zero(V)
+    end
+
+    @inbounds for node in oneto(total)
         deghead[node] = zero(V)
     end
 
-    @inbounds for node in oneto(neqns)
-        ndeg = convert(V, xadj[node + one(V)] - xadj[node])
-        fnode = deghead[ndeg + one(V)]
-        deghead[ndeg + one(V)] = node
-        degnext[node] = fnode
-
-        if ispositive(fnode)
-            degprev[fnode] = node
-        end
-
-        degprev[node] = -ndeg
-    end
-
-    # `num` counts the number of ordered nodes plus 1
-    num = one(V)
-
-    # eliminate all isolated nodes
-    if ispositive(neqns)
-        mdnode = deghead[begin]
-
-        @inbounds while ispositive(mdnode)
-            marker[mdnode] = MAXINT
-            invp[mdnode] = num
-            num += one(V)
-            mdnode = degnext[mdnode]
-        end
-
-        deghead[begin] = zero(V)
-    end
-
-    # search for node of the minimum degree
     # - `mindeg` is the current minimum degree
+    # - `num` counts the number of ordered nodes plus 1
     # - `tag` is used to facilitate marking nodes
-    tag = 1; mindeg = one(V)
+    mindeg = total; num = one(V); tag = 1
+    
+    @inbounds for node in oneto(neqns)
+        istart = xadj[node]; istop = xadj[node + one(V)] - one(E)
+
+        if istart <= istop
+            ndeg = vwght[node]
+
+            for i in istart:istop
+                ndeg += vwght[adjncy[i]]
+            end
+
+            fnode = deghead[ndeg]
+            deghead[ndeg] = node
+            degnext[node] = fnode
+
+            if ispositive(fnode)
+                degprev[fnode] = node
+            end
+
+            degprev[node] = -ndeg
+            mindeg = min(mindeg, ndeg)
+        else
+            # eliminate isolated node
+            marker[node] = MAXINT
+            invp[node] = num; num += one(V)
+        end
+    end
 
     @inbounds while num <= neqns
-        while !ispositive(deghead[mindeg + one(V)])
+        while !ispositive(deghead[mindeg])
             mindeg += one(V)
         end
 
@@ -158,7 +193,7 @@ function mmd_impl!(
         elimhead = zero(V)
 
         while true
-            mdnode = deghead[mindeg + one(V)]
+            mdnode = deghead[mindeg]
 
             while !ispositive(mdnode)
                 mindeg += one(V)
@@ -167,12 +202,12 @@ function mmd_impl!(
                     @goto pass
                 end
 
-                mdnode = deghead[mindeg + one(V)]
+                mdnode = deghead[mindeg]
             end
 
             # remove `mdnode` from the degree structure.
             mdnextnode = degnext[mdnode]
-            deghead[mindeg + one(V)] = mdnextnode
+            deghead[mindeg] = mdnextnode
 
             if ispositive(mdnextnode)
                 degprev[mdnextnode] = -mindeg
@@ -191,9 +226,9 @@ function mmd_impl!(
             if tag >= MAXINT
                 tag = 1
 
-                for m in eachindex(marker)
-                    if marker[m] < MAXINT
-                        marker[m] = 0
+                for node in oneto(neqns)
+                    if marker[node] < MAXINT
+                        marker[node] = 0
                     end
                 end
             end
@@ -206,6 +241,7 @@ function mmd_impl!(
                 degnext,
                 degprev,
                 supersize,
+                superwght,
                 elimnext,
                 marker,
                 tag,
@@ -213,6 +249,7 @@ function mmd_impl!(
                 needsupdate,
                 invp,
             )
+
             num += supersize[mdnode]
             elimnext[mdnode] = elimhead
             elimhead = mdnode
@@ -227,7 +264,9 @@ function mmd_impl!(
         end
 
         mindeg, tag = mmdupdate!(
+            neqns,
             elimhead,
+            vwght,
             xadj,
             adjncy,
             delta,
@@ -236,6 +275,7 @@ function mmd_impl!(
             degnext,
             degprev,
             supersize,
+            superwght,
             elimnext,
             marker,
             tag,
@@ -295,6 +335,7 @@ function mmdelim!(
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         supersize::AbstractVector{V},
+        superwght::AbstractVector{V},
         elimnext::AbstractVector{V},
         marker::AbstractVector{Int},
         tag::Int,
@@ -310,10 +351,9 @@ function mmdelim!(
     # - `rloc` gives the storage location
     #   for the next reachable node.
     elmnt = zero(V)
-    rloc = xadj[mdnode]
-    rlmt = xadj[mdnode + one(V)] - one(E)
+    rloc = xadj[mdnode]; rlmt = xadj[mdnode + one(V)] - one(E)
 
-    @inbounds for i in xadj[mdnode]:(xadj[mdnode + one(V)] - one(E))
+    @inbounds for i in rloc:rlmt
         neighbor = adjncy[i]
 
         if iszero(neighbor)
@@ -336,14 +376,12 @@ function mmdelim!(
     # merge with reachable nodes from generalized elements
     @inbounds while ispositive(elmnt)
         adjncy[rlmt] = -elmnt
-        j = xadj[elmnt]
-        jstop = xadj[elmnt + one(V)]
+        j = xadj[elmnt]; jstop = xadj[elmnt + one(V)]
         node = adjncy[j]
 
         while !iszero(node)
             if node < zero(V)
-                j = xadj[-node]
-                jstop = xadj[one(V) - node]
+                j = xadj[-node]; jstop = xadj[one(V) - node]
             else
                 if marker[node] < tag && !isnegative(degnext[node])
                     marker[node] = tag
@@ -352,12 +390,10 @@ function mmdelim!(
                     # if necessary.
                     while rloc >= rlmt
                         link = -adjncy[rlmt]
-                        rloc = xadj[link]
-                        rlmt = xadj[link + one(V)] - one(E)
+                        rloc = xadj[link]; rlmt = xadj[link + one(V)] - one(E)
                     end
 
-                    adjncy[rloc] = node
-                    rloc += one(E)
+                    adjncy[rloc] = node; rloc += one(E)
                 end
 
                 j += one(E)
@@ -378,14 +414,12 @@ function mmdelim!(
     end
 
     # for each node in the reachable set, do the following...
-    i = xadj[mdnode]
-    istop = xadj[mdnode + one(V)]
+    i = xadj[mdnode]; istop = xadj[mdnode + one(V)]
     rnode = adjncy[i]
 
     @inbounds while !iszero(rnode)
         if isnegative(rnode)
-            i = xadj[-rnode]
-            istop = xadj[one(V) - rnode]
+            i = xadj[-rnode]; istop = xadj[one(V) - rnode]
         else
             # if `rnode` is in the degree list structure...
             pvnode = degprev[rnode]
@@ -402,7 +436,7 @@ function mmdelim!(
                 if ispositive(pvnode)
                     degnext[pvnode] = nxnode
                 else
-                    deghead[one(V) - pvnode] = nxnode
+                    deghead[-pvnode] = nxnode
                 end
             end
 
@@ -417,8 +451,7 @@ function mmdelim!(
                 end
 
                 if marker[neighbor] < tag
-                    adjncy[xqnbr] = neighbor
-                    xqnbr += one(E)
+                    adjncy[xqnbr] = neighbor; xqnbr += one(E)
                 end
             end
 
@@ -427,16 +460,15 @@ function mmdelim!(
 
             if !ispositive(nqnbrs)
                 # then merge `rnode` with `mdnode`
-                supersize[mdnode] += supersize[rnode]
-                supersize[rnode] = zero(V)
+                supersize[mdnode] += supersize[rnode]; supersize[rnode] = zero(V)
+                superwght[mdnode] += superwght[rnode]; superwght[rnode] = zero(V)
                 mergeparent[rnode] = mdnode
                 marker[rnode] = MAXINT
             else
                 # else flag `rnode` for degree update, and
                 # add `mdnode` as a neighbor of `rnode`
                 needsupdate[rnode] = nqnbrs + one(V)
-                adjncy[xqnbr] = mdnode
-                xqnbr += one(E)
+                adjncy[xqnbr] = mdnode; xqnbr += one(E)
 
                 if xqnbr < xadj[rnode + one(V)]
                     adjncy[xqnbr] = zero(V)
@@ -458,7 +490,7 @@ function mmdelim!(
 end
 
 """
-    mmdupdate!(elimhead, xadj, adjncy, delta, mindeg, deghead, degnext, degprev, supersize, elimnext, marker, tag, mergeparent, needsupdate, invp)
+    mmdupdate!(neqns, elimhead, vwght, xadj, adjncy, delta, mindeg, deghead, degnext, degprev, supersize, elimnext, marker, tag, mergeparent, needsupdate, invp)
 
 This routine updates the degrees of nodes
 after a multiple elimination step.
@@ -494,7 +526,9 @@ updated parameters:
   - `needsupdate`: positive iff node needs update (0 otherwise)
 """
 function mmdupdate!(
+        neqns::V,
         elimhead::V,
+        vwght::AbstractVector{V},
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
         delta::V,
@@ -503,6 +537,7 @@ function mmdupdate!(
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         supersize::AbstractVector{V},
+        superwght::AbstractVector{V},
         elimnext::AbstractVector{V},
         marker::AbstractVector{Int},
         tag::Int,
@@ -511,7 +546,6 @@ function mmdupdate!(
         invp::AbstractVector{V},
     ) where {V, E}
     mindeglimit = mindeg + delta
-    deg = enode = zero(V)
     elimnode = elimhead
 
     # for each of the newly formed element, do the following
@@ -523,9 +557,9 @@ function mmdupdate!(
             tag = 1
             mtag = tag + convert(Int, mindeglimit)
 
-            for m in eachindex(marker)
-                if marker[m] < MAXINT
-                    marker[m] = 0
+            for node in oneto(neqns)
+                if marker[node] < MAXINT
+                    marker[node] = 0
                 end
             end
         end
@@ -535,19 +569,17 @@ function mmdupdate!(
         # adjacency structure, and the other with more
         # than two neighbors (`qxhead`)
         #
-        # also compute `elimsize`, number of nodes in this element
-        q2head = qxhead = elimsize = zero(V)
-        i = xadj[elimnode]
-        istop = xadj[elimnode + one(V)]
+        # also compute `elimwght`, weight of the nodes in this element
+        q2head = qxhead = zero(V); elimwght = vwght[elimnode]
+        i = xadj[elimnode]; istop = xadj[elimnode + one(V)]
         enode = adjncy[i]
 
         while !iszero(enode)
             if isnegative(enode)
-                i = xadj[-enode]
-                istop = xadj[one(V) - enode]
+                i = xadj[-enode]; istop = xadj[one(V) - enode]
             else
                 if !iszero(supersize[enode])
-                    elimsize += supersize[enode]
+                    elimwght += superwght[enode]
                     marker[enode] = mtag
 
                     # if `enode` requires a degree update,
@@ -555,11 +587,9 @@ function mmdupdate!(
                     if ispositive(needsupdate[enode])
                         # place either in `qxhead` or `q2head` lists
                         if !istwo(needsupdate[enode])
-                            elimnext[enode] = qxhead
-                            qxhead = enode
+                            elimnext[enode] = qxhead; qxhead = enode
                         else
-                            elimnext[enode] = q2head
-                            q2head = enode
+                            elimnext[enode] = q2head; q2head = enode
                         end
                     end
                 end
@@ -580,7 +610,7 @@ function mmdupdate!(
         while ispositive(enode)
             if ispositive(needsupdate[enode])
                 tag += 1
-                deg = elimsize
+                deg = elimwght
 
                 # identify the other adjacent element neighbor
                 istart = xadj[enode]
@@ -592,7 +622,7 @@ function mmdupdate!(
 
                 # if neighbor is uneliminated, increase degree count
                 if iszero(invp[neighbor])
-                    deg += supersize[neighbor]
+                    deg += superwght[neighbor]
                 else
                     # otherwise, for each node in the 2nd element,
                     # do the following.
@@ -609,15 +639,15 @@ function mmdupdate!(
                                 if marker[node] < tag
                                     # case when `node` is not yet considered
                                     marker[node] = tag
-                                    deg += supersize[node]
+                                    deg += superwght[node]
                                 elseif ispositive(needsupdate[node])
                                     # case when `node` is indistinguishable from
                                     # `enode`
                                     #
                                     # merge them into a new supernode
                                     if istwo(needsupdate[node])
-                                        supersize[enode] += supersize[node]
-                                        supersize[node] = zero(V)
+                                        supersize[enode] += supersize[node]; supersize[node] = zero(V)
+                                        superwght[enode] += superwght[node]; superwght[node] = zero(V)
                                         marker[node] = MAXINT
                                         mergeparent[node] = enode
                                     end
@@ -639,7 +669,7 @@ function mmdupdate!(
                 end
 
                 deg, mindeg = updateexternaldegree!(
-                    deg, mindeg, enode, supersize, deghead, degnext, degprev, needsupdate
+                    deg, mindeg, enode, superwght, deghead, degnext, degprev, needsupdate
                 )
             end
 
@@ -652,7 +682,7 @@ function mmdupdate!(
         while ispositive(enode)
             if ispositive(needsupdate[enode])
                 tag += 1
-                deg = elimsize
+                deg = elimwght
 
                 # for each unmarked neighbor of `enode`,
                 # do the following.
@@ -669,23 +699,21 @@ function mmdupdate!(
                         # if uneliminated, include it in
                         # degree count
                         if iszero(invp[neighbor])
-                            deg += supersize[neighbor]
+                            deg += superwght[neighbor]
                         else
                             # if eliminated, include unmarked
                             # nodes in this element into the
                             # degree count
-                            j = xadj[neighbor]
-                            jstop = xadj[neighbor + one(V)]
+                            j = xadj[neighbor]; jstop = xadj[neighbor + one(V)]
                             node = adjncy[j]
 
                             while !iszero(node)
                                 if isnegative(node)
-                                    j = xadj[-node]
-                                    jstop = xadj[one(V) - node]
+                                    j = xadj[-node]; jstop = xadj[one(V) - node]
                                 else
                                     if marker[node] < tag
                                         marker[node] = tag
-                                        deg += supersize[node]
+                                        deg += superwght[node]
                                     end
 
                                     j += one(E)
@@ -704,7 +732,7 @@ function mmdupdate!(
                 # update external degree of `enode` in degree
                 # structure, and `mindeg` if necessary
                 deg, mindeg = updateexternaldegree!(
-                    deg, mindeg, enode, supersize, deghead, degnext, degprev, needsupdate
+                    deg, mindeg, enode, superwght, deghead, degnext, degprev, needsupdate
                 )
             end
 
@@ -724,21 +752,21 @@ function updateexternaldegree!(
         deg::V,
         mindeg::V,
         enode::V,
-        supersize::AbstractVector{V},
+        superwght::AbstractVector{V},
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         needsupdate::AbstractVector{V},
     ) where {V}
     @inbounds begin
-        deg -= supersize[enode]
-        firstnode = deghead[deg + one(V)]
-        deghead[deg + one(V)] = enode
+        deg -= superwght[enode]
+        firstnode = deghead[deg]
+        deghead[deg] = enode
         degnext[enode] = firstnode
         degprev[enode] = -deg
         needsupdate[enode] = zero(V)
 
-        if firstnode > zero(V)
+        if ispositive(firstnode)
             degprev[firstnode] = enode
         end
     end
