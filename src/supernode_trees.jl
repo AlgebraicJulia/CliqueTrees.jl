@@ -57,7 +57,7 @@ function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Tree{V}, upp
     sndptr = Vector{V}(undef, mm); sndptr[begin] = one(V)
     sepptr = Vector{E}(undef, mm); sepptr[begin] = one(E)
     eorder = invperm(postorder!(tree))
-    
+
     for i in tree
         ii = i + one(V); j = eorder[i]
         u = new[j]

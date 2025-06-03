@@ -120,7 +120,7 @@ function mmd_impl!(
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         total::V,
-        neqns::V, 
+        neqns::V,
         delta::V,
         vwght::AbstractVector{V},
         xadj::AbstractVector{E},
@@ -158,7 +158,7 @@ function mmd_impl!(
     # - `num` counts the number of ordered nodes plus 1
     # - `tag` is used to facilitate marking nodes
     mindeg = total; num = one(V); tag = one(I)
-    
+
     @inbounds for node in oneto(neqns)
         istart = xadj[node]; istop = xadj[node + one(V)] - one(E)
 

@@ -245,22 +245,25 @@ function compositerotations(graph, clique::AbstractVector, alg::PermutationOrAlg
 end
 
 function compositerotations(graph::AbstractGraph{V}, clique::AbstractVector, alg::PermutationOrAlgorithm) where {V}
-    clique::AbstractVector{V} = clique
-    return compositerotations(graph, clique, alg)
+    n = nv(graph)
+    order, index = permutation(graph, alg)
+    upper = sympermute(graph, index, Forward)
+    alpha = compositerotations(upper, index[clique])
+    invpermute!(order, alpha)
+    return order, invperm(order)
 end
 
-function compositerotations(graph::AbstractGraph{V}, clique::AbstractVector{V}, alg::PermutationOrAlgorithm) where {V}
-    order, alpha = permutation(graph, alg)
-    upper = sympermute(graph, alpha, Forward)
+function compositerotations(upper::AbstractGraph{V}, clique::AbstractVector{V}) where {V}
     E = etype(upper); n = nv(upper); m = ne(upper)
+    alpha = Vector{V}(undef, n)
+    order = Vector{V}(undef, n)
     index = Vector{V}(undef, n)
     fdesc = Vector{V}(undef, n)
     count = Vector{E}(undef, n)
     lower = BipartiteGraph{V, E}(n, n, m)
     tree = Tree{V}(n)
     compositerotations_impl!(alpha, order, index, fdesc, count, lower, tree, upper, clique)
-    order[alpha] = oneto(n)
-    return order, alpha
+    return alpha
 end
 
 function compositerotations_impl!(
@@ -301,13 +304,14 @@ function compositerotations_impl!(
     @argcheck nv(upper) <= length(fdesc)
     @argcheck nv(upper) == nv(lower)
     n = nv(upper)
-    etree_impl!(tree, alpha, upper)
+    etree_impl!(tree, fdesc, upper)
     reverse!_impl!(count, lower, upper)
-    postorder_impl!(index, alpha, order, tree)
+    postorder_impl!(index, fdesc, order, tree)
     firstdescendants_impl!(fdesc, tree, Perm(Forward, index))
 
     @inbounds for v in vertices(lower)
-        order[index[v]] = v
+        i = index[v]
+        order[i] = v
         alpha[v] = zero(V)
     end
 
@@ -380,7 +384,7 @@ function postorder_impl!(
     ) where {V}
     @argcheck length(tree) <= length(index)
     @argcheck length(tree) <= length(child)
-    @argcheck length(tree) <= length(stack) 
+    @argcheck length(tree) <= length(stack)
     n = length(tree); num = zero(V)
 
     function set(i)

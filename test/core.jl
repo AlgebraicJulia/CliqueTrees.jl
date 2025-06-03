@@ -13,6 +13,13 @@ using SparseArrays
 using SuiteSparseMatrixCollection
 using Test
 
+const SSMC = ssmc_db()
+
+function readmatrix(name::String)
+    path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format = "MM")[1], "$(name).mtx")
+    return mmread(path)
+end
+
 @testset "errors" begin
     weights = [1]
     @test_throws Exception lowerbound(weights, 1)
@@ -1166,8 +1173,6 @@ end
 end
 
 @testset "fill" begin
-    ssmc = ssmc_db()
-
     algs = (
         MMD(),
         MMD(; delta = 5),
@@ -1179,21 +1184,37 @@ end
     )
 
     matrices = (
-        ("bcspwr09", 5200),
-        ("bcspwr10", 25300),
-        ("bcsstk08", 31100),
+        ("bcspwr09", 5200, [1144, 1135, 1402]),
+        ("bcspwr10", 25300, [4986, 4354, 2870]),
+        ("bcsstk08", 31100, [1028, 1029, 1014]),
     )
 
-    for (name, fill) in matrices
-        matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format = "MM")[1], "$(name).mtx"))
+    for (name, fill, clique) in matrices
+        matrix = readmatrix(name)
 
         for alg in algs
-            @test treefill(matrix; alg) <= fill
+            order1, index1 = permutation(matrix; alg = MinimalChordal(alg))
+            order2, index2 = permutation(matrix; alg = CompositeRotations(clique, alg))
+            order3, index3 = permutation(matrix; alg)
+
+            label1, tree1 = cliquetree(matrix; alg = order1)
+            label2, tree2 = cliquetree(matrix; alg = order2)
+            label3, tree3 = cliquetree(matrix; alg = order3)
+
+            fill1 = treefill(matrix; alg = order1)
+            fill2 = treefill(matrix; alg = order2)
+            fill3 = treefill(matrix; alg = order3)
+
+            @test order2[(end - 2):end] == clique
+            @test fill1 == treefill(tree1)
+            @test fill2 == treefill(tree2)
+            @test fill3 == treefill(tree3)
+            @test fill1 <= fill2 <= fill3 <= fill
         end
     end
 
     name = "mycielskian14"; fill = 14000000
-    matrix = mmread(joinpath(fetch_ssmc(ssmc[ssmc.name .== name, :]; format = "MM")[1], "$(name).mtx"))
+    matrix = readmatrix(name)
     @test treefill(matrix; alg = AMF()) <= fill
 end
 

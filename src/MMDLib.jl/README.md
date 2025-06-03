@@ -20,7 +20,7 @@ julia> graph = sparse([
            0 0 1 0 0 0 1 0
        ]);
 
-julia> invp = mmd(graph.colptr, graph.rowval)
+julia> invp = mmd(8, graph.colptr, graph.rowval)
 8-element Vector{Int64}:
  2
  3

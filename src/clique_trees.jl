@@ -35,7 +35,7 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
         for i in childindices(tree, j)
             n = nv(upper); m = ne(upper); nn = n + one(V)
             alpha = view(vwork1, oneto(n))
-            clique = view(index, separator(tree, i))            
+            clique = view(index, separator(tree, i))
 
             compositerotations_impl!(
                 alpha,
@@ -60,7 +60,7 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
                 upper,
                 clique,
             )
-            
+
             invpermute!(order, alpha)
             prepend!(order, orders[i])
             upper = isu!(graph, order, index)
@@ -68,7 +68,7 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
 
         n = nv(upper); m = ne(upper); nn = n + one(V)
         alpha = view(vwork1, oneto(n))
-        clique = view(index, separator(tree, j)) 
+        clique = view(index, separator(tree, j))
 
         compositerotations_impl!(
             alpha,
@@ -93,8 +93,8 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
             upper,
             clique,
         )
-            
-        invpermute!(order, alpha)    
+
+        invpermute!(order, alpha)
 
         for _ in separator(tree, j)
             pop!(order)
@@ -134,7 +134,7 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
         for i in childindices(tree, j)
             n = nv(upper); m = ne(upper); nn = n + one(V)
             alpha = view(vwork1, oneto(n))
-            clique = view(index, separator(tree, i))            
+            clique = view(index, separator(tree, i))
 
             compositerotations_impl!(
                 alpha,
@@ -159,7 +159,7 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
                 upper,
                 clique,
             )
-            
+
             invpermute!(order, alpha)
             prepend!(order, orders[i])
             upper = isu!(graph, order, index)
@@ -167,7 +167,7 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
 
         n = nv(upper); m = ne(upper); nn = n + one(V)
         alpha = view(vwork1, oneto(n))
-        clique = view(index, separator(tree, j)) 
+        clique = view(index, separator(tree, j))
 
         compositerotations_impl!(
             alpha,
@@ -192,7 +192,7 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
             upper,
             clique,
         )
-        invpermute!(order, alpha)    
+        invpermute!(order, alpha)
 
         for _ in separator(tree, j)
             pop!(order)

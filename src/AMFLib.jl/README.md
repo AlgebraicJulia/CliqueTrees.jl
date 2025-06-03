@@ -20,7 +20,7 @@ julia> graph = sparse([
            0 0 1 0 0 0 1 0
        ]);
 
-julia> perm, invp = amf(graph.colptr, graph.rowval);
+julia> perm, invp = amf(8, graph.colptr, graph.rowval);
 
 julia> perm
 8-element Vector{Int64}:

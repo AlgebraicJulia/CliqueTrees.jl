@@ -77,7 +77,7 @@ function BipartiteGraph(graph::AbstractGraph{V}) where {V}
     return BipartiteGraph{V, E}(graph)
 end
 
-function BipartiteGraph(matrix::SparseMatrixCSC{<:Any, I}) where I
+function BipartiteGraph(matrix::SparseMatrixCSC{<:Any, I}) where {I}
     return BipartiteGraph{I, I}(matrix)
 end
 
@@ -244,7 +244,7 @@ function sympermute!_impl!(
         end
     end
 
-    pointers(target)[begin] = p = one(E) 
+    pointers(target)[begin] = p = one(E)
 
     @inbounds for i in oneto(n)
         ii = i + one(V); pp = p + count[i]
@@ -305,7 +305,7 @@ function reverse!_impl!(
         count[i] += one(E)
     end
 
-    pointers(target)[begin] = p = one(E) 
+    pointers(target)[begin] = p = one(E)
 
     @inbounds for i in oneto(n)
         ii = i + one(V); pp = p + count[i]
@@ -496,7 +496,7 @@ end
     @boundscheck checkbounds(pointers(graph), ii)
     @inbounds start = pointers(graph)[i]
     @inbounds stop = pointers(graph)[ii]
-    @inbounds neighbors = view(targets(graph), start:stop - one(E))
+    @inbounds neighbors = view(targets(graph), start:(stop - one(E)))
     return neighbors
 end
 

@@ -38,23 +38,24 @@ function CliqueTrees.permutation(weights::AbstractVector, graph, alg::METIS)
     return permutation(weights, BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::METIS)
-    n = nv(graph); new = Vector{INT}(undef, n)
-
-    for v in oneto(n)
-        new[v] = trunc(INT, weights[v])
-    end
-
-    return permutation(new, graph, alg)
-end
-
-function CliqueTrees.permutation(weights::Vector{INT}, graph::AbstractGraph{V}, alg::METIS) where {V}
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::METIS) where {V}
     simple = simplegraph(INT, INT, graph)
     order::Vector{V}, index::Vector{V} = metis(weights, simple, alg)
     return order, index
 end
 
-function metis(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::METIS)
+function metis(weights::AbstractVector, graph::BipartiteGraph{INT, INT}, alg::METIS)
+    @argcheck nv(graph) <= length(weights)
+    n = nv(graph); new = Vector{INT}(undef, n)
+
+    @inbounds for v in oneto(n)
+        new[v] = trunc(INT, weights[v])
+    end
+
+    return metis(new, graph, alg)
+end
+
+function metis(weights::Vector{INT}, graph::BipartiteGraph{INT, INT}, alg::METIS)
     n = nv(graph)
 
     # construct options
@@ -126,7 +127,7 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
     vwght = weights
 
     @inbounds for i in oneto(nn)
-        xadj[i] -= one(INT)    
+        xadj[i] -= one(INT)
     end
 
     @inbounds for p in oneto(m)
@@ -145,7 +146,7 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
     )
 
     @inbounds for i in oneto(nn)
-        xadj[i] += one(INT)    
+        xadj[i] += one(INT)
     end
 
     @inbounds for p in oneto(m)
@@ -194,8 +195,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     vwork6 = Vector{INT}(undef, n)
     vwork7 = Vector{INT}(undef, n)
     vwork8 = Vector{INT}(undef, n)
-    ework2 = Vector{INT}(undef, nn)
-    ework3 = Vector{INT}(undef, nn)
+    vwork11 = Vector{INT}(undef, nn)
+    vwork12 = Vector{INT}(undef, nn)
 
     orders = Vector{INT}[]
 
@@ -236,7 +237,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 )
 
                 push!(
-                    nodes, 
+                    nodes,
                     (graph, weights, label, clique, width, -two(INT)),
                     (child0..., level + one(INT)),
                     (child1..., level + one(INT)),
@@ -273,8 +274,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 end
             end
 
-            upper = BipartiteGraph(n, n, half(m), ework2, vwork1)
-            lower = BipartiteGraph(n, n, half(m), ework3, vwork2)
+            upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
+            lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
             sympermute!_impl!(vwork3, upper, graph, index, Forward)
 
             tree = Tree(
@@ -340,8 +341,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     vwork8 = Vector{INT}(undef, n)
     vwork9 = Vector{INT}(undef, n)
     vwork10 = Vector{INT}(undef, n)
-    ework2 = Vector{INT}(undef, nn)
-    ework3 = Vector{INT}(undef, nn)
+    vwork11 = Vector{INT}(undef, nn)
+    vwork12 = Vector{INT}(undef, nn)
 
     orders = Vector{INT}[]
 
@@ -382,7 +383,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 )
 
                 push!(
-                    nodes, 
+                    nodes,
                     (graph, weights, label, clique, width, -two(INT)),
                     (child0..., level + one(INT)),
                     (child1..., level + one(INT)),
@@ -399,8 +400,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
                 mmd_impl!(
                     index,
-                    ework2,
-                    ework3,
+                    vwork11,
+                    vwork12,
                     vwork2,
                     vwork3,
                     vwork4,
@@ -432,20 +433,20 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                     order2
                 ]
 
-                index = vwork9
+                index = vwork10
 
                 for v in oneto(n)
                     index[order[v]] = v
                 end
 
                 if isone(S) || istwo(S)
-                    mmdindex = vwork10
+                    mmdindex = vwork9
                     copyto!(vwork1, one(INT), targets(graph), one(INT), m)
 
                     mmd_impl!(
                         mmdindex,
-                        ework2,
-                        ework3,
+                        vwork11,
+                        vwork12,
                         vwork2,
                         vwork3,
                         vwork4,
@@ -477,8 +478,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 end
             end
 
-            upper = BipartiteGraph(n, n, half(m), ework2, vwork1)
-            lower = BipartiteGraph(n, n, half(m), ework3, vwork2)
+            upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
+            lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
             sympermute!_impl!(vwork3, upper, graph, index, Forward)
 
             tree = Tree(

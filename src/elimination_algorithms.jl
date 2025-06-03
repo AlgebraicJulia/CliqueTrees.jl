@@ -992,11 +992,11 @@ struct GraphCompression{S, A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
-function GraphCompression{S}(alg::A=DEFAULT_ELIMINATION_ALGORITHM) where {S, A <: EliminationAlgorithm}
+function GraphCompression{S}(alg::A = DEFAULT_ELIMINATION_ALGORITHM) where {S, A <: EliminationAlgorithm}
     return GraphCompression{S, A}(alg)
 end
 
-function GraphCompression(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+function GraphCompression(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return GraphCompression{true}(alg)
 end
 
@@ -2614,15 +2614,15 @@ function twins_impl!(
     @argcheck nv(graph) <= length(head)
     @argcheck nv(graph) <= length(prev)
     @argcheck nv(graph) <= length(next)
-    
+
     n = nv(graph); m = zero(V)
-    
+
     @inbounds for i in oneto(n)
         flag[i] = zero(V)
         size[i] = zero(V)
         head[i] = zero(V)
     end
-    
+
     new[] = zero(V); free = SinglyLinkedList(new, var)
     @inbounds prepend!(free, oneto(n))
 
@@ -2631,14 +2631,14 @@ function twins_impl!(
         return DoublyLinkedList(h, prev, next)
     end
 
-    if ispositive(n)    
+    if ispositive(n)
         s = popfirst!(free); m += one(V)
         @inbounds prepend!(set(s), oneto(n)); size[s] = n
 
         @inbounds for i in oneto(n)
             svar[i] = s
         end
-    end    
+    end
 
     @inbounds for j in oneto(n)
         for i in neighbors(graph, j)
@@ -2656,7 +2656,7 @@ function twins_impl!(
                         ns = svar[i] = popfirst!(free); m += one(V)
                         pushfirst!(set(ns), i); size[ns] += one(V)
                     end
-                # second of later occurrence of `s` for column `j`
+                    # second of later occurrence of `s` for column `j`
                 else
                     # `k` is the first variable of `s` encountered in column `j`.
                     delete!(set(s), i); size[s] -= one(V)
@@ -2670,7 +2670,7 @@ function twins_impl!(
                 end
             end
         end
-        
+
         if S
             # `s` is the old supervariable of `j`
             s = svar[j]
@@ -2685,7 +2685,7 @@ function twins_impl!(
                     ns = svar[j] = popfirst!(free); m += one(V)
                     pushfirst!(set(ns), j); size[ns] += one(V)
                 end
-            # second of later occurrence of `s` for column `j`
+                # second of later occurrence of `s` for column `j`
             else
                 # `k` is the first variable of `s` encountered in column `j`.
                 delete!(set(s), j); size[s] -= one(V)
@@ -2699,13 +2699,13 @@ function twins_impl!(
             end
         end
     end
-    
+
     partition = BipartiteGraph(n, m, n, var, flag)
     t = one(V); pointers(partition)[t] = p = one(V)
-    
+
     @inbounds for s in oneto(n)
         isempty(set(s)) && continue
-           
+
         for i in set(s)
             svar[i] = t
             targets(partition)[p] = i; p += one(V)
@@ -2713,7 +2713,7 @@ function twins_impl!(
 
         t += one(V); pointers(partition)[t] = p
     end
-    
+
     return partition
 end
 

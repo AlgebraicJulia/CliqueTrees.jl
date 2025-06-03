@@ -50,8 +50,8 @@ function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, projec
     t0 = zero(V); label0 = Vector{V}(undef, n0)
     t1 = zero(V); label1 = Vector{V}(undef, n1)
     t2 = zero(V); label2 = Vector{V}(undef, n2)
-                  clique0 = Vector{V}(undef, n2)
-                  clique1 = Vector{V}(undef, n2)
+    clique0 = Vector{V}(undef, n2)
+    clique1 = Vector{V}(undef, n2)
 
     @inbounds for v in vertices(graph)
         vv = part[v]

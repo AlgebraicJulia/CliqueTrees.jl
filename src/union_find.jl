@@ -34,7 +34,7 @@ end
     end
 
     return ii
-end    
+end
 
 @propagate_inbounds function rootunion!(uf::UnionFind{I}, i::I, j::I) where {I}
     @boundscheck checkbounds(uf.parent, i)
