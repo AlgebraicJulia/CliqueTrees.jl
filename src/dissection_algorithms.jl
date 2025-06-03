@@ -15,28 +15,15 @@ Compute a vertex separator using `METIS_computeVertexSeparator`.
     seed::Int = -1
 end
 
-# Find a pair of subsets W and B such that V = W ∪ B and
-#     N[W - B] ⊆ W
-#     N[B - W] ⊆ B
-# Then the intersection W ∩ B is called a vertex separator.
-# The function returns a vector `project` satisfying
-#     project(i) = 0 iff i ∈ W - B
-#     project(i) = 1 iff i ∈ B - W
-#     project(i) = 2 iff i ∈ W ∩ B
-function separator!(sepsize::AbstractScalar, part::AbstractVector, weights::AbstractVector, graph::AbstractGraph, alg::DissectionAlgorithm)
-    throw(ArgumentError("Algorithm $alg not implemented. You may need to load an additional package."))
-end
-
-function partition!(sepsize::AbstractScalar{V}, part::AbstractVector{V}, project0::AbstractVector{V}, project1::AbstractVector{V}, weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::DissectionAlgorithm) where {W, V}
+function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, project1::AbstractVector{V}, weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W, V}
     E = etype(graph)
 
     # V = W ∪ B
-    separator!(sepsize, part, weights, graph, alg)
     n0 = zero(V); m0 = zero(E)
     n1 = zero(V); m1 = zero(E)
     n2 = zero(V)
 
-    for v in vertices(graph)
+    @inbounds for v in vertices(graph)
         vv = part[v]
 
         if iszero(vv)    # v ∈ W - B
@@ -66,7 +53,7 @@ function partition!(sepsize::AbstractScalar{V}, part::AbstractVector{V}, project
                   clique0 = Vector{V}(undef, n2)
                   clique1 = Vector{V}(undef, n2)
 
-    for v in vertices(graph)
+    @inbounds for v in vertices(graph)
         vv = part[v]
 
         if iszero(vv)    # v ∈ W - B
@@ -87,7 +74,7 @@ function partition!(sepsize::AbstractScalar{V}, part::AbstractVector{V}, project
     width0 = zero(W)
     width1 = zero(W)
 
-    for v in vertices(graph)
+    @inbounds for v in vertices(graph)
         vv = part[v]
         wt = weights[v]
 
@@ -125,7 +112,9 @@ function partition!(sepsize::AbstractScalar{V}, part::AbstractVector{V}, project
         end
     end
 
-    return label2, (graph0, weights0, label0, clique0, width0), (graph1, weights1, label1, clique1, width1)
+    child0 = (graph0, weights0, label0, clique0, width0)
+    child1 = (graph1, weights1, label1, clique1, width1)
+    return child0, child1, label2
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::METISND)

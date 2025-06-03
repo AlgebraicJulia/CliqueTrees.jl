@@ -40,60 +40,60 @@ function supernodetree(
 end
 
 function supernodetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    return supernodetree(graph, snd, eliminationtree(graph, alg)...)
+    return supernodetree(snd, eliminationtree(graph, alg)...)
 end
 
 function supernodetree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    return supernodetree(graph, snd, eliminationtree(weights, graph, alg)...)
+    return supernodetree(snd, eliminationtree(weights, graph, alg)...)
 end
 
-function supernodetree(graph, snd, label, etree, upper)
+function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Tree{V}, upper::BipartiteGraph{V, E}) where {V, E}
     lower = reverse(upper)
     rowcount, colcount = supcnt(lower, etree)
     new, ancestor, tree = stree(etree, colcount, snd)
 
-    V = eltype(lower)
-    E = etype(lower)
-    eindex = Vector{V}(undef, length(etree))
-    sndptr = Vector{V}(undef, length(tree) + 1)
-    sepptr = Vector{E}(undef, length(tree) + 1)
-    sndptr[begin] = sepptr[begin] = 1
-
-    for (i, j) in enumerate(invperm(postorder!(tree)))
+    n = nv(lower); m = last(tree); mm = m + one(V)
+    eindex = Vector{V}(undef, n)
+    sndptr = Vector{V}(undef, mm); sndptr[begin] = one(V)
+    sepptr = Vector{E}(undef, mm); sepptr[begin] = one(E)
+    eorder = invperm(postorder!(tree))
+    
+    for i in tree
+        ii = i + one(V); j = eorder[i]
         u = new[j]
         p = eindex[u] = sndptr[i]
 
-        for v in takewhile(v -> v != ancestor[j], ancestorindices(etree, u))
-            eindex[v] = p += 1
+        for v in ancestorindices(etree, u)
+            v == ancestor[j] && break
+            eindex[v] = p += one(V)
         end
 
-        sepptr[i + 1] = sndptr[i] + sepptr[i] + colcount[u] - p - 1
-        sndptr[i + 1] = p + 1
+        sepptr[ii] = sepptr[i] + convert(E, sndptr[i] + colcount[u] - p) - one(E)
+        sndptr[ii] = p + one(V)
     end
 
     invpermute!(label, eindex)
-    sndtree = SupernodeTree(tree, BipartiteGraph(nv(lower), sndptr, vertices(lower)))
+    sndtree = SupernodeTree(tree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
     return label, sndtree, rowcount, eindex, sepptr, lower, upper
 end
 
-function supernodetree(graph, snd::Nodal, label, etree, upper)
+function supernodetree(snd::Nodal, label::Vector{V}, etree::Tree{V}, upper::BipartiteGraph{V, E}) where {V, E}
     lower = reverse(upper)
     rowcount, colcount = supcnt(lower, etree)
 
-    V = eltype(lower)
-    E = etype(lower)
-    eindex = postorder!(etree)
-    sndptr = Vector{V}(undef, length(etree) + 1)
-    sepptr = Vector{E}(undef, length(etree) + 1)
-    sndptr[begin] = sepptr[begin] = 1
+    n = nv(lower); m = last(etree); mm = m + one(V)
+    eindex = postorder!(etree); eorder = invperm(eindex)
+    sndptr = Vector{V}(undef, mm); sndptr[begin] = one(V)
+    sepptr = Vector{E}(undef, mm); sepptr[begin] = one(E)
 
-    for (i, j) in enumerate(invperm(eindex))
-        sepptr[i + 1] = sepptr[i] + colcount[j] - 1
-        sndptr[i + 1] = sndptr[i] + 1
+    for i in etree
+        ii = i + one(V); j = eorder[i]
+        sepptr[ii] = sepptr[i] + convert(E, colcount[j]) - one(E)
+        sndptr[ii] = sndptr[i] + one(V)
     end
 
     invpermute!(label, eindex)
-    sndtree = SupernodeTree(etree, BipartiteGraph(nv(lower), sndptr, vertices(lower)))
+    sndtree = SupernodeTree(etree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
     return label, sndtree, rowcount, eindex, sepptr, lower, upper
 end
 

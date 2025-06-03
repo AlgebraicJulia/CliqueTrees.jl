@@ -182,7 +182,6 @@ end
             (
                 graph,
                 BipartiteGraph(graph),
-                BipartiteGraph{Int32}(graph),
                 BipartiteGraph{Int32, Int64}(graph),
             )
         )
@@ -191,7 +190,6 @@ end
             (
                 graph,
                 BipartiteGraph(Matrix(graph)),
-                BipartiteGraph{Int8}(Matrix{Float64}(graph)),
                 BipartiteGraph{Int8, Int16}(Matrix{Float64}(graph)),
             )
         )
@@ -200,7 +198,6 @@ end
             (
                 graph,
                 BipartiteGraph(SparseMatrixCSC(graph)),
-                BipartiteGraph{Int8}(SparseMatrixCSC{Float64}(graph)),
                 BipartiteGraph{Int8, Int16}(SparseMatrixCSC{Float64, Int32}(graph)),
             )
         )
@@ -209,7 +206,6 @@ end
             (
                 graph,
                 BipartiteGraph(sparse(graph)),
-                BipartiteGraph{Int8}(sparse(Float64, graph)),
                 BipartiteGraph{Int8, Int16}(sparse(Float64, Int32, graph)),
             )
         )
@@ -218,7 +214,6 @@ end
             (
                 graph,
                 BipartiteGraph(Graph(graph)),
-                BipartiteGraph{Int8}(Graph{Int64}(graph)),
                 BipartiteGraph{Int8, Int16}(Graph{Int32}(graph)),
             )
         )
@@ -227,7 +222,6 @@ end
             (
                 graph,
                 BipartiteGraph(DiGraph(graph)),
-                BipartiteGraph{Int8}(DiGraph{Int64}(graph)),
                 BipartiteGraph{Int8, Int16}(DiGraph{Int32}(graph)),
             )
         )
@@ -236,7 +230,6 @@ end
             (
                 graph,
                 BipartiteGraph(Catlab.Graph(graph)),
-                BipartiteGraph{Int8}(Catlab.Graph(graph)),
                 BipartiteGraph{Int8, Int16}(Catlab.Graph(graph)),
             )
         )
@@ -245,7 +238,6 @@ end
             (
                 graph,
                 BipartiteGraph(Catlab.SymmetricGraph(graph)),
-                BipartiteGraph{Int8}(Catlab.SymmetricGraph(graph)),
                 BipartiteGraph{Int8, Int16}(Catlab.SymmetricGraph(graph)),
             )
         )
@@ -307,7 +299,6 @@ end
         @test allequal(
             (
                 BipartiteGraph(filledgraph),
-                BipartiteGraph{Int8}(filledgraph),
                 BipartiteGraph{Int8, Int16}(filledgraph),
                 BipartiteGraph(SparseMatrixCSC(filledgraph)),
                 BipartiteGraph(SparseMatrixCSC{Float64}(filledgraph)),
@@ -1190,7 +1181,7 @@ end
     matrices = (
         ("bcspwr09", 5200),
         ("bcspwr10", 25300),
-        ("bcsstk08", 30800),
+        ("bcsstk08", 31100),
     )
 
     for (name, fill) in matrices

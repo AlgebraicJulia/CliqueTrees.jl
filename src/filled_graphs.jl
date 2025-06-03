@@ -10,8 +10,7 @@ struct FilledGraph{V, E} <: AbstractGraph{V}
 end
 
 function FilledGraph{V, E}(tree::CliqueTree) where {V, E}
-    n = pointers(residuals(tree))[end] - one(V)
-    m = zero(E); i = zero(V)
+    n = ne(residuals(tree)); m = zero(E); i = zero(V)
     index = Vector{V}(undef, n)
 
     @inbounds for bag in tree
@@ -187,7 +186,7 @@ function Graphs.is_directed(::Type{<:FilledGraph})
 end
 
 function Graphs.nv(graph::FilledGraph{V}) where {V}
-    return pointers(residuals(graph.tree))[end] - one(V)
+    return ne(residuals(graph.tree))
 end
 
 function Graphs.ne(graph::FilledGraph)

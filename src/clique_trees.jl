@@ -39,20 +39,23 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
 
             compositerotations_impl!(
                 alpha,
-                view(vwork2, oneto(n)),
-                view(vwork3, oneto(n)),
-                view(vwork4, oneto(n)),
-                view(ework1, oneto(nn)),
+                vwork2,
+                vwork3,
+                vwork4,
+                ework1,
                 BipartiteGraph(
                     n,
-                    view(lwork1.ptr, oneto(nn)),
-                    view(lwork1.tgt, oneto(m)),
+                    n,
+                    m,
+                    lwork1.ptr,
+                    lwork1.tgt,
                 ),
                 Tree(
-                    view(twork1.parent, oneto(n)),
+                    n,
+                    twork1.parent,
                     twork1.root,
-                    view(twork1.child, oneto(n)),
-                    view(twork1.brother, oneto(n)),
+                    twork1.child,
+                    twork1.brother,
                 ),
                 upper,
                 clique,
@@ -69,20 +72,23 @@ function cliquedissect(graph::AbstractGraph{V}, tree::CliqueTree{V}, alg::Elimin
 
         compositerotations_impl!(
             alpha,
-            view(vwork2, oneto(n)),
-            view(vwork3, oneto(n)),
-            view(vwork4, oneto(n)),
-            view(ework1, oneto(nn)),
+            vwork2,
+            vwork3,
+            vwork4,
+            ework1,
             BipartiteGraph(
                 n,
-                view(lwork1.ptr, oneto(nn)),
-                view(lwork1.tgt, oneto(m)),
+                n,
+                m,
+                lwork1.ptr,
+                lwork1.tgt,
             ),
             Tree(
-                view(twork1.parent, oneto(n)),
+                n,
+                twork1.parent,
                 twork1.root,
-                view(twork1.child, oneto(n)),
-                view(twork1.brother, oneto(n)),
+                twork1.child,
+                twork1.brother,
             ),
             upper,
             clique,
@@ -132,20 +138,23 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
 
             compositerotations_impl!(
                 alpha,
-                view(vwork2, oneto(n)),
-                view(vwork3, oneto(n)),
-                view(vwork4, oneto(n)),
-                view(ework1, oneto(nn)),
+                vwork2,
+                vwork3,
+                vwork4,
+                ework1,
                 BipartiteGraph(
                     n,
-                    view(lwork1.ptr, oneto(nn)),
-                    view(lwork1.tgt, oneto(m)),
+                    n,
+                    m,
+                    lwork1.ptr,
+                    lwork1.tgt,
                 ),
                 Tree(
-                    view(twork1.parent, oneto(n)),
+                    n,
+                    twork1.parent,
                     twork1.root,
-                    view(twork1.child, oneto(n)),
-                    view(twork1.brother, oneto(n)),
+                    twork1.child,
+                    twork1.brother,
                 ),
                 upper,
                 clique,
@@ -162,25 +171,27 @@ function cliquedissect(weights::AbstractVector, graph::AbstractGraph{V}, tree::C
 
         compositerotations_impl!(
             alpha,
-            view(vwork2, oneto(n)),
-            view(vwork3, oneto(n)),
-            view(vwork4, oneto(n)),
-            view(ework1, oneto(nn)),
+            vwork2,
+            vwork3,
+            vwork4,
+            ework1,
             BipartiteGraph(
                 n,
-                view(lwork1.ptr, oneto(nn)),
-                view(lwork1.tgt, oneto(m)),
+                n,
+                m,
+                lwork1.ptr,
+                lwork1.tgt,
             ),
             Tree(
-                view(twork1.parent, oneto(n)),
+                n,
+                twork1.parent,
                 twork1.root,
-                view(twork1.child, oneto(n)),
-                view(twork1.brother, oneto(n)),
+                twork1.child,
+                twork1.brother,
             ),
             upper,
             clique,
         )
-            
         invpermute!(order, alpha)    
 
         for _ in separator(tree, j)
@@ -312,10 +323,11 @@ end
 # Berry, Pogorelcnik, and Simonet
 # Algorithm Atom-Tree
 function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::CliqueTree{V, E}) where {V, E}
-    n = nv(graph)
-    m = convert(V, length(tree))
+    n = nv(graph); m = last(Tree(tree))
     marker = zeros(Int, n); tag = 0
-    atom = Vector{V}(undef, m); a = b = zero(V)
+    atom = Vector{V}(undef, m)
+    a = zero(V)
+    b = zero(E)
 
     # identify clique separators
     for i in reverse(oneto(m))
@@ -340,7 +352,7 @@ function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::Cliqu
 
         if flag
             atom[i] = a += one(V)
-            b += convert(V, length(sep))
+            b += convert(E, length(sep))
         else
             j = parentindex(tree, i)
             atom[i] = atom[j]
@@ -412,8 +424,8 @@ function atomtree(graph::AbstractGraph{V}, label::AbstractVector{V}, tree::Cliqu
 
     # return atom tree
     invpermute!(label, index)
-    stree = SupernodeTree(atree, BipartiteGraph(n, sndptr, oneto(n)))
-    ctree = CliqueTree(stree, BipartiteGraph(n, sepptr, sepval))
+    stree = SupernodeTree(atree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
+    ctree = CliqueTree(stree, BipartiteGraph(n, a, b, sepptr, sepval))
     return label, ctree
 end
 
@@ -492,7 +504,9 @@ end
     end
 
     V = eltype(lower)
-    sep = BipartiteGraph(nv(lower), ptr, Vector{V}(undef, ptr[end] - 1))
+    E = etype(lower)
+    h = nv(lower); n = last(tree.tree); nn = n + one(V); m = ptr[nn] - one(E)
+    sep = BipartiteGraph(h, n, m, ptr, Vector{V}(undef, m))
     cache = Vector{V}(undef, Δout(sep))
 
     for (j, res) in enumerate(tree)
@@ -530,7 +544,7 @@ function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V <: Signed, E
 end
 
 function cliquetree(tree::CliqueTree{V, E}, root::V) where {V <: Signed, E <: Signed}
-    n = V(length(tree)); h = root
+    n = last(Tree(tree)); h = root; nn = n + one(V)
     parent = Vector{V}(undef, n)
 
     for i in Tree(tree)
@@ -559,8 +573,8 @@ function cliquetree(tree::CliqueTree{V, E}, root::V) where {V <: Signed, E <: Si
     eorder = invperm(eindex)
     sepval = Vector{V}(undef, se)
     index = Vector{V}(undef, re)
-    sepptr = Vector{E}(undef, n + one(V))
-    sndptr = Vector{V}(undef, n + one(V))
+    sepptr = Vector{E}(undef, nn)
+    sndptr = Vector{V}(undef, nn)
     sepptr[begin] = p = one(E)
     sndptr[begin] = q = one(V)
 
@@ -596,8 +610,8 @@ function cliquetree(tree::CliqueTree{V, E}, root::V) where {V <: Signed, E <: Si
     end
 
     sepval = index[sepval]; sndval = oneto(rv)
-    stree = SupernodeTree(etree, BipartiteGraph(rv, sndptr, sndval))
-    ctree = CliqueTree(stree, BipartiteGraph(sv, sepptr, sepval))
+    stree = SupernodeTree(etree, BipartiteGraph(rv, n, q - one(V), sndptr, sndval))
+    ctree = CliqueTree(stree, BipartiteGraph(sv, n, p - one(E), sepptr, sepval))
     return invperm(index), ctree
 end
 
@@ -1015,13 +1029,15 @@ end
 Compute the relative indices of a clique tree.
 """
 function relatives(tree::CliqueTree{V}) where {V}
-    graph = BipartiteGraph{V}(
-        pointers(residuals(tree))[end] - 1, pointers(separators(tree)), ne(separators(tree))
-    )
+    sep = separators(tree); h = nov(sep); n = nv(sep); m = ne(sep)
+    tgt = Vector{V}(undef, m)
+    graph = BipartiteGraph(h, n, m, pointers(sep), tgt)
 
-    for (j, clique) in enumerate(tree)
-        for i in childindices(tree, j)
-            indexinsorted!(neighbors(graph, i), separator(tree, i), clique)
+    for i in Tree(tree)
+        j = parentindex(tree, i)
+
+        if !isnothing(j)
+            indexinsorted!(neighbors(graph, i), separator(tree, i), tree[j])
         end
     end
 

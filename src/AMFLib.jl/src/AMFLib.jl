@@ -42,21 +42,17 @@ function Speed(speed::Integer)
         Fast()
 end
 
-function amf(
-        xadj::AbstractVector{E}, adjncy::AbstractVector{V}; speed::Integer = 1
-    ) where {V, E}
+function amf(neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; speed::Integer = 1) where {V, E}
     EE = promote_type(Int32, E)
-    nnz = length(adjncy)
-    neqns = convert(V, length(xadj) - 1)
+    nnz = xadj[neqns + one(V)] - one(E)
     adjln = convert(EE, 2nnz + 4neqns + 10000)
-    locaux = convert(EE, nnz + 1)
 
     return amf!(
         neqns,
         adjln,
         Vector{EE}(xadj),
         copyto!(Vector{V}(undef, adjln), 1, adjncy, 1, nnz),
-        locaux,
+        convert(EE, nnz + 1),
         Speed(speed),
     )
 end

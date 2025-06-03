@@ -30,8 +30,7 @@ julia> collect(list)
  9
 ```
 """
-struct SinglyLinkedList{I, Head <: AbstractScalar{I}, Next <: AbstractVector{I}} <:
-    AbstractLinkedList{I}
+struct SinglyLinkedList{I, Head <: AbstractScalar{I}, Next <: AbstractVector{I}} <: AbstractLinkedList{I}
     """
     If `list` is empty, then `list.head[]` is equal to `0`.
     Otherwise, `list.head[]` is the first element of `list`

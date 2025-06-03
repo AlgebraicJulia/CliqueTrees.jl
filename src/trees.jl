@@ -15,6 +15,7 @@ struct Tree{
         Child <: AbstractVector{V},
         Brother <: AbstractVector{V},
     } <: AbstractUnitRange{V}
+    last::V
     parent::Parent   # vector of parents
     root::Root       # root
     child::Child     # vector of left-children
@@ -22,10 +23,12 @@ struct Tree{
 end
 
 function Tree{V}(parent::AbstractVector) where {V}
+    n = length(parent)
+    last = convert(V, n)
     root = Scalar{V}(undef)
-    child = Vector{V}(undef, length(parent))
-    brother = Vector{V}(undef, length(parent))
-    tree = Tree(parent, root, child, brother)
+    child = Vector{V}(undef, n)
+    brother = Vector{V}(undef, n)
+    tree = Tree(last, parent, root, child, brother)
     return lcrs!(tree)
 end
 
@@ -34,15 +37,16 @@ function Tree(parent::AbstractVector{V}) where {V}
 end
 
 function Tree{V}(n::Integer) where {V}
+    last = convert(V, n)
     parent = Vector{V}(undef, n)
     root = Scalar{V}(undef)
     child = Vector{V}(undef, n)
     brother = Vector{V}(undef, n)
-    return Tree(parent, root, child, brother)
+    return Tree(last, parent, root, child, brother)
 end
 
 function Tree(tree::Tree)
-    return Tree(tree.parent, tree.root, tree.child, tree.brother)
+    return Tree(tree.last, tree.parent, tree.root, tree.child, tree.brother)
 end
 
 """
@@ -248,15 +252,29 @@ end
 function compositerotations(graph::AbstractGraph{V}, clique::AbstractVector{V}, alg::PermutationOrAlgorithm) where {V}
     order, alpha = permutation(graph, alg)
     upper = sympermute(graph, alpha, Forward)
-    E = etype(upper); n = nv(upper); m = ne(upper); nn = n + one(V)
+    E = etype(upper); n = nv(upper); m = ne(upper)
     index = Vector{V}(undef, n)
     fdesc = Vector{V}(undef, n)
-    count = Vector{E}(undef, nn)
+    count = Vector{E}(undef, n)
     lower = BipartiteGraph{V, E}(n, n, m)
     tree = Tree{V}(n)
     compositerotations_impl!(alpha, order, index, fdesc, count, lower, tree, upper, clique)
     order[alpha] = oneto(n)
     return order, alpha
+end
+
+function compositerotations_impl!(
+        alpha::AbstractVector{I},
+        order::AbstractVector{I},
+        index::AbstractVector{I},
+        fdesc::AbstractVector{I},
+        lower::BipartiteGraph{I, I},
+        tree::Tree{I},
+        upper::AbstractGraph{I},
+        clique::AbstractVector{I},
+    ) where {I}
+    count = order
+    return compositerotations_impl!(alpha, order, index, fdesc, count, lower, tree, upper, clique)
 end
 
 # Equivalent Sparse Matrix Reorderings by Elimination Tree Rotations
@@ -298,28 +316,31 @@ function compositerotations_impl!(
 
         @inbounds for v in Iterators.reverse(clique)
             alpha[v] = n; n -= one(V)
-
-            if v < y
-                y = v
-            end
+            y = min(v, y)
         end
 
-        @inbounds xstop = index[y]
-        xstart = xstop + one(V)
+        @inbounds xstop = index[y]; xstart = xstop + one(V)
 
         @inbounds for z in ancestorindices(tree, y)
-            ystart = index[fdesc[y]]
-            ystop = index[y]
+            ystart = index[fdesc[y]]; ystop = index[y]
 
-            for v in view(order, ystart:(xstart - one(V))), w in neighbors(lower, v)
-                if y < w && iszero(alpha[w])
-                    alpha[w] = n; n -= one(V)
+            for i in ystart:(xstart - one(V))
+                v = order[i]
+
+                for w in neighbors(lower, v)
+                    if y < w && iszero(alpha[w])
+                        alpha[w] = n; n -= one(V)
+                    end
                 end
             end
 
-            for v in view(order, (xstop + one(V)):ystop), w in neighbors(lower, v)
-                if y < w && iszero(alpha[w])
-                    alpha[w] = n; n -= one(V)
+            for i in (xstop + one(V)):ystop
+                v = order[i]
+
+                for w in neighbors(lower, v)
+                    if y < w && iszero(alpha[w])
+                        alpha[w] = n; n -= one(V)
+                    end
                 end
             end
 
@@ -540,14 +561,22 @@ function Base.isequal(left::Tree, right::Tree)
 end
 
 function Base.copy(tree::Tree)
-    return Tree(copy(tree.parent), copy(tree.root), copy(tree.child), copy(tree.brother))
+    return Tree(
+        last(tree),
+        copy(tree.parent),
+        copy(tree.root),
+        copy(tree.child),
+        copy(tree.brother),
+    )
 end
 
 function Base.copy!(dst::Tree, src::Tree)
-    copy!(dst.parent, src.parent)
-    copy!(dst.root, src.root)
-    copy!(dst.child, src.child)
-    copy!(dst.brother, src.brother)
+    @argcheck length(dst) == length(src)
+    n = length(dst)
+    copyto!(dst.parent, 1, src.parent, 1, n)
+    dst.root[] = src.root[]
+    copyto!(dst.child, 1, src.child, 1, n)
+    copyto!(dst.brother, 1, src.brother, 1, n)
     return dst
 end
 
@@ -636,6 +665,5 @@ function Base.first(tree::Tree{V}) where {V}
 end
 
 function Base.last(tree::Tree{V}) where {V}
-    n::V = length(tree.parent)
-    return n
+    return tree.last
 end

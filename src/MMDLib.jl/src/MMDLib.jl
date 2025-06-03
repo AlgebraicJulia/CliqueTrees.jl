@@ -16,19 +16,23 @@ using ..Utilities
 
 export mmd
 
-const MAXINT = typemax(Int) - 100000
-
-function mmd(xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
-    vwght = ones(V, length(xadj) - 1)
-    return mmd(vwght, xadj, adjncy)
+function mmd(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
+    vwght = ones(V, neqns)
+    return mmd(neqns, vwght, xadj, adjncy; kwargs...)
 end
 
-function mmd(vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
-    return mmd(trunc.(V, vwght), xadj, adjncy; kwargs...)
+function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
+    new = Vector{V}(undef, neqns)
+
+    @inbounds for node in oneto(neqns)
+        new[node] = trunc(V, vwght[node])
+    end
+
+    return mmd(neqns, new, xadj, adjncy; kwargs...)
 end
 
-function mmd(vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
-    neqns = length(xadj) - 1; total = zero(V)
+function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
+    total = zero(V)
 
     @inbounds for node in oneto(neqns)
         total += vwght[node]
@@ -57,7 +61,7 @@ function mmd(vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::Abstract
         degnext,
         degprev,
         total,
-        convert(V, neqns),
+        neqns,
         convert(V, delta),
         vwght,
         xadj,
@@ -106,7 +110,7 @@ working arrays:
 """
 function mmd_impl!(
         invp::AbstractVector{V},
-        marker::AbstractVector{Int},
+        marker::AbstractVector{I},
         mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
         supersize::AbstractVector{V},
@@ -121,7 +125,7 @@ function mmd_impl!(
         vwght::AbstractVector{V},
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
-    ) where {V, E}
+    ) where {I, V, E}
     @argcheck neqns <= length(invp)
     @argcheck neqns <= length(marker)
     @argcheck neqns <= length(mergeparent)
@@ -138,7 +142,7 @@ function mmd_impl!(
     # initialization for the minimum degree algorithm.
     @inbounds for node in oneto(neqns)
         invp[node] = zero(V)
-        marker[node] = 0
+        marker[node] = zero(I)
         mergeparent[node] = zero(V)
         needsupdate[node] = zero(V)
         supersize[node] = one(V)
@@ -153,7 +157,7 @@ function mmd_impl!(
     # - `mindeg` is the current minimum degree
     # - `num` counts the number of ordered nodes plus 1
     # - `tag` is used to facilitate marking nodes
-    mindeg = total; num = one(V); tag = 1
+    mindeg = total; num = one(V); tag = one(I)
     
     @inbounds for node in oneto(neqns)
         istart = xadj[node]; istop = xadj[node + one(V)] - one(E)
@@ -177,7 +181,7 @@ function mmd_impl!(
             mindeg = min(mindeg, ndeg)
         else
             # eliminate isolated node
-            marker[node] = MAXINT
+            marker[node] = maxint(I)
             invp[node] = num; num += one(V)
         end
     end
@@ -221,14 +225,14 @@ function mmd_impl!(
 
             # eliminate `mdnode` and perform quotient graph
             # transformation (reset `tag` value if necessary)
-            tag += 1
+            tag += one(I)
 
-            if tag >= MAXINT
-                tag = 1
+            if tag >= maxint(I)
+                tag = one(I)
 
                 for node in oneto(neqns)
-                    if marker[node] < MAXINT
-                        marker[node] = 0
+                    if marker[node] < maxint(I)
+                        marker[node] = zero(I)
                     end
                 end
             end
@@ -337,21 +341,21 @@ function mmdelim!(
         supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         elimnext::AbstractVector{V},
-        marker::AbstractVector{Int},
-        tag::Int,
+        marker::AbstractVector{I},
+        tag::I,
         mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
         invp::AbstractVector{V},
-    ) where {V, E}
+    ) where {I, V, E}
     # find reachable set and place in data structure
-    marker[mdnode] = tag
+    @inbounds marker[mdnode] = tag
 
     # - `elmnt` points to the beginning of the list of eliminated
     #   neighbors of `mdnode`
     # - `rloc` gives the storage location
     #   for the next reachable node.
     elmnt = zero(V)
-    rloc = xadj[mdnode]; rlmt = xadj[mdnode + one(V)] - one(E)
+    @inbounds rloc = xadj[mdnode]; rlmt = xadj[mdnode + one(V)] - one(E)
 
     @inbounds for i in rloc:rlmt
         neighbor = adjncy[i]
@@ -410,12 +414,12 @@ function mmdelim!(
     end
 
     if rloc <= rlmt
-        adjncy[rloc] = zero(V)
+        @inbounds adjncy[rloc] = zero(V)
     end
 
     # for each node in the reachable set, do the following...
-    i = xadj[mdnode]; istop = xadj[mdnode + one(V)]
-    rnode = adjncy[i]
+    @inbounds i = xadj[mdnode]; istop = xadj[mdnode + one(V)]
+    @inbounds rnode = adjncy[i]
 
     @inbounds while !iszero(rnode)
         if isnegative(rnode)
@@ -463,7 +467,7 @@ function mmdelim!(
                 supersize[mdnode] += supersize[rnode]; supersize[rnode] = zero(V)
                 superwght[mdnode] += superwght[rnode]; superwght[rnode] = zero(V)
                 mergeparent[rnode] = mdnode
-                marker[rnode] = MAXINT
+                marker[rnode] = maxint(I)
             else
                 # else flag `rnode` for degree update, and
                 # add `mdnode` as a neighbor of `rnode`
@@ -539,27 +543,27 @@ function mmdupdate!(
         supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         elimnext::AbstractVector{V},
-        marker::AbstractVector{Int},
-        tag::Int,
+        marker::AbstractVector{I},
+        tag::I,
         mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
         invp::AbstractVector{V},
-    ) where {V, E}
+    ) where {I, V, E}
     mindeglimit = mindeg + delta
     elimnode = elimhead
 
     # for each of the newly formed element, do the following
     # (reset `tag` value if necessary)
     @inbounds while ispositive(elimnode)
-        mtag = tag + convert(Int, mindeglimit)
+        mtag = tag + convert(I, mindeglimit)
 
-        if mtag >= MAXINT
-            tag = 1
-            mtag = tag + convert(Int, mindeglimit)
+        if mtag >= maxint(I)
+            tag = one(I)
+            mtag = tag + convert(I, mindeglimit)
 
             for node in oneto(neqns)
-                if marker[node] < MAXINT
-                    marker[node] = 0
+                if marker[node] < maxint(I)
+                    marker[node] = zero(I)
                 end
             end
         end
@@ -609,7 +613,7 @@ function mmdupdate!(
 
         while ispositive(enode)
             if ispositive(needsupdate[enode])
-                tag += 1
+                tag += one(I)
                 deg = elimwght
 
                 # identify the other adjacent element neighbor
@@ -648,7 +652,7 @@ function mmdupdate!(
                                     if istwo(needsupdate[node])
                                         supersize[enode] += supersize[node]; supersize[node] = zero(V)
                                         superwght[enode] += superwght[node]; superwght[node] = zero(V)
-                                        marker[node] = MAXINT
+                                        marker[node] = maxint(I)
                                         mergeparent[node] = enode
                                     end
 
@@ -681,7 +685,7 @@ function mmdupdate!(
 
         while ispositive(enode)
             if ispositive(needsupdate[enode])
-                tag += 1
+                tag += one(I)
                 deg = elimwght
 
                 # for each unmarked neighbor of `enode`,
@@ -758,17 +762,15 @@ function updateexternaldegree!(
         degprev::AbstractVector{V},
         needsupdate::AbstractVector{V},
     ) where {V}
-    @inbounds begin
-        deg -= superwght[enode]
-        firstnode = deghead[deg]
-        deghead[deg] = enode
-        degnext[enode] = firstnode
-        degprev[enode] = -deg
-        needsupdate[enode] = zero(V)
+    @inbounds deg -= superwght[enode]
+    @inbounds firstnode = deghead[deg]
+    @inbounds deghead[deg] = enode
+    @inbounds degnext[enode] = firstnode
+    @inbounds degprev[enode] = -deg
+    @inbounds needsupdate[enode] = zero(V)
 
-        if ispositive(firstnode)
-            degprev[firstnode] = enode
-        end
+    if ispositive(firstnode)
+        @inbounds degprev[firstnode] = enode
     end
 
     return deg, min(deg, mindeg)
@@ -832,6 +834,10 @@ function mmdnumber!(neqns::V, invp::AbstractVector{V}, mergeparent::AbstractVect
     end
 
     return
+end
+
+function maxint(::Type{I}) where {I}
+    return typemax(I) - convert(I, 100000)
 end
 
 end

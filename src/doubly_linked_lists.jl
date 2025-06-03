@@ -1,6 +1,4 @@
-struct DoublyLinkedList{
-        I, Head <: AbstractScalar{I}, Prev <: AbstractVector{I}, Next <: AbstractVector{I},
-    } <: AbstractLinkedList{I}
+struct DoublyLinkedList{I, Head <: AbstractScalar{I}, Prev <: AbstractVector{I}, Next <: AbstractVector{I}} <: AbstractLinkedList{I}
     head::Head
     prev::Prev
     next::Next

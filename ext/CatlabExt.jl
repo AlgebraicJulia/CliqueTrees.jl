@@ -30,9 +30,7 @@ function (::Type{G})(graph::BipartiteGraph) where {G <: Catlab.HasGraph}
     return result
 end
 
-function CliqueTrees.sympermute(
-        graph::Catlab.HasGraph, index::AbstractVector, order::Ordering
-    )
+function CliqueTrees.sympermute(graph::Catlab.HasGraph, index::AbstractVector, order::Ordering)
     return sympermute(CatlabGraph(graph), index, order)
 end
 
@@ -84,18 +82,12 @@ function CliqueTrees.permutation(graph::Catlab.HasGraph, alg::BT)
     return permutation(CatlabGraph(graph), alg)
 end
 
-function CliqueTrees.isperfect(
-        graph::Catlab.HasGraph, order::AbstractVector, index::AbstractVector
-    )
+function CliqueTrees.isperfect(graph::Catlab.HasGraph, order::AbstractVector, index::AbstractVector)
     return isperfect(CatlabGraph(graph), order, index)
 end
 
 function CliqueTrees.BipartiteGraph{V, E}(graph::Catlab.HasGraph) where {V, E}
     return BipartiteGraph{V, E}(CatlabGraph(graph))
-end
-
-function CliqueTrees.BipartiteGraph{V}(graph::Catlab.HasGraph) where {V}
-    return BipartiteGraph{V}(CatlabGraph(graph))
 end
 
 function CliqueTrees.BipartiteGraph(graph::Catlab.HasGraph)
