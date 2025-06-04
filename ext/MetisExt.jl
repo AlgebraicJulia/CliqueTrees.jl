@@ -528,6 +528,7 @@ function setoptions!(options::AbstractVector{INT}, alg::METISND)
         options[i] = -one(INT) # null
     end
 
+    options[OPTION_NSEPS] = convert(INT, alg.nseps)
     options[OPTION_NUMBERING] = one(INT)
     options[OPTION_SEED] = convert(INT, alg.seed)
     options[OPTION_UFACTOR] = convert(INT, alg.ufactor)

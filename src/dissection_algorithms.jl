@@ -11,6 +11,7 @@ abstract type DissectionAlgorithm end
 Compute a vertex separator using `METIS_computeVertexSeparator`.
 """
 @kwdef struct METISND <: DissectionAlgorithm
+    nseps::Int = -1
     ufactor::Int = -1
     seed::Int = -1
 end
