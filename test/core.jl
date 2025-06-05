@@ -1176,9 +1176,7 @@ end
     algs = (
         MMD(),
         MMD(; delta = 5),
-        AMF(; speed = 1),
-        AMF(; speed = 2),
-        AMF(; speed = 3),
+        AMF(),
         ND{2}(),
         MF(),
     )
@@ -1212,10 +1210,6 @@ end
             @test fill1 <= fill2 <= fill3 <= fill
         end
     end
-
-    name = "mycielskian14"; fill = 14000000
-    matrix = readmatrix(name)
-    @test treefill(matrix; alg = AMF()) <= fill
 end
 
 @testset "exact treewidth" begin

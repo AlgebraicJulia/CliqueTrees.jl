@@ -383,9 +383,7 @@ julia> treewidth(graph; alg)
 
   - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
 """
-@kwdef struct AMF <: EliminationAlgorithm
-    speed::Int = 1
-end
+struct AMF <: EliminationAlgorithm end
 
 """
     MF <: EliminationAlgorithm
@@ -1270,7 +1268,7 @@ function permutation(graph, alg::MCSM)
 end
 
 function permutation(graph, alg::AMF)
-    return amf(graph; speed = alg.speed)
+    return amf(graph)
 end
 
 function permutation(graph, alg::MF)
@@ -4190,13 +4188,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::MMD)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "MMD:")
     println(io, " "^indent * "    delta: $(alg.delta)")
-    return
-end
-
-function Base.show(io::IO, ::MIME"text/plain", alg::AMF)
-    indent = get(io, :indent, 0)
-    println(io, " "^indent * "AMF:")
-    println(io, " "^indent * "    speed: $(alg.speed)")
     return
 end
 
