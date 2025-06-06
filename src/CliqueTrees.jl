@@ -6,7 +6,6 @@ using Base: OneTo, oneto, @kwdef, @propagate_inbounds
 using Base.Iterators
 using Base.Order
 using Base.Sort: DEFAULT_UNSTABLE, Algorithm as SortingAlgorithm
-using Base.Threads: @threads
 using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra

@@ -54,14 +54,24 @@ function anint(::Type{I}, x::F) where {I, F}
 end
 
 function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
+    vwght = Vector{V}(undef, n)
+
+    @inbounds for i in oneto(n)
+        vwght[i] = one(V)
+    end
+
+    return amf(n, vwght, xadj, adjncy)
+end
+
+function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
+    @argcheck n <= length(vwght)
     @argcheck n < length(xadj)
     @argcheck xadj[n + one(V)] - one(E) <= length(adjncy)
 
     nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
-    norig = n
+    norig = zero(V)
     nbelts = zero(V)
-    nbbuck = twice(n)
 
     pfree = mm
     iwlen = m + convert(E, 4n + 10000)
@@ -69,20 +79,22 @@ function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V,
     len = Vector{V}(undef, n)
     pe = Vector{E}(undef, nn)
     iw = Vector{V}(undef, iwlen)
-
-    @inbounds for i in oneto(nn)
-        pe[i] = xadj[i]
-    end
+    nv = Vector{V}(undef, n)
 
     @inbounds for p in oneto(m)
         iw[p] = adjncy[p]
     end
 
+    p = pe[begin] = xadj[begin]
+
     @inbounds for i in oneto(n)
-        ii = i + one(V); len[i] = convert(V, xadj[ii] - xadj[i])
+        ii = i + one(E); pp = xadj[ii]
+        norig += nv[i] = trunc(V, vwght[i])
+        len[i] = convert(V, pp - p)
+        pe[ii] = p = pp
     end
 
-    nv = Vector{V}(undef, n)
+    nbbuck = twice(norig)
     elen = Vector{V}(undef, n)
     last = Vector{V}(undef, n)
     degree = Vector{V}(undef, n)
@@ -90,16 +102,8 @@ function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V,
     next = Vector{V}(undef, n)
     w = Vector{Int}(undef, n)
     head = Vector{V}(undef, nbbuck + two(V))
-
-    ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe, pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
-
-    @inbounds for i in oneto(n)
-        j = abs(elen[i])
-        elen[i] = j
-        last[j] = i
-    end
-
-    return last, elen
+    ncmpa, perm, invp = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe, pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
+    return perm, invp
 end
 
 #  -- translated by f2c (version 19970219).
@@ -667,10 +671,9 @@ function hamf_impl!(
         w::AbstractVector{I},      # flag array
         head::AbstractVector{V},   # linked list structure
     ) where {I, V, E}
-    @argcheck norig <= n
     @argcheck nbelts <= n
     @argcheck pfree <= iwlen <= length(iw)
-    @argcheck n <= nbbuck
+    @argcheck norig <= nbbuck
     @argcheck n < length(pe)
     @argcheck n <= length(len)
     @argcheck n <= length(nv)
@@ -683,7 +686,6 @@ function hamf_impl!(
     @argcheck nbbuck + two(V) <= length(head)
 
     @inbounds for i in oneto(n)
-        nv[i] = one(V)
         elen[i] = zero(V)
         last[i] = zero(V)
         degree[i] = zero(V)
@@ -788,7 +790,7 @@ function hamf_impl!(
     lastd = zero(V)
 
     if iszero(nbelts)                         # if graph has no elements and only variables
-        for i in oneto(n)
+        @inbounds for i in oneto(n)
             elen[i] = zero(V)                 # already done before calling
             w[i] = one(I)
 
@@ -817,7 +819,7 @@ function hamf_impl!(
             end
         end
     else                                      # graph has elements
-        for i in oneto(n)
+        @inbounds for i in oneto(n)
             w[i] = one(I)
 
             if isnegative(len[i])
@@ -861,7 +863,7 @@ function hamf_impl!(
 
     nreal = n - nbflag                        # number of entries to be ordered
 
-    for i in oneto(n)                         # initialize degree lists and eliminate rows with no off-diag. nz.
+    @inbounds for i in oneto(n)               # initialize degree lists and eliminate rows with no off-diag. nz.
         if isnegative(elen[i])                # skip element vertices (Ve)
             continue
         end
@@ -906,7 +908,7 @@ function hamf_impl!(
 
     nleft = totel - nel                       # if elements provided (`nbelts > 0`), they are eliminated
 
-    while nel < totel
+    @inbounds while nel < totel
         deg = mindeg - one(V); me = zero(V)
 
         while deg < nbbuck && !ispositive(me)
@@ -1053,7 +1055,7 @@ function hamf_impl!(
                                 pn = pe[j]
 
                                 if ispositive(pn)
-                                    pe[j] = iw[pn]
+                                    pe[j] = convert(E, iw[pn])
                                     iw[pn] = -j
                                 end
                             end               # L70
@@ -1067,7 +1069,7 @@ function hamf_impl!(
                                 psrc += one(E)
 
                                 if ispositive(j)
-                                    iw[pdst] = pe[j]
+                                    iw[pdst] = convert(V, pe[j])
                                     pe[j] = pdst
                                     pdst += one(E)
                                     lenj = len[j]
@@ -1128,7 +1130,7 @@ function hamf_impl!(
                 end                           # L110:
 
                 if e != me                    # set tree pointer and flag to indicate element `e` is absorbed into new element `me` (the parent of `e` is `me`)
-                    pe[e] = -me
+                    pe[e] = convert(E, -me)
                     w[e] = zero(I)
                 end
 
@@ -1205,7 +1207,7 @@ function hamf_impl!(
                     pn += one(E)
                     hash += convert(E, e)
                 elseif iszero(dext)           # aggressive absorption: `e` is not adjacent to `me`, but |Le\Lme| is 0, so absorb it into `me`
-                    pe[e] = -me
+                    pe[e] = convert(E, -me)
                     w[e] = zero(I)
                 end
             end                               # L160:
@@ -1231,7 +1233,7 @@ function hamf_impl!(
             end
 
             if iszero(deg)                    # mass elimination
-                pe[i] = -me
+                pe[i] = convert(E, -me)
                 nvi = -nv[i]
                 degme -= nvi
                 nvpiv += nvi
@@ -1342,7 +1344,7 @@ function hamf_impl!(
                             end              # L230:
                         end
 
-                        pe[j] = -i           # found it! `j` can be absorbed into `i`
+                        pe[j] = convert(E, -i) # found it! `j` can be absorbed into `i`
 
                         if wf[j] > wf[i]
                             wf[i] = wf[j]
@@ -1455,35 +1457,35 @@ function hamf_impl!(
     if ispositive(nbflag)                    # begin halo v2
         deg = mindeg - one(V); me = zero(V)
 
-        while deg < nbbuck + one(V) && !ispositive(me)
+        @inbounds while deg < nbbuck + one(V) && !ispositive(me)
             deg += one(V); me = head[deg + one(V)]
         end
 
         mindeg = deg
         nelme = -one(V) - nel
 
-        for x in oneto(n)
+        @inbounds for x in oneto(n)
             if ispositive(pe[x]) && isnegative(elen[x]) # `x` is an unabsorbed element
-                pe[x] = -me
+                pe[x] = convert(E, -me)
             elseif degree[x] == n2          # `x` is a dense row, absorb it in ME (mass elimination)
                 nel += nv[x]
-                pe[x] = -me
+                pe[x] = convert(E, -me)
                 elen[x] = zero(V)
                 nv[x] = zero(V)             # patch 12/12/98 <PA+FP> (old: `n + 1`)
             end
         end
 
-        elen[me] = nelme                    # `me` is the root node
-        nv[me] = n - nreal                  # correct value of `nv` is principal variable = `nbflag`
-        pe[me] = zero(E)
+        @inbounds elen[me] = nelme          # `me` is the root node
+        @inbounds nv[me] = n - nreal        # correct value of `nv` is principal variable = `nbflag`
+        @inbounds pe[me] = zero(E)
     end
 
-    for i in oneto(n)
+    @inbounds for i in oneto(n)
         if iszero(elen[i])
-            j = -pe[i]
+            j = convert(V, -pe[i])
 
             while !isnegative(elen[j])      # L270:
-                j = -pe[j]
+                j = convert(V, -pe[j])
             end
 
             e = j
@@ -1491,8 +1493,8 @@ function hamf_impl!(
             j = i
 
             while !isnegative(elen[j])      # L280:
-                jnext = -pe[j]
-                pe[j] = -e
+                jnext = convert(V, -pe[j])
+                pe[j] = convert(E, -e)
 
                 if iszero(elen[j])
                     elen[j] = k
@@ -1506,7 +1508,28 @@ function hamf_impl!(
         end
     end                                     # L290:
 
-    return ncmpa
+    @inbounds for j in oneto(norig)
+        head[j] = zero(V)
+    end
+
+    @inbounds for i in oneto(n)
+        j = abs(elen[i])
+        head[j] = i
+    end
+
+    k = zero(V)
+
+    @inbounds for j in oneto(norig)
+        i = head[j]
+
+        if ispositive(i)
+            k += one(V)
+            elen[k] = i
+            last[i] = k
+        end
+    end
+    
+    return ncmpa, elen, last
 end
 
 end

@@ -349,7 +349,7 @@ struct MCSM <: EliminationAlgorithm end
 """
     AMF <: EliminationAlgorithm
 
-    AMF(; speed=1)
+    AMF()
 
 The approximate minimum fill algorithm.
 
@@ -368,16 +368,11 @@ julia> graph = [
        ];
 
 julia> alg = AMF(; speed=2)
-AMF:
-    speed: 2
+AMF
 
 julia> treewidth(graph; alg)
 2
 ```
-
-### Parameters
-
-  - `speed`: fill approximation strategy (`1`, `2`, or, `3`)
 
 ### References
 
@@ -1265,6 +1260,10 @@ end
 function permutation(graph, alg::MCSM)
     index = mcsm(graph)
     return invperm(index), index
+end
+
+function permutation(weights::AbstractVector, graph, alg::AMF)
+    return amf(weights, graph)
 end
 
 function permutation(graph, alg::AMF)
@@ -2263,6 +2262,11 @@ function mf!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
     end
 
     return order
+end
+
+function AMFLib.amf(weights::AbstractVector, graph; kwargs...)
+    simple = simplegraph(graph)
+    return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
 function AMFLib.amf(graph; kwargs...)
