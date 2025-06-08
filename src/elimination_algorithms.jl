@@ -628,16 +628,26 @@ end
         imbalances = 130:130,
     )
 
-The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection). The algorithm `dis` is used to compute vertex separators, and the algorithm
-`alg` is called on the leaves of the separator tree. CliqueTrees currently has two vertex separator algorithms, both of which require loading an external package.
+The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
+The algorithm `dis` is used to compute vertex separators, and the algorithm `alg` is called on the of the separator tree.
+The type parameter `S` controls the behavior of the algorithm: if `S` is equal to `1` or `2`, then `alg` is additionally called
+on the branches of the separator tree. At each branch, the ordering computed by `alg` is compared to the ordering computed
+by the nested dissection algorithm, and the worse of the two is discarded.
 
-| type                | name                         | package                                              |
-|:--------------------|:-----------------------------|:-----------------------------------------------------|
-| [`METISND`](@ref)   | multilevel vertex separation | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)  |
-| [`KaHyParND`](@ref) | hypergraph partitioning      | [KayHyPar.jl](https://github.com/kahypar/KaHyPar.jl) |
+  - `1`: optimize for width (slow)
+  - `2`: optimize for fill (slow)
+  - `3`: no optimization (fast)
 
-The parameters `width` and `level` control the recursion depth of the algorithm. At each level of recursion, the algorithm attepts to compute a vertex separator
-of size at most `sepsize`, calling `dis` with larger and larger edge imbalances.
+CliqueTrees currently has two vertex separator algorithms, both of which require loading an external package.
+
+| type                | name                               | package                                              |
+|:--------------------|:-----------------------------------|:-----------------------------------------------------|
+| [`METISND`](@ref)   | multilevel vertex separation       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)  |
+| [`KaHyParND`](@ref) | multilevel hypergraph partitioning | [KayHyPar.jl](https://github.com/kahypar/KaHyPar.jl) |
+
+The algorithm `KaHyParND` computed a vertex separator indirectly, by partitioning a quasi-clique-cover of the original graph.
+The parameters `width` and `level` control the recursion depth of the algorithm. At each level of recursion, the algorithm
+attepts to compute a vertex separator of size at most `sepsize`, calling `dis` with larger and larger edge imbalances.
 
 ```julia-repl
 julia> using CliqueTrees, Metis
