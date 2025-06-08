@@ -63,9 +63,11 @@ import FlowCutterPACE17_jll
 @static if Sys.iswindows()
     import libpicosat_jll as PicoSAT_jll
     import libpicosat_jll as Lingeling_jll
+    const METIS_OR_KAHYPAR = MetisND
 else
     import PicoSAT_jll
     import Lingeling_jll
+    const METIS_OR_KAHYPAR = KaHyParND
 end
 
 const TYPES = (
@@ -553,9 +555,9 @@ end
             MMD(),
             # METIS(),
             ND{1}(MMD(), METISND(); width = 5),
-            ND{2}(MMD(), KaHyParND(); width = 5),
+            ND{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
             ND{1}(MCS(), METISND(); width = 5),
-            ND{2}(MCS(), KaHyParND(); width = 5),
+            ND{2}(MCS(), METIS_OR_KAHYPAR(); width = 5),
             # Spectral(),
             SafeFlowCutter(; time = 1),
             BT(),
@@ -618,9 +620,9 @@ end
             MMD(),
             METIS(),
             ND{1}(MMD(), METISND(); width = 5),
-            ND{2}(MMD(), KaHyParND(); width = 5),
+            ND{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
             ND{1}(MCS(), METISND(); width = 5),
-            ND{2}(MCS(), KaHyParND(); width = 5),
+            ND{2}(MCS(), METIS_OR_KAHYPAR(); width = 5),
             # Spectral,
             SafeFlowCutter(; time = 1),
             BT(),
@@ -734,6 +736,9 @@ end
                 @inferred CliqueTrees.pr4(graph, lowerbound(graph))
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
+                @inferred CliqueTrees.twins(graph, Val(true))
+                @inferred CliqueTrees.simplicialrule(graph)
+                @inferred CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred treefill(graph; alg = 1:17)
                 @inferred eliminationtree(graph; alg = 1:17)
@@ -768,6 +773,9 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(graph, lowerbound(graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.simplicialrule(graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) treefill(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
@@ -814,6 +822,9 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(ones(17), graph, lowerbound(ones(17), graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.simplicialrule(graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) treefill(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) eliminationtree(graph; alg = 1:17)
@@ -894,9 +905,9 @@ end
                         MMD(),
                         METIS(),
                         ND{1}(MMD(), METISND(); width = 5),
-                        FillRules(ND{2}(MMD(), KaHyParND(); width = 5)),
+                        FillRules(ND{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
                         ND{1}(MCS(), METISND(); width = 5),
-                        FillRules(ND{2}(MCS(), KaHyParND(); width = 5)),
+                        FillRules(ND{2}(MCS(), METIS_OR_KAHYPAR(); width = 5)),
                         Spectral(),
                         SafeFlowCutter(; time = 1),
                         BT(),
@@ -1173,7 +1184,7 @@ end
         MMD(; delta = 5),
         AMF(),
         FillRules(ND{2}(MMD(), METISND())),
-        FillRules(ND{2}(MMD(), KaHyParND())),
+        FillRules(ND{2}(MMD(), METIS_OR_KAHYPAR())),
         MF(),
     )
 

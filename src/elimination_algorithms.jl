@@ -2626,6 +2626,10 @@ function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) 
     return clique
 end
 
+function twins(graph, ::Val{S}) where {S}
+    return twins(BipartiteGraph(graph), Val(S))
+end
+
 function twins(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     n = nv(graph); nn = n + one(V)
     new = Scalar{V}(undef)
@@ -3853,6 +3857,10 @@ function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
     append!(_stack, view(_label, resize!(stack, hi)))
     keepat!(_label, rem_vertices!(graph, stack; keep_order = true))
     return _stack, _label, width
+end
+
+function simplicialrule(graph, args...)
+    return simplicialrule(BipartiteGraph(graph), args...)
 end
 
 function simplicialrule(graph::AbstractGraph{V}, maxdegree::V = typemax(V)) where {V}
