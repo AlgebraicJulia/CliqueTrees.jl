@@ -443,6 +443,10 @@ function nov(graph::AbstractGraph)
     return nv(graph)
 end
 
+function outvertices(graph::AbstractGraph)
+    return oneto(nov(graph))
+end
+
 function etype(::G) where {G}
     return etype(G)
 end

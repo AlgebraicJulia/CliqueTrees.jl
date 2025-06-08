@@ -110,11 +110,14 @@ end
     @test_throws ArgumentError permutation(matrix; alg = AMD())
     @test_throws ArgumentError permutation(matrix; alg = SymAMD())
     @test_throws ArgumentError permutation(matrix; alg = METIS())
+    @test_throws ArgumentError permutation(matrix; alg = ND(MMD(), METISND()))
+    @test_throws ArgumentError permutation(matrix; alg = ND(MMD(), KaHyParND()))
     @test_throws ArgumentError permutation(matrix; alg = Spectral())
     @test_throws ArgumentError permutation(matrix; alg = BT())
 end
 
 import AMD as AMDLib
+import KaHyPar
 import Laplacians
 import Metis
 import TreeWidthSolver
@@ -465,10 +468,10 @@ end
             MF(),
             MMD(),
             METIS(),
-            ND{1}(; limit = 5),
-            ND{2}(; limit = 5),
-            ND{1}(MCS(); limit = 5),
-            ND{2}(MCS(); limit = 5),
+            ND{1}(MMD(), METISND(); width = 5),
+            ND{2}(MMD(), KaHyParND(); width = 5),
+            ND{1}(MCS(), METISND(); width = 5),
+            ND{2}(MCS(), KaHyParND(); width = 5),
             Spectral(),
             FlowCutter(; time = 1),
             BT(),
@@ -477,6 +480,7 @@ end
             CompositeRotations([1, 2, 3]),
             GraphCompression(),
             SafeRules(),
+            FillRules(),
             SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
@@ -548,10 +552,10 @@ end
             MF(),
             MMD(),
             # METIS(),
-            ND{1}(; limit = 5),
-            ND{2}(; limit = 5),
-            ND{1}(MCS(); limit = 5),
-            ND{2}(MCS(); limit = 5),
+            ND{1}(MMD(), METISND(); width = 5),
+            ND{2}(MMD(), KaHyParND(); width = 5),
+            ND{1}(MCS(), METISND(); width = 5),
+            ND{2}(MCS(), KaHyParND(); width = 5),
             # Spectral(),
             SafeFlowCutter(; time = 1),
             BT(),
@@ -559,6 +563,7 @@ end
             CompositeRotations([]),
             GraphCompression(),
             SafeRules(),
+            FillRules(),
             SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
@@ -612,16 +617,17 @@ end
             MF(),
             MMD(),
             METIS(),
-            ND{1}(; limit = 5),
-            ND{2}(; limit = 5),
-            ND{1}(MCS(); limit = 5),
-            ND{2}(MCS(); limit = 5),
+            ND{1}(MMD(), METISND(); width = 5),
+            ND{2}(MMD(), KaHyParND(); width = 5),
+            ND{1}(MCS(), METISND(); width = 5),
+            ND{2}(MCS(), KaHyParND(); width = 5),
             # Spectral,
             SafeFlowCutter(; time = 1),
             BT(),
             CompositeRotations([1]),
             GraphCompression(),
             SafeRules(),
+            FillRules(),
             SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
@@ -722,10 +728,6 @@ end
                 @inferred CliqueTrees.amf(graph)
                 @inferred CliqueTrees.mf(graph)
                 @inferred CliqueTrees.mmd(graph)
-                @inferred CliqueTrees.dissect(graph, ND{1}(; limit = 5))
-                @inferred CliqueTrees.dissect(graph, ND{2}(; limit = 5))
-                @inferred CliqueTrees.dissect(graph, ND{1}(MCS(); limit = 5))
-                @inferred CliqueTrees.dissect(graph, ND{2}(MCS(); limit = 5))
                 @inferred CliqueTrees.minimalchordal(graph, 1:17)
                 @inferred CliqueTrees.pr3(graph, lowerbound(graph))
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -760,10 +762,6 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(; limit = 5))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(; limit = 5))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(MCS(); limit = 5))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(MCS(); limit = 5))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -810,10 +808,6 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mf(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(; limit = 5))
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(; limit = 5))
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{1}(MCS(); limit = 5))
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.dissect(graph, ND{2}(MCS(); limit = 5))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(graph, lowerbound(graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(ones(17), graph, lowerbound(ones(17), graph))
@@ -899,10 +893,10 @@ end
                         MF(),
                         MMD(),
                         METIS(),
-                        ND{1}(; limit = 5),
-                        ND{2}(; limit = 5),
-                        ND{1}(MCS(); limit = 5),
-                        ND{2}(MCS(); limit = 5),
+                        ND{1}(MMD(), METISND(); width = 5),
+                        FillRules(ND{2}(MMD(), KaHyParND(); width = 5)),
+                        ND{1}(MCS(), METISND(); width = 5),
+                        FillRules(ND{2}(MCS(), KaHyParND(); width = 5)),
                         Spectral(),
                         SafeFlowCutter(; time = 1),
                         BT(),
@@ -910,6 +904,7 @@ end
                         CompositeRotations([1, 3]),
                         GraphCompression(),
                         SafeRules(),
+                        FillRules(),
                         SafeSeparators(),
                         ConnectedComponents(),
                         BestWidth(MCS(), MF()),
@@ -1177,7 +1172,8 @@ end
         MMD(),
         MMD(; delta = 5),
         AMF(),
-        ND{2}(),
+        FillRules(ND{2}(MMD(), METISND())),
+        FillRules(ND{2}(MMD(), KaHyParND())),
         MF(),
     )
 

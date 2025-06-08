@@ -36,7 +36,7 @@ export BipartiteGraph, BipartiteEdgeIter, pointers, targets
 export MMW, lowerbound
 
 # Dissection Algorithms
-export METISND
+export METISND, KaHyParND
 
 # Elimination Algorithms
 export BFS,
@@ -62,6 +62,7 @@ export BFS,
     CompositeRotations,
     GraphCompression,
     SafeRules,
+    FillRules,
     SafeSeparators,
     ConnectedComponents,
     BestWidth,

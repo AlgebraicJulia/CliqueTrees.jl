@@ -32,7 +32,7 @@ function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abst
 end
 
 function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
-    total = zero(V)
+    total = zero(V); nnz = xadj[neqns + one(V)] - one(E)
 
     @inbounds for node in oneto(neqns)
         total += vwght[node]
@@ -48,8 +48,58 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
     deghead = Vector{V}(undef, total)
     degnext = Vector{V}(undef, neqns)
     degprev = Vector{V}(undef, neqns)
+    newadjncy = Vector{V}(undef, nnz)
 
     mmd_impl!(
+        invp,
+        marker,
+        mergeparent,
+        needsupdate,
+        supersize,
+        superwght,
+        elimnext,
+        deghead,
+        degnext,
+        degprev,
+        newadjncy,
+        total,
+        neqns,
+        convert(V, delta),
+        vwght,
+        xadj,
+        adjncy,
+    )
+
+    return invp
+end
+
+function mmd_impl!(
+        invp::AbstractVector{V},
+        marker::AbstractVector{I},
+        mergeparent::AbstractVector{V},
+        needsupdate::AbstractVector{V},
+        supersize::AbstractVector{V},
+        superwght::AbstractVector{V},
+        elimnext::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        newadjncy::AbstractVector{V},
+        total::V,
+        neqns::V,
+        delta::V,
+        vwght::AbstractVector{V},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+    ) where {I, V, E}
+
+    nnz = xadj[neqns + one(V)] - one(E)
+
+    @inbounds for i in oneto(nnz)
+        newadjncy[i] = adjncy[i]
+    end
+
+    return mmd!_impl!(
         invp,
         marker,
         mergeparent,
@@ -65,10 +115,8 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
         convert(V, delta),
         vwght,
         xadj,
-        Vector{V}(adjncy),
+        newadjncy,
     )
-
-    return invp
 end
 
 """
@@ -108,7 +156,7 @@ working arrays:
   - `mergeparent`: the parent map for the merged forest
   - `needsupdate`: positive iff node needs a degree update (0 otherwise)
 """
-function mmd_impl!(
+function mmd!_impl!(
         invp::AbstractVector{V},
         marker::AbstractVector{I},
         mergeparent::AbstractVector{V},

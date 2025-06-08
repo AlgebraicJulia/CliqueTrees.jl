@@ -64,22 +64,55 @@ function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V,
 end
 
 function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
-    @argcheck n <= length(vwght)
-    @argcheck n < length(xadj)
-    @argcheck xadj[n + one(V)] - one(E) <= length(adjncy)
-
     nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
     norig = zero(V)
-    nbelts = zero(V)
-
-    pfree = mm
     iwlen = m + convert(E, 4n + 10000)
+
+    @inbounds for i in oneto(n)
+        norig += trunc(V, vwght[i])
+    end
+
+    nbbuck = twice(norig)
 
     len = Vector{V}(undef, n)
     pe = Vector{E}(undef, nn)
     iw = Vector{V}(undef, iwlen)
     nv = Vector{V}(undef, n)
+    elen = Vector{V}(undef, n)
+    last = Vector{V}(undef, n)
+    degree = Vector{V}(undef, n)
+    wf = Vector{E}(undef, n)
+    next = Vector{V}(undef, n)
+    w = Vector{Int}(undef, n)
+    head = Vector{V}(undef, nbbuck + two(V))
+    return amf_impl!(norig, n, nbbuck, iwlen, pe, len, iw, nv, elen, last, degree, wf, next, w, head, vwght, xadj, adjncy)
+end
+
+function amf_impl!(
+        norig::V,
+        n::V,
+        nbbuck::V,
+        iwlen::E,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        iw::AbstractVector{V},
+        nv::AbstractVector{V},
+        elen::AbstractVector{V},
+        last::AbstractVector{V},
+        degree::AbstractVector{V},
+        wf::AbstractVector{E},
+        next::AbstractVector{V},
+        w::AbstractVector,
+        head::AbstractVector{V},
+        vwght::AbstractVector,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+    ) where {V, E}
+    nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
+
+    nbelts = zero(V)
+    pfree = mm
 
     @inbounds for p in oneto(m)
         iw[p] = adjncy[p]
@@ -88,22 +121,37 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
     p = pe[begin] = xadj[begin]
 
     @inbounds for i in oneto(n)
-        ii = i + one(E); pp = xadj[ii]
-        norig += nv[i] = trunc(V, vwght[i])
+        ii = i + one(E)
+        pp = xadj[ii]
+
+        nv[i] = trunc(V, vwght[i])
         len[i] = convert(V, pp - p)
         pe[ii] = p = pp
     end
 
-    nbbuck = twice(norig)
-    elen = Vector{V}(undef, n)
-    last = Vector{V}(undef, n)
-    degree = Vector{V}(undef, n)
-    wf = Vector{E}(undef, n)
-    next = Vector{V}(undef, n)
-    w = Vector{Int}(undef, n)
-    head = Vector{V}(undef, nbbuck + two(V))
-    ncmpa, perm, invp = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe, pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
-    return perm, invp
+    ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe, pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
+
+    @inbounds for j in oneto(norig)
+        head[j] = zero(V)
+    end
+
+    @inbounds for i in oneto(n)
+        j = abs(elen[i])
+        head[j] = i
+    end
+
+    k = zero(V)
+
+    @inbounds for j in oneto(norig)
+        i = head[j]
+
+        if ispositive(i)
+            last[i] = k += one(V)
+            elen[k] = i
+        end
+    end
+
+    return elen, last
 end
 
 #  -- translated by f2c (version 19970219).
@@ -1508,28 +1556,7 @@ function hamf_impl!(
         end
     end                                     # L290:
 
-    @inbounds for j in oneto(norig)
-        head[j] = zero(V)
-    end
-
-    @inbounds for i in oneto(n)
-        j = abs(elen[i])
-        head[j] = i
-    end
-
-    k = zero(V)
-
-    @inbounds for j in oneto(norig)
-        i = head[j]
-
-        if ispositive(i)
-            k += one(V)
-            elen[k] = i
-            last[i] = k
-        end
-    end
-    
-    return ncmpa, elen, last
+    return ncmpa
 end
 
 end

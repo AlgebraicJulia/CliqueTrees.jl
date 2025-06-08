@@ -4,7 +4,7 @@ using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, AbstractScalar, Scalar, dissect, simplegraph, partition!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!
+using CliqueTrees: EliminationAlgorithm, AbstractScalar, Scalar, simplegraph, partition!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!
 using CliqueTrees.MMDLib: mmd_impl!
 using CliqueTrees.Utilities
 using Graphs
@@ -42,6 +42,16 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V
     simple = simplegraph(INT, INT, graph)
     order::Vector{V}, index::Vector{V} = metis(weights, simple, alg)
     return order, index
+end
+
+function CliqueTrees.permutation(graph, alg::ND{<:Any, <:EliminationAlgorithm, METISND})
+    order = dissect(graph, alg)
+    return order, invperm(order)
+end
+
+function CliqueTrees.permutation(weights::AbstractVector, graph, alg::ND{<:Any, <:EliminationAlgorithm, METISND})
+    order = dissect(weights, graph, alg)
+    return order, invperm(order)
 end
 
 function metis(weights::AbstractVector, graph::BipartiteGraph{INT, INT}, alg::METIS)
@@ -112,14 +122,15 @@ function metis(graph::BipartiteGraph{INT, INT}, alg::METIS)
     return order, index
 end
 
-function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, part::AbstractVector{INT}, weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::METISND)
+function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, part::AbstractVector{INT}, weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, imbalance::INT, alg::METISND)
     @argcheck NOPTIONS <= length(options)
     @argcheck nv(graph) <= length(part)
     @argcheck nv(graph) <= length(weights)
+    @argcheck ispositive(imbalance)
     n = nv(graph); m = ne(graph); nn = n + one(INT)
 
     # construct options
-    setoptions!(options, alg)
+    setoptions!(options, imbalance, alg)
 
     # construct METIS graph
     xadj = pointers(graph)
@@ -156,12 +167,20 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
     return
 end
 
-function CliqueTrees.dissect(graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
+function dissect(graph, alg::ND)
+    return dissect(BipartiteGraph(graph), alg)
+end
+
+function dissect(graph::AbstractGraph, alg::ND)
     weights = ones(INT, nv(graph))
     return dissect(weights, graph, alg)
 end
 
-function CliqueTrees.dissect(weights::AbstractVector, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
+function dissect(weights::AbstractVector, graph, alg::ND)
+    return dissect(weights, BipartiteGraph(graph), alg)
+end
+
+function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
     n = nv(graph); new = Vector{INT}(undef, n)
 
     @inbounds for v in oneto(n)
@@ -171,7 +190,7 @@ function CliqueTrees.dissect(weights::AbstractVector, graph::AbstractGraph{V}, a
     return dissect(new, graph, alg)
 end
 
-function CliqueTrees.dissect(weights::Vector{INT}, graph::AbstractGraph{V}, alg::ND{<:Any, <:EliminationAlgorithm, METISND}) where {V}
+function dissect(weights::Vector{INT}, graph::AbstractGraph{V}, alg::ND) where {V <: Integer}
     simple = simplegraph(INT, INT, graph)
     order::Vector{V} = dissectsimple(weights, simple, alg)
     return order
@@ -180,7 +199,9 @@ end
 function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::ND{S}) where {S}
     n = nv(graph); m = ne(graph); nn = n + one(INT); width = zero(INT)
     maxlevel = convert(INT, alg.level)
-    minwidth = convert(INT, alg.limit)
+    minwidth = convert(INT, alg.width)
+    maxsepsize = convert(INT, alg.sepsize)
+    imbalances = convert(StepRange{INT, INT}, alg.imbalances)
 
     @inbounds for v in oneto(n)
         width += weights[v]
@@ -226,7 +247,12 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             if isleaf # leaf
                 push!(nodes, (graph, weights, label, clique, width, -one(INT)))
             else      # branch
-                separator!(vwork3, swork, vwork4, weights, graph, alg.dis)
+                sepsize = swork
+
+                for imbalance in imbalances
+                    separator!(vwork3, sepsize, vwork4, weights, graph, imbalance, alg.dis)
+                    sepsize[] <= maxsepsize && break
+                end
 
                 child0, child1, order2 = partition!(
                     vwork4,
@@ -319,10 +345,11 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     return only(orders)
 end
 
+#=
 function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::ND{S, MMD}) where {S}
     n = nv(graph); m = ne(graph); nn = n + one(INT); width = zero(INT)
     maxlevel = convert(INT, alg.level)
-    minwidth = convert(INT, alg.limit)
+    minwidth = convert(INT, alg.width)
     delta = convert(INT, alg.alg.delta)
 
     @inbounds for v in oneto(n)
@@ -396,7 +423,6 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
             if isleaf # leaf
                 index = vwork9
-                copyto!(vwork1, one(INT), targets(graph), one(INT), m)
 
                 mmd_impl!(
                     index,
@@ -409,12 +435,13 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                     vwork6,
                     vwork7,
                     vwork8,
+                    vwork1,
                     width,
                     n,
                     delta,
                     weights,
                     pointers(graph),
-                    vwork1,
+                    targets(graph),
                 )
 
                 order = Vector{INT}(undef, n)
@@ -441,7 +468,6 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
                 if isone(S) || istwo(S)
                     mmdindex = vwork9
-                    copyto!(vwork1, one(INT), targets(graph), one(INT), m)
 
                     mmd_impl!(
                         mmdindex,
@@ -454,12 +480,13 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                         vwork6,
                         vwork7,
                         vwork8,
+                        vwork1,
                         width,
                         n,
                         delta,
                         weights,
                         pointers(graph),
-                        vwork1,
+                        targets(graph),
                     )
 
                     mmdorder = Vector{INT}(undef, n)
@@ -522,8 +549,9 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
     return only(orders)
 end
+=#
 
-function setoptions!(options::AbstractVector{INT}, alg::METISND)
+function setoptions!(options::AbstractVector{INT}, imbalance::INT, alg::METISND)
     for i in oneto(NOPTIONS)
         options[i] = -one(INT) # null
     end
@@ -531,7 +559,7 @@ function setoptions!(options::AbstractVector{INT}, alg::METISND)
     options[OPTION_NSEPS] = convert(INT, alg.nseps)
     options[OPTION_NUMBERING] = one(INT)
     options[OPTION_SEED] = convert(INT, alg.seed)
-    options[OPTION_UFACTOR] = convert(INT, alg.ufactor)
+    options[OPTION_UFACTOR] = convert(INT, imbalance)
     return
 end
 

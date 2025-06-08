@@ -621,9 +621,23 @@ end
 """
     ND{S, A, D} <: EliminationAlgorithm
 
-    ND{S}(alg::EliminationAlgorithm, dis::DissectionAlgorithm; limit=200, level=6)
+    ND{S}(alg::EliminationAlgorithm, dis::DissectionAlgorithm;
+        width = 200,
+        level = 6,
+        sepsize = 1,
+        imbalances = 130:130,
+    )
 
-The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
+The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection). The algorithm `dis` is used to compute vertex separators, and the algorithm
+`alg` is called on the leaves of the separator tree. CliqueTrees currently has two vertex separator algorithms, both of which require loading an external package.
+
+| type                | name                         | package                                              |
+|:--------------------|:-----------------------------|:-----------------------------------------------------|
+| [`METISND`](@ref)   | multilevel vertex separation | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)  |
+| [`KaHyParND`](@ref) | hypergraph partitioning      | [KayHyPar.jl](https://github.com/kahypar/KaHyPar.jl) |
+
+The parameters `width` and `level` control the recursion depth of the algorithm. At each level of recursion, the algorithm attepts to compute a vertex separator
+of size at most `sepsize`, calling `dis` with larger and larger edge imbalances.
 
 ```julia-repl
 julia> using CliqueTrees, Metis
@@ -639,14 +653,16 @@ julia> graph = [
            0 0 1 0 0 0 1 0
        ];
 
-julia> alg = ND{1}(MF(), METISND(); limit=0, level=2)
+julia> alg = ND{1}(MF(), METISND())
 ND{1, MF, METISND}:
     MF
     METISND:
+        nseps: -1
         seed: -1
-        ufactor: -1
-    limit: 0
-    level: 2
+    width: 200
+    level: 6
+    sepsize: 1
+    imbalances: 130:1:130
 
 julia> treewidth(graph; alg)
 2
@@ -655,23 +671,33 @@ julia> treewidth(graph; alg)
 ### Parameters
 
   - `alg`: elimination algorithm
-  - `dis`: dissection algorithm
-  - `limit`: smallest subgraph
-  - `level`: search depth
+  - `dis`: separation algorithm
+  - `width`: minimum width
+  - `level`: maximum level
+  - `sepsize`: maximum separator size
+  - `imbalances`: edge imbalance
 """
 struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
     alg::A
     dis::D
-    limit::Int
+    width::Int
     level::Int
+    sepsize::Int
+    imbalances::StepRange{Int, Int}
 end
 
 function ND{S}(
         alg::A = DEFAULT_ELIMINATION_ALGORITHM, dis::D = DEFAULT_DISSECTION_ALGORITHM;
-        limit::Int = 200,
-        level::Int = 6,
+        width::Integer = 200,
+        level::Integer = 6,
+        sepsize::Integer = 1,
+        imbalances::AbstractRange = 130:130,
     ) where {S, A, D}
-    return ND{S, A, D}(alg, dis, limit, level)
+    @argcheck ispositive(width)
+    @argcheck ispositive(level)
+    @argcheck ispositive(sepsize)
+    @argcheck ispositive(first(imbalances))
+    return ND{S, A, D}(alg, dis, width, level, sepsize, imbalances)
 end
 
 function ND(args...; kwargs...)
@@ -1069,6 +1095,15 @@ end
 const RuleReduction{A} = SafeRules{A, MMW{3}, MF}
 RuleReduction(alg) = SafeRules(alg, MMW(), MF())
 
+struct FillRules{A <: EliminationAlgorithm} <: EliminationAlgorithm
+    alg::A
+    maxdeg::Int
+end
+
+function FillRules(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM; maxdeg::Integer = typemax(Int))
+    return FillRules(alg, maxdeg)
+end
+
 """
     SafeSeparators{M, A} <: EliminationAlgorithm
 
@@ -1290,16 +1325,6 @@ function permutation(weights::AbstractVector, graph, alg::MMD)
     return invperm(index), index
 end
 
-function permutation(graph, alg::ND)
-    order = dissect(graph, alg)
-    return order, invperm(order)
-end
-
-function permutation(weights::AbstractVector, graph, alg::ND)
-    order = dissect(weights, graph, alg)
-    return order, invperm(order)
-end
-
 function permutation(graph, alg::SAT{H}) where {H}
     order, width = sat(graph, treewidth(graph, alg.alg), Val(H))
     return order, invperm(order)
@@ -1366,6 +1391,28 @@ function permutation(weights::AbstractVector, graph, alg::SafeRules)
     end
 
     return stack, invperm(stack)
+end
+
+function permutation(graph, alg::FillRules)
+    weights, graph, inject, project = fillrules(graph, alg.maxdeg)
+    order, index = permutation(weights, graph, alg.alg)
+
+    for v in order
+        append!(inject, neighbors(project, v))
+    end
+
+    return inject, invperm(inject)
+end
+
+function permutation(weights::AbstractVector, graph, alg::FillRules)
+    weights, graph, inject, project = fillrules(weights, graph, alg.maxdeg)
+    order, index = permutation(weights, graph, alg.alg)
+
+    for v in order
+        append!(inject, neighbors(project, v))
+    end
+
+    return inject, invperm(inject)
 end
 
 function permutation(graph, alg::SafeSeparators)
@@ -3808,6 +3855,123 @@ function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
     return _stack, _label, width
 end
 
+function simplicialrule(graph::AbstractGraph{V}, maxdegree::V = typemax(V)) where {V}
+    E = etype(graph)
+    n = nv(graph); m = de(graph); nn = n + one(V)
+    ptr = Vector{E}(undef, nn)
+    tgt = Vector{V}(undef, m)
+    marker = Vector{E}(undef, n)
+    inject0 = Vector{V}(undef, n)
+    inject1 = Vector{V}(undef, n)
+    project = Vector{V}(undef, n)
+    return simplicialrule_impl!(ptr, tgt, marker, project, inject0, inject1, graph, maxdegree)
+end
+
+function simplicialrule_impl!(
+        ptr::AbstractVector{E},
+        tgt::AbstractVector{V},
+        marker::AbstractVector{I},
+        project::AbstractVector{V},
+        inject0::AbstractVector{V},
+        inject1::AbstractVector{V},
+        graph::AbstractGraph{V},
+        maxdeg::V,
+    ) where {I, V, E}
+    @argcheck nv(graph) < length(ptr)
+    @argcheck ne(graph) <= length(tgt)
+    @argcheck nv(graph) <= length(marker)
+    @argcheck nv(graph) <= length(project)
+    @argcheck nv(graph) <= length(inject0)
+    @argcheck nv(graph) <= length(inject1)
+
+    n = nv(graph); num = tag = zero(V)
+    degree = inject0; fillin = inject1; stack = project
+
+    @inbounds for v in vertices(graph)
+        marker[v] = tag
+    end
+
+    @inbounds for v in vertices(graph)
+        deg = eltypedegree(graph, v)
+        degree[v] = deg + one(V)
+
+        if deg <= maxdeg
+            cnt = zero(E)
+            marker[v] = tag + convert(I, deg)
+
+            for w in neighbors(graph, v)
+                marker[w] = tag += one(I)
+
+                for x in neighbors(graph, w)
+                    marker[x] = tag
+                end
+
+                for ww in neighbors(graph, v)
+                    if w < ww && marker[ww] < tag
+                        cnt += one(E)
+                    end
+                end
+            end
+
+            fillin[v] = cnt
+
+            if iszero(cnt)
+                num += one(V); stack[num] = v
+            end
+        end
+    end
+
+    @inbounds while ispositive(num)
+        v = stack[num]; num -= one(V)
+        vdeg = degree[v]; degree[v] = zero(V)
+
+        for w in neighbors(graph, v)
+            wdeg = degree[w]
+
+            if ispositive(wdeg)
+                wcnt = fillin[w] -= convert(E, wdeg - vdeg)
+
+                if iszero(wcnt)
+                    num += one(V); stack[num] = w
+                end
+            end
+        end
+    end
+
+    n0 = n1 = zero(V)
+
+    @inbounds for v in oneto(n)
+        deg = degree[v]
+
+        if iszero(deg)
+            n0 += one(V); inject0[n0] = v; project[v] = zero(V)
+        else
+            n1 += one(V); inject1[n1] = v; project[v] = n1
+        end
+    end
+
+    ptr[begin] = p = one(E)
+
+    @inbounds for v in vertices(graph)
+        j = project[v]; jj = j + one(V)
+
+        if ispositive(j)
+            for u in neighbors(graph, v)
+                i = project[u]
+
+                if ispositive(i)
+                    tgt[p] = i; p += one(E)
+                end
+            end
+
+            ptr[jj] = p
+        end
+    end
+
+    m1 = p - one(E)
+    return BipartiteGraph(n1, n1, m1, ptr, tgt), view(inject0, oneto(n0)), view(inject1, oneto(n1))
+end
+
 function compress(graph, ::Val{S}) where {S}
     return compress(BipartiteGraph(graph), Val(S))
 end
@@ -3827,39 +3991,132 @@ end
 # Reduction 3 (Twin Reduction)
 function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, ::Val{S}) where {W, V, S}
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
-    cweights = Vector{W}(undef, n)
-    cptr = Vector{E}(undef, nn)
-    ctgt = Vector{V}(undef, m)
-    marker = zeros(V, n)
-    cptr[begin] = p = one(E)
+    new = Scalar{V}(undef)
+    var = Vector{V}(undef, nn)
+    svar = Vector{V}(undef, n)
+    flag = Vector{V}(undef, n)
+    size = Vector{V}(undef, n)
+    head = Vector{V}(undef, n)
+    prev = Vector{V}(undef, n)
+    next = Vector{V}(undef, n)
+    outweights = Vector{W}(undef, n)
+    outptr = Vector{E}(undef, nn)
+    outtgt = Vector{V}(undef, m)
+    return compress_impl!(new, var, svar, flag, size, head, prev, next, outweights, outptr, outtgt, weights, graph, Val(S))
+end
 
-    project, partition = twins(graph, Val(S))
-    cn = nv(partition); cnn = cn + one(V)
+function compress2(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    new = Scalar{V}(undef)
+    var = Vector{V}(undef, nn)
+    svar = Vector{V}(undef, n)
+    flag = Vector{V}(undef, n)
+    size = Vector{V}(undef, n)
+    head = Vector{V}(undef, n)
+    prev = Vector{V}(undef, n)
+    next = Vector{V}(undef, n)
+    outptr = Vector{E}(undef, nn)
+    outtgt = Vector{V}(undef, m)
+    return compress_impl!(new, var, svar, flag, size, head, prev, next, outptr, outtgt, graph, Val(S))
+end
 
-    for i in vertices(partition)
-        vv = zero(V); weight = zero(W)
+function compress_impl!(
+        new::AbstractScalar{V},
+        var::AbstractVector{V},
+        svar::AbstractVector{V},
+        flag::AbstractVector{V},
+        size::AbstractVector{V},
+        head::AbstractVector{V},
+        prev::AbstractVector{V},
+        next::AbstractVector{V},
+        outweights::AbstractVector{W},
+        outptr::AbstractVector{E},
+        outtgt::AbstractVector{V},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        ::Val{S},
+    ) where {W, V, E, S}
+    @argcheck nv(graph) <= length(outweights)
+    @argcheck nv(graph) < length(outptr)
+    @argcheck ne(graph) <= length(outtgt)
+    @argcheck nv(graph) <= length(weights)
+
+    partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
+    project = svar; marker = size; tag = zero(V)
+
+    @inbounds for v in vertices(graph)
+        marker[v] = zero(V)
+    end
+
+    outptr[begin] = p = one(E)
+
+    @inbounds for i in vertices(partition)
+        ii = i + one(V); vv = zero(V); weight = zero(W)
 
         for v in neighbors(partition, i)
             vv = v; weight += weights[v]
         end
 
-        cweights[i] = weight
-
         for w in neighbors(graph, vv)
             j = project[w]
 
             if i != j && marker[j] < i
-                marker[j] = i
-                ctgt[p] = j; p += one(E)
+                marker[j] = i; outtgt[p] = j; p += one(E)
             end
         end
 
-        ii = i + one(V); cptr[ii] = p
+        outweights[i] = weight; outptr[ii] = p
     end
 
-    cm = p - one(E)
-    cgraph = BipartiteGraph(cn, cn, cm, cptr, ctgt)
-    return view(cweights, oneto(cn)), cgraph, partition
+    outn = nv(partition); outm = p - one(E)
+    outgraph = BipartiteGraph(outn, outn, outm, outptr, outtgt)
+    return view(outweights, oneto(outn)), outgraph, partition
+end
+
+function compress_impl!(
+        new::AbstractScalar{V},
+        var::AbstractVector{V},
+        svar::AbstractVector{V},
+        flag::AbstractVector{V},
+        size::AbstractVector{V},
+        head::AbstractVector{V},
+        prev::AbstractVector{V},
+        next::AbstractVector{V},
+        outptr::AbstractVector{E},
+        outtgt::AbstractVector{V},
+        graph::AbstractGraph{V},
+        ::Val{S},
+    ) where {V, E, S}
+    @argcheck nv(graph) < length(outptr)
+    @argcheck ne(graph) <= length(outtgt)
+
+    partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
+    project = svar; marker = size; tag = zero(V)
+
+    @inbounds for v in vertices(graph)
+        marker[v] = zero(V)
+    end
+
+    outptr[begin] = p = one(E)
+
+    @inbounds for i in vertices(partition)
+        ii = i + one(V)
+        v = first(neighbors(partition, i))
+
+        for w in neighbors(graph, v)
+            j = project[w]
+
+            if i != j && marker[j] < i
+                marker[j] = i; outtgt[p] = j; p += one(E)
+            end
+        end
+
+        outptr[ii] = p
+    end
+
+    outn = nv(partition); outm = p - one(E)
+    outgraph = BipartiteGraph(outn, outn, outm, outptr, outtgt)
+    return outgraph, partition
 end
 
 function graphcompression(graph, ::Val{S}, alg::EliminationAlgorithm) where {S}
@@ -3977,6 +4234,118 @@ function saferules(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W
     return weights, graph, stack, index, width
 end
 
+function fillrules(graph, maxdeg::Integer)
+    return fillrules(BipartiteGraph(graph), maxdeg)
+end
+
+function fillrules(graph::AbstractGraph{V}, maxdeg::Integer) where {V}
+    weights = ones(V, nv(graph))
+    return fillrules(weights, graph, maxdeg)
+end
+
+function fillrules(weights::AbstractVector, graph, maxdeg::Integer)
+    return fillrules(weights, BipartiteGraph(graph), maxdeg)
+end
+
+function fillrules(weights::AbstractVector, graph::AbstractGraph{V}, maxdeg::Integer) where {V <: Integer}
+    return fillrules(weights, graph, convert(V, min(typemax(V), maxdeg)))
+end
+
+function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::V) where {W, V <: Integer}
+    weights00 = weights; graph00 = graph; n00 = nv(graph00)
+    inject03 = Vector{V}(undef, n00); n03 = zero(V)
+    # V01
+    #  ↓ inject01
+    # V00
+    #  ↑ inject02
+    # V02
+    #  ↓ project10
+    # V10
+    graph02, inject01, inject02 = simplicialrule(graph00, maxdeg)
+    graph10, project10 = compress2(graph02, Val(true))
+
+    for v00 in inject01
+        n03 += one(V); inject03[n03] = v00
+    end
+
+    n02 = nv(graph02); n10 = nv(graph10)
+    #   inject02 V02
+    #        ↙    ↓ project10
+    #   V00  →   V10
+    #     project11
+    project11 = BipartiteGraph{V, V}(n00, n10, n00 - n03)
+    pointers(project11)[begin] = p = one(V)
+
+    for v10 in vertices(graph10)
+        vv10 = v10 + one(V)
+
+        for v02 in neighbors(project10, v10)
+            v00 = inject02[v02]
+            targets(project11)[p] = v00; p += one(V)
+        end
+
+        pointers(project11)[vv10] = p
+    end
+
+    lo = n10; hi = n00
+
+    while lo < hi
+        hi = lo
+        # V11
+        #  ↓ inject11
+        # V10
+        #  ↑ inject12
+        # V12
+        #  ↓ project20
+        # V20
+        graph12, inject11, inject12 = simplicialrule(graph10, maxdeg)
+        graph20, project20 = compress2(graph12, Val(true))
+
+        for v10 in inject11, v00 in neighbors(project11, v10)
+            n03 += one(V); inject03[n03] = v00
+        end
+
+        n12 = nv(graph12); n20 = nv(graph20)
+        #            inject12
+        #          V10  ←   V12
+        # project11 ↑        ↓ project20
+        #          V00  →   V20
+        #           project21
+        project21 = BipartiteGraph{V, V}(n00, n20, n00 - n03)
+        pointers(project21)[begin] = p = one(V)
+
+        for v20 in vertices(graph20)
+            vv20 = v20 + one(V)
+
+            for v12 in neighbors(project20, v20)
+                v10 = inject12[v12]
+
+                for v00 in neighbors(project11, v10)
+                    targets(project21)[p] = v00; p += one(V)
+                end
+            end
+
+            pointers(project21)[vv20] = p
+        end
+
+        lo = n10 = n20; graph10 = graph20; project11 = project21
+    end
+
+    weights10 = Vector{W}(undef, n10)
+
+    for v10 in vertices(graph10)
+        w10 = zero(W)
+
+        for v00 in neighbors(project11, v10)
+            w10 += weights00[v00]
+        end
+
+        weights10[v10] = w10
+    end
+
+    resize!(inject03, n03)
+    return weights10, graph10, inject03, project11
+end
 
 function connectedcomponents(graph)
     return connectedcomponents(BipartiteGraph(graph))
@@ -4232,8 +4601,10 @@ function Base.show(io::IO, ::MIME"text/plain", alg::ND{S, A, D}) where {S, A, D}
     println(io, " "^indent * "ND{$S, $A, $D}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.dis)
-    println(io, " "^indent * "    limit: $(alg.limit)")
+    println(io, " "^indent * "    width: $(alg.width)")
     println(io, " "^indent * "    level: $(alg.level)")
+    println(io, " "^indent * "    sepsize: $(alg.sepsize)")
+    println(io, " "^indent * "    imbalances: $(alg.imbalances)")
     return
 end
 
