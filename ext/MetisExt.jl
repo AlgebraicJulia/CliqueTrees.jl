@@ -200,8 +200,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     n = nv(graph); m = ne(graph); nn = n + one(INT); width = zero(INT)
     maxlevel = convert(INT, alg.level)
     minwidth = convert(INT, alg.width)
-    maxsepsize = convert(INT, alg.sepsize)
-    imbalances = convert(StepRange{INT, INT}, alg.imbalances)
+    imbalance = convert(INT, alg.imbalance)
 
     @inbounds for v in oneto(n)
         width += weights[v]
@@ -247,12 +246,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             if isleaf # leaf
                 push!(nodes, (graph, weights, label, clique, width, -one(INT)))
             else      # branch
-                sepsize = swork
-
-                for imbalance in imbalances
-                    separator!(vwork3, sepsize, vwork4, weights, graph, imbalance, alg.dis)
-                    sepsize[] <= maxsepsize && break
-                end
+                separator!(vwork3, swork, vwork4, weights, graph, imbalance, alg.dis)
 
                 child0, child1, order2 = partition!(
                     vwork4,

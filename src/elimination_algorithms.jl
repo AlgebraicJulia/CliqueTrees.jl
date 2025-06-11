@@ -622,10 +622,9 @@ end
     ND{S, A, D} <: EliminationAlgorithm
 
     ND{S}(alg::EliminationAlgorithm, dis::DissectionAlgorithm;
-        width = 200,
+        width = 120,
         level = 6,
-        sepsize = 1,
-        imbalances = 130:130,
+        imbalance = 130,
     )
 
 The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
@@ -645,9 +644,9 @@ CliqueTrees currently has two vertex separator algorithms, both of which require
 | [`METISND`](@ref)   | multilevel vertex separation       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)  |
 | [`KaHyParND`](@ref) | multilevel hypergraph partitioning | [KayHyPar.jl](https://github.com/kahypar/KaHyPar.jl) |
 
-The algorithm `KaHyParND` computed a vertex separator indirectly, by partitioning a quasi-clique-cover of the original graph.
-The parameters `width` and `level` control the recursion depth of the algorithm. At each level of recursion, the algorithm
-attepts to compute a vertex separator of size at most `sepsize`, calling `dis` with larger and larger edge imbalances.
+The algorithm `KaHyParND` computes a vertex separator indirectly, by partitioning a quasi-clique-cover of the original graph.
+The parameters `width` and `level` control the recursion depth of the algorithm, and the parameter `imbalance` controls the
+maximum imbalance of the vertex separator.
 
 ```julia-repl
 julia> using CliqueTrees, Metis
@@ -669,10 +668,9 @@ ND{1, MF, METISND}:
     METISND:
         nseps: -1
         seed: -1
-    width: 200
+    width: 120
     level: 6
-    sepsize: 1
-    imbalances: 130:1:130
+    imbalance: 130
 
 julia> treewidth(graph; alg)
 2
@@ -684,30 +682,26 @@ julia> treewidth(graph; alg)
   - `dis`: separation algorithm
   - `width`: minimum width
   - `level`: maximum level
-  - `sepsize`: maximum separator size
-  - `imbalances`: edge imbalance
+  - `imbalance`: separator imbalance
 """
 struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
     alg::A
     dis::D
     width::Int
     level::Int
-    sepsize::Int
-    imbalances::StepRange{Int, Int}
+    imbalance::Int
 end
 
 function ND{S}(
         alg::A = DEFAULT_ELIMINATION_ALGORITHM, dis::D = DEFAULT_DISSECTION_ALGORITHM;
-        width::Integer = 200,
+        width::Integer = 120,
         level::Integer = 6,
-        sepsize::Integer = 1,
-        imbalances::AbstractRange = 130:130,
+        imbalance::Integer = 130,
     ) where {S, A, D}
     @argcheck ispositive(width)
     @argcheck ispositive(level)
-    @argcheck ispositive(sepsize)
-    @argcheck ispositive(first(imbalances))
-    return ND{S, A, D}(alg, dis, width, level, sepsize, imbalances)
+    @argcheck ispositive(imbalance)
+    return ND{S, A, D}(alg, dis, width, level, imbalance)
 end
 
 function ND(args...; kwargs...)
@@ -1107,11 +1101,10 @@ RuleReduction(alg) = SafeRules(alg, MMW(), MF())
 
 struct FillRules{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
-    maxdeg::Int
 end
 
-function FillRules(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM; maxdeg::Integer = typemax(Int))
-    return FillRules(alg, maxdeg)
+function FillRules()
+    return FillRules(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -1404,7 +1397,7 @@ function permutation(weights::AbstractVector, graph, alg::SafeRules)
 end
 
 function permutation(graph, alg::FillRules)
-    weights, graph, inject, project = fillrules(graph, alg.maxdeg)
+    weights, graph, inject, project = fillrules(graph)
     order, index = permutation(weights, graph, alg.alg)
 
     for v in order
@@ -1415,7 +1408,7 @@ function permutation(graph, alg::FillRules)
 end
 
 function permutation(weights::AbstractVector, graph, alg::FillRules)
-    weights, graph, inject, project = fillrules(weights, graph, alg.maxdeg)
+    weights, graph, inject, project = fillrules(weights, graph)
     order, index = permutation(weights, graph, alg.alg)
 
     for v in order
@@ -3869,11 +3862,11 @@ function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V
     return _stack, _label, width
 end
 
-function simplicialrule(graph, args...)
-    return simplicialrule(BipartiteGraph(graph), args...)
+function simplicialrule(graph)
+    return simplicialrule(BipartiteGraph(graph))
 end
 
-function simplicialrule(graph::AbstractGraph{V}, maxdegree::V = typemax(V)) where {V}
+function simplicialrule(graph::AbstractGraph{V}) where {V}
     E = etype(graph)
     n = nv(graph); m = de(graph); nn = n + one(V)
     ptr = Vector{E}(undef, nn)
@@ -3882,7 +3875,7 @@ function simplicialrule(graph::AbstractGraph{V}, maxdegree::V = typemax(V)) wher
     inject0 = Vector{V}(undef, n)
     inject1 = Vector{V}(undef, n)
     project = Vector{V}(undef, n)
-    return simplicialrule_impl!(ptr, tgt, marker, project, inject0, inject1, graph, maxdegree)
+    return simplicialrule_impl!(ptr, tgt, marker, project, inject0, inject1, graph)
 end
 
 function simplicialrule_impl!(
@@ -3893,7 +3886,6 @@ function simplicialrule_impl!(
         inject0::AbstractVector{V},
         inject1::AbstractVector{V},
         graph::AbstractGraph{V},
-        maxdeg::V,
     ) where {I, V, E}
     @argcheck nv(graph) < length(ptr)
     @argcheck ne(graph) <= length(tgt)
@@ -3911,31 +3903,34 @@ function simplicialrule_impl!(
 
     @inbounds for v in vertices(graph)
         deg = eltypedegree(graph, v)
+        cnt = zero(E)
+        marker[v] = tag + convert(I, deg)
+
+        for w in neighbors(graph, v)
+            marker[w] = tag += one(I)
+
+            for x in neighbors(graph, w)
+                marker[x] = tag
+            end
+
+            for ww in neighbors(graph, v)
+                w == ww && break
+
+                if marker[ww] < tag
+                    cnt += one(E)
+                end
+            end
+
+            if v == w
+                deg -= one(V)
+            end
+        end
+
         degree[v] = deg + one(V)
+        fillin[v] = cnt
 
-        if deg <= maxdeg
-            cnt = zero(E)
-            marker[v] = tag + convert(I, deg)
-
-            for w in neighbors(graph, v)
-                marker[w] = tag += one(I)
-
-                for x in neighbors(graph, w)
-                    marker[x] = tag
-                end
-
-                for ww in neighbors(graph, v)
-                    if w < ww && marker[ww] < tag
-                        cnt += one(E)
-                    end
-                end
-            end
-
-            fillin[v] = cnt
-
-            if iszero(cnt)
-                num += one(V); stack[num] = v
-            end
+        if iszero(cnt)
+            num += one(V); stack[num] = v
         end
     end
 
@@ -3952,6 +3947,8 @@ function simplicialrule_impl!(
                 if iszero(wcnt)
                     num += one(V); stack[num] = w
                 end
+
+                degree[w] = wdeg - one(V)
             end
         end
     end
@@ -3970,20 +3967,18 @@ function simplicialrule_impl!(
 
     ptr[begin] = p = one(E)
 
-    @inbounds for v in vertices(graph)
-        j = project[v]; jj = j + one(V)
+    @inbounds for j in oneto(n1)
+        v = inject1[j]; jj = j + one(V)
 
-        if ispositive(j)
-            for u in neighbors(graph, v)
-                i = project[u]
+        for u in neighbors(graph, v)
+            i = project[u]
 
-                if ispositive(i)
-                    tgt[p] = i; p += one(E)
-                end
+            if ispositive(i)
+                tgt[p] = i; p += one(E)
             end
-
-            ptr[jj] = p
         end
+
+        ptr[jj] = p
     end
 
     m1 = p - one(E)
@@ -4252,24 +4247,20 @@ function saferules(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W
     return weights, graph, stack, index, width
 end
 
-function fillrules(graph, maxdeg::Integer)
-    return fillrules(BipartiteGraph(graph), maxdeg)
+function fillrules(graph)
+    return fillrules(BipartiteGraph(graph))
 end
 
-function fillrules(graph::AbstractGraph{V}, maxdeg::Integer) where {V}
+function fillrules(graph::AbstractGraph{V}) where {V}
     weights = ones(V, nv(graph))
-    return fillrules(weights, graph, maxdeg)
+    return fillrules(weights, graph)
 end
 
-function fillrules(weights::AbstractVector, graph, maxdeg::Integer)
-    return fillrules(weights, BipartiteGraph(graph), maxdeg)
+function fillrules(weights::AbstractVector, graph)
+    return fillrules(weights, BipartiteGraph(graph))
 end
 
-function fillrules(weights::AbstractVector, graph::AbstractGraph{V}, maxdeg::Integer) where {V <: Integer}
-    return fillrules(weights, graph, convert(V, min(typemax(V), maxdeg)))
-end
-
-function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::V) where {W, V <: Integer}
+function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W, V <: Integer}
     weights00 = weights; graph00 = graph; n00 = nv(graph00)
     inject03 = Vector{V}(undef, n00); n03 = zero(V)
     # V01
@@ -4279,10 +4270,10 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::
     # V02
     #  ↓ project10
     # V10
-    graph02, inject01, inject02 = simplicialrule(graph00, maxdeg)
+    graph02, inject01, inject02 = simplicialrule(graph00)
     graph10, project10 = compress2(graph02, Val(true))
 
-    for v00 in inject01
+    @inbounds for v00 in inject01
         n03 += one(V); inject03[n03] = v00
     end
 
@@ -4294,7 +4285,7 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::
     project11 = BipartiteGraph{V, V}(n00, n10, n00 - n03)
     pointers(project11)[begin] = p = one(V)
 
-    for v10 in vertices(graph10)
+    @inbounds for v10 in vertices(graph10)
         vv10 = v10 + one(V)
 
         for v02 in neighbors(project10, v10)
@@ -4307,7 +4298,7 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::
 
     lo = n10; hi = n00
 
-    while lo < hi
+    @inbounds while lo < hi
         hi = lo
         # V11
         #  ↓ inject11
@@ -4316,7 +4307,7 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::
         # V12
         #  ↓ project20
         # V20
-        graph12, inject11, inject12 = simplicialrule(graph10, maxdeg)
+        graph12, inject11, inject12 = simplicialrule(graph10)
         graph20, project20 = compress2(graph12, Val(true))
 
         for v10 in inject11, v00 in neighbors(project11, v10)
@@ -4351,7 +4342,7 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxdeg::
 
     weights10 = Vector{W}(undef, n10)
 
-    for v10 in vertices(graph10)
+    @inbounds for v10 in vertices(graph10)
         w10 = zero(W)
 
         for v00 in neighbors(project11, v10)
@@ -4621,8 +4612,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::ND{S, A, D}) where {S, A, D}
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.dis)
     println(io, " "^indent * "    width: $(alg.width)")
     println(io, " "^indent * "    level: $(alg.level)")
-    println(io, " "^indent * "    sepsize: $(alg.sepsize)")
-    println(io, " "^indent * "    imbalances: $(alg.imbalances)")
+    println(io, " "^indent * "    imbalance: $(alg.imbalance)")
     return
 end
 

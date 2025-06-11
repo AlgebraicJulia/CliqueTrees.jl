@@ -92,8 +92,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     h = nov(hgraph); n = nv(graph); m = ne(graph); nn = n + one(PINT); width = zero(WINT2)
     maxlevel = convert(PINT, alg.level)
     minwidth = convert(WINT2, alg.width)
-    maxsepsize = convert(PINT, alg.sepsize)
-    imbalances = convert(StepRange{PINT, PINT}, alg.imbalances)
+    imbalance = convert(PINT, alg.imbalance)
 
     @inbounds for v in oneto(n)
         width += weights[v]
@@ -116,7 +115,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
 
     nodes = Tuple{
         BipartiteGraph{VINT2, EINT, Vector{EINT}, Vector{VINT2}}, # hgraph
-        BipartiteGraph{PINT, PINT, Vector{PINT}, Vector{PINT}},  # graph
+        BipartiteGraph{PINT, PINT, Vector{PINT}, Vector{PINT}},   # graph
         Vector{PINT},                                             # weights
         Vector{PINT},                                             # label
         Vector{PINT},                                             # clique
@@ -141,12 +140,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
             if isleaf # leaf
                 push!(nodes, (hgraph, graph, weights, label, clique, width, -one(PINT)))
             else      # branch
-                sepsize = swork
-
-                for imbalance in imbalances
-                    separator!(sepsize, vwork3, hwght, weights, hgraph, imbalance, alg.dis)
-                    sepsize[] <= maxsepsize && break
-                end
+                separator!(swork, vwork3, hwght, weights, hgraph, imbalance, alg.dis)
 
                 hchild0, hchild1 = hpartition!(
                     vwork3,
