@@ -1227,6 +1227,7 @@ end
         SAT{Lingeling_jll}(),
         SAT{PicoSAT_jll}(),
         SAT{CryptoMiniSat_jll}(),
+        SimplicialRule(SAT{CryptoMiniSat_jll}()),
         SafeRules(SAT{CryptoMiniSat_jll}()),
         SafeSeparators(SAT{CryptoMiniSat_jll}()),
         SafeRules(SafeSeparators(BT())),

@@ -504,10 +504,13 @@ end
 
 # Compute the `root`, `child`, and `brother` fields of a forest.
 function lcrs!(tree::Tree{V}) where {V}
-    fill!(tree.root, zero(V))
-    fill!(tree.child, zero(V))
+    tree.root[] = zero(V)
 
-    for i in reverse(tree)
+    @inbounds for i in tree
+        tree.child[i] = zero(V)
+    end
+
+    @inbounds for i in reverse(tree)
         j = parentindex(tree, i)
 
         if isnothing(j)
