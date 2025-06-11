@@ -1011,18 +1011,6 @@ function CompositeRotations(clique::AbstractVector)
     return CompositeRotations(clique, DEFAULT_ELIMINATION_ALGORITHM)
 end
 
-struct GraphCompression{S, A <: EliminationAlgorithm} <: EliminationAlgorithm
-    alg::A
-end
-
-function GraphCompression{S}(alg::A = DEFAULT_ELIMINATION_ALGORITHM) where {S, A <: EliminationAlgorithm}
-    return GraphCompression{S, A}(alg)
-end
-
-function GraphCompression(alg::EliminationAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
-    return GraphCompression{true}(alg)
-end
-
 """
     SafeRules{A, L, U} <: EliminationAlgorithm
 
@@ -1099,12 +1087,12 @@ end
 const RuleReduction{A} = SafeRules{A, MMW{3}, MF}
 RuleReduction(alg) = SafeRules(alg, MMW(), MF())
 
-struct FillRules{A <: EliminationAlgorithm} <: EliminationAlgorithm
+struct SimplicialRule{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
-function FillRules()
-    return FillRules(DEFAULT_ELIMINATION_ALGORITHM)
+function SimplicialRule()
+    return SimplicialRule(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -1354,50 +1342,40 @@ function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
     return compositerotations(graph, alg.clique, alg.alg)
 end
 
-function permutation(graph, alg::GraphCompression{S}) where {S}
-    order = graphcompression(graph, Val(S), alg.alg)
-    return order, invperm(order)
-end
-
-function permutation(weights::AbstractVector, graph, alg::GraphCompression{S}) where {S}
-    order = graphcompression(weights, graph, Val(S), alg.alg)
-    return order, invperm(order)
-end
-
 function permutation(graph, alg::SafeRules)
     width = lowerbound(graph, alg.lb)
-    weights, graph, stack, index, width = saferules(graph, width)
-    order, _ = permutation(weights, graph, alg.ub)
+    weights, graph, inject, project, width = compresspr4(graph, width)
+    order, index = permutation(weights, graph, alg.ub)
 
-    if width < treewidth(weights, graph, order)
-        order, _ = permutation(weights, graph, alg.alg)
+    if width < treewidth(weights, graph, (order, index))
+        order, index = permutation(weights, graph, alg.alg)
     end
 
     for v in order
-        append!(stack, neighbors(index, v))
+        append!(inject, neighbors(project, v))
     end
 
-    return stack, invperm(stack)
+    return inject, invperm(inject)
 end
 
 function permutation(weights::AbstractVector, graph, alg::SafeRules)
     width = lowerbound(weights, graph, alg.lb)
-    weights, graph, stack, index, width = saferules(weights, graph, width)
-    order, _ = permutation(weights, graph, alg.ub)
+    weights, graph, inject, project, width = compresspr4(weights, graph, width)
+    order, index = permutation(weights, graph, alg.ub)
 
-    if width < treewidth(weights, graph, order)
-        order, _ = permutation(weights, graph, alg.alg)
+    if width < treewidth(weights, graph, (order, index))
+        order, index = permutation(weights, graph, alg.alg)
     end
 
     for v in order
-        append!(stack, neighbors(index, v))
+        append!(inject, neighbors(project, v))
     end
 
-    return stack, invperm(stack)
+    return inject, invperm(inject)
 end
 
-function permutation(graph, alg::FillRules)
-    weights, graph, inject, project = fillrules(graph)
+function permutation(graph, alg::SimplicialRule)
+    weights, graph, inject, project = compresssimplicial(graph)
     order, index = permutation(weights, graph, alg.alg)
 
     for v in order
@@ -1407,8 +1385,8 @@ function permutation(graph, alg::FillRules)
     return inject, invperm(inject)
 end
 
-function permutation(weights::AbstractVector, graph, alg::FillRules)
-    weights, graph, inject, project = fillrules(weights, graph)
+function permutation(weights::AbstractVector, graph, alg::SimplicialRule)
+    weights, graph, inject, project = compresssimplicial(weights, graph)
     order, index = permutation(weights, graph, alg.alg)
 
     for v in order
@@ -3985,40 +3963,11 @@ function simplicialrule_impl!(
     return BipartiteGraph(n1, n1, m1, ptr, tgt), view(inject0, oneto(n0)), view(inject1, oneto(n1))
 end
 
-function compress(graph, ::Val{S}) where {S}
-    return compress(BipartiteGraph(graph), Val(S))
-end
-
-function compress(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
-    weights = ones(V, nv(graph))
-    return compress(weights, graph, Val(S))
-end
-
-function compress(weights::AbstractVector, graph, ::Val{S}) where {S}
-    return compress(weights, BipartiteGraph(graph), Val(S))
-end
-
 # Engineering Data Reduction for Nested Dissection
 # Ost, Schulz, Strash
 # Reduction 2 (Indistinguishable node reduction)
 # Reduction 3 (Twin Reduction)
-function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, ::Val{S}) where {W, V, S}
-    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
-    new = Scalar{V}(undef)
-    var = Vector{V}(undef, nn)
-    svar = Vector{V}(undef, n)
-    flag = Vector{V}(undef, n)
-    size = Vector{V}(undef, n)
-    head = Vector{V}(undef, n)
-    prev = Vector{V}(undef, n)
-    next = Vector{V}(undef, n)
-    outweights = Vector{W}(undef, n)
-    outptr = Vector{E}(undef, nn)
-    outtgt = Vector{V}(undef, m)
-    return compress_impl!(new, var, svar, flag, size, head, prev, next, outweights, outptr, outtgt, weights, graph, Val(S))
-end
-
-function compress2(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
+function compress(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
     new = Scalar{V}(undef)
     var = Vector{V}(undef, nn)
@@ -4031,59 +3980,6 @@ function compress2(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     outptr = Vector{E}(undef, nn)
     outtgt = Vector{V}(undef, m)
     return compress_impl!(new, var, svar, flag, size, head, prev, next, outptr, outtgt, graph, Val(S))
-end
-
-function compress_impl!(
-        new::AbstractScalar{V},
-        var::AbstractVector{V},
-        svar::AbstractVector{V},
-        flag::AbstractVector{V},
-        size::AbstractVector{V},
-        head::AbstractVector{V},
-        prev::AbstractVector{V},
-        next::AbstractVector{V},
-        outweights::AbstractVector{W},
-        outptr::AbstractVector{E},
-        outtgt::AbstractVector{V},
-        weights::AbstractVector{W},
-        graph::AbstractGraph{V},
-        ::Val{S},
-    ) where {W, V, E, S}
-    @argcheck nv(graph) <= length(outweights)
-    @argcheck nv(graph) < length(outptr)
-    @argcheck ne(graph) <= length(outtgt)
-    @argcheck nv(graph) <= length(weights)
-
-    partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
-    project = svar; marker = size; tag = zero(V)
-
-    @inbounds for v in vertices(graph)
-        marker[v] = zero(V)
-    end
-
-    outptr[begin] = p = one(E)
-
-    @inbounds for i in vertices(partition)
-        ii = i + one(V); vv = zero(V); weight = zero(W)
-
-        for v in neighbors(partition, i)
-            vv = v; weight += weights[v]
-        end
-
-        for w in neighbors(graph, vv)
-            j = project[w]
-
-            if i != j && marker[j] < i
-                marker[j] = i; outtgt[p] = j; p += one(E)
-            end
-        end
-
-        outweights[i] = weight; outptr[ii] = p
-    end
-
-    outn = nv(partition); outm = p - one(E)
-    outgraph = BipartiteGraph(outn, outn, outm, outptr, outtgt)
-    return view(outweights, oneto(outn)), outgraph, partition
 end
 
 function compress_impl!(
@@ -4132,135 +4028,128 @@ function compress_impl!(
     return outgraph, partition
 end
 
-function graphcompression(graph, ::Val{S}, alg::EliminationAlgorithm) where {S}
-    return graphcompression(BipartiteGraph(graph), Val(S), alg)
+function compresspr4(graph, width::Integer)
+    return compresspr4(BipartiteGraph(graph), width)
 end
 
-function graphcompression(graph::AbstractGraph{V}, ::Val{S}, alg::EliminationAlgorithm) where {V, S}
-    n = nv(graph)
-    weights, graph, partition = compress(graph, Val(S))
-    innerorder, innerindex = permutation(weights, graph, alg)
-    i = zero(V); order = Vector{V}(undef, n)
-
-    for v in innerorder, w in neighbors(partition, v)
-        i += one(V); order[i] = w
-    end
-
-    return order
-end
-
-function graphcompression(weights::AbstractVector, graph, ::Val{S}, alg::EliminationAlgorithm) where {S}
-    return graphcompression(weights, BipartiteGraph(graph), Val(S), alg)
-end
-
-function graphcompression(weights::AbstractVector, graph::AbstractGraph{V}, ::Val{S}, alg::EliminationAlgorithm) where {V, S}
-    n = nv(graph)
-    weights, graph, partition = compress(weights, graph, Val(S))
-    innerorder, innerindex = permutation(weights, graph, alg)
-    i = zero(V); order = Vector{V}(undef, n)
-
-    for v in innerorder, w in neighbors(partition, v)
-        i += one(V); order[i] = w
-    end
-
-    return order
-end
-
-function saferules(graph, width::Integer)
-    return saferules(BipartiteGraph(graph), width)
-end
-
-function saferules(graph::AbstractGraph{V}, width::Integer) where {V}
+function compresspr4(graph::AbstractGraph{V}, width::Integer) where {V}
     weights = ones(V, nv(graph))
-    return saferules(weights, graph, V(width) + one(V))
+    return compresspr4(weights, graph, convert(V, width) + one(V))
 end
 
-function saferules(weights::AbstractVector{<:Number}, graph, width::Number)
-    return saferules(weights, BipartiteGraph(graph), width)
+function compresspr4(weights::AbstractVector{<:Number}, graph, width::Number)
+    return compresspr4(weights, BipartiteGraph(graph), width)
 end
 
-function saferules(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::Number) where {W <: Number, V}
-    return saferules(weights, graph, W(width))
+function compresspr4(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::Number) where {W <: Number, V}
+    return compresspr4(weights, graph, convert(W, width))
 end
 
-function saferules(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V}
-    # initialize hi
-    hi = n = nv(graph)
+function compresspr4(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V <: Integer}
+    weights00 = weights; graph00 = graph; width00 = width; n00 = nv(graph00)
+    inject03 = Vector{V}(undef, n00); n03 = zero(V)
+    # V01
+    #  ↓ inject01
+    # V00
+    #  ↑ inject02
+    # V02
+    #  ↓ project10
+    # V10
+    graph02, inject01, inject02, width10, = pr4(weights00, graph00, width00)
+    graph10, project10 = compress(graph02, Val(true))
 
-    # apply rules
-    rgraph, stack, inject, width = pr4(weights, graph, width)
-
-    # compress graph
-    weights, graph, project = compress(view(weights, inject), rgraph, Val(true))
-
-    # initialize lo
-    lo = nv(project); m = ne(project)
-
-    # initialize index
-    index = BipartiteGraph{V, V}(n, lo, m)
-    pointers(index)[begin] = p = one(V)
-
-    for v in vertices(project)
-        for w in neighbors(project, v)
-            targets(index)[p] = inject[w]
-            p += one(V)
-        end
-
-        pointers(index)[v + one(V)] = p
+    @inbounds for v00 in inject01
+        n03 += one(V); inject03[n03] = v00
     end
 
-    # repeat until exhaustion
-    while lo < hi
-        # update hi
-        hi = lo
+    n02 = nv(graph02); n10 = nv(graph10)
+    #   inject02 V02
+    #        ↙    ↓ project10
+    #   V00  →   V10
+    #     project11
+    weights10 = Vector{W}(undef, n10)
+    project11 = BipartiteGraph{V, V}(n00, n10, n00 - n03)
+    pointers(project11)[begin] = p = one(V)
 
-        # apply rules
-        rgraph, newstack, inject, width = pr4(weights, graph, width)
+    @inbounds for v10 in vertices(graph10)
+        w10 = zero(W); vv10 = v10 + one(V)
 
-        # update stack
-        for w in newstack, x in neighbors(index, w)
-            push!(stack, x); m -= one(V)
+        for v02 in neighbors(project10, v10)
+            v00 = inject02[v02]
+            w10 += weights00[v00]
+            targets(project11)[p] = v00; p += one(V)
         end
 
-        # compress graph
-        weights, graph, project = compress(view(weights, inject), rgraph, Val(true))
+        weights10[v10] = w10
+        pointers(project11)[vv10] = p
+    end
 
-        # update lo
-        lo = nv(project)
+    lo = n10; hi = n00
 
-        # update index
-        newindex = BipartiteGraph{V, V}(n, lo, m)
-        pointers(newindex)[begin] = p = one(V)
+    @inbounds while lo < hi
+        hi = lo
+        # V11
+        #  ↓ inject11
+        # V10
+        #  ↑ inject12
+        # V12
+        #  ↓ project20
+        # V20
+        graph12, inject11, inject12, width20 = pr4(weights10, graph10, width10)
+        graph20, project20 = compress(graph12, Val(true))
 
-        for v in vertices(project)
-            for w in neighbors(project, v), x in neighbors(index, inject[w])
-                targets(newindex)[p] = x
-                p += one(V)
+        for v10 in inject11, v00 in neighbors(project11, v10)
+            n03 += one(V); inject03[n03] = v00
+        end
+
+        n12 = nv(graph12); n20 = nv(graph20)
+        #            inject12
+        #          V10  ←   V12
+        # project11 ↑        ↓ project20
+        #          V00  →   V20
+        #           project21
+
+        weights20 = Vector{W}(undef, n20)
+        project21 = BipartiteGraph{V, V}(n00, n20, n00 - n03)
+        pointers(project21)[begin] = p = one(V)
+
+        for v20 in vertices(graph20)
+            w20 = zero(W); vv20 = v20 + one(V)
+
+            for v12 in neighbors(project20, v20)
+                v10 = inject12[v12]
+                w20 += weights10[v10]
+
+                for v00 in neighbors(project11, v10)
+                    targets(project21)[p] = v00; p += one(V)
+                end
             end
 
-            pointers(newindex)[v + one(V)] = p
+            weights20[v20] = w20
+            pointers(project21)[vv20] = p
         end
 
-        index = newindex
+        lo = n10 = n20; weights10 = weights20; graph10 = graph20; width10 = width20; project11 = project21
     end
 
-    return weights, graph, stack, index, width
+    resize!(inject03, n03)
+    return weights10, graph10, inject03, project11, width10
 end
 
-function fillrules(graph)
-    return fillrules(BipartiteGraph(graph))
+function compresssimplicial(graph)
+    return compresssimplicial(BipartiteGraph(graph))
 end
 
-function fillrules(graph::AbstractGraph{V}) where {V}
+function compresssimplicial(graph::AbstractGraph{V}) where {V}
     weights = ones(V, nv(graph))
-    return fillrules(weights, graph)
+    return compresssimplicial(weights, graph)
 end
 
-function fillrules(weights::AbstractVector, graph)
-    return fillrules(weights, BipartiteGraph(graph))
+function compresssimplicial(weights::AbstractVector, graph)
+    return compresssimplicial(weights, BipartiteGraph(graph))
 end
 
-function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W, V <: Integer}
+function compresssimplicial(weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W, V <: Integer}
     weights00 = weights; graph00 = graph; n00 = nv(graph00)
     inject03 = Vector{V}(undef, n00); n03 = zero(V)
     # V01
@@ -4271,7 +4160,7 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W
     #  ↓ project10
     # V10
     graph02, inject01, inject02 = simplicialrule(graph00)
-    graph10, project10 = compress2(graph02, Val(true))
+    graph10, project10 = compress(graph02, Val(true))
 
     @inbounds for v00 in inject01
         n03 += one(V); inject03[n03] = v00
@@ -4308,7 +4197,7 @@ function fillrules(weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W
         #  ↓ project20
         # V20
         graph12, inject11, inject12 = simplicialrule(graph10)
-        graph20, project20 = compress2(graph12, Val(true))
+        graph20, project20 = compress(graph12, Val(true))
 
         for v10 in inject11, v00 in neighbors(project11, v10)
             n03 += one(V); inject03[n03] = v00
@@ -4649,6 +4538,13 @@ function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) wh
     indent = get(io, :indent, 0)
     println(io, " "^indent * "CompositeRotations{$C, $A}:")
     println(io, " "^indent * "    clique: $(alg.clique)")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::SimplicialRule{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "SimplicialRule{$A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
 end
