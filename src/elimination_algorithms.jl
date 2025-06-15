@@ -2270,7 +2270,11 @@ function mf!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
                         nweights[w] += wwweight
                         nweights[ww] += wweight
                         heap[w] += wwweight * (nweights[w] - cost)
+                        hrise!(heap, w)
+                        hfall!(heap, w)
                         heap[ww] += wweight * (nweights[ww] - cost)
+                        hrise!(heap, ww)
+                        hfall!(heap, ww)
                         add_edge!(graph, w, ww)
                         label[ww] = tag
                     end

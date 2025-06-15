@@ -35,7 +35,7 @@ end
 
 @propagate_inbounds function _hrise!(heap::Heap{I}, i::I) where {I}
     @boundscheck checkbounds(heap.heap, i)
-    j = i ÷ two(I)
+    j = half(i)
 
     @inbounds while j > zero(I)
         if heap.key[heap.heap[j]] > heap.key[heap.heap[i]]
@@ -53,7 +53,7 @@ end
 
 @propagate_inbounds function _hfall!(heap::Heap{I}, i::I) where {I}
     @boundscheck checkbounds(heap.heap, i)
-    j = i * two(I)
+    j = twice(i)
 
     @inbounds while j <= heap.num[]
         if j < heap.num[] && heap.key[heap.heap[j + one(I)]] < heap.key[heap.heap[j]]
@@ -83,17 +83,25 @@ end
 
 @propagate_inbounds function Base.delete!(heap::Heap{I}, v::I) where {I}
     @boundscheck checkbounds(heap.key, v)
-    @inbounds i = heap.inv[v]
-    @inbounds k = heap.key[heap.heap[i]]
-    @inbounds vv = heap.heap[i] = heap.heap[heap.num[]]
-    @inbounds heap.inv[vv] = i
-    @inbounds kk = heap.key[vv]
-    heap.num[] -= one(I)
 
-    if k < kk
-        @inbounds _hfall!(heap, i)
-    else
-        @inbounds _hrise!(heap, i)
+    @inbounds i = heap.inv[v]
+    @inbounds ii = heap.num[]
+    @inbounds heap.num[] -= one(I)
+
+    if i < ii
+        @inbounds vv = heap.heap[ii]
+
+        @inbounds k = heap.key[v]
+        @inbounds kk = heap.key[vv]
+
+        @inbounds heap.heap[i] = vv
+        @inbounds heap.inv[vv] = i
+
+        if k < kk
+            @inbounds _hfall!(heap, i)
+        else
+            @inbounds _hrise!(heap, i)
+        end
     end
 
     return heap
