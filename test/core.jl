@@ -58,7 +58,6 @@ end
 import Catlab
 import libpicosat_jll
 import CryptoMiniSat_jll
-import FlowCutterPACE17_jll
 
 @static if Sys.iswindows()
     import libpicosat_jll as PicoSAT_jll
@@ -115,10 +114,12 @@ end
     @test_throws ArgumentError permutation(matrix; alg = ND(MMD(), METISND()))
     @test_throws ArgumentError permutation(matrix; alg = ND(MMD(), KaHyParND()))
     @test_throws ArgumentError permutation(matrix; alg = Spectral())
+    @test_throws ArgumentError permutation(matrix; alg = FlowCutter())
     @test_throws ArgumentError permutation(matrix; alg = BT())
 end
 
 import AMD as AMDLib
+import FlowCutterPACE17_jll
 import KaHyPar
 import Laplacians
 import Metis

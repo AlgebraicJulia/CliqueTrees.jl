@@ -1222,12 +1222,10 @@ function permutation(weights::AbstractVector, graph; alg::PermutationOrAlgorithm
     return permutation(weights, graph, alg)
 end
 
-function permutation(graph, alg::EliminationAlgorithm)
-    throw(
-        ArgumentError(
-            "Algorithm $alg not implemented. You may need to load an additional package."
-        ),
-    )
+function permutation(graph, alg::A) where A <: EliminationAlgorithm
+    name = package(A)
+    message = "`import $name` to use algorithm $A."
+    throw(ArgumentError(message))    
 end
 
 function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
