@@ -536,8 +536,8 @@ end
             MMW{2}(),
             MMW{3}(),
         )
-        @test iszero(lowerbound(graph))
-        @test iszero(lowerbound(weights, graph))
+        @test isone(-lowerbound(graph; alg))
+        @test iszero(lowerbound(weights, graph; alg))
     end
 
     for alg in (
@@ -599,8 +599,8 @@ end
             MMW{2}(),
             MMW{3}(),
         )
-        @test iszero(lowerbound(graph))
-        @test istwo(lowerbound(weights, graph))
+        @test iszero(lowerbound(graph; alg))
+        @test istwo(lowerbound(weights, graph; alg))
     end
 
     for alg in (

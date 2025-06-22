@@ -30,6 +30,19 @@
 
 CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs.
 
+## Projects using CliqueTrees
+
+- [BandedMatrices.jl](https://github.com/JuliaLinearAlgebra/BandedMatrices.jl)
+- [BayesNets.jl](https://github.com/sisl/BayesNets.jl)
+- [CausalInference.jl](https://github.com/mschauer/CausalInference.jl)
+- [EinExprs.jl](https://github.com/bsc-quantic/EinExprs.jl)
+- [IncrementalInference.jl](https://github.com/JuliaRobotics/IncrementalInference.jl)
+- [OMEinsumContractionOrders.jl](https://github.com/TensorBFS/OMEinsumContractionOrders.jl)
+- [Scruff.jl](https://github.com/charles-river-analytics/Scruff.jl)
+- [SparseMatrixColorings.jl](https://github.com/gdalle/SparseMatrixColorings.jl)
+- [SumOfSquares.jl](https://github.com/jump-dev/SumOfSquares.jl)
+- [TSSOS.jl](https://github.com/wangjie212/TSSOS)
+
 ## Installation
 
 To install CliqueTrees.jl, enter the Pkg REPL by typing `]` and run the following command.

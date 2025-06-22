@@ -633,9 +633,9 @@ The type parameter `S` controls the behavior of the algorithm: if `S` is equal t
 on the branches of the separator tree. At each branch, the ordering computed by `alg` is compared to the ordering computed
 by the nested dissection algorithm, and the worse of the two is discarded.
 
-  - `1`: optimize for width (slow)
-  - `2`: optimize for fill (slow)
-  - `3`: no optimization (fast)
+  - `1`: minimize width (slow)
+  - `2`: minimize fill (slow)
+  - `3`: no strategy (fast)
 
 CliqueTrees currently has two vertex separator algorithms, both of which require loading an external package.
 
@@ -678,6 +678,10 @@ julia> treewidth(graph; alg)
 
 ### Parameters
 
+  - `S`: strategy
+    - `1`: minimize width (slow)
+    - `2`: minimize fill (slow)
+    - `3`: no strategy (fast)
   - `alg`: elimination algorithm
   - `dis`: separation algorithm
   - `width`: minimum width
@@ -1544,7 +1548,7 @@ function mcs(graph, clique)
     return mcs(BipartiteGraph(graph), clique)
 end
 
-# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
+# Simple Linear-Time Algorithms to Test Chordality of Graphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
 # Tarjan and Yannakakis
 # Maximum Cardinality Search
 #
