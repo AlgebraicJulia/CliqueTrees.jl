@@ -1345,57 +1345,23 @@ function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
 end
 
 function permutation(graph, alg::SafeRules)
-    width = lowerbound(graph, alg.lb)
-    weights, graph, inject, project, width = compresspr4(graph, width)
-    order, index = permutation(weights, graph, alg.ub)
-
-    if width < treewidth(weights, graph, (order, index))
-        order, index = permutation(weights, graph, alg.alg)
-    end
-
-    for v in order
-        append!(inject, neighbors(project, v))
-    end
-
-    return inject, invperm(inject)
+    order = saferules(graph, alg.alg, alg.lb, alg.ub)
+    return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph, alg::SafeRules)
-    width = lowerbound(weights, graph, alg.lb)
-    weights, graph, inject, project, width = compresspr4(weights, graph, width)
-    order, index = permutation(weights, graph, alg.ub)
-
-    if width < treewidth(weights, graph, (order, index))
-        order, index = permutation(weights, graph, alg.alg)
-    end
-
-    for v in order
-        append!(inject, neighbors(project, v))
-    end
-
-    return inject, invperm(inject)
+    order = saferules(weights, graph, alg.alg, alg.lb, alg.ub)
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::SimplicialRule)
-    weights, graph, inject, project = compresssimplicial(graph)
-    order, index = permutation(weights, graph, alg.alg)
-
-    for v in order
-        append!(inject, neighbors(project, v))
-    end
-
-    return inject, invperm(inject)
+    order = simplicialrule(graph, alg.alg)
+    return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph, alg::SimplicialRule)
-    weights, graph, inject, project = compresssimplicial(weights, graph)
-    order, index = permutation(weights, graph, alg.alg)
-
-    for v in order
-        append!(inject, neighbors(project, v))
-    end
-
-    return inject, invperm(inject)
+    order = simplicialrule(weights, graph, alg.alg)
+    return order, invperm(order)
 end
 
 function permutation(graph, alg::SafeSeparators)
@@ -2341,13 +2307,13 @@ function sat(graph, upperbound::Integer, ::Val{H}) where {H}
     return sat(BipartiteGraph(graph), upperbound, Val(H))
 end
 
-function sat(graph::AbstractGraph, upperbound::I, ::Val{H}) where {I <: Integer, H}
-    weights = ones(Int32, nv(graph))
-    order, width = sat(weights, graph, upperbound + one(I), Val(H))
-    return order, width - one(Int32)
+function sat(graph::AbstractGraph{V}, upperbound::V, ::Val{H}) where {V <: Integer, H}
+    weights = ones(V, nv(graph))
+    order, width = sat(weights, graph, upperbound + one(V), Val(H))
+    return order, width - one(V)
 end
 
-function sat(weights::AbstractVector, graph, upperbound::Integer, ::Val{H}) where {H}
+function sat(weights::AbstractVector{W}, graph, upperbound::W, ::Val{H}) where {W, H}
     return sat(weights, BipartiteGraph(graph), upperbound, Val(H))
 end
 
@@ -2359,7 +2325,7 @@ end
 #
 # Jdrasil: A Modular Library for Computing Tree Decompositions
 # Bannach, Berndt, and Ehlers
-function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integer, ::Val{H}) where {V, H}
+function sat(weights::AbstractVector{W}, graph::AbstractGraph{V}, upperbound::W, ::Val{H}) where {W, V, H}
     @argcheck !isnegative(upperbound)
     n = Int32(nv(graph))
 
@@ -2375,7 +2341,7 @@ function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integ
         m = zero(Int32)
 
         for i in oneto(n)
-            m += Int32(weights[i])
+            m += trunc(Int32, weights[i])
         end
 
         ord = Matrix{Int32}(undef, n, n)
@@ -2401,7 +2367,7 @@ function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integ
                 arc[i, j] = length(solver)
 
                 # duplicate arc variables
-                weight = Int32(weights[j])
+                weight = trunc(Int32, weights[j])
 
                 for _ in oneto(weight - one(Int32))
                     jj += one(Int32)
@@ -2479,7 +2445,7 @@ function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integ
         cache = Matrix{Bool}(undef, n, n)
 
         # initialize assumption
-        count = min(Int32(upperbound), m - one(Int32))
+        count = min(ceil(Int32, upperbound), m - one(Int32))
 
         for i in oneto(n)
             # Σ { arc(i, j) : j } <= count
@@ -2521,7 +2487,7 @@ function sat(weights::AbstractVector, graph::AbstractGraph{V}, upperbound::Integ
 
     order = Vector{V}(undef, n)
     sortperm!(order, oneto(n); lt = (i, j) -> matrix[i, j])
-    return order, width
+    return order, convert(V, width)
 end
 
 # compute a maximal clique
@@ -2534,7 +2500,7 @@ function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) 
         m = zero(Int32)
 
         for i in oneto(n)
-            m += Int32(weights[i])
+            m += trunc(Int32, weights[i])
         end
 
         # define variables
@@ -2545,7 +2511,7 @@ function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) 
             var[i] = i
 
             # duplicate variables
-            weight = Int32(weights[i])
+            weight = trunc(Int32, weights[i])
 
             for _ in oneto(weight - one(Int32))
                 ii += one(Int32)
@@ -2725,7 +2691,7 @@ function twins_impl!(
                     ns = svar[j] = popfirst!(free); m += one(V)
                     pushfirst!(set(ns), j); size[ns] += one(V)
                 end
-                # second of later occurrence of `s` for column `j`
+                # second or later occurrence of `s` for column `j`
             else
                 # `k` is the first variable of `s` encountered in column `j`.
                 delete!(set(s), j); size[s] -= one(V)
@@ -2861,1114 +2827,6 @@ function minimalchordal(graph::AbstractGraph{V}, order::AbstractVector, index::A
     return permutation(M; alg = MCS())
 end
 
-# Pre-processing for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Eijkhof, and van der Gaag
-#
-# Preprocessing Rules for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Eijkhof, and van der Gaag
-#
-# PR-3 (Islet, Twig, Series, Triangle, Buddy, and Cube)
-function pr3(graph, width::Integer)
-    return pr3(BipartiteGraph(graph), width)
-end
-
-function pr3(graph::AbstractGraph{V}, width::Integer) where {V}
-    kernel = Graph(graph)
-    return kernel, pr3!(kernel, convert(V, width))...
-end
-
-function pr3!(graph::Graph{V}, width::V) where {V}
-    n = nv(graph)
-
-    for v in vertices(graph)
-        @inbounds rem_edge!(graph, v, v)
-    end
-
-    # bucket queue
-    head = zeros(V, max(n, four(V)))
-    prev = Vector{V}(undef, n)
-    next = Vector{V}(undef, n)
-
-    function set(i)
-        @inbounds h = @view head[i + one(i)]
-        return DoublyLinkedList(h, prev, next)
-    end
-
-    for v in vertices(graph)
-        @inbounds pushfirst!(set(eltypedegree(graph, v)), v)
-    end
-
-    # treewidth lower bound
-    width = max(width, zero(V))
-
-    # stack of eliminated vertices
-    lo = -one(V)
-    hi = zero(V)
-    stack = Vector{V}(undef, n)
-
-    # apply rules until exhaustion
-    while lo < hi
-        lo = hi
-
-        # islet rule
-        v = head[1]
-
-        while ispositive(v)
-            # v
-            hi += one(V); stack[hi] = v
-            n = next[v]; delete!(set(0), v)
-            v = n
-        end
-
-        if lo == hi
-            # twig rule
-            v = head[2]
-
-            while ispositive(v)
-                # w
-                # |
-                # v
-                w = only(neighbors(graph, v))
-                hi += one(V); stack[hi] = v
-
-                delete!(set(eltypedegree(graph, w)), w)
-
-                rem_edge!(graph, v, w)
-
-                pushfirst!(set(eltypedegree(graph, w)), w)
-
-                n = next[v]; delete!(set(1), v)
-                v = n
-            end
-
-            if lo == hi
-                width = max(width, two(V))
-
-                # series rule
-                v = head[3]
-
-                while ispositive(v)
-                    # w
-                    # |
-                    # v  ---  ww
-                    w, ww = neighbors(graph, v)
-                    hi += one(V); stack[hi] = v
-
-                    delete!(set(eltypedegree(graph, w)), w)
-                    delete!(set(eltypedegree(graph, ww)), ww)
-
-                    rem_edge!(graph, v, w)
-                    rem_edge!(graph, v, ww)
-
-                    add_edge!(graph, w, ww)
-
-                    pushfirst!(set(eltypedegree(graph, w)), w)
-                    pushfirst!(set(eltypedegree(graph, ww)), ww)
-
-                    n = next[v]; delete!(set(2), v)
-                    v = n
-                end
-
-                if lo == hi
-                    width = max(width, three(V))
-
-                    # triangle rule
-                    v = head[4]
-
-                    while ispositive(v)
-                        w = ww = www = zero(V)
-                        x, xx, xxx = neighbors(graph, v)
-
-                        if has_edge(graph, x, xx)
-                            w, ww, www = x, xx, xxx
-                        elseif has_edge(graph, x, xxx)
-                            w, ww, www = x, xxx, xx
-                        elseif has_edge(graph, xx, xxx)
-                            w, ww, www = xx, xxx, x
-                        end
-
-                        if ispositive(w)
-                            # w  ---  ww
-                            # |   /
-                            # v  ---  www
-                            hi += one(V); stack[hi] = v
-
-                            delete!(set(eltypedegree(graph, w)), w)
-                            delete!(set(eltypedegree(graph, ww)), ww)
-                            delete!(set(eltypedegree(graph, www)), www)
-
-                            rem_edge!(graph, v, w)
-                            rem_edge!(graph, v, ww)
-                            rem_edge!(graph, v, www)
-
-                            add_edge!(graph, w, www)
-                            add_edge!(graph, ww, www)
-
-                            pushfirst!(set(eltypedegree(graph, w)), w)
-                            pushfirst!(set(eltypedegree(graph, ww)), ww)
-                            pushfirst!(set(eltypedegree(graph, www)), www)
-
-                            n = next[v]; delete!(set(3), v)
-                        else
-                            n = next[v]
-                        end
-
-                        v = n
-                    end
-
-                    if lo == hi
-                        # buddy rule
-                        v = head[4]
-
-                        while ispositive(v)
-                            w, ww, www = neighbors(graph, v)
-                            vv = n = next[v]
-
-                            while ispositive(vv)
-                                x, xx, xxx = neighbors(graph, vv)
-
-                                if (w, ww, www) == (x, xx, xxx)
-                                    # w  -----------  vv
-                                    # |           /   |
-                                    # |       ww      |
-                                    # |   /           |
-                                    # v  -----------  www
-                                    hi += one(V); stack[hi] = vv
-                                    hi += one(V); stack[hi] = v
-
-                                    delete!(set(eltypedegree(graph, w)), w)
-                                    delete!(set(eltypedegree(graph, ww)), ww)
-                                    delete!(set(eltypedegree(graph, www)), www)
-
-                                    rem_edge!(graph, v, w)
-                                    rem_edge!(graph, v, ww)
-                                    rem_edge!(graph, v, www)
-                                    rem_edge!(graph, vv, w)
-                                    rem_edge!(graph, vv, ww)
-                                    rem_edge!(graph, vv, www)
-
-                                    add_edge!(graph, w, ww)
-                                    add_edge!(graph, w, www)
-                                    add_edge!(graph, ww, www)
-
-                                    pushfirst!(set(eltypedegree(graph, w)), w)
-                                    pushfirst!(set(eltypedegree(graph, ww)), ww)
-                                    pushfirst!(set(eltypedegree(graph, www)), www)
-
-                                    nn = zero(V); delete!(set(3), vv)
-                                    n = next[v]; delete!(set(3), v)
-                                else
-                                    nn = next[vv]
-                                end
-
-                                vv = nn
-                            end
-
-                            v = n
-                        end
-
-                        if lo == hi
-                            # cube rule
-                            v = head[4]
-
-                            while ispositive(v)
-                                vv, vvv, vvvv = neighbors(graph, v)
-
-                                if isthree(eltypedegree(graph, vv)) && isthree(eltypedegree(graph, vvv)) && isthree(eltypedegree(graph, vvvv))
-                                    w = ww = www = zero(V)
-                                    x, xx, xxx = neighbors(graph, vv)
-                                    y, yy, yyy = neighbors(graph, vvv)
-                                    z, zz, zzz = neighbors(graph, vvvv)
-
-                                    if v == x
-                                        x, xx = xx, xxx
-                                    elseif v == xx
-                                        x, xx = x, xxx
-                                    end
-
-                                    if v == y
-                                        y, yy = yy, yyy
-                                    elseif v == yy
-                                        y, yy = y, yyy
-                                    end
-
-                                    if v == z
-                                        z, zz = zz, zzz
-                                    elseif v == zz
-                                        z, zz = z, zzz
-                                    end
-
-                                    if x == y != vvvv && yy == zz != vv && z == xx != vvv
-                                        w, ww, www = x, yy, z
-                                    elseif x == y != vvvv && yy == z != vv && zz == xx != vvv
-                                        w, ww, www = x, yy, zz
-                                    elseif x == yy != vvvv && y == z != vv && zz == xx != vvv
-                                        w, ww, www = x, y, zz
-                                    elseif xx == yy != vvvv && y == z != vv && zz == x != vvv
-                                        w, ww, www = xx, y, zz
-                                    elseif xx == y != vvvv && yy == zz != vv && z == x != vvv
-                                        w, ww, www = xx, yy, z
-                                    elseif xx == yy != vvvv && y == zz != vv && z == x != vvv
-                                        w, ww, www = xx, y, z
-                                    end
-
-                                    if ispositive(w)
-                                        #         ww
-                                        #     /       \
-                                        # vvv             vvvv
-                                        # |   \       /   |
-                                        # |       v       |
-                                        # |       |       |
-                                        # w       |       www
-                                        #     \   |   /
-                                        #         vv
-                                        hi += one(V); stack[hi] = vvvv
-                                        hi += one(V); stack[hi] = vvv
-                                        hi += one(V); stack[hi] = vv
-                                        hi += one(V); stack[hi] = v
-
-                                        delete!(set(eltypedegree(graph, w)), w)
-                                        delete!(set(eltypedegree(graph, ww)), ww)
-                                        delete!(set(eltypedegree(graph, www)), www)
-
-                                        rem_edge!(graph, vv, v)
-                                        rem_edge!(graph, vv, x)
-                                        rem_edge!(graph, vv, xx)
-                                        rem_edge!(graph, vvv, v)
-                                        rem_edge!(graph, vvv, y)
-                                        rem_edge!(graph, vvv, yy)
-                                        rem_edge!(graph, vvvv, v)
-                                        rem_edge!(graph, vvvv, z)
-                                        rem_edge!(graph, vvvv, zz)
-
-                                        add_edge!(graph, w, ww)
-                                        add_edge!(graph, w, www)
-                                        add_edge!(graph, ww, www)
-
-                                        pushfirst!(set(eltypedegree(graph, w)), w)
-                                        pushfirst!(set(eltypedegree(graph, ww)), ww)
-                                        pushfirst!(set(eltypedegree(graph, www)), www)
-
-                                        delete!(set(3), vvvv)
-                                        delete!(set(3), vvv)
-                                        delete!(set(3), vv)
-                                        n = next[v]; delete!(set(3), v)
-                                    else
-                                        n = next[v]
-                                    end
-                                else
-                                    n = next[v]
-                                end
-
-                                v = n
-                            end
-
-                            if lo == hi
-                                width = max(width, four(V))
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    label = rem_vertices!(graph, resize!(stack, hi); keep_order = true)
-    return stack, label, width
-end
-
-# Pre-processing for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Eijkhof, and van der Gaag
-#
-# Preprocessing Rules for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Eijkhof, and van der Gaag
-#
-#  PR-4 (PR-3 + Simplicial + Almost Simplicial)
-function pr4(graph, width::Integer)
-    return pr4(BipartiteGraph(graph), width)
-end
-
-function pr4(graph::AbstractGraph{V}, width::Integer) where {V}
-    kernel = Graph(graph)
-    return kernel, pr4!(kernel, convert(V, width))...
-end
-
-function pr4!(graph::Graph{V}, width::V) where {V}
-    # apply PR-3
-    _stack, _label, width = pr3!(graph, width)
-
-    # apply simplicial and almost simplicial rules
-    n = nv(graph)
-    marker = zeros(Int, n); tag = 0
-
-    # heap
-    heap = Heap{V, V}(n)
-
-    for v in vertices(graph)
-        list = neighbors(graph, v)
-        degeneracy = zero(V)
-
-        for i in oneto(eltypedegree(graph, v))
-            w = list[i]
-            marker[neighbors(graph, w)] .= tag += 1
-
-            for ii in oneto(i - one(V))
-                ww = list[ii]
-
-                if marker[ww] < tag
-                    degeneracy += one(V)
-                end
-            end
-        end
-
-        push!(heap, v => degeneracy)
-    end
-
-    hfall!(heap)
-
-    # stack of eliminated vertices
-    lo = -one(V)
-    hi = zero(V)
-    stack = Vector{V}(undef, n)
-
-    while lo < hi
-        lo = hi
-
-        # simplicial
-        while !isempty(heap) && iszero(minimum(heap))
-            v = argmin(heap)
-            list = neighbors(graph, v)
-            degree = eltypedegree(graph, v)
-
-            hi += one(V); stack[hi] = v; width = max(width, degree)
-            delete!(heap, v)
-
-            while !isempty(list)
-                w = last(list)
-                heap[w] -= (eltypedegree(graph, w) - degree)
-                hrise!(heap, w)
-                hfall!(heap, w)
-                rem_edge!(graph, v, w)
-            end
-        end
-
-        # almost-simplicial
-        for w in keys(heap)
-            marker[neighbors(graph, w)] .= tag += 1
-
-            for v in neighbors(graph, w)
-                list = neighbors(graph, v)
-                degree = eltypedegree(graph, v)
-
-                if degree <= width
-                    count = zero(V)
-
-                    for ww in neighbors(graph, v)
-                        if w != ww && marker[ww] < tag
-                            count += one(V)
-                        end
-                    end
-
-                    if heap[v] == count
-                        hi += one(V); stack[hi] = v
-                        delete!(heap, v)
-
-                        for ww in list
-                            if w != ww && marker[ww] < tag
-                                count = one(V)
-
-                                for vv in neighbors(graph, ww)
-                                    if v != vv && marker[vv] == tag
-                                        heap[vv] -= one(V)
-                                        hrise!(heap, vv)
-                                        count += one(V)
-                                    end
-                                end
-
-                                heap[w] += (eltypedegree(graph, w) - count)
-                                heap[ww] += (eltypedegree(graph, ww) - count)
-                                add_edge!(graph, w, ww); marker[ww] = tag
-                            end
-                        end
-
-                        while !isempty(list)
-                            ww = last(list)
-                            heap[ww] -= (eltypedegree(graph, ww) - degree)
-                            hrise!(heap, ww)
-                            hfall!(heap, ww)
-                            rem_edge!(graph, v, ww)
-                        end
-
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    append!(_stack, view(_label, resize!(stack, hi)))
-    keepat!(_label, rem_vertices!(graph, stack; keep_order = true))
-    return _stack, _label, width
-end
-
-
-# Safe Reduction Rules for Weighted Treewidth
-# Eijkhof, Bodlaender, and Koster
-# PR-3 (Islet, Twig, Series, Triangle, Buddy, and Cube)
-function pr3(weights::AbstractVector, graph, width::Number)
-    return pr3(weights, BipartiteGraph(graph), width)
-end
-
-function pr3(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
-    kernel = Graph(graph)
-    return kernel, pr3!(weights, kernel, convert(W, width))...
-end
-
-function pr3!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V}
-    n = nv(graph)
-    tol = tolerance(W)
-
-    @inbounds for v in vertices(graph)
-        rem_edge!(graph, v, v)
-    end
-
-    # neighbor weights
-    nws = Vector{W}(undef, n)
-
-    # bucket queue
-    head = zeros(V, max(n, four(V)))
-    prev = Vector{V}(undef, n)
-    next = Vector{V}(undef, n)
-
-    function set(i)
-        @inbounds h = @view head[i + one(i)]
-        return DoublyLinkedList(h, prev, next)
-    end
-
-    @inbounds for v in vertices(graph)
-        nw = weights[v]
-
-        for w in neighbors(graph, v)
-            nw += weights[w]
-        end
-
-        nws[v] = nw
-        pushfirst!(set(eltypedegree(graph, v)), v)
-    end
-
-    # stack of eliminated vertices
-    lo = -one(V)
-    hi = zero(V)
-    stack = Vector{V}(undef, n)
-
-    # apply rules until exhaustion
-    while lo < hi
-        lo = hi
-
-        # islet rule
-        v = head[1]
-
-        while ispositive(v)
-            # v
-            hi += one(V); stack[hi] = v; width = max(width, nws[v])
-            n = next[v]; delete!(set(0), v)
-            v = n
-        end
-
-        if lo == hi
-            # twig rule
-            v = head[2]
-
-            while ispositive(v)
-                # w
-                # |
-                # v
-                w = only(neighbors(graph, v))
-                hi += one(V); stack[hi] = v; width = max(width, nws[v])
-
-                delete!(set(eltypedegree(graph, w)), w)
-
-                rem_edge!(graph, v, w); nws[w] -= weights[v]
-
-                pushfirst!(set(eltypedegree(graph, w)), w)
-
-                n = next[v]; delete!(set(1), v)
-                v = n
-            end
-
-            if lo == hi
-                # series rule
-                v = head[3]
-
-                while ispositive(v)
-                    w = ww = zero(V)
-
-                    if nws[v] < width + tol
-                        x, xx = neighbors(graph, v)
-
-                        if weights[v] + tol > min(weights[x], weights[xx])
-                            w, ww = x, xx
-                        end
-                    end
-
-                    if ispositive(w)
-                        # w
-                        # |
-                        # v  ---  ww
-                        hi += one(V); stack[hi] = v
-
-                        delete!(set(eltypedegree(graph, w)), w)
-                        delete!(set(eltypedegree(graph, ww)), ww)
-
-                        rem_edge!(graph, v, w); nws[w] -= weights[v]
-                        rem_edge!(graph, v, ww); nws[ww] -= weights[v]
-
-                        if add_edge!(graph, w, ww)
-                            nws[w] += weights[ww]
-                            nws[ww] += weights[w]
-                        end
-
-                        pushfirst!(set(eltypedegree(graph, w)), w)
-                        pushfirst!(set(eltypedegree(graph, ww)), ww)
-
-                        n = next[v]; delete!(set(2), v)
-                    else
-                        n = next[v]
-                    end
-
-                    v = n
-                end
-
-                if lo == hi
-                    # triangle rule
-                    v = head[4]
-
-                    while ispositive(v)
-                        w = ww = www = zero(V)
-
-                        if nws[v] < width + tol
-                            x, xx, xxx = neighbors(graph, v)
-
-                            if has_edge(graph, x, xx) && weights[v] + tol > weights[xxx]
-                                w, ww, www = x, xx, xxx
-                            elseif has_edge(graph, x, xxx) && weights[v] + tol > weights[xx]
-                                w, ww, www = x, xxx, xx
-                            elseif has_edge(graph, xx, xxx) && weights[v] + tol > weights[x]
-                                w, ww, www = xx, xxx, x
-                            end
-                        end
-
-                        if ispositive(w)
-                            # w  ---  ww
-                            # |   /
-                            # v  ---  www
-                            hi += one(V); stack[hi] = v
-
-                            delete!(set(eltypedegree(graph, w)), w)
-                            delete!(set(eltypedegree(graph, ww)), ww)
-                            delete!(set(eltypedegree(graph, www)), www)
-
-                            rem_edge!(graph, v, w); nws[w] -= weights[v]
-                            rem_edge!(graph, v, ww); nws[ww] -= weights[v]
-                            rem_edge!(graph, v, www); nws[www] -= weights[v]
-
-                            if add_edge!(graph, w, www)
-                                nws[w] += weights[ww]
-                                nws[ww] += weights[w]
-                            end
-
-                            if add_edge!(graph, ww, www)
-                                nws[ww] += weights[www]
-                                nws[www] += weights[ww]
-                            end
-
-                            pushfirst!(set(eltypedegree(graph, w)), w)
-                            pushfirst!(set(eltypedegree(graph, ww)), ww)
-                            pushfirst!(set(eltypedegree(graph, www)), www)
-
-                            n = next[v]; delete!(set(3), v)
-                        else
-                            n = next[v]
-                        end
-
-                        v = n
-                    end
-
-                    if lo == hi
-                        # buddy rule
-                        v = head[4]
-
-                        while ispositive(v)
-                            vv = n = next[v]
-
-                            if nws[v] < width + tol
-                                w, ww, www = neighbors(graph, v)
-
-                                # sort the weights
-                                p = weights[w]
-                                pp = weights[ww]
-                                ppp = weights[www]
-
-                                if p - tol >= pp
-                                    p, pp = pp, p
-                                end
-
-                                if pp - tol >= ppp
-                                    pp, ppp = ppp, pp
-                                end
-
-                                if p - tol >= pp
-                                    p, pp = pp, p
-                                end
-
-                                while ispositive(vv)
-                                    x, xx, xxx = neighbors(graph, vv)
-
-                                    # sort the weights
-                                    q = weights[v]
-                                    qq = weights[vv]
-
-                                    if q - tol >= qq
-                                        q, qq = qq, q
-                                    end
-
-                                    if nws[vv] < width + tol && p < q + tol && pp < qq + tol && (w, ww, www) == (x, xx, xxx)
-                                        # w  -----------  vv
-                                        # |           /   |
-                                        # |       ww      |
-                                        # |   /           |
-                                        # v  -----------  www
-                                        hi += one(V); stack[hi] = vv
-                                        hi += one(V); stack[hi] = v
-
-                                        delete!(set(eltypedegree(graph, w)), w)
-                                        delete!(set(eltypedegree(graph, ww)), ww)
-                                        delete!(set(eltypedegree(graph, www)), www)
-
-                                        rem_edge!(graph, v, w); nws[w] -= weights[v]
-                                        rem_edge!(graph, v, ww); nws[ww] -= weights[v]
-                                        rem_edge!(graph, v, www); nws[www] -= weights[v]
-                                        rem_edge!(graph, vv, w); nws[w] -= weights[vv]
-                                        rem_edge!(graph, vv, ww); nws[ww] -= weights[vv]
-                                        rem_edge!(graph, vv, www); nws[www] -= weights[vv]
-
-                                        if add_edge!(graph, w, ww)
-                                            nws[w] += weights[ww]
-                                            nws[ww] += weights[w]
-                                        end
-
-                                        if add_edge!(graph, w, www)
-                                            nws[w] += weights[www]
-                                            nws[www] += weights[w]
-                                        end
-
-                                        if add_edge!(graph, ww, www)
-                                            nws[ww] += weights[www]
-                                            nws[www] += weights[ww]
-                                        end
-
-                                        pushfirst!(set(eltypedegree(graph, w)), w)
-                                        pushfirst!(set(eltypedegree(graph, ww)), ww)
-                                        pushfirst!(set(eltypedegree(graph, www)), www)
-
-                                        nn = zero(V); delete!(set(3), vv)
-                                        n = next[v]; delete!(set(3), v)
-                                    else
-                                        nn = next[vv]
-                                    end
-
-                                    vv = nn
-                                end
-                            end
-
-                            v = n
-                        end
-
-                        if lo == hi
-                            # cube rule
-                            v = head[4]
-
-                            while ispositive(v)
-                                vv, vvv, vvvv = neighbors(graph, v)
-
-                                if isthree(eltypedegree(graph, vv)) && isthree(eltypedegree(graph, vvv)) && isthree(eltypedegree(graph, vvvv)) && max(nws[vv], nws[vvv], nws[vvvv]) < width + tol
-                                    w = ww = www = zero(V)
-                                    x, xx, xxx = neighbors(graph, vv)
-                                    y, yy, yyy = neighbors(graph, vvv)
-                                    z, zz, zzz = neighbors(graph, vvvv)
-
-                                    if v == x
-                                        x, xx = xx, xxx
-                                    elseif v == xx
-                                        x, xx = x, xxx
-                                    end
-
-                                    if v == y
-                                        y, yy = yy, yyy
-                                    elseif v == yy
-                                        y, yy = y, yyy
-                                    end
-
-                                    if v == z
-                                        z, zz = zz, zzz
-                                    elseif v == zz
-                                        z, zz = z, zzz
-                                    end
-
-                                    if x == y != vvvv && yy == zz != vv && z == xx != vvv
-                                        w, ww, www = x, yy, z
-                                    elseif x == y != vvvv && yy == z != vv && zz == xx != vvv
-                                        w, ww, www = x, yy, zz
-                                    elseif x == yy != vvvv && y == z != vv && zz == xx != vvv
-                                        w, ww, www = x, y, zz
-                                    elseif xx == yy != vvvv && y == z != vv && zz == x != vvv
-                                        w, ww, www = xx, y, zz
-                                    elseif xx == y != vvvv && yy == zz != vv && z == x != vvv
-                                        w, ww, www = xx, yy, z
-                                    elseif xx == yy != vvvv && y == zz != vv && z == x != vvv
-                                        w, ww, www = xx, y, z
-                                    end
-
-                                    if ispositive(w) && (
-                                            (weights[vv] + tol > weights[www] && weights[vvv] + tol > weights[w] && weights[vvvv] + tol > weights[ww]) ||
-                                                (weights[vv] + tol > weights[w] && weights[vvv] + tol > weights[ww] && weights[vvvv] + tol > weights[www])
-                                        )
-                                        #         ww
-                                        #     /       \
-                                        # vvv             vvvv
-                                        # |   \       /   |
-                                        # |       v       |
-                                        # |       |       |
-                                        # w       |       www
-                                        #     \   |   /
-                                        #         vv
-                                        hi += one(V); stack[hi] = vvvv
-                                        hi += one(V); stack[hi] = vvv
-                                        hi += one(V); stack[hi] = vv
-                                        hi += one(V); stack[hi] = v
-
-                                        delete!(set(eltypedegree(graph, w)), w)
-                                        delete!(set(eltypedegree(graph, ww)), ww)
-                                        delete!(set(eltypedegree(graph, www)), www)
-
-                                        rem_edge!(graph, vv, v); nws[vv] -= weights[v]
-                                        rem_edge!(graph, vv, x); nws[vv] -= weights[x]
-                                        rem_edge!(graph, vv, xx); nws[vv] -= weights[xx]
-                                        rem_edge!(graph, vvv, v); nws[vvv] -= weights[v]
-                                        rem_edge!(graph, vvv, y); nws[vvv] -= weights[y]
-                                        rem_edge!(graph, vvv, yy); nws[vvv] -= weights[yy]
-                                        rem_edge!(graph, vvvv, v); nws[vvvv] -= weights[v]
-                                        rem_edge!(graph, vvvv, z); nws[vvvv] -= weights[z]
-                                        rem_edge!(graph, vvvv, zz); nws[vvvv] -= weights[zz]
-
-                                        if add_edge!(graph, w, ww)
-                                            nws[w] += weights[ww]
-                                            nws[ww] += weights[w]
-                                        end
-
-                                        if add_edge!(graph, w, www)
-                                            nws[w] += weights[www]
-                                            nws[www] += weights[w]
-                                        end
-
-                                        if add_edge!(graph, ww, www)
-                                            nws[ww] += weights[www]
-                                            nws[www] += weights[ww]
-                                        end
-
-                                        pushfirst!(set(eltypedegree(graph, w)), w)
-                                        pushfirst!(set(eltypedegree(graph, ww)), ww)
-                                        pushfirst!(set(eltypedegree(graph, www)), www)
-
-                                        delete!(set(3), vvvv)
-                                        delete!(set(3), vvv)
-                                        delete!(set(3), vv)
-                                        n = next[v]; delete!(set(3), v)
-                                    else
-                                        n = next[v]
-                                    end
-                                else
-                                    n = next[v]
-                                end
-
-                                v = n
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    label = rem_vertices!(graph, resize!(stack, hi); keep_order = true)
-    return stack, label, width
-end
-
-# Safe Reduction Rules for Weighted Treewidth
-# Eijkhof, Bodlaender, and Koster
-# PR-4 (PR-3 + Simplicial + Almost Simplicial)
-function pr4(weights::AbstractVector, graph, width::Number)
-    return pr4(weights, BipartiteGraph(graph), width)
-end
-
-function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
-    kernel = Graph(graph)
-    return kernel, pr4!(weights, kernel, convert(W, width))...
-end
-
-function pr4!(weights::AbstractVector{W}, graph::Graph{V}, width::W) where {W, V}
-    # apply PR-3
-    _stack, _label, width = pr3!(weights, graph, width)
-
-    # apply simplicial and almost simplicial rules
-    n = nv(graph)
-    tol = tolerance(W)
-    marker = zeros(Int, n); tag = 0
-
-    # neighbor weights
-    nws = Vector{W}(undef, n)
-
-    # heap
-    heap = Heap{V, V}(n)
-
-    for v in vertices(graph)
-        list = neighbors(graph, v)
-
-        nw = weights[_label[v]]
-        degeneracy = zero(V)
-
-        for i in oneto(eltypedegree(graph, v))
-            w = list[i]
-            nw += weights[_label[w]]
-            marker[neighbors(graph, w)] .= tag += 1
-
-            for ii in oneto(i - one(V))
-                ww = list[ii]
-
-                if marker[ww] < tag
-                    degeneracy += one(V)
-                end
-            end
-        end
-
-        nws[v] = nw
-        push!(heap, v => degeneracy)
-    end
-
-    hfall!(heap)
-
-    # stack of eliminated vertices
-    lo = -one(V)
-    hi = zero(V)
-    stack = Vector{V}(undef, n)
-
-    while lo < hi
-        lo = hi
-
-        # simplicial
-        while !isempty(heap) && iszero(minimum(heap))
-            v = argmin(heap)
-            list = neighbors(graph, v)
-            degree = eltypedegree(graph, v)
-
-            hi += one(V); stack[hi] = v; width = max(width, nws[v])
-            delete!(heap, v)
-
-            while !isempty(list)
-                w = last(list)
-                nws[w] -= weights[_label[v]]
-                heap[w] -= (eltypedegree(graph, w) - degree)
-                hrise!(heap, w)
-                hfall!(heap, w)
-                rem_edge!(graph, v, w)
-            end
-        end
-
-        # almost-simplicial
-        for w in keys(heap)
-            marker[neighbors(graph, w)] .= tag += 1
-
-            for v in neighbors(graph, w)
-                list = neighbors(graph, v)
-                degree = eltypedegree(graph, v)
-
-                if nws[v] < width + tol && weights[_label[w]] < weights[_label[v]] + tol
-                    count = zero(V)
-
-                    for ww in neighbors(graph, v)
-                        if w != ww && marker[ww] < tag
-                            count += one(V)
-                        end
-                    end
-
-                    if heap[v] == count
-                        hi += one(V); stack[hi] = v
-                        delete!(heap, v)
-
-                        for ww in list
-                            if w != ww && marker[ww] < tag
-                                count = one(V)
-
-                                for vv in neighbors(graph, ww)
-                                    if v != vv && marker[vv] == tag
-                                        heap[vv] -= one(V)
-                                        hrise!(heap, vv)
-                                        count += one(V)
-                                    end
-                                end
-
-                                nws[w] += weights[_label[ww]]
-                                nws[ww] += weights[_label[w]]
-                                heap[w] += (eltypedegree(graph, w) - count)
-                                heap[ww] += (eltypedegree(graph, ww) - count)
-                                add_edge!(graph, w, ww); marker[ww] = tag
-                            end
-                        end
-
-                        while !isempty(list)
-                            ww = last(list)
-                            nws[ww] -= weights[_label[v]]
-                            heap[ww] -= (eltypedegree(graph, ww) - degree)
-                            hrise!(heap, ww)
-                            hfall!(heap, ww)
-                            rem_edge!(graph, v, ww)
-                        end
-
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    append!(_stack, view(_label, resize!(stack, hi)))
-    keepat!(_label, rem_vertices!(graph, stack; keep_order = true))
-    return _stack, _label, width
-end
-
-function simplicialrule(graph)
-    return simplicialrule(BipartiteGraph(graph))
-end
-
-function simplicialrule(graph::AbstractGraph{V}) where {V}
-    E = etype(graph)
-    n = nv(graph); m = de(graph); nn = n + one(V)
-    ptr = Vector{E}(undef, nn)
-    tgt = Vector{V}(undef, m)
-    marker = Vector{E}(undef, n)
-    inject0 = Vector{V}(undef, n)
-    inject1 = Vector{V}(undef, n)
-    project = Vector{V}(undef, n)
-    return simplicialrule_impl!(ptr, tgt, marker, project, inject0, inject1, graph)
-end
-
-function simplicialrule_impl!(
-        ptr::AbstractVector{E},
-        tgt::AbstractVector{V},
-        marker::AbstractVector{I},
-        project::AbstractVector{V},
-        inject0::AbstractVector{V},
-        inject1::AbstractVector{V},
-        graph::AbstractGraph{V},
-    ) where {I, V, E}
-    @argcheck nv(graph) < length(ptr)
-    @argcheck ne(graph) <= length(tgt)
-    @argcheck nv(graph) <= length(marker)
-    @argcheck nv(graph) <= length(project)
-    @argcheck nv(graph) <= length(inject0)
-    @argcheck nv(graph) <= length(inject1)
-
-    n = nv(graph); num = tag = zero(V)
-    degree = inject0; fillin = inject1; stack = project
-
-    @inbounds for v in vertices(graph)
-        marker[v] = tag
-    end
-
-    @inbounds for v in vertices(graph)
-        deg = eltypedegree(graph, v)
-        cnt = zero(E)
-        marker[v] = tag + convert(I, deg)
-
-        for w in neighbors(graph, v)
-            marker[w] = tag += one(I)
-
-            for x in neighbors(graph, w)
-                marker[x] = tag
-            end
-
-            for ww in neighbors(graph, v)
-                w == ww && break
-
-                if marker[ww] < tag
-                    cnt += one(E)
-                end
-            end
-
-            if v == w
-                deg -= one(V)
-            end
-        end
-
-        degree[v] = deg + one(V)
-        fillin[v] = cnt
-
-        if iszero(cnt)
-            num += one(V); stack[num] = v
-        end
-    end
-
-    @inbounds while ispositive(num)
-        v = stack[num]; num -= one(V)
-        vdeg = degree[v]; degree[v] = zero(V)
-
-        for w in neighbors(graph, v)
-            wdeg = degree[w]
-
-            if ispositive(wdeg)
-                wcnt = fillin[w] -= convert(E, wdeg - vdeg)
-
-                if iszero(wcnt)
-                    num += one(V); stack[num] = w
-                end
-
-                degree[w] = wdeg - one(V)
-            end
-        end
-    end
-
-    n0 = n1 = zero(V)
-
-    @inbounds for v in oneto(n)
-        deg = degree[v]
-
-        if iszero(deg)
-            n0 += one(V); inject0[n0] = v; project[v] = zero(V)
-        else
-            n1 += one(V); inject1[n1] = v; project[v] = n1
-        end
-    end
-
-    ptr[begin] = p = one(E)
-
-    @inbounds for j in oneto(n1)
-        v = inject1[j]; jj = j + one(V)
-
-        for u in neighbors(graph, v)
-            i = project[u]
-
-            if ispositive(i)
-                tgt[p] = i; p += one(E)
-            end
-        end
-
-        ptr[jj] = p
-    end
-
-    m1 = p - one(E)
-    return BipartiteGraph(n1, n1, m1, ptr, tgt), view(inject0, oneto(n0)), view(inject1, oneto(n1))
-end
-
 # Engineering Data Reduction for Nested Dissection
 # Ost, Schulz, Strash
 # Reduction 2 (Indistinguishable node reduction)
@@ -4034,221 +2892,105 @@ function compress_impl!(
     return outgraph, partition
 end
 
-function compresspr4(graph, width::Integer)
-    return compresspr4(BipartiteGraph(graph), width)
+
+function saferules(graph, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm)
+    return saferules(BipartiteGraph(graph), alg, lb, ub)
 end
 
-function compresspr4(graph::AbstractGraph{V}, width::Integer) where {V}
-    weights = ones(V, nv(graph))
-    return compresspr4(weights, graph, convert(V, width) + one(V))
-end
+function saferules(graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm) where {V}
+    n = nv(graph)
+    width = lowerbound(graph, lb)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, graph, width)
+    innerorder, innerindex = permutation(innerweights, innergraph, ub)
 
-function compresspr4(weights::AbstractVector{<:Number}, graph, width::Number)
-    return compresspr4(weights, BipartiteGraph(graph), width)
-end
-
-function compresspr4(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::Number) where {W <: Number, V}
-    return compresspr4(weights, graph, convert(W, width))
-end
-
-function compresspr4(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V <: Integer}
-    weights00 = weights; graph00 = graph; width00 = width; n00 = nv(graph00)
-    inject03 = Vector{V}(undef, n00); n03 = zero(V)
-    # V01
-    #  ↓ inject01
-    # V00
-    #  ↑ inject02
-    # V02
-    #  ↓ project10
-    # V10
-    graph02, inject01, inject02, width10, = pr4(weights00, graph00, width00)
-    graph10, project10 = compress(graph02, Val(true))
-
-    @inbounds for v00 in inject01
-        n03 += one(V); inject03[n03] = v00
+    if innerwidth < treewidth(innerweights, innergraph, (innerorder, innerindex))
+        innerorder, innerindex = permutation(innerweights, innergraph, alg)
     end
 
-    n02 = nv(graph02); n10 = nv(graph10)
-    #   inject02 V02
-    #        ↙    ↓ project10
-    #   V00  →   V10
-    #     project11
-    weights10 = Vector{W}(undef, n10)
-    project11 = BipartiteGraph{V, V}(n00, n10, n00 - n03)
-    pointers(project11)[begin] = p = one(V)
+    order = Vector{V}(undef, n); i = zero(V)
 
-    @inbounds for v10 in vertices(graph10)
-        w10 = zero(W); vv10 = v10 + one(V)
-
-        for v02 in neighbors(project10, v10)
-            v00 = inject02[v02]
-            w10 += weights00[v00]
-            targets(project11)[p] = v00; p += one(V)
-        end
-
-        weights10[v10] = w10
-        pointers(project11)[vv10] = p
+    for v in inject
+        i += one(V); order[i] = v
     end
 
-    lo = n10; hi = n00
+    for j in innerorder, v in neighbors(project, j)
+        i += one(V); order[i] = v
+    end 
 
-    @inbounds while lo < hi
-        hi = lo
-        # V11
-        #  ↓ inject11
-        # V10
-        #  ↑ inject12
-        # V12
-        #  ↓ project20
-        # V20
-        graph12, inject11, inject12, width20 = pr4(weights10, graph10, width10)
-        graph20, project20 = compress(graph12, Val(true))
-
-        for v10 in inject11, v00 in neighbors(project11, v10)
-            n03 += one(V); inject03[n03] = v00
-        end
-
-        n12 = nv(graph12); n20 = nv(graph20)
-        #            inject12
-        #          V10  ←   V12
-        # project11 ↑        ↓ project20
-        #          V00  →   V20
-        #           project21
-
-        weights20 = Vector{W}(undef, n20)
-        project21 = BipartiteGraph{V, V}(n00, n20, n00 - n03)
-        pointers(project21)[begin] = p = one(V)
-
-        for v20 in vertices(graph20)
-            w20 = zero(W); vv20 = v20 + one(V)
-
-            for v12 in neighbors(project20, v20)
-                v10 = inject12[v12]
-                w20 += weights10[v10]
-
-                for v00 in neighbors(project11, v10)
-                    targets(project21)[p] = v00; p += one(V)
-                end
-            end
-
-            weights20[v20] = w20
-            pointers(project21)[vv20] = p
-        end
-
-        lo = n10 = n20; weights10 = weights20; graph10 = graph20; width10 = width20; project11 = project21
-    end
-
-    resize!(inject03, n03)
-    return weights10, graph10, inject03, project11, width10
+    return order
 end
 
-function compresssimplicial(graph)
-    return compresssimplicial(BipartiteGraph(graph))
+function saferules(weights::AbstractVector, graph, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm)
+    return saferules(weights, BipartiteGraph(graph), alg, lb, ub)
 end
 
-function compresssimplicial(graph::AbstractGraph{V}) where {V}
-    weights = ones(V, nv(graph))
-    return compresssimplicial(weights, graph)
+function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm) where {V}
+    n = nv(graph)
+    width = lowerbound(weights, graph, lb)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, weights, graph, width)
+    innerorder, innerindex = permutation(innerweights, innergraph, ub)
+
+    if innerwidth < treewidth(innerweights, innergraph, (innerorder, innerindex))
+        innerorder, innerindex = permutation(innerweights, innergraph, alg)
+    end
+
+    order = Vector{V}(undef, n); i = zero(V)
+
+    for v in inject
+        i += one(V); order[i] = v
+    end
+
+    for j in innerorder, v in neighbors(project, j)
+        i += one(V); order[i] = v
+    end 
+
+    return order
 end
 
-function compresssimplicial(weights::AbstractVector, graph)
-    return compresssimplicial(weights, BipartiteGraph(graph))
+function simplicialrule(graph, alg::EliminationAlgorithm)
+    return simplicialrule(BipartiteGraph(graph), alg)
 end
 
-function compresssimplicial(weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W, V <: Integer}
-    weights00 = weights; graph00 = graph; n00 = nv(graph00)
-    inject03 = Vector{V}(undef, n00); n03 = zero(V)
-    # V01
-    #  ↓ inject01
-    # V00
-    #  ↑ inject02
-    # V02
-    #  ↓ project10
-    # V10
-    graph02, inject01, inject02 = simplicialrule(graph00)
-    graph10, project10 = compress(graph02, Val(true))
+function simplicialrule(graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {V}
+    n = nv(graph)
+    width = zero(V)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, graph, width)
+    innerorder, innerindex = permutation(innerweights, innergraph, alg)
 
-    @inbounds for v00 in inject01
-        n03 += one(V); inject03[n03] = v00
+    order = Vector{V}(undef, n); i = zero(V)
+
+    for v in inject
+        i += one(V); order[i] = v
     end
 
-    n02 = nv(graph02); n10 = nv(graph10)
-    #   inject02 V02
-    #        ↙    ↓ project10
-    #   V00  →   V10
-    #     project11
-    project11 = BipartiteGraph{V, V}(n00, n10, n00 - n03)
-    pointers(project11)[begin] = p = one(V)
+    for j in innerorder, v in neighbors(project, j)
+        i += one(V); order[i] = v
+    end 
 
-    @inbounds for v10 in vertices(graph10)
-        vv10 = v10 + one(V)
+    return order
+end
 
-        for v02 in neighbors(project10, v10)
-            v00 = inject02[v02]
-            targets(project11)[p] = v00; p += one(V)
-        end
+function simplicialrule(weights::AbstractVector, graph, alg::EliminationAlgorithm)
+    return simplicialrule(weights, BipartiteGraph(graph), alg)
+end
 
-        pointers(project11)[vv10] = p
+function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
+    n = nv(graph)
+    width = zero(W)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, weights, graph, width)
+    innerorder, innerindex = permutation(innerweights, innergraph, alg)
+
+    order = Vector{V}(undef, n); i = zero(V)
+
+    for v in inject
+        i += one(V); order[i] = v
     end
 
-    lo = n10; hi = n00
+    for j in innerorder, v in neighbors(project, j)
+        i += one(V); order[i] = v
+    end 
 
-    @inbounds while lo < hi
-        hi = lo
-        # V11
-        #  ↓ inject11
-        # V10
-        #  ↑ inject12
-        # V12
-        #  ↓ project20
-        # V20
-        graph12, inject11, inject12 = simplicialrule(graph10)
-        graph20, project20 = compress(graph12, Val(true))
-
-        for v10 in inject11, v00 in neighbors(project11, v10)
-            n03 += one(V); inject03[n03] = v00
-        end
-
-        n12 = nv(graph12); n20 = nv(graph20)
-        #            inject12
-        #          V10  ←   V12
-        # project11 ↑        ↓ project20
-        #          V00  →   V20
-        #           project21
-        project21 = BipartiteGraph{V, V}(n00, n20, n00 - n03)
-        pointers(project21)[begin] = p = one(V)
-
-        for v20 in vertices(graph20)
-            vv20 = v20 + one(V)
-
-            for v12 in neighbors(project20, v20)
-                v10 = inject12[v12]
-
-                for v00 in neighbors(project11, v10)
-                    targets(project21)[p] = v00; p += one(V)
-                end
-            end
-
-            pointers(project21)[vv20] = p
-        end
-
-        lo = n10 = n20; graph10 = graph20; project11 = project21
-    end
-
-    weights10 = Vector{W}(undef, n10)
-
-    @inbounds for v10 in vertices(graph10)
-        w10 = zero(W)
-
-        for v00 in neighbors(project11, v10)
-            w10 += weights00[v00]
-        end
-
-        weights10[v10] = w10
-    end
-
-    resize!(inject03, n03)
-    return weights10, graph10, inject03, project11
+    return order
 end
 
 function connectedcomponents(graph)

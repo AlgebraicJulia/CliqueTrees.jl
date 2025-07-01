@@ -6,7 +6,7 @@ using Base.Order
 using Graphs
 
 # arithmetic
-export tolerance, twice, half, two, three, four, five, eight, ispositive, isnegative, istwo, isthree, isfour
+export tolerance, twice, half, two, three, four, five, six, eight, ispositive, isnegative, istwo, isthree, isfour
 
 # graphs
 export eltypedegree, de
@@ -43,15 +43,23 @@ function eight(::Type{I}) where {I}
     return twice(four(I))
 end
 
-function eight(i::I) where {I}
+function eight(::I) where {I}
     return eight(I)
+end
+
+function six(::Type{I}) where {I}
+    return twice(three(I))
+end
+
+function six(::I) where {I}
+    return six(I)
 end
 
 function five(::Type{I}) where {I}
     return one(I) + four(I)
 end
 
-function five(i::I) where {I}
+function five(::I) where {I}
     return five(I)
 end
 
@@ -59,7 +67,7 @@ function four(::Type{I}) where {I}
     return one(I) + three(I)
 end
 
-function four(i::I) where {I}
+function four(::I) where {I}
     return four(I)
 end
 
@@ -67,7 +75,7 @@ function three(::Type{I}) where {I}
     return one(I) + two(I)
 end
 
-function three(i::I) where {I}
+function three(::I) where {I}
     return three(I)
 end
 
@@ -75,7 +83,7 @@ function two(::Type{I}) where {I}
     return one(I) + one(I)
 end
 
-function two(i::I) where {I}
+function two(::I) where {I}
     return two(I)
 end
 

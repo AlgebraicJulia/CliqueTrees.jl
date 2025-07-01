@@ -113,5 +113,7 @@ include("filled_edge_iter.jl")
 include("chordal_graphs.jl")
 include("ambiguities.jl")
 include("packages.jl")
+include("pr3.jl")
+include("pr4.jl")
 
 end

@@ -171,7 +171,7 @@ end
 
 """
   mmw_impl!(marker, vstack, tmpptr, degree, source, target, begptr,
-    endptr, invptr, head, prev, next, totdeg, weights, graph, strategy)  
+    endptr, invptr, head, prev, next, totdeg, weight, graph, strategy)  
 
 Contraction and Treewidth Lower Bounds
 Bodlaender, Koster, and Wolle
@@ -199,7 +199,7 @@ relation on the set of elements.
 
 input parameters:
   - `totdeg`: total vertex weight
-  - `weights`: vertex weights
+  - `weight`: vertex weight
   - `graph`: input graph
   - `S`: strategy
     - `1`: min-d (fast)
@@ -241,7 +241,7 @@ function mmw_impl!(
         prev::AbstractVector{V},
         next::AbstractVector{V},
         totdeg::V,
-        weights::AbstractVector{V},
+        weight::AbstractVector{V},
         graph::AbstractGraph{V},
         strategy::Val,
     ) where {V <: Signed, E}
@@ -271,7 +271,7 @@ function mmw_impl!(
     # `mindeg` is the minimum weighted degree
     # `maxdeg` is the maximum weighted degree
     mindeg, maxdeg = mmw_init!(marker, tmpptr, degree, source, target,
-        begptr, endptr, invptr, head, prev, next, totdeg, weights, graph)
+        begptr, endptr, invptr, head, prev, next, totdeg, weight, graph)
 
     # `maxmindeg` is the largest value of `mindeg`
     # encountered during the algorithm
@@ -296,26 +296,26 @@ function mmw_impl!(
 
         # find a neighbor according to strategy `S`
         w = mmw_search!(marker, vstack, degree, target,
-            begptr, endptr, invptr, weights, tag, v, n, strategy)
+            begptr, endptr, invptr, weight, tag, v, n, strategy)
 
         # if a neighbor was found, contract the edge
         # {`v`, `w`}, turning `v` into a supernode
         if ispositive(w)
-            mmw_update_1!(marker, vstack, degree, source, target,
-                begptr, endptr, invptr, head, prev, next, weights, tag, v, w)
+            mmw_contract!(marker, vstack, degree, source, target,
+                begptr, endptr, invptr, head, prev, next, weight, tag, v, w)
 
             # the weighted degree of `w` may have increased
             maxdeg = max(maxdeg, degree[w])
 
         # otherwise, remove `v` from the graph
         else
-            mmw_update_2!(vstack, degree, source, target,
-                begptr, endptr, invptr, head, prev, next, weights, v)
+            mmw_remove!(vstack, degree, source, target,
+                begptr, endptr, invptr, head, prev, next, weight, v)
         end
 
         # the weighted degree of every element reachable by
         # `v` has decreased by the weight of `v`
-        mindeg = max(mindeg - weights[v], one(V))
+        mindeg = max(mindeg - weight[v], one(V))
     end
 
     return maxmindeg
@@ -323,12 +323,12 @@ end
 
 """
     mmw_init!(marker, tmpptr, degree, source, target, begptr,
-        endptr, invptr, head, prev, next, totdeg, weights, graph)
+        endptr, invptr, head, prev, next, totdeg, weight, graph)
 
 Initialize quotient graph and degree bucket queue.
 
 input parameters:
-  - `weights`: vertex weights
+  - `weight`: vertex weight
   - `graph`: input graph
   - `totdeg`: total vertex weight
 
@@ -349,7 +349,7 @@ function mmw_init!(
         prev::AbstractVector{V},
         next::AbstractVector{V},
         totdeg::V,
-        weights::AbstractVector{V},
+        weight::AbstractVector{V},
         graph::AbstractGraph{V},
     ) where {V, E}
  
@@ -378,13 +378,13 @@ function mmw_init!(
         marker[v] = zero(V)
 
         # `deg` is the weighted degree of `v`
-        deg = weights[v]
+        deg = weight[v]
         
         for w in neighbors(graph, v)
             if v != w
                 # `p` is the arc (`v`, `w`)
                 source[p] = v; p += one(E)
-                deg += weights[w]
+                deg += weight[w]
             end
         end
         
@@ -424,7 +424,7 @@ end
 
 """
     mmw_search!(marker, vstack, degree, target,
-        begptr, endptr, invptr, weights, tag, v, n, strategy)
+        begptr, endptr, invptr, weight, tag, v, n, strategy)
 
 Find an element reachable by `v` using the min-d or
 max-d heuristics. The min-d heuristic selects an element
@@ -450,7 +450,7 @@ function mmw_search!(
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
         invptr::AbstractVector{E},
-        weights::AbstractVector{V},
+        weight::AbstractVector{V},
         tag::V,
         v::V,
         n::V,
@@ -458,7 +458,7 @@ function mmw_search!(
     ) where {V, E, S}
    
     # `wgt` is the weight of `v` 
-    @inbounds wgt = weights[v]
+    @inbounds wgt = weight[v]
 
     # `w` is the chosen element
     w = deg = zero(V)
@@ -466,7 +466,7 @@ function mmw_search!(
     w, deg = mmw_reach!((w, deg), vstack,
             target, begptr, endptr, invptr, v) do (w, deg), pp, ww
         # `ww` is reachable by `v`; `wwgt` is its weight
-        @inbounds wwgt = weights[ww]
+        @inbounds wwgt = weight[ww]
 
         if wwgt <= wgt
             # `ddeg` is the weighted degree of `ww`
@@ -485,12 +485,12 @@ end
 
 """
     mmw_search!(marker, vstack, degree, target,
-        begptr, endptr, invptr, weights, tag, v, n, strategy)
+        begptr, endptr, invptr, weight, tag, v, n, strategy)
 
 Find an element reachable by `v` using the least-c
 heuristic. The least-c heuristic selects a neighbor
 `w` that minimizes the sum
-   Σ weights(x)
+   Σ weight(x)
  x ∈ N(v) ∩ N(w)
 
 input parameters:
@@ -509,7 +509,7 @@ function mmw_search!(
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
         invptr::AbstractVector{E},
-        weights::AbstractVector{V},
+        weight::AbstractVector{V},
         tag::V,
         v::V,
         n::V,
@@ -536,7 +536,7 @@ function mmw_search!(
     scr = zero(V)
 
     # `wgt` is the weight of `v`
-    @inbounds wgt = weights[v]
+    @inbounds wgt = weight[v]
 
     # elements reachable by `v` are located at the
     # indices (`numend`, ..., `n`) in `vstack`
@@ -546,7 +546,7 @@ function mmw_search!(
 
         # if the weight of `ww` is no greater than
         # the weight of `v`, compute its score
-        if weights[ww] <= wgt
+        if weight[ww] <= wgt
             # `sscr` is the score of `ww`
             sscr = zero(V)
 
@@ -560,7 +560,7 @@ function mmw_search!(
                 # if `w` is reachable by `v`, increase
                 # the score of `ww` by the weight of `w`
                 if ttag == -tag
-                    @inbounds scr += weights[w]
+                    @inbounds scr += weight[w]
                 end
 
                 return scr
@@ -578,8 +578,8 @@ function mmw_search!(
 end
 
 """
-    mmw_update_1!(marker, vstack, degree, source, begptr,
-        endptr, invptr, head, prev, next, weights, tag, v, w)
+    mmw_contract!(marker, vstack, degree, source, begptr,
+        endptr, invptr, head, prev, next, weight, tag, v, w)
 
 Contract the edge {`v`, `w`}, turning the
 element `v` into a supernode.
@@ -589,7 +589,7 @@ input parameters:
  - `v`: minimum degree vertex
  - `w`: neighbor of `v`
 """
-function mmw_update_1!(
+function mmw_contract!(
         marker::AbstractVector{V},
         vstack::AbstractVector{V},
         degree::AbstractVector{V},
@@ -601,7 +601,7 @@ function mmw_update_1!(
         head::AbstractVector{V},
         prev::AbstractVector{V},
         next::AbstractVector{V},
-        weights::AbstractVector{V},
+        weight::AbstractVector{V},
         tag::V,
         v::V,
         w::V,
@@ -625,11 +625,11 @@ function mmw_update_1!(
     end
 
     # `wgt` is the weight of `v`
-    @inbounds wgt = weights[v]
+    @inbounds wgt = weight[v]
 
     # `del` is the difference between the weight
     # of `v` and the weight of `w`
-    @inbounds del = wgt - weights[w]
+    @inbounds del = wgt - weight[w]
 
     # `deg` is the weighted degree of `w`
     @inbounds deg = degree[w]
@@ -661,7 +661,7 @@ function mmw_update_1!(
 
                     # increase the weighted degree of `w` by the
                     # weight of `ww`
-                    deg += weights[ww]
+                    deg += weight[ww]
 
                     # increase the weighted degree of `ww` by the
                     # weight of `w` and decrease it by the weight
@@ -742,15 +742,15 @@ function mmw_update_1!(
 end
 
 """
-    mmw_update_2!(vstack, degree, source, target,
-        begptr, endptr, invptr, head, prev, next, weights, v)
+    mmw_remove!(vstack, degree, source, target,
+        begptr, endptr, invptr, head, prev, next, weight, v)
 
 Remove the vertex `v` from the graph.
 
 input parameters:
  - `v`: minimum degree vertex
 """
-function mmw_update_2!(
+function mmw_remove!(
         vstack::AbstractVector{V},
         degree::AbstractVector{V},
         source::AbstractVector{V},
@@ -761,12 +761,12 @@ function mmw_update_2!(
         head::AbstractVector{V},
         prev::AbstractVector{V},
         next::AbstractVector{V},
-        weights::AbstractVector{V},
+        weight::AbstractVector{V},
         v::V,
     ) where {V, E}
    
     # `wgt` is the weight of `v` 
-    @inbounds wgt = weights[v]
+    @inbounds wgt = weight[v]
 
     # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)
@@ -819,7 +819,7 @@ end
 
 Compute the linear fold
   combine(combine(combine(combine(result, w), x), y), ...)
-where {w, x, y, ...} are the neighbors of `v`.
+where {w, x, y, ...} are the elements reachable by `v`.
 
 input parameters:
  - `v`: an element
