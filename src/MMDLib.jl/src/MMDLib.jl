@@ -12,65 +12,55 @@ module MMDLib
 
 using ArgCheck
 using Base: oneto
+using FillArrays
+using FixedSizeArrays
 using ..Utilities
 
 export mmd
 
 function mmd(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
-    vwght = ones(V, neqns)
+    vwght = Ones{V}(neqns)
     return mmd(neqns, vwght, xadj, adjncy; kwargs...)
 end
 
 function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
-    new = Vector{V}(undef, neqns)
+    @argcheck neqns <= length(vwght)
+    newvwght = FixedSizeVector{V}(undef, neqns)
 
     @inbounds for node in oneto(neqns)
-        new[node] = trunc(V, vwght[node])
+        newvwght[node] = trunc(V, vwght[node])
     end
 
-    return mmd(neqns, new, xadj, adjncy; kwargs...)
+    return mmd(neqns, newvwght, xadj, adjncy; kwargs...)
 end
 
 function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
-    total = zero(V); nnz = xadj[neqns + one(V)] - one(E)
+    @argcheck neqns <= length(vwght)
+    @argcheck neqns < length(xadj)
+    @inbounds nnz = xadj[neqns + one(V)] - one(E)
+    total = zero(V)
 
     @inbounds for node in oneto(neqns)
         total += vwght[node]
     end
 
-    invp = Vector{V}(undef, neqns)
-    marker = Vector{Int}(undef, neqns)
-    mergeparent = Vector{V}(undef, neqns)
-    needsupdate = Vector{V}(undef, neqns)
-    supersize = Vector{V}(undef, neqns)
-    superwght = Vector{V}(undef, neqns)
-    elimnext = Vector{V}(undef, neqns)
-    deghead = Vector{V}(undef, total)
-    degnext = Vector{V}(undef, neqns)
-    degprev = Vector{V}(undef, neqns)
-    newadjncy = Vector{V}(undef, nnz)
+    invp = FixedSizeVector{V}(undef, neqns)
+    marker = FixedSizeVector{Int}(undef, neqns)
+    mergeparent = FixedSizeVector{V}(undef, neqns)
+    needsupdate = FixedSizeVector{V}(undef, neqns)
+    supersize = FixedSizeVector{V}(undef, neqns)
+    superwght = FixedSizeVector{V}(undef, neqns)
+    elimnext = FixedSizeVector{V}(undef, neqns)
+    deghead = FixedSizeVector{V}(undef, total)
+    degnext = FixedSizeVector{V}(undef, neqns)
+    degprev = FixedSizeVector{V}(undef, neqns)
+    newadjncy = FixedSizeVector{V}(undef, nnz)
 
-    mmd_impl!(
-        invp,
-        marker,
-        mergeparent,
-        needsupdate,
-        supersize,
-        superwght,
-        elimnext,
-        deghead,
-        degnext,
-        degprev,
-        newadjncy,
-        total,
-        neqns,
-        convert(V, delta),
-        vwght,
-        xadj,
-        adjncy,
-    )
+    mmd_impl!(invp, marker, mergeparent, needsupdate, supersize,
+        superwght, elimnext, deghead, degnext, degprev, newadjncy,
+        total, neqns, convert(V, delta), vwght, xadj, adjncy)
 
-    return invp
+    return convert(Vector{V}, invp)
 end
 
 function mmd_impl!(
@@ -92,31 +82,19 @@ function mmd_impl!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
     ) where {I, V, E}
-
-    nnz = xadj[neqns + one(V)] - one(E)
+    @argcheck neqns < length(xadj)
+    @inbounds nnz = xadj[neqns + one(V)] - one(E)
 
     @inbounds for i in oneto(nnz)
         newadjncy[i] = adjncy[i]
     end
 
-    return mmd!_impl!(
-        invp,
-        marker,
-        mergeparent,
-        needsupdate,
-        supersize,
-        superwght,
-        elimnext,
-        deghead,
-        degnext,
-        degprev,
-        total,
-        neqns,
-        convert(V, delta),
-        vwght,
-        xadj,
-        newadjncy,
-    )
+    mmd!_impl!(
+        invp, marker, mergeparent, needsupdate, supersize,
+        superwght, elimnext, deghead, degnext, degprev, total,
+        neqns, convert(V, delta), vwght, xadj, newadjncy)
+
+    return invp
 end
 
 """
@@ -285,22 +263,9 @@ function mmd!_impl!(
                 end
             end
 
-            mmdelim!(
-                mdnode,
-                xadj,
-                adjncy,
-                deghead,
-                degnext,
-                degprev,
-                supersize,
-                superwght,
-                elimnext,
-                marker,
-                tag,
-                mergeparent,
-                needsupdate,
-                invp,
-            )
+            mmdelim!(mdnode, xadj, adjncy, deghead, degnext, degprev,
+                supersize, superwght, elimnext, marker, tag, mergeparent,
+                needsupdate, invp)
 
             num += supersize[mdnode]
             elimnext[mdnode] = elimhead
@@ -315,31 +280,15 @@ function mmd!_impl!(
             @goto main
         end
 
-        mindeg, tag = mmdupdate!(
-            neqns,
-            elimhead,
-            vwght,
-            xadj,
-            adjncy,
-            delta,
-            mindeg,
-            deghead,
-            degnext,
-            degprev,
-            supersize,
-            superwght,
-            elimnext,
-            marker,
-            tag,
-            mergeparent,
-            needsupdate,
-            invp,
-        )
+        mindeg, tag = mmdupdate!(neqns, elimhead, vwght, xadj, adjncy,
+            delta, mindeg, deghead, degnext, degprev, supersize, superwght,
+            elimnext, marker, tag, mergeparent, needsupdate, invp)
     end
 
     @label main
 
-    mmdnumber!(neqns, invp, mergeparent)
+    mergelastnum = degnext
+    mmdnumber!(neqns, invp, mergeparent, mergelastnum)
 
     return invp
 end
@@ -720,9 +669,8 @@ function mmdupdate!(
                     end
                 end
 
-                deg, mindeg = updateexternaldegree!(
-                    deg, mindeg, enode, superwght, deghead, degnext, degprev, needsupdate
-                )
+                deg, mindeg = updateexternaldegree!(deg, mindeg, enode,
+                    superwght, deghead, degnext, degprev, needsupdate)
             end
 
             enode = elimnext[enode]
@@ -783,9 +731,8 @@ function mmdupdate!(
 
                 # update external degree of `enode` in degree
                 # structure, and `mindeg` if necessary
-                deg, mindeg = updateexternaldegree!(
-                    deg, mindeg, enode, superwght, deghead, degnext, degprev, needsupdate
-                )
+                deg, mindeg = updateexternaldegree!(deg, mindeg, enode,
+                    superwght, deghead, degnext, degprev, needsupdate)
             end
 
             # get next `enode` in current element.
@@ -846,12 +793,12 @@ working arrays:
 
   - `mergelastnum`: last number used for a merged tree rooted at r
 """
-function mmdnumber!(neqns::V, invp::AbstractVector{V}, mergeparent::AbstractVector{V}) where {V}
-    mergelastnum = zeros(V, neqns)
-
+function mmdnumber!(neqns::V, invp::AbstractVector{V}, mergeparent::AbstractVector{V}, mergelastnum::AbstractVector{V}) where {V}
     @inbounds for i in oneto(neqns)
         if iszero(mergeparent[i])
             mergelastnum[i] = invp[i]
+        else
+            mergelastnum[i] = zero(V)
         end
     end
 

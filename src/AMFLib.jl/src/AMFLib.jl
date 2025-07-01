@@ -43,6 +43,8 @@ module AMFLib
 
 using ArgCheck
 using Base: oneto
+using FillArrays
+using FixedSizeArrays
 using ..Utilities
 
 export amf
@@ -54,17 +56,13 @@ function anint(::Type{I}, x::F) where {I, F}
 end
 
 function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
-    vwght = Vector{V}(undef, n)
-
-    @inbounds for i in oneto(n)
-        vwght[i] = one(V)
-    end
-
+    vwght = Ones{V}(n)
     return amf(n, vwght, xadj, adjncy)
 end
 
 function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
-    nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
+    @argcheck n <= length(vwght)
+    @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
     norig = zero(V)
     iwlen = m + convert(E, 4n + 10000)
@@ -75,18 +73,23 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
 
     nbbuck = twice(norig)
 
-    len = Vector{V}(undef, n)
-    pe = Vector{E}(undef, nn)
-    iw = Vector{V}(undef, iwlen)
-    nv = Vector{V}(undef, n)
-    elen = Vector{V}(undef, n)
-    last = Vector{V}(undef, n)
-    degree = Vector{V}(undef, n)
-    wf = Vector{E}(undef, n)
-    next = Vector{V}(undef, n)
-    w = Vector{Int}(undef, n)
-    head = Vector{V}(undef, nbbuck + two(V))
-    return amf_impl!(norig, n, nbbuck, iwlen, pe, len, iw, nv, elen, last, degree, wf, next, w, head, vwght, xadj, adjncy)
+    len = FixedSizeVector{V}(undef, n)
+    pe = FixedSizeVector{E}(undef, nn)
+    iw = FixedSizeVector{V}(undef, iwlen)
+    nv = FixedSizeVector{V}(undef, n)
+    elen = FixedSizeVector{V}(undef, n)
+    last = FixedSizeVector{V}(undef, n)
+    degree = FixedSizeVector{V}(undef, n)
+    wf = FixedSizeVector{E}(undef, n)
+    next = FixedSizeVector{V}(undef, n)
+    w = FixedSizeVector{Int}(undef, n)
+    head = FixedSizeVector{V}(undef, nbbuck + two(V))
+
+    perm, invp = amf_impl!(norig, n, nbbuck, iwlen, pe,
+        len, iw, nv, elen, last, degree, wf, next, w, head,
+        vwght, xadj, adjncy)
+
+    return convert(Vector{V}, perm), convert(Vector{V}, invp)
 end
 
 function amf_impl!(
@@ -109,7 +112,7 @@ function amf_impl!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
     ) where {V, E}
-    nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
+    @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
     nbelts = zero(V)
     pfree = mm
@@ -118,7 +121,7 @@ function amf_impl!(
         iw[p] = adjncy[p]
     end
 
-    p = pe[begin] = xadj[begin]
+    @inbounds p = pe[begin] = xadj[begin]
 
     @inbounds for i in oneto(n)
         ii = i + one(E)
@@ -129,7 +132,8 @@ function amf_impl!(
         pe[ii] = p = pp
     end
 
-    ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe, pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
+    ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe,
+        pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
 
     @inbounds for j in oneto(norig)
         head[j] = zero(V)
