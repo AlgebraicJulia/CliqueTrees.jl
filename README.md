@@ -28,7 +28,7 @@
     </p>
 </h2>
 
-CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs.
+CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs. Feel free to open an [issue](https://github.com/AlgebraicJulia/CliqueTrees.jl/issues) or leave a message in the [cliquetrees.jl](https://julialang.zulipchat.com/#narrow/channel/513749-cliquetrees.2Ejl) Zulip channel.
 
 ## Projects using CliqueTrees
 

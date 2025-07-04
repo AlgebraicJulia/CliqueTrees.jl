@@ -5,9 +5,9 @@ A *graph elimination algorithm* computes a total ordering of the vertices of a g
 The algorithms implemented in CliqueTrees.jl can be divided into five categories.
 
   - triangulation recognition algorithms
-  - bandwidth reduction algorithms
-  - greedy algorithms
-  - nested dissection algorithms
+  - bandwidth minimization algorithms
+  - local algorithms
+  - global algorithms
   - exact treewidth algorithms
 
 # Triangulation Recognition Algorithms
@@ -21,7 +21,7 @@ The algorithms implemented in CliqueTrees.jl can be divided into five categories
 
 These algorithms will compute perfect orderings when applied to chordal graphs.
 
-# Bandwidth and Envelope Minimization Algorithms
+# Bandwidth Minimization Algorithms
 
 | type            | name                                   | time     | space    | package |
 |:----------------|:---------------------------------------|:-------- |:-------- | :------ |
@@ -41,7 +41,7 @@ These algorithms try to minimize the *bandwidth* and *envelope* of the ordered g
 | [`AMF`](@ref)    | approximate minimum fill          | O(mn)  | O(m + n) |                                                           |
 
 These algorithms simulate the graph elimination process, greedily eliminating
-vertices that minimize a cost function. They are faster then the nested dissection
+vertices that minimize a cost function. They are faster then the global
 algorithms, but have worse results.
 
 # Global Algorithms
@@ -64,16 +64,16 @@ These are slower than the local algorithms, but have better results.
 The orderings computed by these algorithms induce minimum-width tree decompositions.
 
 !!! warning
-    This is an NP-hard problem.
+    Exact treewidth is an NP-hard problem.
 """
 abstract type EliminationAlgorithm end
 
 """
     PermutationOrAlgorithm = Union{
-    AbstractVector,
-    Tuple{AbstractVector, AbstractVector},
-    EliminationAlgorithm,
-}
+        AbstractVector,
+        Tuple{AbstractVector, AbstractVector},
+        EliminationAlgorithm,
+    }
 
 Either a permutation or an algorithm.
 """
