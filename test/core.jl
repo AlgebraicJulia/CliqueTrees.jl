@@ -70,11 +70,11 @@ else
 end
 
 const TYPES = (
-    (BipartiteGraph{Int8, Int16}, Int8, Int16),
+    (BipartiteGraph{Int16, Int32}, Int16, Int32),
     (Matrix{Float64}, Int, Int),
-    (SparseMatrixCSC{Float64, Int16}, Int16, Int16),
-    (Graph{Int8}, Int8, Int),
-    (DiGraph{Int8}, Int8, Int),
+    (SparseMatrixCSC{Float64, Int32}, Int32, Int32),
+    (Graph{Int16}, Int16, Int),
+    (DiGraph{Int16}, Int16, Int),
     (Catlab.Graph, Int, Int),
     (Catlab.SymmetricGraph, Int, Int),
 )
@@ -127,10 +127,10 @@ import TreeWidthSolver
 
 @testset "trees" begin
     @testset "interface" begin
-        tree = Tree(Int8[2, 5, 4, 5, 0])
-        @test rootindex(tree) === Int8(5)
+        tree = Tree(Int16[2, 5, 4, 5, 0])
+        @test rootindex(tree) === Int16(5)
         setrootindex!(tree, 1)
-        @test rootindex(tree) === Int8(1)
+        @test rootindex(tree) === Int16(1)
 
         node = IndexNode(tree)
         @test ParentLinks(node) === StoredParents()
@@ -140,7 +140,7 @@ import TreeWidthSolver
     end
 
     @testset "construction" begin
-        graph = BipartiteGraph{Int8, Int16}(
+        graph = BipartiteGraph{Int16, Int32}(
             [
                 0 1 1 0 0 0 0 0
                 1 0 1 0 1 1 1 0
@@ -165,7 +165,7 @@ import TreeWidthSolver
 end
 
 @testset "bipartite graphs" begin
-    graph = BipartiteGraph{Int8, Int16}(
+    graph = BipartiteGraph{Int16, Int32}(
         [
             0 1 1 0 0 0 0 0
             1 0 1 0 1 1 1 0
@@ -186,7 +186,7 @@ end
             convert(BipartiteGraph{Int32, Int64, Vector{Int64}, Vector{Int32}}, graph),
             BipartiteGraph{Int32, Int64, Vector{Int64}, Vector{Int32}},
         )
-        @test convert(BipartiteGraph{Int8, Int16, Vector{Int16}, Vector{Int8}}, graph) ===
+        @test convert(BipartiteGraph{Int16, Int32, Vector{Int32}, Vector{Int16}}, graph) ===
             graph
     end
 
@@ -203,7 +203,7 @@ end
             (
                 graph,
                 BipartiteGraph(Matrix(graph)),
-                BipartiteGraph{Int8, Int16}(Matrix{Float64}(graph)),
+                BipartiteGraph{Int16, Int32}(Matrix{Float64}(graph)),
             )
         )
 
@@ -211,7 +211,7 @@ end
             (
                 graph,
                 BipartiteGraph(SparseMatrixCSC(graph)),
-                BipartiteGraph{Int8, Int16}(SparseMatrixCSC{Float64, Int32}(graph)),
+                BipartiteGraph{Int16, Int32}(SparseMatrixCSC{Float64, Int64}(graph)),
             )
         )
 
@@ -219,7 +219,7 @@ end
             (
                 graph,
                 BipartiteGraph(sparse(graph)),
-                BipartiteGraph{Int8, Int16}(sparse(Float64, Int32, graph)),
+                BipartiteGraph{Int16, Int32}(sparse(Float64, Int64, graph)),
             )
         )
 
@@ -227,7 +227,7 @@ end
             (
                 graph,
                 BipartiteGraph(Graph(graph)),
-                BipartiteGraph{Int8, Int16}(Graph{Int32}(graph)),
+                BipartiteGraph{Int16, Int32}(Graph{Int64}(graph)),
             )
         )
 
@@ -235,7 +235,7 @@ end
             (
                 graph,
                 BipartiteGraph(DiGraph(graph)),
-                BipartiteGraph{Int8, Int16}(DiGraph{Int32}(graph)),
+                BipartiteGraph{Int16, Int32}(DiGraph{Int64}(graph)),
             )
         )
 
@@ -243,7 +243,7 @@ end
             (
                 graph,
                 BipartiteGraph(Catlab.Graph(graph)),
-                BipartiteGraph{Int8, Int16}(Catlab.Graph(graph)),
+                BipartiteGraph{Int16, Int32}(Catlab.Graph(graph)),
             )
         )
 
@@ -251,7 +251,7 @@ end
             (
                 graph,
                 BipartiteGraph(Catlab.SymmetricGraph(graph)),
-                BipartiteGraph{Int8, Int16}(Catlab.SymmetricGraph(graph)),
+                BipartiteGraph{Int16, Int32}(Catlab.SymmetricGraph(graph)),
             )
         )
 
@@ -260,22 +260,22 @@ end
     end
 
     @testset "interface" begin
-        nullgraph = zero(BipartiteGraph{Int8, Int16, Vector{Int16}, Vector{Int8}})
-        @test nv(nullgraph) === zero(Int8)
-        @test ne(nullgraph) === zero(Int16)
+        nullgraph = zero(BipartiteGraph{Int16, Int32, Vector{Int32}, Vector{Int16}})
+        @test nv(nullgraph) === zero(Int16)
+        @test ne(nullgraph) === zero(Int32)
 
         @test is_directed(graph)
-        @test nv(graph) === Int8(8)
-        @test ne(graph) === Int16(26)
-        @test eltype(graph) === Int8
-        @test edgetype(graph) === SimpleEdge{Int8}
+        @test nv(graph) === Int16(8)
+        @test ne(graph) === Int32(26)
+        @test eltype(graph) === Int16
+        @test edgetype(graph) === SimpleEdge{Int16}
 
         @test has_edge(graph, 1, 2)
         @test !has_edge(graph, 1, 4)
         @test SimpleEdge(1, 2) ∈ edges(graph)
         @test SimpleEdge(1, 4) ∉ edges(graph)
 
-        @test vertices(graph) === oneto(Int8(8))
+        @test vertices(graph) === oneto(Int16(8))
         @test src.(edges(graph)) ==
             [1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 5, 5, 5, 5, 5, 6, 6, 7, 7, 7, 7, 8, 8]
         @test dst.(edges(graph)) ==
@@ -292,7 +292,7 @@ end
 end
 
 @testset "filled graphs" begin
-    graph = BipartiteGraph{Int8, Int16}(
+    graph = BipartiteGraph{Int16, Int32}(
         [
             0 1 1 0 0 0 0 0
             1 0 1 0 1 1 1 0
@@ -312,13 +312,13 @@ end
         @test allequal(
             (
                 BipartiteGraph(filledgraph),
-                BipartiteGraph{Int8, Int16}(filledgraph),
+                BipartiteGraph{Int16, Int32}(filledgraph),
                 BipartiteGraph(SparseMatrixCSC(filledgraph)),
                 BipartiteGraph(SparseMatrixCSC{Float64}(filledgraph)),
-                BipartiteGraph(SparseMatrixCSC{Float64, Int32}(filledgraph)),
+                BipartiteGraph(SparseMatrixCSC{Float64, Int64}(filledgraph)),
                 BipartiteGraph(sparse(filledgraph)),
                 BipartiteGraph(sparse(Float64, filledgraph)),
-                BipartiteGraph(sparse(Float64, Int16, filledgraph)),
+                BipartiteGraph(sparse(Float64, Int32, filledgraph)),
                 BipartiteGraph(Matrix(filledgraph)),
                 BipartiteGraph(Matrix{Float64}(filledgraph)),
             )
@@ -327,10 +327,10 @@ end
 
     @testset "interface" begin
         @test is_directed(filledgraph)
-        @test nv(filledgraph) === Int8(8)
-        @test ne(filledgraph) === Int16(13)
-        @test eltype(filledgraph) === Int8
-        @test edgetype(filledgraph) === SimpleEdge{Int8}
+        @test nv(filledgraph) === Int16(8)
+        @test ne(filledgraph) === Int32(13)
+        @test eltype(filledgraph) === Int16
+        @test edgetype(filledgraph) === SimpleEdge{Int16}
 
         @test has_edge(filledgraph, 1, 7)
         @test !has_edge(filledgraph, 7, 1)
@@ -338,7 +338,7 @@ end
         @test SimpleEdge(7, 1) ∉ edges(filledgraph)
         @test Base.hasfastin(edges(filledgraph))
 
-        @test vertices(filledgraph) === oneto(Int8(8))
+        @test vertices(filledgraph) === oneto(Int16(8))
         @test src.(edges(filledgraph)) == [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7]
         @test dst.(edges(filledgraph)) == [6, 7, 6, 8, 5, 7, 5, 8, 7, 8, 7, 8, 8]
 
@@ -572,7 +572,7 @@ end
 
         @test permutation(graph; alg) == ([], [])
         @test permutation(weights, graph; alg) == ([], [])
-        @test iszero(treewidth(graph; alg))
+        @test isone(-treewidth(graph; alg))
         @test iszero(treewidth(weights, graph; alg))
         @test iszero(treefill(graph; alg))
         @test iszero(treefill(weights, graph; alg))
@@ -583,7 +583,7 @@ end
         filledgraph = FilledGraph(tree)
         @test iszero(length(tree))
         @test isnothing(rootindex(tree))
-        @test iszero(treewidth(tree))
+        @test isone(-treewidth(tree))
         @test iszero(treefill(tree))
         @test iszero(nv(filledgraph))
         @test iszero(ne(filledgraph))

@@ -153,91 +153,133 @@ function etree_impl!(
     return
 end
 
+function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
+    n = nv(lower); weights = Ones{V}(n)
+    return supcnt(weights, lower, tree)
+end
+
+function supcnt(weights::AbstractVector{W}, lower::AbstractGraph{V}, tree::Tree{V}) where {W, V}
+    n = nv(lower)
+    
+    wt = FixedSizeVector{W}(undef, n)
+    map0 = FixedSizeVector{V}(undef, n)
+    inv0 = FixedSizeVector{V}(undef, n)
+    inv1 = FixedSizeVector{V}(undef, n)
+    fdesc = FixedSizeVector{V}(undef, n)
+    prev_p = FixedSizeVector{V}(undef, n)
+    prev_nbr = FixedSizeVector{V}(undef, n)
+
+    rank = FixedSizeVector{V}(undef, n)
+    parent = FixedSizeVector{V}(undef, n)
+    stack = FixedSizeVector{V}(undef, n)
+    sets = UnionFind(rank, parent, stack)
+   
+    supcnt_impl!(wt, map0, inv0, inv1, fdesc,
+        prev_p, prev_nbr, sets, weights, lower, tree)
+    
+    return wt
+end
+
 # An Efficient Algorithm to Compute Row and Column Counts for Sparse Cholesky Factorization
 # Gilbert, Ng, and Peyton
 # Figure 3: Implementation of algorithm to compute row and column counts.
 #
 # Compute the lower and higher degrees of the monotone transitive extesion of an ordered graph.
 # The complexity is O(mα(m, n)), where m = |E|, n = |V|, and α is the inverse Ackermann function.
-function supcnt(lower::AbstractGraph{V}, tree::Tree{V}) where {V}
-    # validate arguments
-    @argcheck vertices(lower) == tree
+function supcnt_impl!(
+        wt::AbstractVector{W},
+        map0::AbstractVector{V},
+        inv0::AbstractVector{V},
+        inv1::AbstractVector{V},
+        fdesc::AbstractVector{V},
+        prev_p::AbstractVector{V},
+        prev_nbr::AbstractVector{V},
+        sets::UnionFind{V},
+        weights::AbstractVector{W},
+        lower::AbstractGraph{V},
+        tree::Tree{V}
+    ) where {W, V}
+    @argcheck nv(lower) <= length(wt)
+    @argcheck nv(lower) <= length(map0)
+    @argcheck nv(lower) <= length(inv0)
+    @argcheck nv(lower) <= length(inv1)
+    @argcheck nv(lower) <= length(fdesc)
+    @argcheck nv(lower) <= length(prev_p)
+    @argcheck nv(lower) <= length(prev_nbr)
+    @argcheck nv(lower) <= length(weights)
+    @argcheck nv(lower) <= length(tree)
+    
+    n = nv(lower)
+    postorder_impl!(inv0, inv1, map0, tree)
+    firstdescendants_impl!(fdesc, tree, inv0)
+    
+    @inbounds for p in oneto(n)
+        if isempty(childindices(tree, p))
+            wt[p] = weights[p]
+        else
+            wt[p] = zero(W)
+        end
+        
+        map0[inv0[p]] = p
+        inv0[p] = p
+        inv1[p] = p
+        prev_p[p] = zero(V)
+        prev_nbr[p] = zero(V)
+        sets.rank[p] = zero(V)
+        sets.parent[p] = zero(V)
+    end
 
-    # find postordering, first descendants, and levels
-    index = postorder(tree)
-    order = Perm(Forward, index)
-    fdesc = firstdescendants(tree, order)
-    level = levels(tree)
-
-    # construct disjoint set forest
-    sets = UnionFind{V}(length(tree))
-    root = Vector{V}(tree)
-    repr = Vector{V}(tree)
-
-    function find(u)
-        v = @inbounds repr[find!(sets, u)]
+    map1 = inv0
+    
+    function find(u::V)
+        vv = @inbounds find!(sets, u)
+        v = @inbounds inv1[vv]
         return v
     end
 
-    function union(u, v)
-        @inbounds root[v] = rootunion!(sets, root[u], root[v])
-        @inbounds repr[root[v]] = v
-        return nothing
+    function union(u::V, v::V)
+        @inbounds uu = map1[u]
+        @inbounds vv = map1[v]
+        @inbounds vv = map1[v] = rootunion!(sets, uu, vv)
+        @inbounds inv1[vv] = v
+        return
     end
-
-    # run algorithm
-    prev_p = zeros(V, length(tree))
-    prev_nbr = zeros(V, length(tree))
-    rc = ones(V, length(tree))
-    wt = ones(V, length(tree))
-
-    @inbounds for p in tree
-        r = parentindex(tree, p)
-
-        if !isnothing(r)
-            wt[r] = zero(V)
-        end
-    end
-
-    @inbounds for p in invperm(index)
+    
+    @inbounds for i in oneto(n)
+        p = map0[i]
         r = parentindex(tree, p)
 
         for u in neighbors(lower, p)
-            if iszero(prev_nbr[u]) || lt(order, prev_nbr[u], fdesc[p])
-                wt[p] += one(V)
+            if iszero(prev_nbr[u]) || prev_nbr[u] < fdesc[p]
+                wt[p] += weights[u]
                 pp = prev_p[u]
 
-                if iszero(pp)
-                    rc[u] += level[p] - level[u]
-                else
+                if !iszero(pp)
                     q = find(pp)
-                    rc[u] += level[p] - level[q]
-                    wt[q] -= one(V)
+                    wt[q] -= weights[u]
                 end
 
                 prev_p[u] = p
             end
 
-            prev_nbr[u] = p
+            prev_nbr[u] = i
         end
 
         if !isnothing(r)
-            wt[r] -= one(V)
+            wt[r] -= weights[p]
             union(p, r)
         end
     end
 
-    cc = wt
-
-    @inbounds for p in tree
+    @inbounds for p in oneto(n)
         r = parentindex(tree, p)
 
         if !isnothing(r)
-            cc[r] += cc[p]
+            wt[r] += wt[p]
         end
     end
-
-    return rc, cc
+    
+    return
 end
 
 function compositerotations(graph, clique::AbstractVector, alg::PermutationOrAlgorithm)
@@ -307,7 +349,7 @@ function compositerotations_impl!(
     etree_impl!(tree, fdesc, upper)
     reverse!_impl!(count, lower, upper)
     postorder_impl!(index, fdesc, order, tree)
-    firstdescendants_impl!(fdesc, tree, Perm(Forward, index))
+    firstdescendants_impl!(fdesc, tree, index)
 
     @inbounds for v in vertices(lower)
         i = index[v]
@@ -326,7 +368,7 @@ function compositerotations_impl!(
         @inbounds xstop = index[y]; xstart = xstop + one(V)
 
         @inbounds for z in ancestorindices(tree, y)
-            ystart = index[fdesc[y]]; ystop = index[y]
+            ystart = fdesc[y]; ystop = index[y]
 
             for i in ystart:(xstart - one(V))
                 v = order[i]
@@ -468,35 +510,34 @@ function levels_impl!(
 end
 
 """
-    firstdescendants(tree::Tree[, ordering::Ordering])
+    firstdescendants(tree::Tree, index::AbstractVector)
 
-Get the first descendant of every vertex of atopologically ordered forest.
+Get the first descendant of every vertex of a topologically ordered forest.
 """
-function firstdescendants(tree::Tree{V}, order::Ordering = Forward) where {V}
+function firstdescendants(tree::Tree{V}, index::AbstractVector{V}) where {V}
     n = length(tree); fdesc = Vector{V}(undef, n)
-    firstdescendants_impl!(fdesc, tree, order)
+    firstdescendants_impl!(fdesc, tree, index)
     return fdesc
 end
 
 function firstdescendants_impl!(
         fdesc::AbstractVector{V},
         tree::Tree{V},
-        order::Ordering,
+        index::AbstractVector{V},
     ) where {V}
-    @argcheck length(tree) <= length(tree)
+    @argcheck length(tree) <= length(fdesc)
+    @argcheck length(tree) <= length(index)
 
-    @inbounds for j in tree
-        jj = j
+    @inbounds for i in tree
+        fdesc[i] = index[i]
+    end
 
-        for i in childindices(tree, j)
-            ii = fdesc[i]
+    @inbounds for i in tree
+        j = parentindex(tree, i)
 
-            if lt(order, ii, jj)
-                jj = ii
-            end
+        if !isnothing(j)
+            fdesc[j] = min(fdesc[i], fdesc[j])
         end
-
-        fdesc[j] = jj
     end
 
     return

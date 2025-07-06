@@ -3,7 +3,11 @@ module Utilities
 using Base: @propagate_inbounds
 using Base.Iterators
 using Base.Order
+using FixedSizeArrays
 using Graphs
+
+# arrays
+export AbstractScalar, Scalar, FScalar, FVector
 
 # arithmetic
 export tolerance, twice, half, two, three, four, five, six, eight, ispositive, isnegative, istwo, isthree, isfour
@@ -17,6 +21,10 @@ export mergesorted!, indexinsorted!, swap!
 # printing
 export MAX_ITEMS_PRINTED, printiterator
 
+const AbstractScalar{T} = AbstractArray{T, 0}
+const Scalar{T} = Array{T, 0}
+const FScalar{T} = FixedSizeArrayDefault{T, 0}
+const FVector{T} = FixedSizeArrayDefault{T, 1}
 const MAX_ITEMS_PRINTED = 5
 
 # `tol = tolerance(W)` should satisfy

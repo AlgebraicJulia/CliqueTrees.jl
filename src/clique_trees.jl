@@ -489,7 +489,7 @@ function cliquetree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm,
     return cliquetree(supernodetree(weights, graph, alg, snd)...)
 end
 
-@views function cliquetree(label, tree, count, index, ptr, lower, upper)
+@views function cliquetree(label, tree, index, ptr, lower, upper)
     lower = sympermute!(upper, lower, index, Reverse)
 
     # compute separators
@@ -648,13 +648,12 @@ julia> treewidth(tree)
 
 """
 function treewidth(tree::CliqueTree{V}) where {V}
-    n::V = maximum(length, tree; init = 1) - 1
+    n::V = maximum(length, tree; init = 0) - 1
     return n
 end
 
-function treewidth(weights::AbstractVector, tree::CliqueTree{V}) where {V}
-    W = eltype(weights)
-    treewidth = zero(W)
+function treewidth(weights::AbstractVector{W}, tree::CliqueTree{V}) where {W, V}
+    maxwidth = zero(W)
 
     for clique in tree
         width = zero(W)
@@ -663,10 +662,10 @@ function treewidth(weights::AbstractVector, tree::CliqueTree{V}) where {V}
             width += weights[v]
         end
 
-        treewidth = max(treewidth, width)
+        maxwidth = max(maxwidth, width)
     end
 
-    return treewidth
+    return maxwidth
 end
 
 """
@@ -705,60 +704,10 @@ function treewidth(graph, alg::PermutationOrAlgorithm)
     return treewidth(BipartiteGraph(graph), alg)
 end
 
-# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
-# Tarjan and Yannakakis
-# Fill-In computation
-#
-# Compute the width of an elimination ordering.
-# The complexity is O(m' + n), where m' = |E'| and n = |V|.
 function treewidth(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
-    n = nv(graph)
-    f = Vector{V}(undef, n)
-    findex = Vector{V}(undef, n)
-    counts = Vector{V}(undef, n)
-    return treewidth_impl!(f, findex, counts, graph, permutation(graph, alg)...)
-end
-
-function treewidth_impl!(
-        f::AbstractVector{V},
-        findex::AbstractVector{V},
-        counts::AbstractVector{V},
-        graph::AbstractGraph{V},
-        order::AbstractVector{V},
-        index::AbstractVector{V},
-    ) where {V}
-    @argcheck nv(graph) <= length(f)
-    @argcheck nv(graph) <= length(findex)
-    @argcheck nv(graph) <= length(counts)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
-    width = zero(V)
-
-    @inbounds for i in vertices(graph)
-        w = order[i]
-        f[w] = w
-        findex[w] = i
-
-        counts[w] = zero(V)
-
-        for v in neighbors(graph, w)
-            if index[v] < i
-                x = v
-
-                while findex[x] < i
-                    findex[x] = i
-                    width = max(width, counts[x] += one(V))
-                    x = f[x]
-                end
-
-                if f[x] == x
-                    f[x] = w
-                end
-            end
-        end
-    end
-
-    return width
+    n = nv(graph); weights = Ones{V}(n)
+    width = treewidth(weights, graph, alg)
+    return width - one(V)
 end
 
 function treewidth(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
@@ -769,63 +718,176 @@ function treewidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
     return treewidth(weights, BipartiteGraph(graph), alg)
 end
 
-# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
-# Tarjan and Yannakakis
-# Fill-In computation
-#
-# Compute the weighted width of an elimination ordering.
-# The complexity is O(m' + n), where m' = |E'| and n = |V|.
 function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
-    n = nv(graph)
-    f = Vector{V}(undef, n)
-    findex = Vector{V}(undef, n)
-    counts = Vector{W}(undef, n)
-    return treewidth_impl!(f, findex, counts, weights, graph, permutation(weights, graph, alg)...)
+    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    order, index = permutation(weights, graph, alg)
+    
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    lower = BipartiteGraph(n, n, half(m), ptr, tgt)
+    
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    upper = BipartiteGraph(n, n, half(m), ptr, tgt)
+    
+    root = FScalar{V}(undef)
+    parent = FVector{V}(undef, n)
+    child = FVector{V}(undef, n)
+    brother = FVector{V}(undef, n)
+    tree = Tree(n, parent, root, child, brother)
+    
+    rank = FVector{V}(undef, n)
+    parent = FVector{V}(undef, n)
+    stack = FVector{V}(undef, n)
+    sets = UnionFind(rank, parent, stack)
+    
+    wwork0 = FVector{W}(undef, n)
+    wwork1 = FVector{W}(undef, n)
+    vwork0 = FVector{V}(undef, n)
+    vwork1 = FVector{V}(undef, n)
+    vwork2 = FVector{V}(undef, n)
+    vwork3 = FVector{V}(undef, n)
+    vwork4 = FVector{V}(undef, n)
+    vwork5 = FVector{V}(undef, n)
+    ework0 = FVector{E}(undef, n)
+    
+    width = treewidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
+        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, index)
+
+    return width
 end
 
 function treewidth_impl!(
-        f::AbstractVector{V},
-        findex::AbstractVector{V},
-        counts::AbstractVector{W},
+        lower::BipartiteGraph{V},
+        upper::BipartiteGraph{V},
+        tree::Tree{V},
+        sets::UnionFind{V},
+        wwork0::AbstractVector{W},
+        wwork1::AbstractVector{W},
+        vwork0::AbstractVector{V},
+        vwork1::AbstractVector{V},
+        vwork2::AbstractVector{V},
+        vwork3::AbstractVector{V},
+        vwork4::AbstractVector{V},
+        vwork5::AbstractVector{V},
+        ework0::AbstractVector{E},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
-        order::AbstractVector{V},
         index::AbstractVector{V},
-    ) where {W, V}
-    @argcheck nv(graph) <= length(f)
-    @argcheck nv(graph) <= length(findex)
-    @argcheck nv(graph) <= length(counts)
+    ) where {W, V, E}
     @argcheck nv(graph) <= length(weights)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
+    @argcheck nv(graph) <= length(wwork1)
+    
+    @inbounds for v in vertices(graph)
+        wwork1[index[v]] = weights[v]
+    end
+    
+    sympermute!_impl!(ework0, upper, graph, index, Forward)
+    reverse!_impl!(ework0, lower, upper)
+    etree_impl!(tree, vwork0, upper)
+    
+    supcnt_impl!(wwork0, vwork0, vwork1, vwork2, vwork3,
+        vwork4, vwork5, sets, wwork1, lower, tree)
+
     width = zero(W)
 
-    @inbounds for i in vertices(graph)
-        w = order[i]
-        f[w] = w
-        findex[w] = i
-
-        weight = counts[w] = weights[w]
-        width = max(width, weight)
-
-        for v in neighbors(graph, w)
-            if index[v] < i
-                x = v
-
-                while findex[x] < i
-                    findex[x] = i
-                    width = max(width, counts[x] += weight)
-                    x = f[x]
-                end
-
-                if f[x] == x
-                    f[x] = w
-                end
-            end
-        end
+    @inbounds for v in vertices(lower)
+        width = max(width, wwork0[v])
     end
 
     return width
+end
+
+function bestwidth(graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestwidth(BipartiteGraph(graph), algs)
+end
+
+function bestwidth(graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {V}
+    n = nv(graph); weights = Ones{V}(n)
+    return bestwidth(weights, graph, algs)
+end
+
+function bestwidth(weights::AbstractVector, graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestwidth(weights, BipartiteGraph(graph), algs)
+end
+
+function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}
+    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    
+    pairs = map(algs) do alg
+        return permutation(weights, graph, alg)
+    end
+
+    indices = map(pairs) do (order, index)
+        return index
+    end
+
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    lower = BipartiteGraph(n, n, half(m), ptr, tgt)
+
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    upper = BipartiteGraph(n, n, half(m), ptr, tgt)
+
+    root = FScalar{V}(undef)
+    parent = FVector{V}(undef, n)
+    child = FVector{V}(undef, n)
+    brother = FVector{V}(undef, n)
+    tree = Tree(n, parent, root, child, brother)
+
+    rank = FVector{V}(undef, n)
+    parent = FVector{V}(undef, n)
+    stack = FVector{V}(undef, n)
+    sets = UnionFind(rank, parent, stack)
+
+    wwork0 = FVector{W}(undef, n)
+    wwork1 = FVector{W}(undef, n)
+    vwork0 = FVector{V}(undef, n)
+    vwork1 = FVector{V}(undef, n)
+    vwork2 = FVector{V}(undef, n)
+    vwork3 = FVector{V}(undef, n)
+    vwork4 = FVector{V}(undef, n)
+    vwork5 = FVector{V}(undef, n)
+    ework0 = FVector{E}(undef, n)
+
+    index = bestwidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
+        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices)
+
+    return pairs[index]
+end
+
+function bestwidth_impl!(
+        lower::BipartiteGraph{V},
+        upper::BipartiteGraph{V},
+        tree::Tree{V},
+        sets::UnionFind{V},
+        wwork0::AbstractVector{W},
+        wwork1::AbstractVector{W},
+        vwork0::AbstractVector{V},
+        vwork1::AbstractVector{V},
+        vwork2::AbstractVector{V},
+        vwork3::AbstractVector{V},
+        vwork4::AbstractVector{V},
+        vwork5::AbstractVector{V},
+        ework0::AbstractVector{E},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        indices::NTuple{N, AbstractVector{V}},
+    ) where {W, V, E, N}
+
+    minindex = zero(N); minwidth = typemax(W)
+
+    for index in oneto(N)
+        width = treewidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
+            vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices[index])
+
+        if width < minwidth
+            minindex, minwidth = index, width
+        end
+    end
+
+    return minindex
 end
 
 function treefill(tree::CliqueTree{<:Any, E}) where {E}
@@ -873,55 +935,10 @@ function treefill(graph, alg::PermutationOrAlgorithm)
     return treefill(BipartiteGraph(graph), alg)
 end
 
-# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
-# Tarjan and Yannakakis
-# Fill-In computation
-#
-# Compute the fill-in of an elimination ordering.
-# The complexity is O(m' + n), where m' = |E'| and n = |V|.
-function treefill(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
-    n = nv(graph)
-    f = Vector{V}(undef, n)
-    findex = Vector{V}(undef, n)
-    return treefill_impl!(f, findex, graph, permutation(graph, alg)...)
-end
-
-function treefill_impl!(
-        f::AbstractVector{V},
-        findex::AbstractVector{V},
-        graph::AbstractGraph{V},
-        order::AbstractVector{V},
-        index::AbstractVector{V},
-    ) where {V}
-    @argcheck nv(graph) <= length(f)
-    @argcheck nv(graph) <= length(findex)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
-    E = etype(graph); fill = zero(E)
-
-    @inbounds for i in vertices(graph)
-        w = order[i]
-        f[w] = w
-        findex[w] = i
-
-        for v in neighbors(graph, w)
-            if index[v] < i
-                x = v
-
-                while findex[x] < i
-                    findex[x] = i
-                    fill += one(E)
-                    x = f[x]
-                end
-
-                if f[x] == x
-                    f[x] = w
-                end
-            end
-        end
-    end
-
-    return fill
+function treefill(graph::AbstractGraph, alg::PermutationOrAlgorithm)
+    E = etype(graph); n = nv(graph); weights = Ones{E}(n)
+    fill = treefill(weights, graph, alg)
+    return fill - convert(E, n)
 end
 
 function treefill(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
@@ -932,60 +949,178 @@ function treefill(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
     return treefill(weights, BipartiteGraph(graph), alg)
 end
 
-# Simple Linear-Time Algorithms to Test Chordality of BipartiteGraphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
-# Tarjan and Yannakakis
-# Fill-In computation
-#
-# Compute the weighted fill-in of an elimination ordering.
-# The complexity is O(m' + n), where m' = |E'| and n = |V|.
 function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
-    n = nv(graph)
-    f = Vector{V}(undef, n)
-    findex = Vector{V}(undef, n)
-    return treefill_impl!(f, findex, weights, graph, permutation(weights, graph, alg)...)
+    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    order, index = permutation(weights, graph, alg)
+    
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    lower = BipartiteGraph(n, n, half(m), ptr, tgt)
+    
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    upper = BipartiteGraph(n, n, half(m), ptr, tgt)
+    
+    root = FScalar{V}(undef)
+    parent = FVector{V}(undef, n)
+    child = FVector{V}(undef, n)
+    brother = FVector{V}(undef, n)
+    tree = Tree(n, parent, root, child, brother)
+    
+    rank = FVector{V}(undef, n)
+    parent = FVector{V}(undef, n)
+    stack = FVector{V}(undef, n)
+    sets = UnionFind(rank, parent, stack)
+    
+    wwork0 = FVector{W}(undef, n)
+    wwork1 = FVector{W}(undef, n)
+    vwork0 = FVector{V}(undef, n)
+    vwork1 = FVector{V}(undef, n)
+    vwork2 = FVector{V}(undef, n)
+    vwork3 = FVector{V}(undef, n)
+    vwork4 = FVector{V}(undef, n)
+    vwork5 = FVector{V}(undef, n)
+    ework0 = FVector{E}(undef, n)
+    
+    fill = treefill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
+        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, index)
+
+    return fill
 end
 
 function treefill_impl!(
-        f::AbstractVector{V},
-        findex::AbstractVector{V},
+        lower::BipartiteGraph{V},
+        upper::BipartiteGraph{V},
+        tree::Tree{V},
+        sets::UnionFind{V},
+        wwork0::AbstractVector{W},
+        wwork1::AbstractVector{W},
+        vwork0::AbstractVector{V},
+        vwork1::AbstractVector{V},
+        vwork2::AbstractVector{V},
+        vwork3::AbstractVector{V},
+        vwork4::AbstractVector{V},
+        vwork5::AbstractVector{V},
+        ework0::AbstractVector{E},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
-        order::AbstractVector{V},
         index::AbstractVector{V},
-    ) where {W, V}
-    @argcheck nv(graph) <= length(f)
-    @argcheck nv(graph) <= length(findex)
+    ) where {W, V, E}
     @argcheck nv(graph) <= length(weights)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
+    @argcheck nv(graph) <= length(wwork1)
+    
+    @inbounds for v in vertices(graph)
+        wwork1[index[v]] = weights[v]
+    end
+    
+    sympermute!_impl!(ework0, upper, graph, index, Forward)
+    reverse!_impl!(ework0, lower, upper)
+    etree_impl!(tree, vwork0, upper)
+    
+    supcnt_impl!(wwork0, vwork0, vwork1, vwork2, vwork3,
+        vwork4, vwork5, sets, wwork1, lower, tree)
+    
     fill = zero(W)
 
-    @inbounds for i in vertices(graph)
-        w = order[i]
-        f[w] = w
-        findex[w] = i
-
-        weight = weights[w]; fill += weight * weight
-
-        for v in neighbors(graph, w)
-            if index[v] < i
-                x = v
-
-                while findex[x] < i
-                    findex[x] = i
-                    fill += weights[x] * weight
-                    x = f[x]
-                end
-
-                if f[x] == x
-                    f[x] = w
-                end
-            end
-        end
+    @inbounds for v in vertices(lower)
+        fill += wwork1[v] * wwork0[v]
     end
 
     return fill
 end
+
+function bestfill(graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestfill(BipartiteGraph(graph), algs)
+end
+
+function bestfill(graph::AbstractGraph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    E = etype(graph); n = nv(graph); weights = Ones{E}(n)
+    return bestfill(weights, graph, algs)
+end
+
+function bestfill(weights::AbstractVector, graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
+    return bestfill(weights, BipartiteGraph(graph), algs)
+end
+
+function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}
+    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    
+    pairs = map(algs) do alg
+        return permutation(weights, graph, alg)
+    end
+
+    indices = map(pairs) do (order, index)
+        return index
+    end
+
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    lower = BipartiteGraph(n, n, half(m), ptr, tgt)
+
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, half(m))
+    upper = BipartiteGraph(n, n, half(m), ptr, tgt)
+
+    root = FScalar{V}(undef)
+    parent = FVector{V}(undef, n)
+    child = FVector{V}(undef, n)
+    brother = FVector{V}(undef, n)
+    tree = Tree(n, parent, root, child, brother)
+
+    rank = FVector{V}(undef, n)
+    parent = FVector{V}(undef, n)
+    stack = FVector{V}(undef, n)
+    sets = UnionFind(rank, parent, stack)
+
+    wwork0 = FVector{W}(undef, n)
+    wwork1 = FVector{W}(undef, n)
+    vwork0 = FVector{V}(undef, n)
+    vwork1 = FVector{V}(undef, n)
+    vwork2 = FVector{V}(undef, n)
+    vwork3 = FVector{V}(undef, n)
+    vwork4 = FVector{V}(undef, n)
+    vwork5 = FVector{V}(undef, n)
+    ework0 = FVector{E}(undef, n)
+
+    index = bestfill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
+        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices)
+
+    return pairs[index]
+end
+
+function bestfill_impl!(
+        lower::BipartiteGraph{V},
+        upper::BipartiteGraph{V},
+        tree::Tree{V},
+        sets::UnionFind{V},
+        wwork0::AbstractVector{W},
+        wwork1::AbstractVector{W},
+        vwork0::AbstractVector{V},
+        vwork1::AbstractVector{V},
+        vwork2::AbstractVector{V},
+        vwork3::AbstractVector{V},
+        vwork4::AbstractVector{V},
+        vwork5::AbstractVector{V},
+        ework0::AbstractVector{E},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        indices::NTuple{N, AbstractVector{V}},
+    ) where {W, V, E, N}
+
+    minindex = zero(N); minfill = typemax(W)
+
+    for index in oneto(N)
+        fill = treefill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
+            vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices[index])
+
+        if fill < minfill
+            minindex, minfill = index, fill
+        end
+    end
+
+    return minindex
+end
+
 
 """
     residual(tree::CliqueTree, i::Integer)

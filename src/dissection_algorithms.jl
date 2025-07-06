@@ -204,6 +204,10 @@ function hpartition!(hpart::AbstractVector, part::AbstractVector, project0::Abst
             end
         end
 
+        if isthree(vv)
+            n0 += one(V); vv = zero(V)
+        end
+
         part[v] = vv
     end
 
@@ -240,6 +244,7 @@ function hpartition!(hpart::AbstractVector, part::AbstractVector, project0::Abst
 
             targets(graph0)[p0] = one(V); p0 += one(E)
             targets(graph1)[p1] = one(V); p1 += one(E)
+
             t0 += one(V); pointers(graph0)[t0] = p0
             t1 += one(V); pointers(graph1)[t1] = p1
         end

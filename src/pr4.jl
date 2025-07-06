@@ -197,19 +197,19 @@ function sr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where
         totdeg += weights[v]
     end
 
-    marker = FixedSizeVector{E}(undef, n)
-    stack0 = FixedSizeVector{V}(undef, n)
-    stack1 = FixedSizeVector{V}(undef, n)
-    tmpptr = FixedSizeVector{E}(undef, nn)
+    marker = FVector{E}(undef, n)
+    stack0 = FVector{V}(undef, n)
+    stack1 = FVector{V}(undef, n)
+    tmpptr = FVector{E}(undef, nn)
 
-    fillin = FixedSizeVector{E}(undef, n)
-    degree = FixedSizeVector{W}(undef, n)
-    number = FixedSizeVector{V}(undef, n)
-    source = FixedSizeVector{V}(undef, m)
-    target = FixedSizeVector{V}(undef, m)
-    begptr = FixedSizeVector{E}(undef, nn)
-    endptr = FixedSizeVector{E}(undef, n)
-    invptr = FixedSizeVector{E}(undef, m)
+    fillin = FVector{E}(undef, n)
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
 
     kernel, stack, inject, width = sr_impl!(marker, stack0, stack1,
         tmpptr, fillin, degree, number, source,

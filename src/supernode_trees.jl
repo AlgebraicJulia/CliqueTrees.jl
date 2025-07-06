@@ -25,7 +25,7 @@ function supernodetree(
         alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
         snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
     )
-    label, tree, count, index, ptr, lower, upper = supernodetree(graph, alg, snd)
+    label, tree, index, ptr, lower, upper = supernodetree(graph, alg, snd)
     return label, tree
 end
 
@@ -35,7 +35,7 @@ function supernodetree(
         alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
         snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
     )
-    label, tree, count, index, ptr, lower, upper = supernodetree(weights, graph, alg, snd)
+    label, tree, index, ptr, lower, upper = supernodetree(weights, graph, alg, snd)
     return label, tree
 end
 
@@ -49,7 +49,7 @@ end
 
 function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Tree{V}, upper::BipartiteGraph{V, E}) where {V, E}
     lower = reverse(upper)
-    rowcount, colcount = supcnt(lower, etree)
+    colcount = supcnt(lower, etree)
     new, ancestor, tree = stree(etree, colcount, snd)
 
     n = nv(lower); m = last(tree); mm = m + one(V)
@@ -74,12 +74,12 @@ function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Tree{V}, upp
 
     invpermute!(label, eindex)
     sndtree = SupernodeTree(tree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
-    return label, sndtree, rowcount, eindex, sepptr, lower, upper
+    return label, sndtree, eindex, sepptr, lower, upper
 end
 
 function supernodetree(snd::Nodal, label::Vector{V}, etree::Tree{V}, upper::BipartiteGraph{V, E}) where {V, E}
     lower = reverse(upper)
-    rowcount, colcount = supcnt(lower, etree)
+    colcount = supcnt(lower, etree)
 
     n = nv(lower); m = last(etree); mm = m + one(V)
     eindex = postorder!(etree); eorder = invperm(eindex)
@@ -94,7 +94,7 @@ function supernodetree(snd::Nodal, label::Vector{V}, etree::Tree{V}, upper::Bipa
 
     invpermute!(label, eindex)
     sndtree = SupernodeTree(etree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
-    return label, sndtree, rowcount, eindex, sepptr, lower, upper
+    return label, sndtree, eindex, sepptr, lower, upper
 end
 
 """

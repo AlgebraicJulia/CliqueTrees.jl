@@ -44,7 +44,6 @@ module AMFLib
 using ArgCheck
 using Base: oneto
 using FillArrays
-using FixedSizeArrays
 using ..Utilities
 
 export amf
@@ -73,17 +72,17 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
 
     nbbuck = twice(norig)
 
-    len = FixedSizeVector{V}(undef, n)
-    pe = FixedSizeVector{E}(undef, nn)
-    iw = FixedSizeVector{V}(undef, iwlen)
-    nv = FixedSizeVector{V}(undef, n)
-    elen = FixedSizeVector{V}(undef, n)
-    last = FixedSizeVector{V}(undef, n)
-    degree = FixedSizeVector{V}(undef, n)
-    wf = FixedSizeVector{E}(undef, n)
-    next = FixedSizeVector{V}(undef, n)
-    w = FixedSizeVector{Int}(undef, n)
-    head = FixedSizeVector{V}(undef, nbbuck + two(V))
+    len = FVector{V}(undef, n)
+    pe = FVector{E}(undef, nn)
+    iw = FVector{V}(undef, iwlen)
+    nv = FVector{V}(undef, n)
+    elen = FVector{V}(undef, n)
+    last = FVector{V}(undef, n)
+    degree = FVector{V}(undef, n)
+    wf = FVector{E}(undef, n)
+    next = FVector{V}(undef, n)
+    w = FVector{Int}(undef, n)
+    head = FVector{V}(undef, nbbuck + two(V))
 
     perm, invp = amf_impl!(norig, n, nbbuck, iwlen, pe,
         len, iw, nv, elen, last, degree, wf, next, w, head,

@@ -4,7 +4,7 @@ using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, AbstractScalar, Scalar, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, partition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
+using CliqueTrees: EliminationAlgorithm, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, partition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
 using CliqueTrees.Utilities
 using Graphs
 
@@ -32,8 +32,16 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
     @argcheck nov(graph) <= length(vwght)
     @argcheck nv(graph) <= length(ewght)
 
-    pointers(graph) .-= one(EINT)
-    targets(graph) .-= one(VINT2)
+    m = ne(graph); n = nv(graph); nn = n + one(VINT2)
+
+    @inbounds for v in oneto(nn)
+        pointers(graph)[v] -= one(EINT)
+    end
+
+    @inbounds for p in oneto(m)
+        targets(graph)[p] -= one(VINT2)
+    end
+
     imbalance -= convert(PINT, 100)
 
     context = KaHyPar.kahypar_context_new()
@@ -53,8 +61,14 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
         part,
     )
 
-    pointers(graph) .+= one(EINT)
-    targets(graph) .+= one(VINT2)
+    @inbounds for v in oneto(nn)
+        pointers(graph)[v] += one(EINT)
+    end
+
+    @inbounds for p in oneto(m)
+        targets(graph)[p] += one(VINT2)
+    end
+
     return
 end
 
@@ -107,9 +121,22 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     vwork6 = Vector{PINT}(undef, max(h, n))
     vwork7 = Vector{PINT}(undef, n)
     vwork8 = Vector{PINT}(undef, n)
+    vwork9 = Vector{WINT2}(undef, n)
+    vwork10 = Vector{WINT2}(undef, n)
     vwork11 = Vector{PINT}(undef, nn)
     vwork12 = Vector{PINT}(undef, nn)
-    hwght = ones(WINT1, h)
+    vwork13 = Vector{PINT}(undef, n)
+    vwork14 = Vector{PINT}(undef, n)
+    vwork15 = Vector{PINT}(undef, n)
+    vwork16 = Vector{PINT}(undef, n)
+    vwork17 = Vector{PINT}(undef, n)
+    vwork18 = Vector{PINT}(undef, n)
+    vwork19 = Vector{PINT}(undef, n)
+    hwght = Vector{WINT1}(undef, h)
+
+    @inbounds for v in oneto(h)
+        hwght[v] = one(WINT1)
+    end
 
     orders = Vector{PINT}[]
 
@@ -169,6 +196,9 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
             end
         else                  # processed
             isleaf = isone(-level)
+            tree = Tree(n, vwork6, swork, vwork7, vwork8)
+            upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
+            lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
 
             if isleaf # leaf
                 order, index = permutation(weights, graph, alg.alg)
@@ -186,42 +216,33 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
                 index = invperm(order)
 
                 if isone(S) || istwo(S)
-                    pairs = ((order, index), permutation(weights, graph, alg.alg))
+                    sets = UnionFind(vwork3, vwork4, vwork5)
+                    greedyorder, greedyindex = permutation(weights, graph, alg.alg)
 
                     if isone(S)
-                        order, index = bestwidth_impl!(vwork3, vwork4, vwork5, weights, graph, pairs)
+                        best = bestwidth_impl!(lower, upper, tree, sets, vwork9,
+                            vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
+                            vwork18, vwork19, weights, graph, (index, greedyindex))
                     else
-                        order, index = bestfill_impl!(vwork3, vwork4, weights, graph, pairs)
+                        best = bestfill_impl!(lower, upper, tree, sets, vwork9,
+                            vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
+                            vwork18, vwork19, weights, graph, (index, greedyindex))
+                    end
+
+                    if istwo(best)
+                        order, index = greedyorder, greedyindex
                     end
                 end
             end
 
-            upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
-            lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
             sympermute!_impl!(vwork3, upper, graph, index, Forward)
-
-            tree = Tree(
-                n,
-                vwork6,
-                swork,
-                vwork7,
-                vwork8,
-            )
 
             for i in oneto(k)
                 clique[i] = index[clique[i]]
             end
 
-            compositerotations_impl!(
-                index,
-                vwork3,
-                vwork4,
-                vwork5,
-                lower,
-                tree,
-                upper,
-                clique,
-            )
+            compositerotations_impl!(index, vwork3, vwork4,
+                vwork5, lower, tree, upper, clique)
 
             copyto!(vwork3, order)
             resize!(order, n - k)

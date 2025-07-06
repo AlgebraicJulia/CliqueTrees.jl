@@ -13,7 +13,6 @@ module MMDLib
 using ArgCheck
 using Base: oneto
 using FillArrays
-using FixedSizeArrays
 using ..Utilities
 
 export mmd
@@ -25,7 +24,7 @@ end
 
 function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
     @argcheck neqns <= length(vwght)
-    newvwght = FixedSizeVector{V}(undef, neqns)
+    newvwght = FVector{V}(undef, neqns)
 
     @inbounds for node in oneto(neqns)
         newvwght[node] = trunc(V, vwght[node])
@@ -44,17 +43,17 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
         total += vwght[node]
     end
 
-    invp = FixedSizeVector{V}(undef, neqns)
-    marker = FixedSizeVector{Int}(undef, neqns)
-    mergeparent = FixedSizeVector{V}(undef, neqns)
-    needsupdate = FixedSizeVector{V}(undef, neqns)
-    supersize = FixedSizeVector{V}(undef, neqns)
-    superwght = FixedSizeVector{V}(undef, neqns)
-    elimnext = FixedSizeVector{V}(undef, neqns)
-    deghead = FixedSizeVector{V}(undef, total)
-    degnext = FixedSizeVector{V}(undef, neqns)
-    degprev = FixedSizeVector{V}(undef, neqns)
-    newadjncy = FixedSizeVector{V}(undef, nnz)
+    invp = FVector{V}(undef, neqns)
+    marker = FVector{Int}(undef, neqns)
+    mergeparent = FVector{V}(undef, neqns)
+    needsupdate = FVector{V}(undef, neqns)
+    supersize = FVector{V}(undef, neqns)
+    superwght = FVector{V}(undef, neqns)
+    elimnext = FVector{V}(undef, neqns)
+    deghead = FVector{V}(undef, total)
+    degnext = FVector{V}(undef, neqns)
+    degprev = FVector{V}(undef, neqns)
+    newadjncy = FVector{V}(undef, nnz)
 
     mmd_impl!(invp, marker, mergeparent, needsupdate, supersize,
         superwght, elimnext, deghead, degnext, degprev, newadjncy,
