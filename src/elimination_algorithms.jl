@@ -712,6 +712,30 @@ function ND(args...; kwargs...)
     return ND{1}(args...; kwargs...)
 end
 
+struct NDS{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
+    alg::A
+    dis::D
+    width::Int
+    level::Int
+    imbalances::StepRange{Int, Int}
+end
+
+function NDS{S}(
+        alg::A = DEFAULT_ELIMINATION_ALGORITHM, dis::D = DEFAULT_DISSECTION_ALGORITHM;
+        width::Integer = 120,
+        level::Integer = 6,
+        imbalances::AbstractRange = 130:130,
+    ) where {S, A, D}
+    @argcheck ispositive(width)
+    @argcheck ispositive(level)
+    @argcheck ispositive(first(imbalances))
+    return NDS{S, A, D}(alg, dis, width, level, imbalances)
+end
+
+function NDS(args...; kwargs...)
+    return NDS{1}(args...; kwargs...)
+end
+
 """
     Spectral <: EliminationAlgorithm
 
@@ -1316,6 +1340,14 @@ end
 function permutation(weights::AbstractVector, graph, alg::MMD)
     index = mmd(weights, graph; delta = alg.delta)
     return invperm(index), index
+end
+
+function permutation(graph, alg::NDS{S}) where {S}
+    return dissectsearch(graph, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
+end
+
+function permutation(weights::AbstractVector, graph, alg::NDS{S}) where {S}
+    return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
 end
 
 function permutation(graph, alg::SAT{H}) where {H}
@@ -2284,23 +2316,46 @@ function MMDLib.mmd(weights::AbstractVector, graph; kwargs...)
     return mmd(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
-# Algorithms for Sparse Linear Systems
-# Scott and Tuma
-# Algorithm 8.6: Nested Dissection Algorithm
-function dissect(graph, alg::ND)
-    return dissect(BipartiteGraph(graph), alg)
+function dissectsearch(graph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
+    minscore = minpair = nothing
+
+    for imbalance in imbalances
+        curalg = ND{S}(alg, dis; width, level, imbalance)
+        curpair = permutation(graph, curalg)
+
+        if isone(S)
+            curscore = treewidth(graph, curpair)
+        else
+            curscore = treefill(graph, curpair)
+        end
+
+        if isnothing(minscore) || curscore < minscore
+            minscore, minpair = curscore, curpair
+        end
+    end
+
+    return minpair
 end
 
-function dissect(graph::AbstractGraph{V}, alg::ND) where {V}
-    weights = ones(V, nv(graph))
-    return dissect(weights, graph, alg)
-end
+function dissectsearch(weights::AbstractVector, graph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
+    minscore = minpair = nothing
 
-# Algorithms for Sparse Linear Systems
-# Scott and Tuma
-# Algorithm 8.6: Nested Dissection Algorithm
-function dissect(weights::AbstractVector, graph, alg::ND)
-    return dissect(weights, BipartiteGraph(graph), alg)
+    for imbalance in imbalances
+        curalg = ND{S}(alg, dis; width, level, imbalance)
+        curpair = permutation(weights, graph, curalg)
+
+        if isone(S)
+            curscore = treewidth(weights, graph, curpair)
+        else
+            curscore = treefill(weights, graph, curpair)
+        end
+
+        if isnothing(minscore) || curscore < minscore
+            minscore, minpair = curscore, curpair
+        end
+    end
+
+    return minpair
 end
 
 function sat(graph, upperbound::Integer, ::Val{H}) where {H}
