@@ -2324,9 +2324,9 @@ function dissectsearch(graph, alg::EliminationAlgorithm, dis::DissectionAlgorith
         curpair = permutation(graph, curalg)
 
         if isone(S)
-            curscore = treewidth(graph, curpair)
+            curscore = (treewidth(graph, curpair), treefill(graph, curpair))
         else
-            curscore = treefill(graph, curpair)
+            curscore = (treefill(graph, curpair), treewidth(graph, curpair))
         end
 
         if isnothing(minscore) || curscore < minscore
@@ -2345,9 +2345,9 @@ function dissectsearch(weights::AbstractVector, graph, alg::EliminationAlgorithm
         curpair = permutation(weights, graph, curalg)
 
         if isone(S)
-            curscore = treewidth(weights, graph, curpair)
+            curscore = (treewidth(weights, graph, curpair), treefill(weights, graph, curpair))
         else
-            curscore = treefill(weights, graph, curpair)
+            curscore = (treefill(weights, graph, curpair), treewidth(weights, graph, curpair))
         end
 
         if isnothing(minscore) || curscore < minscore
