@@ -28,7 +28,11 @@
     </p>
 </h2>
 
-CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs. Feel free to open an [issue](https://github.com/AlgebraicJulia/CliqueTrees.jl/issues) or leave a message in the [cliquetrees.jl](https://julialang.zulipchat.com/#narrow/channel/513749-cliquetrees.2Ejl) Zulip channel.
+CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs.
+
+## Getting Help
+
+Feel free to open an [issue](https://github.com/AlgebraicJulia/CliqueTrees.jl/issues) or leave a message in the [cliquetrees.jl](https://julialang.zulipchat.com/#narrow/channel/513749-cliquetrees.2Ejl) Zulip channel.
 
 ## Projects using CliqueTrees
 
@@ -169,6 +173,15 @@ Users can input graphs as adjacency matrices. Additionally, CliqueTrees.jl suppo
 
 Self-edges are always ignored.
 
-## References
+## Citation
 
-CliqueTrees.jl was inspired by the book [Chordal Graphs and Semidefinite Optimization](https://www.nowpublishers.com/article/Details/OPT-006) by Vandenberghe and Andersen.
+If you use CliqueTrees.jl for a publication, please cite our work using the following bibtex citation:
+
+```bibtex
+@misc{cliquetrees2025samuelson,
+  author = {Samuelson, Richard and Fairbanks, James},
+  url = {https://github.com/AlgebraicJulia/CliqueTrees.jl},
+  title = {CliqueTrees.jl: A Julia library for computing tree decompositions and chordal completions of graphs},
+  year = {2025}
+}
+```
