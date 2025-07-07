@@ -32,7 +32,7 @@ CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [
 
 ## Getting Help
 
-Feel free to open an [issue](https://github.com/AlgebraicJulia/CliqueTrees.jl/issues) or leave a message in the [cliquetrees.jl](https://julialang.zulipchat.com/#narrow/channel/513749-cliquetrees.2Ejl) Zulip channel.
+If you have a question about the library, feel free to open an [issue](https://github.com/AlgebraicJulia/CliqueTrees.jl/issues) or leave a message in the [cliquetrees.jl](https://julialang.zulipchat.com/#narrow/channel/513749-cliquetrees.2Ejl) Zulip channel.
 
 ## Projects using CliqueTrees
 
@@ -175,7 +175,7 @@ Self-edges are always ignored.
 
 ## Citation
 
-If you use CliqueTrees.jl for a publication, please cite our work using the following bibtex citation:
+If you use CliqueTrees.jl for a publication, please cite it as follows.
 
 ```bibtex
 @misc{cliquetrees2025samuelson,
