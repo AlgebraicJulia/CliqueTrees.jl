@@ -1343,7 +1343,7 @@ function permutation(weights::AbstractVector, graph, alg::MMD)
 end
 
 function permutation(graph, alg::NDS{S}) where {S}
-    return dissectsearch(graph, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
+    return dissectsearch(graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
 end
 
 function permutation(weights::AbstractVector, graph, alg::NDS{S}) where {S}
