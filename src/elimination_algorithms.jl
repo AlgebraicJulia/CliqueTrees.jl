@@ -1433,29 +1433,12 @@ function permutation(weights::AbstractVector, graph, alg::SafeSeparators)
     return order, invperm(order)
 end
 
-# TODO: multi-threading
 function permutation(graph, alg::ConnectedComponents)
-    components, subgraphs = connectedcomponents(graph)
-    order = eltype(eltype(components))[]
-
-    @inbounds for (component, subgraph) in zip(components, subgraphs)
-        suborder, subindex = permutation(subgraph, alg.alg)
-        append!(order, view(component, suborder))
-    end
-
-    return order, invperm(order)
+    return connectedcomponents(graph, alg.alg)
 end
 
 function permutation(weights::AbstractVector, graph, alg::ConnectedComponents)
-    components, subgraphs = connectedcomponents(graph)
-    order = eltype(eltype(components))[]
-
-    @inbounds for (component, subgraph) in zip(components, subgraphs)
-        suborder, subindex = permutation(weights[component], subgraph, alg.alg)
-        append!(order, view(component, suborder))
-    end
-
-    return order, invperm(order)
+    return connectedcomponents(weights, graph, alg.alg)
 end
 
 function permutation(graph, alg::BestWidth)
@@ -3053,55 +3036,121 @@ function connectedcomponents(graph)
 end
 
 function connectedcomponents(graph::AbstractGraph{V}) where {V}
-    E = etype(graph)
-    n = nv(graph)
-    m = is_directed(graph) ? ne(graph) : twice(ne(graph))
-    components = View{V, V}[]
-    subgraphs = BipartiteGraph{V, E, View{E, V}, View{V, E}}[]
-    projection = Vector{V}(undef, n)
+    E = etype(graph); n = nv(graph); m = de(graph)
 
-    # initialize work arrays
-    level = zeros(Int, n); tag = 0
-    queue = @view Vector{V}(undef, n)[one(V):n]
-    nfree = @view Vector{E}(undef, twice(n))[one(V):twice(n)]
-    mfree = @view Vector{V}(undef, m)[one(E):m]
+    cmp = Vector{Tuple{View{V, V}, BipartiteGraph{V, E, View{E, V}, View{V, E}}}}(undef, n)
+    ptr = Vector{E}(undef, twice(n) + one(V))
+    tgt = Vector{V}(undef, m)
+    prj = Vector{V}(undef, n)
+    inj = Vector{V}(undef, n)
+    
+    cmpend = one(V)
+    injbeg = one(V)
+    ptrbeg = one(V)
+    tgtbeg = one(E)
 
-    @inbounds for root in vertices(graph)
-        if iszero(level[root])
-            component, queue, tag = bfs!(level, queue, graph, root, tag + 1)
-            nstop = one(V)
-            mstop = zero(E)
+    for v in vertices(graph)
+        prj[v] = zero(V)
+    end
 
-            for v in component
-                projection[v] = nstop
-                nstop += one(V)
-                mstop += convert(E, eltypedegree(graph, v))
+    for v in vertices(graph)
+        if iszero(prj[v])
+            injcur = injbeg
+            injend = injbeg
+            prj[v] = injend; inj[injend] = v; injend += one(V)
+
+            tgtend = tgtbeg
+            ptrend = ptrbeg
+            ptr[ptrend] = one(E); ptrend += one(V)
+
+            while injcur < injend
+                v = inj[injcur]; injcur += one(V)
+
+                for w in neighbors(graph, v)
+                    prjnbr = prj[w]
+
+                    if iszero(prjnbr)
+                        prj[w] = prjnbr = injend; inj[injend] = w; injend += one(V)
+                    end
+
+                    tgt[tgtend] = prjnbr - injbeg + one(V); tgtend += one(E)
+                end 
+
+                ptr[ptrend] = tgtend - tgtbeg + one(E); ptrend += one(V)
             end
 
-            subgraph = BipartiteGraph{V, E}(
-                nstop - one(V),
-                nstop - one(V),
-                mstop,
-                nfree,
-                mfree,
+            cmp[cmpend] = (
+                view(inj, injbeg:injend - one(V)),
+                BipartiteGraph(
+                    injend - injbeg,
+                    injend - injbeg,
+                    tgtend - tgtbeg,
+                    view(ptr, ptrbeg:ptrend - one(V)),
+                    view(tgt, tgtbeg:tgtend - one(E)),
+                )
             )
 
-            p = pointers(subgraph)[begin] = one(E)
-
-            for (i, v) in enumerate(component)
-                pp = pointers(subgraph)[i + 1] = p + eltypedegree(graph, v)
-                targets(subgraph)[p:(pp - one(E))] = @view projection[neighbors(graph, v)]
-                p = pp
-            end
-
-            push!(components, component)
-            push!(subgraphs, subgraph)
-            nfree = @view nfree[(nstop + one(V)):twice(n)]
-            mfree = @view mfree[(mstop + one(E)):m]
+            cmpend += one(V)
+            injbeg = injend
+            ptrbeg = ptrend
+            tgtbeg = tgtend
         end
     end
 
-    return components, subgraphs
+    return cmp, cmpend - one(V)
+end
+
+function connectedcomponents(graph, alg::EliminationAlgorithm)
+    return connectedcomponents(BipartiteGraph(graph), alg)
+end
+
+function connectedcomponents(graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {V}
+    n = nv(graph); j = zero(V)
+    order = Vector{V}(undef, n)
+    index = Vector{V}(undef, n)
+    components, m = connectedcomponents(graph)
+
+    for i in oneto(m)
+        label, subgraph = components[i]
+        suborder, subindex = permutation(subgraph, alg)
+        
+        for v in suborder
+            vv = label[v]
+            j += one(V); order[j] = vv; index[vv] = j
+        end
+    end
+
+    return order, index
+end
+
+function connectedcomponents(weights::AbstractVector, graph, alg::EliminationAlgorithm)
+    return connectedcomponents(weights, BipartiteGraph(graph), alg)
+end
+
+function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
+    n = nv(graph); j = zero(V)
+    order = Vector{V}(undef, n)
+    index = Vector{V}(undef, n)
+    subweights = Vector{W}(undef, n)
+    components, m = connectedcomponents(graph)
+
+    for i in oneto(m)
+        label, subgraph = components[i]
+
+        for v in vertices(subgraph)
+            vv = label[v]
+            subweights[v] = weights[vv]
+        end
+
+        suborder, subindex = permutation(subweights, subgraph, alg)
+        
+        for v in suborder
+            vv = label[v]
+            j += one(V); order[j] = vv; index[vv] = j
+        end
+    end
+
+    return order, index
 end
 
 function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: EliminationAlgorithm}

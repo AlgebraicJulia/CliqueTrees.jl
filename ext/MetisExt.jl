@@ -244,9 +244,9 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
         graph, weights, label, clique, width, level = pop!(nodes)
         n = nv(graph); m = ne(graph); k = convert(INT, length(clique))
 
-        if m > length(vwork1)
-            resize!(vwork1, m)
-            resize!(vwork2, m)
+        if half(m) > length(vwork1)
+            resize!(vwork1, half(m))
+            resize!(vwork2, half(m))
         end
 
         if !isnegative(level) # unprocessed

@@ -156,9 +156,9 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
         hgraph, graph, weights, label, clique, width, level = pop!(nodes)
         n = nv(graph); m = ne(graph); k = convert(PINT, length(clique))
 
-        if m > length(vwork1)
-            resize!(vwork1, m)
-            resize!(vwork2, m)
+        if half(m) > length(vwork1)
+            resize!(vwork1, half(m))
+            resize!(vwork2, half(m))
         end
 
         if !isnegative(level) # unprocessed
