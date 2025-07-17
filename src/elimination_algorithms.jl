@@ -1461,58 +1461,40 @@ function bfs(graph)
     return bfs(BipartiteGraph(graph))
 end
 
-function bfs(graph::AbstractGraph{V}) where {V}
-    tag = 0
-    level = zeros(Int, nv(graph))
-    order = Vector{V}(undef, nv(graph))
-
-    # initialize queue
-    queue = @view order[one(V):nv(graph)]
-
-    @inbounds for root in vertices(graph)
-        if iszero(level[root])
-            _, queue, tag = bfs!(level, queue, graph, root, tag + 1)
-        end
-    end
-
-    # reverse ordering
-    return reverse!(order)
-end
-
 # Algorithmic Aspects of Vertex Elimination on Graphs
 # Rose, Tarjan, and Lueker
 # BFS
 #
 # Perform a breadth-first search of a simple graph.
 # The complexity is O(m), where m = |E|.
-function bfs!(
-        level::AbstractVector{Int},
-        queue::AbstractVector{V},
-        graph::AbstractGraph{V},
-        root::V,
-        tag::Int,
-    ) where {V}
-    i = j = one(V)
-    level[root] = tag
-    queue[j] = root
+function bfs(graph::AbstractGraph{V}) where {V}
+    n = nv(graph)
+    order = Vector{V}(undef, n)
+    marker = FVector{Bool}(undef, n)
 
-    @inbounds while i <= j
-        v = queue[i]
-        l = level[v]
-
-        for w in neighbors(graph, v)
-            if level[w] < tag
-                j += one(V)
-                queue[j] = w
-                level[w] = l + 1
-            end
-        end
-
-        i += one(V)
+    @inbounds for node in vertices(graph)
+        marker[node] = false 
     end
 
-    n = convert(V, length(queue))
-    @views return queue[one(V):j], queue[i:n], level[queue[j]]
+    hi = n
+
+    @inbounds for root in vertices(graph)
+        if !marker[root]
+            lo = hi; order[lo] = root; marker[root] = true
+
+            while lo <= hi
+                node = order[hi]; hi -= one(V)
+
+                for nbr in neighbors(graph, node)
+                    if !marker[nbr]
+                        lo -= one(V); order[lo] = nbr; marker[nbr] = true 
+                    end
+                end
+            end
+        end
+    end
+
+    return order
 end
 
 """
@@ -1599,30 +1581,96 @@ function mcs(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
     return alpha, size
 end
 
-function rcmmd(graph, alg::SortingAlgorithm = DEFAULT_UNSTABLE)
-    return genrcm(graph, alg) do level, queue, graph, root, tag
-        component, _, tag = bfs!(level, queue, graph, root, tag)
+function rootls_impl!(
+        xls::AbstractVector{V},
+        ls::AbstractVector{V},
+        graph::AbstractGraph{V},
+        marker::AbstractVector{V},
+        root::V,
+        tag::V,
+    ) where {V}
+    @argcheck nv(graph) < length(xls)
+    @argcheck nv(graph) <= length(ls)
+    @argcheck nv(graph) <= length(marker)
 
-        root = argmin(component) do v
-            eltypedegree(graph, v)
+    # initialization...
+    n = nv(graph)
+    nlvl = lvlend = zero(V)
+    @inbounds marker[root] = tag
+    @inbounds ccsize = one(V); ls[ccsize] = root
+
+    # compute the current level width;
+    # if it is nonzero, generate the next level
+    @inbounds while lvlend < ccsize
+        # `lbegin` is the pointer to the beginning of the current
+        # level, and `lvlend` points to the end of this level
+        lbegin = lvlend + one(V)
+        lvlend = ccsize
+        nlvl += one(V); xls[nlvl] = lbegin
+
+        # generate the next leel by finding all the masked
+        # neighbors of nodes in the current level
+        for i in lbegin:lvlend
+            node = ls[i]
+
+            for nbr in neighbors(graph, node)
+                if marker[nbr] < tag
+                    ccsize += one(V); ls[ccsize] = nbr
+                    marker[nbr] = tag
+                end
+            end
+        end
+    end
+
+    @inbounds xls[nlvl + one(V)] = ccsize + one(V)
+    return BipartiteGraph(n, nlvl, ccsize, xls, ls)
+end
+
+function fnroot_impl!(
+        xls::AbstractVector{V},
+        ls::AbstractVector{V},
+        graph::AbstractGraph{V},
+        marker::AbstractVector{V},
+        root::V,
+    ) where {V}
+    @argcheck nv(graph) < length(xls)
+    @argcheck nv(graph) <= length(ls)
+    @argcheck nv(graph) <= length(marker)
+
+    # initialize `tag`
+    tag = one(V)
+
+    # determine the level structure rooted at `root`
+    level = rootls_impl!(xls, ls, graph, marker, root, tag)
+    nlvl = nv(level); ccsize = ne(level)
+    pnlvl = one(V)
+
+    # increment `tag`
+    tag += one(V)
+
+    @inbounds while pnlvl < nlvl < ccsize
+        pnlvl = nlvl
+
+        # pick a node with minimum degree from the last level
+        mindeg = ccsize
+
+        for node in neighbors(level, nlvl)
+            ndeg = eltypedegree(graph, node)
+
+            if ndeg < mindeg
+                root, mindeg = node, ndeg
+            end
         end
 
-        return root, tag
+        # and generate its rooted level structure
+        level = rootls_impl!(xls, ls, graph, marker, root, tag)
+        nlvl = nv(level)
+
+        # increment `tag`
+        tag += one(V)
     end
-end
 
-function rcmgl(graph, alg::SortingAlgorithm = DEFAULT_UNSTABLE)
-    return genrcm(fnroot!, graph, alg)
-end
-
-function genrcm(f::Function, graph, alg::SortingAlgorithm)
-    return genrcm(f, BipartiteGraph(graph), alg)
-end
-
-function genrcm(
-        f::Function, graph::Union{BipartiteGraph, AbstractSimpleGraph}, alg::SortingAlgorithm
-    )
-    return genrcm!(f, copy(graph), alg)
+    return level
 end
 
 # Algorithms for Sparse Linear Systems
@@ -1631,74 +1679,92 @@ end
 #
 # Apply the reverse Cuthill-Mckee algorithm to each connected component of a graph.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function genrcm!(f::Function, graph::AbstractGraph{V}, alg::SortingAlgorithm) where {V}
-    tag = 0
-    level = zeros(Int, nv(graph))
-    order = Vector{V}(undef, nv(graph))
-
-    # sort neighbors
-    scratch = Vector{V}(undef, Δout(graph))
-
-    @inbounds for v in vertices(graph)
-        sort!(neighbors(graph, v); alg, scratch, by = u -> eltypedegree(graph, u))
-    end
-
-    # initialize queue
-    queue = @view order[one(V):nv(graph)]
-
-    @inbounds for root in vertices(graph)
-        if iszero(level[root])
-            # find pseudo-peripheral vertex
-            root, tag = f(level, queue, graph, root, tag + 1)
-
-            # compute Cuthill-Mckee ordering
-            _, queue, tag = bfs!(level, queue, graph, root, tag + 1)
-        end
-    end
-
-    # reverse ordering
-    return reverse!(order)
+function rcmgl(graph, alg::SortingAlgorithm)
+    return rcmgl!(simplegraph(graph), alg)
 end
 
-# Computer Solution of Sparse Linear Systems
-# George, Liu, and Ng
-# FNROOT (FiNd ROOT)
-#
-# Find a pseudo-peripheral vertex.
-function fnroot!(
-        level::AbstractVector{Int},
-        queue::AbstractVector{V},
-        graph::AbstractGraph{V},
-        root::V,
-        tag::Int,
-    ) where {V}
-    component, _, new = bfs!(level, queue, graph, root, tag)
-    candidate = zero(V)
+function rcmgl!(graph::BipartiteGraph{V}, alg::SortingAlgorithm) where {V}
+    n = nv(graph); nn = n + one(V)
+    order = Vector{V}(undef, n)
+    xls = FVector{V}(undef, nn)
+    ls = FVector{V}(undef, n)
+    marker = FVector{V}(undef, n)
 
-    @inbounds while root != candidate
-        candidate = last(component)
-        degree = eltypedegree(graph, candidate)
-        eccentricity = level[candidate] - tag
+    @inbounds for v in vertices(graph)
+        marker[v] = zero(V)
+        sort!(neighbors(graph, v); alg, scratch = order, by = w -> eltypedegree(graph, w))
+    end
 
-        for v in Iterators.reverse(component)
-            eccentricity + tag == level[v] || break
+    resize!(order, n)
+    hi = n
 
-            d = eltypedegree(graph, v)
+    @inbounds for root in vertices(graph)
+        if iszero(marker[root])
+            level = fnroot_impl!(xls, ls, graph, marker, root)
 
-            if d < degree
-                candidate, degree = v, d
+            for i in vertices(level), v in neighbors(level, i)
+                order[hi] = v; hi -= one(V)
             end
-        end
-
-        tag = new
-        component, _, new = bfs!(level, queue, graph, candidate, tag + 1)
-
-        if level[component[end]] <= eccentricity + tag
-            root = candidate
         end
     end
 
-    return root, new
+    return order
+end
+
+function rcmmd(graph, alg::SortingAlgorithm)
+    return rcmmd!(simplegraph(graph), alg)
+end
+
+function rcmmd!(graph::BipartiteGraph{V}, alg::SortingAlgorithm) where {V}
+    n = nv(graph)
+    order = Vector{V}(undef, n)
+    marker = FVector{V}(undef, n)
+
+    @inbounds for v in vertices(graph)
+        marker[v] = zero(V)
+        sort!(neighbors(graph, v); alg, scratch = order, by = w -> eltypedegree(graph, w))
+    end
+
+    resize!(order, n)
+    hi = n
+
+    @inbounds for root in vertices(graph)
+        if iszero(marker[root])
+            nhi = hi
+            mindeg = eltypedegree(graph, root)
+            lo = hi; order[lo] = root; marker[root] = one(V)
+
+            while lo <= hi
+                node = order[hi]; hi -= one(V)
+                ndeg = eltypedegree(graph, node)
+
+                if ndeg < mindeg
+                    root, mindeg = node, ndeg
+                end
+
+                for nbr in neighbors(graph, node)
+                    if iszero(marker[nbr])
+                        lo -= one(V); order[lo] = nbr; marker[nbr] = one(V) 
+                    end
+                end
+            end
+
+            hi = nhi
+            lo = hi; order[lo] = root; marker[root] = two(V)
+
+            while lo <= hi
+                node = order[hi]; hi -= one(V)
+
+                for nbr in neighbors(graph, node)
+                    if isone(marker[nbr])
+                        lo -= one(V); order[lo] = nbr; marker[nbr] = two(V) 
+                    end
+                end
+            end
+        end
+    end
+
+    return order
 end
 
 function lexbfs(graph)

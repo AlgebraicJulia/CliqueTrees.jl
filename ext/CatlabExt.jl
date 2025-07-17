@@ -43,11 +43,11 @@ function CliqueTrees.mcs(graph::Catlab.HasGraph, clique::AbstractVector)
 end
 
 function CliqueTrees.rcmmd(graph::Catlab.HasGraph, alg::SortingAlgorithm)
-    return rcmmd(CatlabGraph(graph))
+    return rcmmd(CatlabGraph(graph), alg)
 end
 
 function CliqueTrees.rcmgl(graph::Catlab.HasGraph, alg::SortingAlgorithm)
-    return rcmgl(CatlabGraph(graph))
+    return rcmgl(CatlabGraph(graph), alg)
 end
 
 function CliqueTrees.lexbfs(graph::Catlab.HasGraph)
