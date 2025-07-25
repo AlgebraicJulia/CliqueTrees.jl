@@ -1397,40 +1397,11 @@ function permutation(weights::AbstractVector, graph, alg::SimplicialRule)
 end
 
 function permutation(graph, alg::SafeSeparators)
-    # construct almost-clique separator decomposition
-    graph, label, tree = safetree(graph, alg.min)
-
-    # permute graph
-    V = eltype(graph)
-    graph = Graph{V}(permute!(sparse(graph), label, label))
-
-    # compute ordering
-    order = cliquedissect(graph, tree, alg.alg)
-
-    for v in vertices(graph)
-        order[v] = label[order[v]]
-    end
-
-    return order, invperm(order)
+    error()
 end
 
 function permutation(weights::AbstractVector, graph, alg::SafeSeparators)
-    # construct almost-clique separator decomposition
-    graph, label, tree = safetree(graph, alg.min)
-
-    # permute graph
-    weights = weights[label]
-    V = eltype(graph)
-    graph = Graph{V}(permute!(sparse(graph), label, label))
-
-    # compute ordering
-    order = cliquedissect(weights, graph, tree, alg.alg)
-
-    for v in vertices(graph)
-        order[v] = label[order[v]]
-    end
-
-    return order, invperm(order)
+    error()
 end
 
 function permutation(graph, alg::ConnectedComponents)

@@ -47,10 +47,10 @@ function supernodetree(weights::AbstractVector, graph, alg::PermutationOrAlgorit
     return supernodetree(snd, eliminationtree(weights, graph, alg)...)
 end
 
-function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Tree{V}, upper::BipartiteGraph{V, E}) where {V, E}
+function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Parent{V}, upper::BipartiteGraph{V, E}) where {V, E}
     lower = reverse(upper)
     colcount = supcnt(lower, etree)
-    new, ancestor, tree = stree(etree, colcount, snd)
+    new, ancestor, tree = stree(Tree(etree), colcount, snd)
 
     n = nv(lower); m = last(tree); mm = m + one(V)
     eindex = Vector{V}(undef, n)
@@ -73,11 +73,11 @@ function supernodetree(snd::SupernodeType, label::Vector{V}, etree::Tree{V}, upp
     end
 
     invpermute!(label, eindex)
-    sndtree = SupernodeTree(tree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
+    sndtree = SupernodeTree(Tree(tree), BipartiteGraph(n, m, n, sndptr, oneto(n)))
     return label, sndtree, eindex, sepptr, lower, upper
 end
 
-function supernodetree(snd::Nodal, label::Vector{V}, etree::Tree{V}, upper::BipartiteGraph{V, E}) where {V, E}
+function supernodetree(snd::Nodal, label::Vector{V}, etree::Parent{V}, upper::BipartiteGraph{V, E}) where {V, E}
     lower = reverse(upper)
     colcount = supcnt(lower, etree)
 
@@ -93,7 +93,7 @@ function supernodetree(snd::Nodal, label::Vector{V}, etree::Tree{V}, upper::Bipa
     end
 
     invpermute!(label, eindex)
-    sndtree = SupernodeTree(etree, BipartiteGraph(n, m, n, sndptr, oneto(n)))
+    sndtree = SupernodeTree(Tree(etree), BipartiteGraph(n, m, n, sndptr, oneto(n)))
     return label, sndtree, eindex, sepptr, lower, upper
 end
 

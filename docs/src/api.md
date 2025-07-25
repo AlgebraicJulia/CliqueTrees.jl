@@ -48,7 +48,6 @@ SAT
 MinimalChordal
 CompositeRotations
 SafeRules
-SafeSeparators
 ConnectedComponents
 permutation
 mcs

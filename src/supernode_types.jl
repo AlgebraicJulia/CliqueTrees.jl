@@ -39,14 +39,13 @@ struct Fundamental <: SupernodeType end
 # Compute the maximal supernode partition of the montone transitive extension of an ordered graph.
 # The complexity is O(n), where n = |V|.
 function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Maximal) where {V}
-    # validate arguments
-    @argcheck tree == eachindex(colcount)
+    @argcheck length(tree) <= length(colcount)
 
-    # run algorithm
-    new = sizehint!(V[], length(tree))
-    parent = sizehint!(V[], length(tree))
-    ancestor = sizehint!(V[], length(tree))
-    new_in_clique = Vector{V}(undef, length(tree))
+    n = last(tree)
+    new = sizehint!(V[], n)
+    parent = sizehint!(V[], n)
+    ancestor = sizehint!(V[], n)
+    new_in_clique = Vector{V}(undef, n)
 
     @inbounds for v in tree
         u = nothing
@@ -80,20 +79,21 @@ function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Maximal) where {
         end
     end
 
-    return new, ancestor, Tree(parent)
+    m = convert(V, length(new))
+    return new, ancestor, Parent(m, parent)
 end
 
 # Compute the fundamental supernode partition of the montone transitive extension of an ordered graph.
 # The complexity is O(n), where n = |V|.
 function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Fundamental) where {V}
-    # validate arguments
-    @argcheck tree == eachindex(colcount)
+    @argcheck length(tree) <= length(colcount)
 
     # run algorithm
-    new = sizehint!(V[], length(tree))
-    parent = sizehint!(V[], length(tree))
-    ancestor = sizehint!(V[], length(tree))
-    new_in_clique = Vector{V}(undef, length(tree))
+    n = last(tree)
+    new = sizehint!(V[], n)
+    parent = sizehint!(V[], n)
+    ancestor = sizehint!(V[], n)
+    new_in_clique = Vector{V}(undef, n)
 
     @inbounds for v in tree
         u = firstchildindex(tree, v)
@@ -115,7 +115,8 @@ function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Fundamental) whe
         end
     end
 
-    return new, ancestor, Tree(parent)
+    m = convert(V, length(new))
+    return new, ancestor, Parent(m, parent)
 end
 
 """

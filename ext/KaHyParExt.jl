@@ -4,7 +4,7 @@ using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, partition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, partition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
 using CliqueTrees.Utilities
 using Graphs
 
@@ -119,8 +119,6 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     vwork4 = Vector{PINT}(undef, n)
     vwork5 = Vector{PINT}(undef, max(h, n))
     vwork6 = Vector{PINT}(undef, max(h, n))
-    vwork7 = Vector{PINT}(undef, n)
-    vwork8 = Vector{PINT}(undef, n)
     vwork9 = Vector{WINT2}(undef, n)
     vwork10 = Vector{WINT2}(undef, n)
     vwork11 = Vector{PINT}(undef, nn)
@@ -131,7 +129,6 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     vwork16 = Vector{PINT}(undef, n)
     vwork17 = Vector{PINT}(undef, n)
     vwork18 = Vector{PINT}(undef, n)
-    vwork19 = Vector{PINT}(undef, n)
     hwght = Vector{WINT1}(undef, h)
 
     @inbounds for v in oneto(h)
@@ -196,7 +193,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
             end
         else                  # processed
             isleaf = isone(-level)
-            tree = Tree(n, vwork6, swork, vwork7, vwork8)
+            tree = Parent(n, vwork6)
             upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
             lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
 
@@ -222,11 +219,11 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
                     if isone(S)
                         best = bestwidth_impl!(lower, upper, tree, sets, vwork9,
                             vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
-                            vwork18, vwork19, weights, graph, (index, greedyindex))
+                            vwork18, weights, graph, (index, greedyindex))
                     else
                         best = bestfill_impl!(lower, upper, tree, sets, vwork9,
                             vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
-                            vwork18, vwork19, weights, graph, (index, greedyindex))
+                            vwork18, weights, graph, (index, greedyindex))
                     end
 
                     if istwo(best)

@@ -1,21 +1,75 @@
-# A simple bipartite graph (U, V, E). If U = V, then you can think of this as a directed graph.
-# This type implements the abstract graph interface.
+"""
+    BipartiteGraph{V, E, Ptr, Tgt} <: AbstractGraph{V}
+
+A directed bipartite multigraph G = (U, V, E).
+"""
 struct BipartiteGraph{V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt <: AbstractVector{V}} <: AbstractGraph{V}
+    """
+    U is equal to the set
+
+        U := {1, 2, ..., nov}
+
+    """
     nov::V
+
+    """
+    V is equal to the set
+
+        V := {1, 2, ..., nv}
+
+    """
     nv::V
+
+    """
+    E is equal to the set
+
+        E := {1, 2, ..., ne}
+
+    """
     ne::E
+
+    """
+    Each vertex v ∈ V is the source of the arcs
+
+        {ptr[v], ptr[v] + 1, ..., ptr[v + 1] - 1} ⊆ E
+
+    """
     ptr::Ptr
+
+    """
+    Each arc e ∈ E has target vertex
+
+        tgt[e] ∈ V
+
+    """
     tgt::Tgt
+
+    function BipartiteGraph{V, E, Ptr, Tgt}(
+            nov::Integer,
+            nv::Integer,
+            ne::Integer,
+            ptr::AbstractVector,
+            tgt::AbstractVector,
+        ) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt <: AbstractVector{V}}
+        @argcheck !isnegative(nov)
+        @argcheck !isnegative(nv)
+        @argcheck !isnegative(ne)
+        @argcheck nv < length(ptr)
+        @argcheck ne <= length(tgt)
+        return new{V, E, Ptr, Tgt}(nov, nv, ne, ptr, tgt)
+    end
 end
 
 function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer, ptr::AbstractVector, tgt::AbstractVector) where {V, E}
-    return BipartiteGraph(
+    graph = BipartiteGraph(
         convert(V, nov),
         convert(V, nv),
         convert(E, ne),
         convert(AbstractVector{E}, ptr),
         convert(AbstractVector{V}, tgt),
     )
+
+    return graph
 end
 
 function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer) where {V, E}
@@ -50,26 +104,41 @@ function BipartiteGraph{V, E}(graph::AbstractGraph) where {V, E}
 end
 
 function BipartiteGraph{V, E}(graph::BipartiteGraph) where {V, E}
-    return BipartiteGraph{V, E}(
+    graph = BipartiteGraph{V, E}(
         nov(graph),
         nv(graph),
         ne(graph),
         pointers(graph),
         targets(graph),
     )
+
+    return graph
 end
 
 function BipartiteGraph{V, E}(matrix::SparseMatrixCSC) where {V, E}
-    return BipartiteGraph{V, E}(
+    graph = BipartiteGraph{V, E}(
         size(matrix)...,
         nnz(matrix),
         getcolptr(matrix),
         rowvals(matrix),
     )
+
+    return graph
 end
 
 function BipartiteGraph{V, E}(matrix::AbstractMatrix) where {V, E}
-    return BipartiteGraph{V, E}(sparse(matrix))
+    graph = BipartiteGraph{V, E}(sparse(matrix))
+    return graph
+end
+
+function BipartiteGraph(
+        nov::V,
+        nv::V,
+        ne::E,
+        ptr::Ptr,
+        tgt::Tgt,
+    ) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt <: AbstractVector{V}}
+    return BipartiteGraph{V, E, Ptr, Tgt}(nov, nv, ne, ptr, tgt)
 end
 
 function BipartiteGraph(graph::AbstractGraph{V}) where {V}
@@ -144,59 +213,12 @@ function sympermute(graph, index::AbstractVector, order::Ordering)
     return sympermute(BipartiteGraph(graph), index, order)
 end
 
-function sympermute(graph::AbstractGraph, index::AbstractVector, order::Ordering)
-    return sympermute(etype(graph), graph, index, order)
-end
-
-function sympermute(
-        ::Type{E}, graph::AbstractGraph{V}, index::AbstractVector, order::Ordering
-    ) where {V, E}
-    # validate arguments
-    @argcheck vertices(graph) == eachindex(index)
-
-    # compute column counts
-    total = zero(E)
-    count = Vector{E}(undef, nv(graph) + one(V))
-    count[one(V)] = one(E)
-    count[two(V):(nv(graph) + one(V))] .= zero(E)
-
-    @inbounds for j in vertices(graph)
-        for i in neighbors(graph, j)
-            if lt(order, i, j)
-                u = index[i]
-                v = index[j]
-
-                if lt(order, v, u)
-                    u, v = v, u
-                end
-
-                total += one(E)
-                count[v + one(V)] += one(E)
-            end
-        end
-    end
-
-    # permute graph
-    result = BipartiteGraph{V, E}(nv(graph), nv(graph), total)
-    count .= cumsum!(pointers(result), count)
-
-    @inbounds for j in vertices(graph)
-        for i in neighbors(graph, j)
-            if lt(order, i, j)
-                u = index[i]
-                v = index[j]
-
-                if lt(order, v, u)
-                    u, v = v, u
-                end
-
-                targets(result)[count[v]] = u
-                count[v] += one(E)
-            end
-        end
-    end
-
-    return result
+function sympermute(graph::AbstractGraph{V}, index::AbstractVector, order::Ordering) where {V}
+    E = etype(graph); m = half(de(graph)); n = nv(graph); nn = n + one(V)
+    count = Vector{E}(undef, n)
+    ptr = Vector{E}(undef, nn)
+    tgt = Vector{V}(undef, m)
+    return sympermute!_impl!(count, ptr, tgt, graph, index, order)
 end
 
 function sympermute!(
@@ -214,14 +236,32 @@ end
 function sympermute!_impl!(
         count::AbstractVector{E},
         target::BipartiteGraph{V, E},
+        source::AbstractGraph{V},
+        index::AbstractVector{V},
+        order::Ordering
+    ) where {V, E}
+    ptr = pointers(target)
+    tgt = targets(target)
+
+    sympermute!_impl!(count, ptr,
+        tgt, source, index, order)
+
+    return
+end
+
+function sympermute!_impl!(
+        count::AbstractVector{E},
+        ptr::AbstractVector{E},
+        tgt::AbstractVector{V},
         source::AbstractGraph,
         index::AbstractVector,
         order::Ordering,
     ) where {V, E}
-    @argcheck nv(target) == nv(source)
-    @argcheck nv(target) <= length(count)
-    @argcheck nv(target) <= length(index)
-    n = nv(target)
+    @argcheck nv(source) < length(ptr)
+    @argcheck nv(source) <= length(count)
+    @argcheck nv(source) <= length(index)
+    @argcheck half(de(source)) <= length(tgt)
+    n = nv(source)
 
     @inbounds for i in oneto(n)
         count[i] = zero(E)
@@ -244,11 +284,11 @@ function sympermute!_impl!(
         end
     end
 
-    pointers(target)[begin] = p = one(E)
+    ptr[begin] = p = one(E)
 
     @inbounds for i in oneto(n)
         ii = i + one(V); pp = p + count[i]
-        count[i] = p; pointers(target)[ii] = pp
+        count[i] = p; ptr[ii] = pp
         p = pp
     end
 
@@ -264,13 +304,14 @@ function sympermute!_impl!(
                     ii, kk = kk, ii
                 end
 
-                targets(target)[count[kk]] = ii
+                tgt[count[kk]] = ii
                 count[kk] += one(E)
             end
         end
     end
 
-    return
+    m = p - one(E)
+    return BipartiteGraph(n, n, m, ptr, tgt)
 end
 
 # Compute the transpose of a graph.
@@ -495,12 +536,11 @@ function Graphs.vertices(graph::BipartiteGraph{V}) where {V}
 end
 
 @propagate_inbounds function Graphs.outneighbors(graph::BipartiteGraph{<:Any, E}, i::I) where {E, I <: Integer}
-    ii = i + one(I)
-    @boundscheck checkbounds(pointers(graph), i)
-    @boundscheck checkbounds(pointers(graph), ii)
-    @inbounds start = pointers(graph)[i]
-    @inbounds stop = pointers(graph)[ii]
-    @inbounds neighbors = view(targets(graph), start:(stop - one(E)))
+    j = i + one(I); ptr = pointers(graph); tgt = targets(graph)
+    @boundscheck checkbounds(vertices(graph), i)
+    @inbounds strt = ptr[i]
+    @inbounds stop = ptr[j]
+    @inbounds neighbors = view(tgt, strt:stop - one(E))
     return neighbors
 end
 
@@ -512,12 +552,11 @@ function Graphs.inneighbors(graph::BipartiteGraph, i::Integer)
 end
 
 @propagate_inbounds function Graphs.outdegree(graph::BipartiteGraph, i::I) where {I <: Integer}
-    ii = i + one(I)
-    @boundscheck checkbounds(pointers(graph), i)
-    @boundscheck checkbounds(pointers(graph), ii)
-    @inbounds start = pointers(graph)[i]
-    @inbounds stop = pointers(graph)[ii]
-    degree = convert(Int, stop - start)
+    j = i + one(I); ptr = pointers(graph); tgt = targets(graph)
+    @boundscheck checkbounds(vertices(graph), i)
+    @inbounds strt = ptr[i]
+    @inbounds stop = ptr[j]
+    degree = convert(Int, stop - strt)
     return degree
 end
 

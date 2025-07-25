@@ -46,7 +46,6 @@ end
     @test_throws Exception permutation(weights, MinimalChordal())
     @test_throws Exception permutation(weights, CompositeRotations([1]))
     @test_throws Exception permutation(weights, SafeRules())
-    @test_throws Exception permutation(weights, SafeSeparators())
     @test_throws Exception permutation(weights, ConnectedComponents())
     @test_throws Exception permutation(weights, BestWidth())
     @test_throws Exception permutation(weights, BestFill())
@@ -471,10 +470,10 @@ end
             MF(),
             MMD(),
             METIS(),
-            NDS{1}(MMD(), METISND(); width = 5),
-            NDS{2}(MMD(), KaHyParND(); width = 5),
-            NDS{1}(MCS(), METISND(); width = 5),
-            NDS{2}(MCS(), KaHyParND(); width = 5),
+            ND{1}(MMD(), METISND(); width = 5),
+            ND{2}(MMD(), KaHyParND(); width = 5),
+            ND{1}(MCS(), METISND(); width = 5),
+            ND{2}(MCS(), KaHyParND(); width = 5),
             Spectral(),
             FlowCutter(; time = 1),
             BT(),
@@ -483,7 +482,6 @@ end
             CompositeRotations([1, 2, 3]),
             SafeRules(),
             SimplicialRule(),
-            SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -565,7 +563,6 @@ end
             CompositeRotations([]),
             SafeRules(),
             SimplicialRule(),
-            SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
         )
@@ -628,7 +625,6 @@ end
             CompositeRotations([1]),
             SafeRules(),
             SimplicialRule(),
-            SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -913,7 +909,6 @@ end
                         CompositeRotations([1, 3]),
                         SafeRules(),
                         SimplicialRule(),
-                        SafeSeparators(),
                         ConnectedComponents(),
                         BestWidth(MCS(), MF()),
                         BestFill(MCS(), MF()),
@@ -1615,7 +1610,7 @@ end
                     @test wlb <= wwidth
                 end
 
-                for outer_alg in (SafeRules,) # (SafeRules, SafeSeparators)
+                for outer_alg in (SafeRules,)
                     for inner_alg in tw_algs
                         alg = outer_alg(inner_alg)
                         @test treewidth(graph; alg) === uwidth
