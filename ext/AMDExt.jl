@@ -12,11 +12,7 @@ const COLAMD_DENSE_ROW = AMDLib.COLAMD_DENSE_ROW
 const COLAMD_DENSE_COL = AMDLib.COLAMD_DENSE_COL
 const COLAMD_AGGRESSIVE = AMDLib.COLAMD_AGGRESSIVE
 
-function CliqueTrees.permutation(graph, alg::Union{AMD, SymAMD})
-    return permutation(BipartiteGraph(graph), alg)
-end
-
-function CliqueTrees.permutation(graph::AbstractGraph, alg::Union{AMD, SymAMD})
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::Union{AMD, SymAMD})
     order = amd(graph, alg)
     return order, invperm(order)
 end

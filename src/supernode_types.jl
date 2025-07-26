@@ -38,85 +38,125 @@ struct Fundamental <: SupernodeType end
 #
 # Compute the maximal supernode partition of the montone transitive extension of an ordered graph.
 # The complexity is O(n), where n = |V|.
-function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Maximal) where {V}
+function stree_impl!(
+        new::AbstractVector{V},
+        parent::AbstractVector{V},
+        ancestor::AbstractVector{V},
+        new_in_clique::AbstractVector{V},
+        tree::Tree{V},
+        colcount::AbstractVector{V},
+        snd::Maximal,
+    ) where {V}
+    @argcheck length(tree) <= length(new)
+    @argcheck length(tree) <= length(parent)
+    @argcheck length(tree) <= length(ancestor)
+    @argcheck length(tree) <= length(new_in_clique)
     @argcheck length(tree) <= length(colcount)
+    snd = zero(V); n = last(tree)
 
-    n = last(tree)
-    new = sizehint!(V[], n)
-    parent = sizehint!(V[], n)
-    ancestor = sizehint!(V[], n)
-    new_in_clique = Vector{V}(undef, n)
+    for v in tree
+        u = zero(V); children = childindices(tree, v)
 
-    @inbounds for v in tree
-        u = nothing
-
-        for s in childindices(tree, v)
+        for s in children
             if colcount[s] == colcount[v] + one(V)
                 u = s
                 break
             end
         end
 
-        if !isnothing(u)
+        if ispositive(u)
             new_in_clique[v] = new_in_clique[u]
 
-            for s in childindices(tree, v)
-                if s !== u
+            for s in children
+                if s != u
                     parent[new_in_clique[s]] = new_in_clique[v]
                     ancestor[new_in_clique[s]] = v
                 end
             end
         else
-            push!(new, v)
-            push!(parent, zero(V))
-            push!(ancestor, zero(V))
-            new_in_clique[v] = length(new)
+            new_in_clique[v] = snd += one(V); new[snd] = v
+            parent[snd] = ancestor[snd] = zero(V)
 
-            for s in childindices(tree, v)
+            for s in children
                 parent[new_in_clique[s]] = new_in_clique[v]
                 ancestor[new_in_clique[s]] = v
             end
         end
     end
 
-    m = convert(V, length(new))
-    return new, ancestor, Parent(m, parent)
+    return Parent(snd, parent)
 end
 
 # Compute the fundamental supernode partition of the montone transitive extension of an ordered graph.
 # The complexity is O(n), where n = |V|.
-function stree(tree::Tree{V}, colcount::AbstractVector{V}, snd::Fundamental) where {V}
+function stree_impl!(
+        new::AbstractVector{V},
+        parent::AbstractVector{V},
+        ancestor::AbstractVector{V},
+        new_in_clique::AbstractVector{V},
+        tree::Tree{V},
+        colcount::AbstractVector{V},
+        snd::Fundamental,
+    ) where {V}
+    @argcheck length(tree) <= length(new)
+    @argcheck length(tree) <= length(parent)
+    @argcheck length(tree) <= length(ancestor)
+    @argcheck length(tree) <= length(new_in_clique)
     @argcheck length(tree) <= length(colcount)
+    snd = zero(V); n = last(tree)
 
-    # run algorithm
-    n = last(tree)
-    new = sizehint!(V[], n)
-    parent = sizehint!(V[], n)
-    ancestor = sizehint!(V[], n)
-    new_in_clique = Vector{V}(undef, n)
+    for v in tree
+        u = zero(V); children = childindices(tree, v)
 
-    @inbounds for v in tree
-        u = firstchildindex(tree, v)
+        if isone(length(children))
+            u = only(children)
+        end
 
-        if !isnothing(u) &&
-                colcount[u] == colcount[v] + one(V) &&
-                isnothing(nextsiblingindex(tree, u))
+        if ispositive(u) && colcount[u] == colcount[v] + one(V)
             new_in_clique[v] = new_in_clique[u]
         else
-            push!(new, v)
-            push!(parent, zero(V))
-            push!(ancestor, zero(V))
-            new_in_clique[v] = length(new)
+            new_in_clique[v] = snd += one(V); new[snd] = v
+            parent[snd] = ancestor[snd] = zero(V)
 
-            for s in childindices(tree, v)
+            for s in children
                 parent[new_in_clique[s]] = new_in_clique[v]
                 ancestor[new_in_clique[s]] = v
             end
         end
     end
 
-    m = convert(V, length(new))
-    return new, ancestor, Parent(m, parent)
+    return Parent(snd, parent)
+end
+
+# Compute the nodal supernode partition of the montone transitive extension of an ordered graph.
+# The complexity is O(n), where n = |V|.
+function stree_impl!(
+        new::AbstractVector{V},
+        parent::AbstractVector{V},
+        ancestor::AbstractVector{V},
+        new_in_clique::AbstractVector{V},
+        tree::Tree{V},
+        colcount::AbstractVector{V},
+        snd::Nodal,
+    ) where {V}
+    @argcheck length(tree) <= length(new)
+    @argcheck length(tree) <= length(parent)
+    @argcheck length(tree) <= length(ancestor)
+    n = last(tree)
+
+    for i in tree
+        j = parentindex(tree, i)
+
+        if isnothing(j)
+           j = zero(V)
+        end 
+
+        new[i] = i
+        parent[i] = j
+        ancestor[i] = j
+    end
+
+    return Parent(n, parent)
 end
 
 """

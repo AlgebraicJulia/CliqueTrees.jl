@@ -1246,185 +1246,129 @@ function permutation(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_AL
     return permutation(graph, alg)
 end
 
+function permutation(graph, alg::PermutationOrAlgorithm)
+    return permutation(BipartiteGraph(graph), alg)
+end
+
+function permutation(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
+    n = nv(graph); weights = Ones{V}(n)
+    return permutation(weights, graph, alg)
+end
+
 function permutation(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
     return permutation(weights, graph, alg)
 end
 
-function permutation(graph, alg::A) where A <: EliminationAlgorithm
+function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
+    return permutation(weights, BipartiteGraph(graph), alg)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::A) where A <: EliminationAlgorithm
     name = package(A)
     message = "`import $name` to use algorithm $A."
     throw(ArgumentError(message))    
 end
 
-function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
-    return permutation(graph, alg)
-end
-
-function permutation(graph, order::AbstractVector)
-    return permutation(BipartiteGraph(graph), order)
-end
-
-function permutation(graph, (order, index)::Tuple{AbstractVector, AbstractVector})
-    return permutation(BipartiteGraph(graph), (order, index))
-end
-
-function permutation(graph::AbstractGraph{V}, order::AbstractVector) where {V}
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector) where {V}
     order = Vector{V}(order)
     return order, invperm(order)
 end
 
-function permutation(graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector, AbstractVector}) where {V}
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector, AbstractVector}) where {V}
     order = Vector{V}(order)
     index = Vector{V}(index)
     return order, index
 end
 
-function permutation(graph, alg::BFS)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BFS)
     order = bfs(graph)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::MCS)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCS)
     index, size = mcs(graph)
     return invperm(index), index
 end
 
-function permutation(graph, alg::LexBFS)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::LexBFS)
     index = lexbfs(graph)
     return invperm(index), index
 end
 
-function permutation(graph, alg::RCMMD)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RCMMD)
     order = rcmmd(graph, alg.alg)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::RCMGL)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RCMGL)
     order = rcmgl(graph, alg.alg)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::LexM)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::LexM)
     index = lexm(graph)
     return invperm(index), index
 end
 
-function permutation(graph, alg::MCSM)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCSM)
     index = mcsm(graph)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph, alg::AMF)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF)
     return amf(weights, graph)
 end
 
-function permutation(graph, alg::AMF)
-    return amf(graph)
-end
-
-function permutation(graph, alg::MF)
-    order = mf(graph)
-    return order, invperm(order)
-end
-
-function permutation(weights::AbstractVector, graph, alg::MF)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF)
     order = mf(weights, graph)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::MMD)
-    index = mmd(graph; delta = alg.delta)
-    return invperm(index), index
-end
-
-function permutation(weights::AbstractVector, graph, alg::MMD)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD)
     index = mmd(weights, graph; delta = alg.delta)
     return invperm(index), index
 end
 
-function permutation(graph, alg::NDS{S}) where {S}
-    return dissectsearch(graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
-end
-
-function permutation(weights::AbstractVector, graph, alg::NDS{S}) where {S}
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S}) where {S}
     return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
 end
 
-function permutation(graph, alg::SAT{H}) where {H}
-    order, width = sat(graph, treewidth(graph, alg.alg), Val(H))
-    return order, invperm(order)
-end
-
-function permutation(weights::AbstractVector, graph, alg::SAT{H}) where {H}
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SAT{H}) where {H}
     order, width = sat(weights, graph, treewidth(weights, graph, alg.alg), Val(H))
     return order, invperm(order)
 end
 
-function permutation(graph, alg::MinimalChordal)
-    return minimalchordal(graph, permutation(graph, alg.alg)...)
-end
-
-function permutation(weights::AbstractVector, graph, alg::MinimalChordal)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal)
     return minimalchordal(graph, permutation(weights, graph, alg = alg.alg)...)
 end
 
-function permutation(graph, alg::CompositeRotations)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::CompositeRotations)
     return compositerotations(graph, alg.clique, alg.alg)
 end
 
-function permutation(weights::AbstractVector, graph, alg::CompositeRotations)
-    return compositerotations(graph, alg.clique, alg.alg)
-end
-
-function permutation(graph, alg::SafeRules)
-    order = saferules(graph, alg.alg, alg.lb, alg.ub)
-    return order, invperm(order)
-end
-
-function permutation(weights::AbstractVector, graph, alg::SafeRules)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules)
     order = saferules(weights, graph, alg.alg, alg.lb, alg.ub)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::SimplicialRule)
-    order = simplicialrule(graph, alg.alg)
-    return order, invperm(order)
-end
-
-function permutation(weights::AbstractVector, graph, alg::SimplicialRule)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SimplicialRule)
     order = simplicialrule(weights, graph, alg.alg)
     return order, invperm(order)
 end
 
-function permutation(graph, alg::SafeSeparators)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSeparators)
     error()
 end
 
-function permutation(weights::AbstractVector, graph, alg::SafeSeparators)
-    error()
-end
-
-function permutation(graph, alg::ConnectedComponents)
-    return connectedcomponents(graph, alg.alg)
-end
-
-function permutation(weights::AbstractVector, graph, alg::ConnectedComponents)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents)
     return connectedcomponents(weights, graph, alg.alg)
 end
 
-function permutation(graph, alg::BestWidth)
-    return bestwidth(graph, alg.algs)
-end
-
-function permutation(graph, alg::BestFill)
-    return bestfill(graph, alg.algs)
-end
-
-function permutation(weights::AbstractVector, graph, alg::BestWidth)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestWidth)
     return bestwidth(weights, graph, alg.algs)
 end
 
-function permutation(weights::AbstractVector, graph, alg::BestFill)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFill)
     return bestfill(weights, graph, alg.algs)
 end
 
@@ -1468,27 +1412,13 @@ function bfs(graph::AbstractGraph{V}) where {V}
     return order
 end
 
-"""
-    mcs(graph[, clique])
-
-Perform a maximum cardinality search, optionally specifying a clique to be ordered last.
-Returns the inverse permutation.
-"""
-function mcs(graph)
-    return mcs(BipartiteGraph(graph))
-end
-
-function mcs(graph, clique)
-    return mcs(BipartiteGraph(graph), clique)
-end
-
 # Simple Linear-Time Algorithms to Test Chordality of Graphs, Test Acyclicity of Hypergraphs, and Selectively Reduce Acyclic Hypergraphs
 # Tarjan and Yannakakis
 # Maximum Cardinality Search
 #
 # Construct a fill-reducing permutation of a graph.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function mcs(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
+function mcs(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V))) where {V}
     j = one(V); n = nv(graph)
     size = ones(V, n)
     alpha = Vector{V}(undef, n)
@@ -1650,7 +1580,7 @@ end
 #
 # Apply the reverse Cuthill-Mckee algorithm to each connected component of a graph.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function rcmgl(graph, alg::SortingAlgorithm)
+function rcmgl(graph::AbstractGraph, alg::SortingAlgorithm)
     return rcmgl!(simplegraph(graph), alg)
 end
 
@@ -1682,7 +1612,7 @@ function rcmgl!(graph::BipartiteGraph{V}, alg::SortingAlgorithm) where {V}
     return order
 end
 
-function rcmmd(graph, alg::SortingAlgorithm)
+function rcmmd(graph::AbstractGraph, alg::SortingAlgorithm)
     return rcmmd!(simplegraph(graph), alg)
 end
 
@@ -1736,10 +1666,6 @@ function rcmmd!(graph::BipartiteGraph{V}, alg::SortingAlgorithm) where {V}
     end
 
     return order
-end
-
-function lexbfs(graph)
-    return lexbfs(BipartiteGraph(graph))
 end
 
 # Algorithmic Aspects of Vertex Elimination on Graphs
@@ -1851,10 +1777,6 @@ function lexbfs(graph::AbstractGraph{V}) where {V}
     end
 
     return alpha
-end
-
-function lexm(graph)
-    return lexm(BipartiteGraph(graph))
 end
 
 # Algorithmic Aspects of Vertex Elimination on Graphs
@@ -1973,14 +1895,6 @@ function lexm(graph::AbstractGraph{V}) where {V}
     return alpha
 end
 
-function mcsm(graph)
-    return mcsm(BipartiteGraph(graph))
-end
-
-function mcsm(graph, clique)
-    return mcsm(BipartiteGraph(graph), clique)
-end
-
 # Maximum Cardinality Search for Computing Minimal Triangulations
 # Berry, Blair, and Heggernes
 # MCS-M
@@ -1988,7 +1902,7 @@ end
 # Perform a maximum cardinality search of a simple graph.
 # Returns a minimal ordering.
 # The complexity is O(mn), where m = |E| and n = |V|.
-function mcsm(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
+function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V))) where {V}
     k = one(V); n = nv(graph)
     alpha = fill(-n - one(V), n)
     size = ones(V, n)
@@ -2104,19 +2018,6 @@ function mcsm(graph::AbstractGraph{V}, clique = oneto(zero(V))) where {V}
     end
 
     return alpha
-end
-
-function mf(graph)
-    return mf(BipartiteGraph(graph))
-end
-
-function mf(graph::AbstractGraph{V}) where {V}
-    weights = ones(V, nv(graph))
-    return mf(weights, graph)
-end
-
-function mf(weights::AbstractVector, graph)
-    return mf(weights, BipartiteGraph(graph))
 end
 
 function mf(weights::AbstractVector, graph::AbstractGraph)
@@ -2316,48 +2217,17 @@ function mf!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
     return order
 end
 
-function AMFLib.amf(weights::AbstractVector, graph; kwargs...)
+function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     simple = simplegraph(graph)
     return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
-function AMFLib.amf(graph; kwargs...)
-    simple = simplegraph(graph)
-    return amf(nv(simple), pointers(simple), targets(simple); kwargs...)
-end
-
-function MMDLib.mmd(graph; kwargs...)
-    simple = simplegraph(graph)
-    return mmd(nv(simple), pointers(simple), targets(simple); kwargs...)
-end
-
-function MMDLib.mmd(weights::AbstractVector, graph; kwargs...)
+function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     simple = simplegraph(graph)
     return mmd(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
-function dissectsearch(graph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
-    minscore = minpair = nothing
-
-    for imbalance in imbalances
-        curalg = ND{S}(alg, dis; width, level, imbalance)
-        curpair = permutation(graph, curalg)
-
-        if isone(S)
-            curscore = (treewidth(graph, curpair), treefill(graph, curpair))
-        else
-            curscore = (treefill(graph, curpair), treewidth(graph, curpair))
-        end
-
-        if isnothing(minscore) || curscore < minscore
-            minscore, minpair = curscore, curpair
-        end
-    end
-
-    return minpair
-end
-
-function dissectsearch(weights::AbstractVector, graph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
+function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
     minscore = minpair = nothing
 
     for imbalance in imbalances
@@ -2376,20 +2246,6 @@ function dissectsearch(weights::AbstractVector, graph, alg::EliminationAlgorithm
     end
 
     return minpair
-end
-
-function sat(graph, upperbound::Integer, ::Val{H}) where {H}
-    return sat(BipartiteGraph(graph), upperbound, Val(H))
-end
-
-function sat(graph::AbstractGraph{V}, upperbound::V, ::Val{H}) where {V <: Integer, H}
-    weights = ones(V, nv(graph))
-    order, width = sat(weights, graph, upperbound + one(V), Val(H))
-    return order, width - one(V)
-end
-
-function sat(weights::AbstractVector{W}, graph, upperbound::W, ::Val{H}) where {W, H}
-    return sat(weights, BipartiteGraph(graph), upperbound, Val(H))
 end
 
 # Encoding Treewidth into SAT
@@ -2654,10 +2510,6 @@ function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) 
     return clique
 end
 
-function twins(graph, ::Val{S}) where {S}
-    return twins(BipartiteGraph(graph), Val(S))
-end
-
 function twins(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     n = nv(graph); nn = n + one(V)
     new = Scalar{V}(undef)
@@ -2796,10 +2648,6 @@ function twins_impl!(
     end
 
     return partition
-end
-
-function minimalchordal(graph, order::AbstractVector, index::AbstractVector = invperm(order))
-    return minimalchordal(BipartiteGraph(graph), order, index)
 end
 
 # A Practical Algorithm for Making Filled Graphs Minimal
@@ -2967,38 +2815,6 @@ function compress_impl!(
     return outgraph, partition
 end
 
-
-function saferules(graph, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm)
-    return saferules(BipartiteGraph(graph), alg, lb, ub)
-end
-
-function saferules(graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm) where {V}
-    n = nv(graph)
-    width = lowerbound(graph, lb)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, graph, width)
-    innerorder, innerindex = permutation(innerweights, innergraph, ub)
-
-    if innerwidth < treewidth(innerweights, innergraph, (innerorder, innerindex))
-        innerorder, innerindex = permutation(innerweights, innergraph, alg)
-    end
-
-    order = Vector{V}(undef, n); i = zero(V)
-
-    for v in inject
-        i += one(V); order[i] = v
-    end
-
-    for j in innerorder, v in neighbors(project, j)
-        i += one(V); order[i] = v
-    end 
-
-    return order
-end
-
-function saferules(weights::AbstractVector, graph, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm)
-    return saferules(weights, BipartiteGraph(graph), alg, lb, ub)
-end
-
 function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm) where {V}
     n = nv(graph)
     width = lowerbound(weights, graph, lb)
@@ -3022,33 +2838,6 @@ function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::Elimin
     return order
 end
 
-function simplicialrule(graph, alg::EliminationAlgorithm)
-    return simplicialrule(BipartiteGraph(graph), alg)
-end
-
-function simplicialrule(graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {V}
-    n = nv(graph)
-    width = zero(V)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, graph, width)
-    innerorder, innerindex = permutation(innerweights, innergraph, alg)
-
-    order = Vector{V}(undef, n); i = zero(V)
-
-    for v in inject
-        i += one(V); order[i] = v
-    end
-
-    for j in innerorder, v in neighbors(project, j)
-        i += one(V); order[i] = v
-    end 
-
-    return order
-end
-
-function simplicialrule(weights::AbstractVector, graph, alg::EliminationAlgorithm)
-    return simplicialrule(weights, BipartiteGraph(graph), alg)
-end
-
 function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
     n = nv(graph)
     width = zero(W)
@@ -3066,10 +2855,6 @@ function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg
     end 
 
     return order
-end
-
-function connectedcomponents(graph)
-    return connectedcomponents(BipartiteGraph(graph))
 end
 
 function connectedcomponents(graph::AbstractGraph{V}) where {V}
@@ -3135,33 +2920,6 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
     end
 
     return cmp, cmpend - one(V)
-end
-
-function connectedcomponents(graph, alg::EliminationAlgorithm)
-    return connectedcomponents(BipartiteGraph(graph), alg)
-end
-
-function connectedcomponents(graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {V}
-    n = nv(graph); j = zero(V)
-    order = Vector{V}(undef, n)
-    index = Vector{V}(undef, n)
-    components, m = connectedcomponents(graph)
-
-    for i in oneto(m)
-        label, subgraph = components[i]
-        suborder, subindex = permutation(subgraph, alg)
-        
-        for v in suborder
-            vv = label[v]
-            j += one(V); order[j] = vv; index[vv] = j
-        end
-    end
-
-    return order, index
-end
-
-function connectedcomponents(weights::AbstractVector, graph, alg::EliminationAlgorithm)
-    return connectedcomponents(weights, BipartiteGraph(graph), alg)
 end
 
 function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}

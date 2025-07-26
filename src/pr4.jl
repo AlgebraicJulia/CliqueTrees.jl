@@ -1,17 +1,3 @@
-function compressreduce(reduce::Function, graph, width::Integer)
-    return compressreduce(reduce, BipartiteGraph(graph), width)
-end
-
-function compressreduce(reduce::Function, graph::AbstractGraph{V}, width::V) where {V <: Integer}
-    n = nv(graph); weights = Ones{V}(n)
-    weights, graph, inject, project, width = compressreduce(reduce, weights, graph, width + one(V))
-    return weights, graph, inject, project, width - one(V)
-end
-
-function compressreduce(reduce::Function, weights::AbstractVector{W}, graph, width::W) where {W <: Number}
-    return compressreduce(reduce, weights, BipartiteGraph(graph), width)
-end
-
 function compressreduce(reduce::Function, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V <: Integer}
     weights00 = weights; graph00 = graph; width00 = width; n00 = nv(graph00)
     inject03 = Vector{V}(undef, n00); n03 = zero(V)

@@ -17,12 +17,7 @@ const VINT2 = KaHyPar.kahypar_hyperedge_id_t
 const EINT = KaHyPar.Csize_t
 const PINT = KaHyPar.kahypar_partition_id_t
 
-function CliqueTrees.permutation(graph, alg::ND{<:Any, <:EliminationAlgorithm, <:KaHyParND})
-    order = dissect(graph, alg)
-    return order, invperm(order)
-end
-
-function CliqueTrees.permutation(weights::AbstractVector, graph, alg::ND{<:Any, <:EliminationAlgorithm, <:KaHyParND})
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::ND{<:Any, <:EliminationAlgorithm, <:KaHyParND})
     order = dissect(weights, graph, alg)
     return order, invperm(order)
 end

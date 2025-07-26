@@ -60,6 +60,24 @@ struct BipartiteGraph{V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt 
     end
 end
 
+function BipartiteGraph{V, E, Ptr, Tgt}(graph::BipartiteGraph) where {V, E, Ptr, Tgt}
+    return BipartiteGraph{V, E, Ptr, Tgt}(nov(graph), nv(graph), ne(graph), pointers(graph), targets(graph))
+end
+
+function BipartiteGraph{V, E, Ptr, Tgt}(nov::Integer, nv::Integer, ne::Integer) where {V, E, Ptr, Tgt}
+    ptr = Ptr(undef, nv + one(nv))
+    tgt = Tgt(undef, ne)
+    graph = BipartiteGraph{V, E, Ptr, Tgt}(nov, nv, ne, ptr, tgt)
+    return graph
+end
+
+function BipartiteGraph{V, E, Ptr, OneTo{V}}(nov::Integer, nv::Integer, ne::Integer) where {V, E, Ptr}
+    ptr = Ptr(undef, nv + one(nv))
+    tgt = OneTo{V}(ne)
+    graph = BipartiteGraph{V, E, Ptr, OneTo{V}}(nov, nv, ne, ptr, tgt)
+    return graph
+end
+
 function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer, ptr::AbstractVector, tgt::AbstractVector) where {V, E}
     graph = BipartiteGraph(
         convert(V, nov),
@@ -73,13 +91,7 @@ function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer, ptr::Abstr
 end
 
 function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer) where {V, E}
-    ptr = Vector{E}(undef, nv + 1)
-    tgt = Vector{V}(undef, ne)
-    return BipartiteGraph{V, E}(nov, nv, ne, ptr, tgt)
-end
-
-function BipartiteGraph{V, E, Ptr, Tgt}(graph::BipartiteGraph) where {V, E, Ptr, Tgt}
-    return BipartiteGraph{V, E, Ptr, Tgt}(nov(graph), nv(graph), ne(graph), pointers(graph), targets(graph))
+    return BipartiteGraph{V, E, Vector{E}, Vector{V}}(nov, nv, ne)
 end
 
 function BipartiteGraph{V, E}(graph::AbstractGraph) where {V, E}
@@ -246,7 +258,7 @@ function sympermute!_impl!(
     sympermute!_impl!(count, ptr,
         tgt, source, index, order)
 
-    return
+    return target
 end
 
 function sympermute!_impl!(
@@ -335,31 +347,44 @@ function reverse!_impl!(
     ) where {V, E}
     @argcheck nov(target) == nv(source)
     @argcheck nov(source) == nv(target)
-    @argcheck nov(source) <= length(count)
-    n = nv(target)
+    @argcheck de(source) == de(target)
+    reverse!_impl!(count, pointers(target), targets(target), source)
+    return target
+end
 
-    @inbounds for i in oneto(n)
+function reverse!_impl!(
+        count::AbstractVector{E},
+        pointer::AbstractVector{E},
+        target::AbstractVector{V},
+        graph::AbstractGraph{V},
+    ) where {V, E}
+    @argcheck nov(graph) < length(pointer)
+    @argcheck de(graph) <= length(target)
+    @argcheck nov(graph) <= length(count)
+    h = nov(graph); n = nv(graph); m = de(graph)
+
+    @inbounds for i in outvertices(graph)
         count[i] = zero(E)
     end
 
-    @inbounds for j in vertices(source), i in neighbors(source, j)
+    @inbounds for j in vertices(graph), i in neighbors(graph, j)
         count[i] += one(E)
     end
 
-    pointers(target)[begin] = p = one(E)
+    pointer[begin] = p = one(E)
 
-    @inbounds for i in oneto(n)
+    @inbounds for i in outvertices(graph)
         ii = i + one(V); pp = p + count[i]
-        count[i] = p; pointers(target)[ii] = pp
+        count[i] = p; pointer[ii] = pp
         p = pp
     end
 
-    @inbounds for j in vertices(source), i in neighbors(source, j)
-        targets(target)[count[i]] = j
+    @inbounds for j in vertices(graph), i in neighbors(graph, j)
+        target[count[i]] = j
         count[i] += one(E)
     end
 
-    return
+    return BipartiteGraph(n, h, m, pointer, target)
 end
 
 function simplegraph(::Type{V}, ::Type{E}, graph) where {V, E}

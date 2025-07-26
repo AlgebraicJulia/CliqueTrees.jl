@@ -83,10 +83,10 @@ export SupernodeTree, supernodetree, residuals
 export Clique, separator, residual
 
 # Clique Trees
-export CliqueTree, cliquetree, treewidth, treefill, separators, relatives
+export CliqueTree, cliquetree, treewidth, treefill, separators
 
 # Abstract Trees
-export firstchildindex, rootindices, ancestorindices
+export rootindices, ancestorindices
 
 # Filled Graphs
 export FilledGraph, FilledEdgeIter, ischordal, isperfect

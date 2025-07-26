@@ -1,12 +1,35 @@
 """
     CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
 
-A [clique tree](https://en.wikipedia.org/wiki/Tree_decomposition) with vertices of type `V` and edges of type `E`.
+A tree T = (V, E) and functions
+    clique: V → 2ᵁ
+    separator: V → 2ᵁ
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
 struct CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
+    """
+    The tree T = (V, E).
+    """
     tree::SupernodeTree{V}
-    sep::BipartiteGraph{V, E, Vector{E}, Vector{V}}
+
+    """
+    A directed bipartite graph G = (U, V, E') with an arc
+
+        (v, u) ∈ E'
+
+    for all vertices v ∈ V and u ∈ separator(v).
+    """
+    separator::BipartiteGraph{V, E, FVector{E}, FVector{V}}
+
+    function CliqueTree{V, E}(tree::SupernodeTree{V}, separator::BipartiteGraph{V, E}) where {V, E}
+        @argcheck nv(residuals(tree)) == nv(separator)
+        @argcheck nov(residuals(tree)) == nov(separator)
+        return new{V, E}(tree, separator)
+    end
+end
+
+function CliqueTree(tree::SupernodeTree{V}, separator::BipartiteGraph{V, E}) where {V, E}
+    return CliqueTree{V, E}(tree, separator)
 end
 
 function Tree(tree::CliqueTree)
@@ -66,143 +89,196 @@ function cliquetree(
 end
 
 function cliquetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    return cliquetree(supernodetree(graph, alg, snd)...)
+    return cliquetree(BipartiteGraph(graph), alg, snd)
+end
+
+function cliquetree(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {V}
+    n = nv(graph); weights = Ones{V}(n)
+    return cliquetree(weights, graph, alg, snd)
 end
 
 function cliquetree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    return cliquetree(supernodetree(weights, graph, alg, snd)...)
+    return cliquetree(weights, BipartiteGraph(graph), alg, snd)
 end
 
-@views function cliquetree(label, tree, index, ptr, lower, upper)
-    lower = sympermute!(upper, lower, index, Reverse)
+function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {V}
+    E = etype(graph); n = nv(graph); m = half(de(graph))
+    nn = n + one(V); nnn = nn + one(V)
+    
+    target1 = FVector{V}(undef, max(m, nn))
+    target2 = FVector{V}(undef, m)
+    target3 = FVector{V}(undef, n)
 
-    # compute separators
-    function diff(col, res)
-        i = 1
+    ework1 = FVector{E}(undef, n)
+    pointer1 = FVector{E}(undef, nn)
+    pointer2 = FVector{E}(undef, nn)
+    pointer3 = FVector{V}(undef, nnn)
 
-        while i in eachindex(col) && col[i] in res
-            i += 1
+    colcount = FVector{V}(undef, n)
+    elmorder = FVector{V}(undef, n)
+    elmindex = FVector{V}(undef, n)
+    sndptr = FVector{V}(undef, nn)
+    sepptr = FVector{E}(undef, nn)
+    new = FVector{V}(undef, n)
+    parent = FVector{V}(undef, n)
+    elmtree = Parent{V}(n)
+
+    order, index = permutation(weights, graph, alg)
+
+    sndtree, upper, lower = supernodetree_impl!(target1, target2,
+        target3, ework1, pointer1, pointer2, pointer3, colcount,
+        elmorder, elmindex, sndptr, sepptr, new, parent, elmtree, graph,
+        order, index, snd)
+
+    h = last(sndtree.tree); k = sepptr[h + one(V)] - one(E)
+    septgt = FVector{V}(undef, k)
+    separator = BipartiteGraph(n, h, k, sepptr, septgt)
+
+    clqtree = cliquetree_impl!(ework1, elmindex,
+        upper, lower, separator, sndtree)
+
+    return order, clqtree
+end
+
+function cliquetree_impl!(
+        count::AbstractVector{E},
+        index::AbstractVector{V},
+        target::BipartiteGraph{V, E},
+        source::BipartiteGraph{V, E},
+        separator::BipartiteGraph{V, E},
+        sndtree::SupernodeTree{V},
+    ) where {V, E}
+    n = last(sndtree.tree)
+    lower = sympermute!_impl!(count, target, source, index, Reverse)
+    residual = residuals(sndtree); cache = index
+
+    for j in oneto(n)
+        pstrt = pointers(separator)[j]
+        pstop = pointers(separator)[j + one(V)] 
+
+        qstrt = pointers(residual)[j]
+        qstop = pointers(residual)[j + one(V)]
+
+        rstrt = pointers(lower)[qstrt]
+        rstop = pointers(lower)[qstrt + one(V)]
+
+        p = pstrt; r = rstrt
+    
+        while r < rstop && targets(lower)[r] < qstop
+            r += one(E)
         end
+    
+        while r < rstop
+            targets(separator)[p] = targets(lower)[r]; p += one(E)
+            r += one(E)
+        end 
 
-        return col[i:end]
-    end
+        p1 = p 
+ 
+        for i in childindices(sndtree, j)
+            pstop1 = p1
+            pstrt1 = pstrt
 
-    V = eltype(lower)
-    E = etype(lower)
-    h = nv(lower); n = last(tree.tree); nn = n + one(V); m = ptr[nn] - one(E)
-    sep = BipartiteGraph(h, n, m, ptr, Vector{V}(undef, m))
-    cache = Vector{V}(undef, Δout(sep))
+            pstop2 = pointers(separator)[i + one(V)]
+            pstrt2 = pointers(separator)[i]
+        
+            p1 = pstrt1; p2 = pstrt2; t = one(V)
 
-    for (j, res) in enumerate(tree)
-        # get representative vertex
-        vertex = res[begin]
-
-        # subtract residual from higher neighbors
-        column = diff(neighbors(lower, vertex), res)
-
-        # initialize separator
-        state = neighbors(sep, j)[eachindex(column)] .= column
-
-        # iterate over children
-        i = firstchildindex(tree, j)
-
-        while !isnothing(i) && length(state) < outdegree(sep, j)
-            # subtract residual from child separator
-            column = diff(neighbors(sep, i), res)
-
-            # update separator
-            union = mergesorted!(cache, state, column)
-            state = neighbors(sep, j)[eachindex(union)] .= union
-
-            # update child
-            i = nextsiblingindex(tree, i)
-        end
-    end
-
-    # construct clique tree
-    return label, CliqueTree(tree, sep)
-end
-
-function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V <: Signed, E <: Signed}
-    return cliquetree(tree, V(root))
-end
-
-function cliquetree(tree::CliqueTree{V, E}, root::V) where {V <: Signed, E <: Signed}
-    n = last(Tree(tree)); h = root; nn = n + one(V)
-    parent = Vector{V}(undef, n)
-
-    for i in Tree(tree)
-        j = parentindex(tree, i)
-
-        if isnothing(j)
-            j = zero(V)
-
-            if h == i
-                i = root
+            while p2 < pstop2 && targets(separator)[p2] < qstop
+                p2 += one(E)
             end
-        else
-            if h == i
-                h = j; j = i; i = h
+
+            while p1 < pstop1 && p2 < pstop2
+                v1 = targets(separator)[p1]
+                v2 = targets(separator)[p2]
+
+                if v1 == v2
+                    cache[t] = v1
+                    p1 += one(E)
+                    p2 += one(E)
+                elseif v1 < v2
+                    cache[t] = v1
+                    p1 += one(E)
+                else
+                    cache[t] = v2
+                    p2 += one(E)
+                end
+
+                t += one(V)
+            end
+
+            while p1 < pstop1
+                cache[t] = targets(separator)[p1]
+                p1 += one(E)
+                t += one(V)
+            end
+
+            while p2 < pstop2
+                cache[t] = targets(separator)[p2]
+                p2 += one(E)
+                t += one(V)
+            end
+
+            p1 = pstrt; tstop = t
+
+            for t in oneto(tstop - one(V))
+                targets(separator)[p1] = cache[t]
+                p1 += one(E)
             end
         end
+    end        
 
-        parent[i] = j
+    return CliqueTree(sndtree, separator)
+end
+
+function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V, E}
+    graph = separators(tree); h = nov(graph); n = nv(graph); m = ne(graph)
+    perm = FVector{V}(undef, h)
+    invp = FVector{V}(undef, h)
+
+    separator = BipartiteGraph{V, E, FVector{E}, FVector{V}}(h, n, m)
+    p = m + one(E); pointers(separator)[n + one(V)] = p
+
+    residual = BipartiteGraph{V, E, FVector{E}, OneTo{V}}(h, n, h)
+    q = h + one(V); pointers(residual)[n + one(V)] = q
+
+    sndtree = copy(tree.tree.tree.tree)
+    sndinvp = postorder!(setrootindex!(sndtree, root))
+    sndperm = invperm(sndinvp)
+
+    for v in oneto(h)
+        invp[v] = zero(V)
     end
 
-    root = h
-    sv = nov(tree.sep); rv = nov(tree.tree.res)
-    se = ne(tree.sep); re = ne(tree.tree.res)
-    etree = Tree(parent)
-    eindex = postorder!(etree)
-    eorder = invperm(eindex)
-    sepval = Vector{V}(undef, se)
-    index = Vector{V}(undef, re)
-    sepptr = Vector{E}(undef, nn)
-    sndptr = Vector{V}(undef, nn)
-    sepptr[begin] = p = one(E)
-    sndptr[begin] = q = one(V)
+    for i in reverse(sndtree)
+        ii = sndperm[i]; clique = tree[ii]
 
-    for ii in etree
-        i = j = eorder[ii]
+        for vv in Iterators.reverse(clique)
+            v = invp[vv]
 
-        if h == i
-            jj = parentindex(etree, ii)
-
-            if isnothing(jj)
-                j = root
+            if ispositive(v)
+                p -= one(E); targets(separator)[p] = v
             else
-                h = j = eorder[jj]
+                q -= one(V); perm[q] = vv; invp[vv] = q
             end
         end
 
-        sep = separator(tree, j)
-        len = V(length(sep)); s = one(V)
-
-        for v in tree[i]
-            if s <= len && v == sep[s]
-                sepval[p] = v
-                p += one(E)
-                s += one(V)
-            else
-                index[v] = q
-                q += one(V)
-            end
-        end
-
-        sepptr[ii + one(V)] = p
-        sndptr[ii + one(V)] = q
+        pointers(separator)[i] = p
+        pointers(residual)[i] = q
     end
 
-    sepval = index[sepval]; sndval = oneto(rv)
-    stree = SupernodeTree(etree, BipartiteGraph(rv, n, q - one(V), sndptr, sndval))
-    ctree = CliqueTree(stree, BipartiteGraph(sv, n, p - one(E), sepptr, sepval))
-    return invperm(index), ctree
+    converse = BipartiteGraph{V, E, FVector{E}, FVector{V}}(n, h, m)
+    reverse!(converse, separator)    
+    reverse!(separator, converse)
+
+    tree = CliqueTree(SupernodeTree(Tree(sndtree), residual), separator)
+    return collect(perm), tree
 end
 
 function cliquetree!(tree::CliqueTree, root::Integer)
-    label, _tree = cliquetree(tree, root)
-    copy!(tree, _tree)
-    return label
+    perm, source = cliquetree(tree, root)
+    copy!(tree, source)
+    return perm
 end
 
 """
@@ -821,42 +897,21 @@ end
 Get the separators of a clique tree.
 """
 function separators(tree::CliqueTree)
-    return tree.sep
-end
-
-"""
-    relatives(tree::CliqueTree)
-
-Compute the relative indices of a clique tree.
-"""
-function relatives(tree::CliqueTree{V}) where {V}
-    sep = separators(tree); h = nov(sep); n = nv(sep); m = ne(sep)
-    tgt = Vector{V}(undef, m)
-    graph = BipartiteGraph(h, n, m, pointers(sep), tgt)
-
-    for i in Tree(tree)
-        j = parentindex(tree, i)
-
-        if !isnothing(j)
-            indexinsorted!(neighbors(graph, i), separator(tree, i), tree[j])
-        end
-    end
-
-    return graph
+    return tree.separator
 end
 
 function Base.copy(tree::CliqueTree)
-    return CliqueTree(copy(tree.tree), copy(tree.sep))
+    return CliqueTree(copy(tree.tree), copy(tree.separator))
 end
 
 function Base.copy!(dst::CliqueTree, src::CliqueTree)
     copy!(dst.tree, src.tree)
-    copy!(dst.sep, src.sep)
+    copy!(dst.separator, src.separator)
     return dst
 end
 
 function Base.:(==)(left::CliqueTree, right::CliqueTree)
-    return left.tree == right.tree && left.sep == right.sep
+    return left.tree == right.tree && left.separator == right.separator
 end
 
 ##########################
@@ -869,14 +924,6 @@ end
 
 function AbstractTrees.parentindex(tree::CliqueTree, i::Integer)
     return parentindex(tree.tree, i)
-end
-
-function firstchildindex(tree::CliqueTree, i::Integer)
-    return firstchildindex(tree.tree, i)
-end
-
-function AbstractTrees.nextsiblingindex(tree::CliqueTree, i::Integer)
-    return nextsiblingindex(tree.tree, i)
 end
 
 function rootindices(tree::CliqueTree)

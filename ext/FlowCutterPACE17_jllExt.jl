@@ -3,19 +3,15 @@ module FlowCutterPACE17_jllExt
 using ArgCheck
 using Base: oneto
 using CliqueTrees
-using CliqueTrees: postorder, nov
+using CliqueTrees: Parent, postorder, nov
 using CliqueTrees.Utilities
 using FlowCutterPACE17_jll
 using Graphs
 using SparseArrays
 
-function CliqueTrees.permutation(graph, alg::FlowCutter)
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::FlowCutter)
     index = flowcutter(graph, alg.time, alg.seed)
     return invperm(index), index
-end
-
-function flowcutter(graph, time::Int, seed::Int)
-    return flowcutter(BipartiteGraph(graph), time, seed)
 end
 
 function flowcutter(graph::AbstractGraph{V}, time::Int, seed::Int) where {V}
@@ -130,7 +126,7 @@ function readtd(io::IO)
     parent = dfs_parents(BipartiteGraph(sparse(I, J, J, nb, nb)), root)
     parent[root] = 0
 
-    tree = Tree(parent)
+    tree = Parent(nb, parent)
     return hypergraph, tree
 end
 

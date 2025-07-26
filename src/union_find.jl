@@ -10,9 +10,9 @@ struct UnionFind{
 end
 
 function UnionFind{I}(n::Integer) where {I}
-    rank = zeros(I, n)
-    parent = zeros(I, n)
-    stack = Vector{I}(undef, n)
+    rank = FVector{I}(undef, n)
+    parent = FVector{I}(undef, n)
+    stack = FVector{I}(undef, n)
     return UnionFind(rank, parent, stack)
 end
 

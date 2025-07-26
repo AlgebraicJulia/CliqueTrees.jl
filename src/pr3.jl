@@ -1,17 +1,3 @@
-function pr3(graph, width::Number)
-    return pr3(BipartiteGraph(graph), width)
-end
-
-function pr3(graph::AbstractGraph{V}, width::Number) where {V}
-    weights = Ones{V}(nv(graph))
-    stack, inject, kernel, width = pr3(weights, graph, width + one(width))
-    return (stack, inject, kernel, width - one(V))
-end
-
-function pr3(weights::AbstractVector, graph, width::Number)
-    return pr3(weights, BipartiteGraph(graph), width)
-end
-
 function pr3(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}
     return pr3(weights, graph, convert(W, width))
 end

@@ -24,32 +24,13 @@ const OPTION_CCORDER = Metis.METIS_OPTION_CCORDER + one(INT)
 const OPTION_PFACTOR = Metis.METIS_OPTION_PFACTOR + one(INT)
 const OPTION_UFACTOR = Metis.METIS_OPTION_UFACTOR + one(INT)
 
-function CliqueTrees.permutation(graph, alg::METIS)
-    return permutation(BipartiteGraph(graph), alg)
-end
-
-function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::METIS) where {V}
-    simple = simplegraph(INT, INT, graph)
-    order::Vector{V}, index::Vector{V} = metis(simple, alg)
-    return order, index
-end
-
-function CliqueTrees.permutation(weights::AbstractVector, graph, alg::METIS)
-    return permutation(weights, BipartiteGraph(graph), alg)
-end
-
 function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::METIS) where {V}
     simple = simplegraph(INT, INT, graph)
     order::Vector{V}, index::Vector{V} = metis(weights, simple, alg)
     return order, index
 end
 
-function CliqueTrees.permutation(graph, alg::ND{<:Any, <:EliminationAlgorithm, METISND})
-    order = dissect(graph, alg)
-    return order, invperm(order)
-end
-
-function CliqueTrees.permutation(weights::AbstractVector, graph, alg::ND{<:Any, <:EliminationAlgorithm, METISND})
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::ND{<:Any, <:EliminationAlgorithm, METISND})
     order = dissect(weights, graph, alg)
     return order, invperm(order)
 end
@@ -165,19 +146,6 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
     end
 
     return
-end
-
-function dissect(graph, alg::ND)
-    return dissect(BipartiteGraph(graph), alg)
-end
-
-function dissect(graph::AbstractGraph, alg::ND)
-    weights = ones(INT, nv(graph))
-    return dissect(weights, graph, alg)
-end
-
-function dissect(weights::AbstractVector, graph, alg::ND)
-    return dissect(weights, BipartiteGraph(graph), alg)
 end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)

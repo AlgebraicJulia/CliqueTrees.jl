@@ -73,7 +73,6 @@ SinglyLinkedList
 ```@docs
 AbstractTree
 rootindices
-firstchildindex
 ancestorindices
 ```
 

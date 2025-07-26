@@ -88,46 +88,33 @@ function lowerbound(graph; alg::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM
     return lowerbound(graph, alg)
 end
 
+function lowerbound(graph, alg::WidthOrAlgorithm)
+    return lowerbound(BipartiteGraph(graph), alg)
+end
+
+function lowerbound(graph::AbstractGraph{V}, width::Integer) where {V}
+    return convert(V, width)
+end
+
+function lowerbound(graph::AbstractGraph{V}, alg::LowerBoundAlgorithm) where {V}
+    n = nv(graph); weights = Ones{V}(n)
+    return lowerbound(weights, graph, alg) - one(V)
+end
+
 function lowerbound(weights::AbstractVector, graph; alg::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
     return lowerbound(weights, graph, alg)
 end
 
-function lowerbound(graph, alg::Number)
-    return lowerbound(BipartiteGraph(graph), alg)
+function lowerbound(weights::AbstractVector, graph, alg::WidthOrAlgorithm)
+    return lowerbound(weights, BipartiteGraph(graph), alg)
 end
 
-function lowerbound(graph::AbstractGraph{V}, alg::Number) where {V}
-    width = convert(V, alg)
-    return width
+function lowerbound(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
+    return convert(W, width)
 end
 
-function lowerbound(weights::AbstractVector{W}, graph, alg::Number) where {W}
-    width = convert(W, alg)
-    return width
-end
-
-function lowerbound(graph, ::MMW{S}) where {S}
-    strategy = Val(S)
-    return mmw(graph, strategy)
-end
-
-function lowerbound(weights::AbstractVector, graph, ::MMW{S}) where {S}
-    strategy = Val(S)
-    return mmw(weights, graph, strategy)
-end
-
-function mmw(graph, strategy::Val)
-    return mmw(BipartiteGraph(graph), strategy)
-end
-
-function mmw(graph::AbstractGraph{V}, strategy::Val) where {V}
-    weights = Ones{V}(nv(graph))
-    width = mmw(weights, graph, strategy)
-    return width - one(V)
-end
-
-function mmw(weights::AbstractVector, graph, strategy::Val)
-    return mmw(weights, BipartiteGraph(graph), strategy)
+function lowerbound(weights::AbstractVector, graph::AbstractGraph, ::MMW{S}) where {S}
+    return mmw(weights, graph, Val(S))
 end
 
 function mmw(weights::AbstractVector{W}, graph::AbstractGraph{V}, strategy::Val) where {W, V}
@@ -148,20 +135,20 @@ function mmw(weights::AbstractVector{V}, graph::AbstractGraph{V}, strategy::Val)
         totdeg += weights[v]
     end
     
-    marker = FixedSizeVector{V}(undef, n)
-    vstack = FixedSizeVector{V}(undef, n)
-    tmpptr = FixedSizeVector{E}(undef, n)
+    marker = FVector{V}(undef, n)
+    vstack = FVector{V}(undef, n)
+    tmpptr = FVector{E}(undef, n)
 
-    degree = FixedSizeVector{V}(undef, n)
-    source = FixedSizeVector{V}(undef, m)
-    target = FixedSizeVector{V}(undef, m)
-    begptr = FixedSizeVector{E}(undef, nn)
-    endptr = FixedSizeVector{E}(undef, n)
-    invptr = FixedSizeVector{E}(undef, m)
+    degree = FVector{V}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
 
-    head = FixedSizeVector{V}(undef, totdeg)
-    prev = FixedSizeVector{V}(undef, n)
-    next = FixedSizeVector{V}(undef, n)
+    head = FVector{V}(undef, totdeg)
+    prev = FVector{V}(undef, n)
+    next = FVector{V}(undef, n)
     
     width = mmw_impl!(marker, vstack, tmpptr, degree, source, target, begptr,
         endptr, invptr, head, prev, next, totdeg, weights, graph, strategy)
