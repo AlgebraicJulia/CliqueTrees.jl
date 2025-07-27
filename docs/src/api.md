@@ -50,7 +50,6 @@ CompositeRotations
 SafeRules
 ConnectedComponents
 permutation
-mcs
 ```
 
 ## Supernodes

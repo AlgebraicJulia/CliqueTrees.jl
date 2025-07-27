@@ -56,7 +56,7 @@ end
 
 Construct a [tree-depth decomposition](https://en.wikipedia.org/wiki/Tr%C3%A9maux_tree) of a simple graph.
 
-```jldoctest
+```julia
 julia> using CliqueTrees
 
 julia> graph = [
@@ -108,7 +108,7 @@ function eliminationtree(graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V
     target = FVector{V}(undef, m)
     tree = Parent{V}(n)
     eliminationtree_impl!(count, ancestor, pointer, target, tree, graph, index)
-    return order, tree
+    return order, Tree(tree)
 end
 
 function eliminationtree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)

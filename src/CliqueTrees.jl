@@ -67,8 +67,7 @@ export BFS,
     ConnectedComponents,
     BestWidth,
     BestFill,
-    permutation,
-    mcs
+    permutation
 
 # Trees
 export Tree, eliminationtree, setrootindex!

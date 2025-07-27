@@ -17,17 +17,17 @@ struct SupernodeTree{V} <: AbstractVector{UnitRange{V}}
 
     for all vertices u ∈ U.
     """
-    residual::BipartiteGraph{V, V, FVector{V}, OneTo{V}}
+    graph::BipartiteGraph{V, V, FVector{V}, OneTo{V}}
 
-    function SupernodeTree{V}(tree::Tree, residual::BipartiteGraph) where {V}
-        @argcheck last(tree) == nv(residual)
-        @argcheck ne(residual) == nov(residual)
-        return new{V}(tree, residual)
+    function SupernodeTree{V}(tree::Tree, graph::BipartiteGraph) where {V}
+        @argcheck last(tree) == nv(graph)
+        @argcheck ne(graph) == nov(graph)
+        return new{V}(tree, graph)
     end
 end
 
-function SupernodeTree(tree::Tree{V}, residual::BipartiteGraph{V}) where {V}
-    return SupernodeTree{V}(tree, residual)
+function SupernodeTree(tree::Tree{V}, graph::BipartiteGraph{V}) where {V}
+    return SupernodeTree{V}(tree, graph)
 end
 
 function Tree(tree::SupernodeTree)
@@ -187,21 +187,21 @@ end
 Get the residuals of a supernodal elimination tree.
 """
 function residuals(tree::SupernodeTree)
-    return tree.residual
+    return tree.graph
 end
 
 function Base.copy(tree::SupernodeTree)
-    return SupernodeTree(copy(tree.tree), copy(tree.residual))
+    return SupernodeTree(copy(tree.tree), copy(tree.graph))
 end
 
 function Base.copy!(dst::SupernodeTree, src::SupernodeTree)
     copy!(dst.tree, src.tree)
-    copy!(dst.residual, src.residual)
+    copy!(dst.graph, src.graph)
     return dst
 end
 
 function Base.:(==)(left::SupernodeTree, right::SupernodeTree)
-    return left.tree == right.tree && left.residual == right.residual
+    return left.tree == right.tree && left.graph == right.graph
 end
 
 ##########################
@@ -233,7 +233,7 @@ end
 #############################
 
 function Base.getindex(tree::SupernodeTree{V}, i::Integer) where {V}
-    return neighbors(tree.residual, i)
+    return neighbors(tree.graph, i)
 end
 
 function Base.IndexStyle(::Type{<:SupernodeTree})

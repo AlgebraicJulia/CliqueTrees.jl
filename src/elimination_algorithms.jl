@@ -1211,7 +1211,7 @@ end
 
 Construct a fill-reducing permutation of the vertices of a simple graph.
 
-```jldoctest
+```julia
 julia> using CliqueTrees
 
 julia> graph = [

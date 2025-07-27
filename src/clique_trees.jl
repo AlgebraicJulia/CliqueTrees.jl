@@ -19,17 +19,17 @@ struct CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
 
     for all vertices v ∈ V and u ∈ separator(v).
     """
-    separator::BipartiteGraph{V, E, FVector{E}, FVector{V}}
+    graph::BipartiteGraph{V, E, FVector{E}, FVector{V}}
 
-    function CliqueTree{V, E}(tree::SupernodeTree{V}, separator::BipartiteGraph{V, E}) where {V, E}
-        @argcheck nv(residuals(tree)) == nv(separator)
-        @argcheck nov(residuals(tree)) == nov(separator)
-        return new{V, E}(tree, separator)
+    function CliqueTree{V, E}(tree::SupernodeTree{V}, graph::BipartiteGraph{V, E}) where {V, E}
+        @argcheck nv(residuals(tree)) == nv(graph)
+        @argcheck nov(residuals(tree)) == nov(graph)
+        return new{V, E}(tree, graph)
     end
 end
 
-function CliqueTree(tree::SupernodeTree{V}, separator::BipartiteGraph{V, E}) where {V, E}
-    return CliqueTree{V, E}(tree, separator)
+function CliqueTree(tree::SupernodeTree{V}, graph::BipartiteGraph{V, E}) where {V, E}
+    return CliqueTree{V, E}(tree, graph)
 end
 
 function Tree(tree::CliqueTree)
@@ -45,7 +45,7 @@ Construct a tree decomposition of a simple graph.
 The vertices of the graph are first ordered by a fill-reducing permutation computed by the algorithm `alg`.
 The size of the resulting decomposition is determined by the supernode partition `snd`.
 
-```jldoctest
+```julia
 julia> using CliqueTrees
 
 julia> graph = [
@@ -286,7 +286,7 @@ end
 
 Compute the [width](https://en.wikipedia.org/wiki/Treewidth) of a clique tree.
 
-```jldoctest
+```julia
 julia> using CliqueTrees
 
 julia> graph = [
@@ -897,21 +897,21 @@ end
 Get the separators of a clique tree.
 """
 function separators(tree::CliqueTree)
-    return tree.separator
+    return tree.graph
 end
 
 function Base.copy(tree::CliqueTree)
-    return CliqueTree(copy(tree.tree), copy(tree.separator))
+    return CliqueTree(copy(tree.tree), copy(tree.graph))
 end
 
 function Base.copy!(dst::CliqueTree, src::CliqueTree)
     copy!(dst.tree, src.tree)
-    copy!(dst.separator, src.separator)
+    copy!(dst.graph, src.graph)
     return dst
 end
 
 function Base.:(==)(left::CliqueTree, right::CliqueTree)
-    return left.tree == right.tree && left.separator == right.separator
+    return left.tree == right.tree && left.graph == right.graph
 end
 
 ##########################
