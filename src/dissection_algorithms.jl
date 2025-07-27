@@ -85,11 +85,11 @@ function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, projec
         end
     end
 
-    t0 = zero(V); label0 = Vector{V}(undef, n0)
-    t1 = zero(V); label1 = Vector{V}(undef, n1)
-    t2 = zero(V); label2 = Vector{V}(undef, n2)
-    clique0 = Vector{V}(undef, n2)
-    clique1 = Vector{V}(undef, n2)
+    t0 = zero(V); label0 = FVector{V}(undef, n0)
+    t1 = zero(V); label1 = FVector{V}(undef, n1)
+    t2 = zero(V); label2 = FVector{V}(undef, n2)
+    clique0 = FVector{V}(undef, n2)
+    clique1 = FVector{V}(undef, n2)
 
     @inbounds for v in vertices(graph)
         vv = part[v]
@@ -105,8 +105,8 @@ function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, projec
         end
     end
 
-    weights0 = Vector{V}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
-    weights1 = Vector{V}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
+    weights0 = FVector{V}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
+    weights1 = FVector{V}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
     t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
     t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
     width0 = zero(W)
@@ -269,10 +269,14 @@ function qcc!(graph::BipartiteGraph{V, E}, beta::W, order::Ordering) where {W, V
     marker = zeros(V, n)
 
     #### bucket queue (degree) ########################
-    degree = Vector{V}(undef, n)
-    deghead = zeros(V, n)
-    degprev = Vector{V}(undef, n)
-    degnext = Vector{V}(undef, n)
+    degree = FVector{V}(undef, n)
+    deghead = FVector{V}(undef, n)
+    degprev = FVector{V}(undef, n)
+    degnext = FVector{V}(undef, n)
+
+    @inbounds for deg in oneto(n)
+        deghead[deg] = zero(V)
+    end
 
     function degset(deg::V)
         @inbounds head = view(deghead, deg + one(V))
@@ -281,10 +285,14 @@ function qcc!(graph::BipartiteGraph{V, E}, beta::W, order::Ordering) where {W, V
     ###################################################
 
     #### bucket queue (score) #########################
-    score = Vector{E}(undef, n)
-    scrhead = zeros(V, mm)
-    scrprev = Vector{V}(undef, n)
-    scrnext = Vector{V}(undef, n)
+    score = FVector{E}(undef, n)
+    scrhead = FVector{V}(undef, mm)
+    scrprev = FVector{V}(undef, n)
+    scrnext = FVector{V}(undef, n)
+
+    @inbounds for scr in oneto(mm)
+        scrhead[scr] = zero(V)
+    end
 
     function scrset(scr::E)
         @inbounds head = view(scrhead, scr + one(E))
@@ -297,8 +305,8 @@ function qcc!(graph::BipartiteGraph{V, E}, beta::W, order::Ordering) where {W, V
     #          [ x x ]
     # vertices [   x ]
     #          [ x   ]
-    ptrC = Vector{E}(undef, mm)
-    tgtC = Vector{V}(undef, twice(m))
+    ptrC = FVector{E}(undef, mm)
+    tgtC = FVector{V}(undef, twice(m))
     vC = one(V); ptrC[vC] = pC = one(E)
     ###################################################
 

@@ -149,7 +149,7 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
 end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
-    n = nv(graph); new = Vector{INT}(undef, n)
+    n = nv(graph); new = FVector{INT}(undef, n)
 
     @inbounds for v in oneto(n)
         new[v] = trunc(INT, weights[v])
@@ -158,9 +158,9 @@ function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
     return dissect(new, graph, alg)
 end
 
-function dissect(weights::Vector{INT}, graph::AbstractGraph{V}, alg::ND) where {V <: Integer}
+function dissect(weights::FVector{INT}, graph::AbstractGraph{V}, alg::ND) where {V <: Integer}
     simple = simplegraph(INT, INT, graph)
-    order::Vector{V} = dissectsimple(weights, simple, alg)
+    order = convert(Vector{V}, dissectsimple(weights, simple, alg))
     return order
 end
 
@@ -174,36 +174,44 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
         width += weights[v]
     end
 
-    swork = Scalar{INT}(undef)
+    swork = FScalar{INT}(undef)
     vwork1 = Vector{INT}(undef, m)
     vwork2 = Vector{INT}(undef, m)
-    vwork3 = Vector{INT}(undef, max(n, NOPTIONS))
-    vwork4 = Vector{INT}(undef, n)
-    vwork5 = Vector{INT}(undef, n)
-    vwork6 = Vector{INT}(undef, n)
-    vwork9 = Vector{INT}(undef, n)
-    vwork10 = Vector{INT}(undef, n)
-    vwork11 = Vector{INT}(undef, nn)
-    vwork12 = Vector{INT}(undef, nn)
-    vwork13 = Vector{INT}(undef, n)
-    vwork14 = Vector{INT}(undef, n)
-    vwork15 = Vector{INT}(undef, n)
-    vwork16 = Vector{INT}(undef, n)
-    vwork17 = Vector{INT}(undef, n)
-    vwork18 = Vector{INT}(undef, n)
+    vwork3 = FVector{INT}(undef, max(n, NOPTIONS))
+    vwork4 = FVector{INT}(undef, n)
+    vwork5 = FVector{INT}(undef, n)
+    vwork6 = FVector{INT}(undef, n)
+    vwork9 = FVector{INT}(undef, n)
+    vwork10 = FVector{INT}(undef, n)
+    vwork11 = FVector{INT}(undef, nn)
+    vwork12 = FVector{INT}(undef, nn)
+    vwork13 = FVector{INT}(undef, n)
+    vwork14 = FVector{INT}(undef, n)
+    vwork15 = FVector{INT}(undef, n)
+    vwork16 = FVector{INT}(undef, n)
+    vwork17 = FVector{INT}(undef, n)
+    vwork18 = FVector{INT}(undef, n)
 
     orders = Vector{INT}[]
 
     nodes = Tuple{
-        BipartiteGraph{INT, INT, Vector{INT}, Vector{INT}}, # graph
-        Vector{INT},                                        # weights
-        Vector{INT},                                        # label
-        Vector{INT},                                        # clique
-        INT,                                                # width
-        INT,                                                # level
+        BipartiteGraph{INT, INT, FVector{INT}, FVector{INT}}, # graph
+        FVector{INT},                                         # weights
+        FVector{INT},                                         # label
+        FVector{INT},                                         # clique
+        INT,                                                  # width
+        INT,                                                  # level
     }[]
 
-    push!(nodes, (graph, weights, collect(oneto(n)), INT[], width, zero(INT)))
+    label = FVector{INT}(undef, n)
+    clique = FVector{INT}(undef, zero(INT))
+    level = zero(INT)
+
+    @inbounds for v in oneto(n)
+        label[v] = v
+    end
+
+    push!(nodes, (graph, weights, label, clique, width, level))
 
     @inbounds while !isempty(nodes)
         graph, weights, label, clique, width, level = pop!(nodes)

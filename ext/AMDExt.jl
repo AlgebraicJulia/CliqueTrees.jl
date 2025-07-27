@@ -2,6 +2,7 @@ module AMDExt
 
 using Base: oneto
 using CliqueTrees
+using CliqueTrees.Utilities
 using Graphs
 
 import AMD as AMDLib
@@ -12,6 +13,8 @@ const COLAMD_DENSE_ROW = AMDLib.COLAMD_DENSE_ROW
 const COLAMD_DENSE_COL = AMDLib.COLAMD_DENSE_COL
 const COLAMD_AGGRESSIVE = AMDLib.COLAMD_AGGRESSIVE
 
+const VECTOR{T} = Union{Vector{T}, FVector{T}}
+
 function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::Union{AMD, SymAMD})
     order = amd(graph, alg)
     return order, invperm(order)
@@ -19,7 +22,7 @@ end
 
 function amd(graph::AbstractGraph{V}, alg::Union{AMD, SymAMD}) where {V}
     new = BipartiteGraph{Cint, Cint}(graph)
-    order::Vector{V} = amd(new, alg)
+    order = convert(Vector{V}, amd(new, alg))
     return order
 end
 
@@ -28,7 +31,7 @@ function amd(graph::AbstractGraph{Int64}, alg::Union{AMD, SymAMD})
     return amd(new, alg)
 end
 
-function amd(graph::BipartiteGraph{Cint, Cint, Vector{Cint}, Vector{Cint}}, alg::AMD)
+function amd(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, alg::AMD)
     n = nv(graph); m = ne(graph); nn = n + one(Cint)
 
     # set parameters
@@ -66,7 +69,7 @@ function amd(graph::BipartiteGraph{Cint, Cint, Vector{Cint}, Vector{Cint}}, alg:
 end
 
 
-function amd(graph::BipartiteGraph{Int64, Int64, Vector{Int64}, Vector{Int64}}, alg::AMD)
+function amd(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64}}, alg::AMD)
     n = nv(graph); m = ne(graph); nn = n + one(Int64)
 
     # set parameters
@@ -103,7 +106,7 @@ function amd(graph::BipartiteGraph{Int64, Int64, Vector{Int64}, Vector{Int64}}, 
     return order
 end
 
-function amd(graph::BipartiteGraph{Cint, Cint, Vector{Cint}, Vector{Cint}}, alg::SymAMD)
+function amd(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, alg::SymAMD)
     n = nv(graph); m = ne(graph); nn = n + one(Cint)
 
     # set parameters
@@ -142,7 +145,7 @@ function amd(graph::BipartiteGraph{Cint, Cint, Vector{Cint}, Vector{Cint}}, alg:
     return resize!(order, n)
 end
 
-function amd(graph::BipartiteGraph{Int64, Int64, Vector{Int64}, Vector{Int64}}, alg::SymAMD)
+function amd(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64}}, alg::SymAMD)
     n = nv(graph); m = ne(graph); nn = n + one(Int64)
 
     # set parameters

@@ -81,7 +81,7 @@ function dissect(weights::AbstractVector, graph, alg::ND)
 end
 
 function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
-    n = nv(graph); new = Vector{WINT2}(undef, n)
+    n = nv(graph); new = FVector{WINT2}(undef, n)
 
     @inbounds for v in oneto(n)
         new[v] = trunc(WINT2, weights[v])
@@ -90,10 +90,10 @@ function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
     return dissect(new, graph, alg)
 end
 
-function dissect(weights::Vector{WINT2}, graph::AbstractGraph{V}, alg::ND) where {V}
+function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) where {V}
     simple = simplegraph(PINT, PINT, graph)
     cover = qcc(VINT2, EINT, simple, alg.dis.beta, alg.dis.order)
-    order::Vector{V} = dissectsimple(weights, reverse(cover), simple, alg)
+    order = convert(Vector{V}, dissectsimple(weights, reverse(cover), simple, alg))
     return order
 end
 
@@ -107,24 +107,24 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
         width += weights[v]
     end
 
-    swork = Scalar{WINT2}(undef)
+    swork = FScalar{WINT2}(undef)
     vwork1 = Vector{PINT}(undef, m)
     vwork2 = Vector{PINT}(undef, m)
-    vwork3 = Vector{PINT}(undef, max(h, n))
-    vwork4 = Vector{PINT}(undef, n)
-    vwork5 = Vector{PINT}(undef, max(h, n))
-    vwork6 = Vector{PINT}(undef, max(h, n))
-    vwork9 = Vector{WINT2}(undef, n)
-    vwork10 = Vector{WINT2}(undef, n)
-    vwork11 = Vector{PINT}(undef, nn)
-    vwork12 = Vector{PINT}(undef, nn)
-    vwork13 = Vector{PINT}(undef, n)
-    vwork14 = Vector{PINT}(undef, n)
-    vwork15 = Vector{PINT}(undef, n)
-    vwork16 = Vector{PINT}(undef, n)
-    vwork17 = Vector{PINT}(undef, n)
-    vwork18 = Vector{PINT}(undef, n)
-    hwght = Vector{WINT1}(undef, h)
+    vwork3 = FVector{PINT}(undef, max(h, n))
+    vwork4 = FVector{PINT}(undef, n)
+    vwork5 = FVector{PINT}(undef, max(h, n))
+    vwork6 = FVector{PINT}(undef, max(h, n))
+    vwork9 = FVector{WINT2}(undef, n)
+    vwork10 = FVector{WINT2}(undef, n)
+    vwork11 = FVector{PINT}(undef, nn)
+    vwork12 = FVector{PINT}(undef, nn)
+    vwork13 = FVector{PINT}(undef, n)
+    vwork14 = FVector{PINT}(undef, n)
+    vwork15 = FVector{PINT}(undef, n)
+    vwork16 = FVector{PINT}(undef, n)
+    vwork17 = FVector{PINT}(undef, n)
+    vwork18 = FVector{PINT}(undef, n)
+    hwght = FVector{WINT1}(undef, h)
 
     @inbounds for v in oneto(h)
         hwght[v] = one(WINT1)
@@ -133,16 +133,24 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     orders = Vector{PINT}[]
 
     nodes = Tuple{
-        BipartiteGraph{VINT2, EINT, Vector{EINT}, Vector{VINT2}}, # hgraph
-        BipartiteGraph{PINT, PINT, Vector{PINT}, Vector{PINT}},   # graph
-        Vector{PINT},                                             # weights
-        Vector{PINT},                                             # label
-        Vector{PINT},                                             # clique
-        WINT2,                                                    # width
-        PINT,                                                     # level
+        BipartiteGraph{VINT2, EINT, FVector{EINT}, FVector{VINT2}}, # hgraph
+        BipartiteGraph{PINT, PINT, FVector{PINT}, FVector{PINT}},   # graph
+        FVector{PINT},                                              # weights
+        FVector{PINT},                                              # label
+        FVector{PINT},                                              # clique
+        WINT2,                                                      # width
+        PINT,                                                       # level
     }[]
 
-    push!(nodes, (hgraph, graph, weights, collect(oneto(n)), PINT[], width, zero(PINT)))
+    label = FVector{PINT}(undef, n)
+    clique = FVector{PINT}(undef, zero(PINT))
+    level = zero(PINT)
+
+    @inbounds for v in oneto(n)
+        label[v] = v
+    end
+
+    push!(nodes, (hgraph, graph, weights, label, clique, width, level))
 
     @inbounds while !isempty(nodes)
         hgraph, graph, weights, label, clique, width, level = pop!(nodes)

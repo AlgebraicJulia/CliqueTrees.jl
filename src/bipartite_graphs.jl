@@ -91,14 +91,14 @@ function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer, ptr::Abstr
 end
 
 function BipartiteGraph{V, E}(nov::Integer, nv::Integer, ne::Integer) where {V, E}
-    return BipartiteGraph{V, E, Vector{E}, Vector{V}}(nov, nv, ne)
+    return BipartiteGraph{V, E, FVector{E}, FVector{V}}(nov, nv, ne)
 end
 
 function BipartiteGraph{V, E}(graph::AbstractGraph) where {V, E}
     n = convert(V, nv(graph)); nn = n + one(V)
     m = convert(E, de(graph))
-    ptr = Vector{E}(undef, nn)
-    tgt = Vector{V}(undef, m)
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, m)
     ptr[begin] = p = one(E)
 
     @inbounds for j in vertices(graph)
@@ -179,8 +179,8 @@ end
 #    julia> matrix = SparseMatrixCSC{T, I}(graph)
 #    julia> sorted = copy(transpose(copy(transpose(matrix))))
 function SparseArrays.SparseMatrixCSC{T, I}(graph::BipartiteGraph) where {T, I}
-    colptr::Vector{I} = pointers(graph)
-    rowval::Vector{I} = targets(graph)
+    colptr = convert(Vector{I}, pointers(graph))
+    rowval = convert(Vector{I}, targets(graph))
     nzval = Vector{T}(undef, ne(graph))
     return SparseMatrixCSC{T, I}(nov(graph), nv(graph), colptr, rowval, nzval)
 end
@@ -227,9 +227,9 @@ end
 
 function sympermute(graph::AbstractGraph{V}, index::AbstractVector, order::Ordering) where {V}
     E = etype(graph); m = half(de(graph)); n = nv(graph); nn = n + one(V)
-    count = Vector{E}(undef, n)
-    ptr = Vector{E}(undef, nn)
-    tgt = Vector{V}(undef, m)
+    count = FVector{E}(undef, n)
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, m)
     return sympermute!_impl!(count, ptr, tgt, graph, index, order)
 end
 
@@ -240,7 +240,7 @@ function sympermute!(
         order::Ordering,
     ) where {V, E}
     n = nv(graph)
-    count = Vector{E}(undef, n)
+    count = FVector{E}(undef, n)
     sympermute!_impl!(count, result, graph, index, order)
     return result
 end
@@ -335,7 +335,7 @@ end
 
 function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
     n = nov(graph)
-    count = Vector{E}(undef, n)
+    count = FVector{E}(undef, n)
     reverse!_impl!(count, result, graph)
     return result
 end
@@ -394,8 +394,8 @@ end
 function simplegraph(::Type{V}, ::Type{E}, graph::AbstractGraph) where {V, E}
     n = convert(V, nv(graph)); nn = n + one(V)
     m = convert(E, de(graph))
-    ptr = Vector{E}(undef, nn)
-    tgt = Vector{V}(undef, m)
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, m)
     ptr[begin] = p = one(E)
 
     @inbounds for j in vertices(graph)

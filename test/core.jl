@@ -85,8 +85,8 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, 
 
     try
         return permutation(weights, graph, FlowCutter(; time, seed))
-    catch
-        @warn "FlowCutter failed"
+    catch error
+        @warn "FlowCutter failed: $error"
         return permutation(weights, graph)
     end
 end

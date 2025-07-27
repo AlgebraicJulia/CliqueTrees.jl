@@ -93,8 +93,9 @@ function readtd(io::IO)
 
     # parse hypergraph
     index = Vector{Int}(undef, nb)
-    hypergraph = BipartiteGraph{Int, Int}(nv, nb, 0)
-    pointers(hypergraph)[begin] = p = 1
+    pointer = Vector{Int}(undef, nb + 1)
+    target = Vector{Int}(undef, 0)
+    pointer[begin] = p = 1
 
     for i in oneto(nb)
         words = split(lines[i + 1])
@@ -104,11 +105,13 @@ function readtd(io::IO)
 
         for word in words[3:end]
             p += 1
-            push!(targets(hypergraph), parse(Int, word))
+            push!(target, parse(Int, word))
         end
 
-        pointers(hypergraph)[i + 1] = p
+        pointer[i + 1] = p
     end
+
+    hypergraph = BipartiteGraph(nv, nb, p - 1, pointer, target)
 
     # parse tree
     I = sizehint!(Int[], nb)
