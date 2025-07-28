@@ -46,8 +46,8 @@ function supernodetree(
         alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
         snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
     )
-    label, tree, index, ptr, lower, upper = supernodetree(graph, alg, snd)
-    return label, tree
+    order, tree = supernodetree(graph, alg, snd)
+    return order, tree
 end
 
 function supernodetree(
@@ -56,8 +56,8 @@ function supernodetree(
         alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM,
         snd::SupernodeType = DEFAULT_SUPERNODE_TYPE,
     )
-    label, tree, index, ptr, lower, upper = supernodetree(weights, graph, alg, snd)
-    return label, tree
+    order, tree = supernodetree(weights, graph, alg, snd)
+    return order, tree
 end
 
 function supernodetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
@@ -101,8 +101,8 @@ function supernodetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Pe
         target3, ework1, pointer1, pointer2, pointer3, colcount,
         elmorder, elmindex, sndptr, sepptr, new, parent, elmtree, graph,
         order, index, snd)
-        
-    return order, sndtree, elmindex, sepptr, lower, upper 
+
+    return order, sndtree        
 end
 
 function supernodetree_impl!(

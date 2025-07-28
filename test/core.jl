@@ -2,7 +2,7 @@ using AbstractTrees
 using Base: @kwdef, oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: DoublyLinkedList, EliminationAlgorithm, sympermute, cliquetree!
+using CliqueTrees: DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!
 using CliqueTrees.Utilities
 using Graphs
 using Graphs: SimpleEdge
@@ -95,17 +95,22 @@ import Laplacians
 import Metis
 import TreeWidthSolver
 
-#=
 @testset "trees" begin
     @testset "interface" begin
-        tree = Tree(Int16[2, 5, 4, 5, 0])
+        parent = Parent(Int16(5), Int16[2, 5, 4, 5, 0])
+        tree = Tree(parent)
         @test rootindex(tree) === Int16(5)
-        setrootindex!(tree, 1)
+        @test childindices(tree, 1) == Int16[]
+        @test childindices(tree, 5) == Int16[2, 4]
+
+        setrootindex!(parent, 1)
+        tree = Tree(parent)
         @test rootindex(tree) === Int16(1)
+        @test childindices(tree, 1) == Int16[2]
+        @test childindices(tree, 5) == Int16[4]
 
         node = IndexNode(tree)
         @test ParentLinks(node) === StoredParents()
-        @test SiblingLinks(node) === StoredSiblings()
         @test NodeType(node) === HasNodeType()
         @test nodetype(node) === typeof(node)
     end
@@ -134,7 +139,6 @@ import TreeWidthSolver
         @test isequal(Tree(tree), tree.tree.tree)
     end
 end
-=#
 
 @testset "bipartite graphs" begin
     graph = BipartiteGraph{Int16, Int32}(
@@ -455,6 +459,7 @@ end
             CompositeRotations([1, 2, 3]),
             SafeRules(),
             SimplicialRule(),
+            SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -701,7 +706,7 @@ end
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
                 @inferred CliqueTrees.twins(graph, Val(true))
-                @inferred CliqueTrees.sr(graph, zero(V))
+                @inferred CliqueTrees.sr(weights, graph, zero(V))
                 @inferred CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @inferred treewidth(graph; alg = 1:17)
                 @inferred treefill(graph; alg = 1:17)
@@ -736,7 +741,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true))
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.sr(graph, zero(V))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.sr(weights, graph, zero(V))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_call target_modules = (CliqueTrees,) treefill(graph; alg = 1:17)
@@ -783,7 +788,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true))
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.sr(graph, zero(V))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.sr(weights, graph, zero(V))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
                 @test_opt target_modules = (CliqueTrees,) treefill(graph; alg = 1:17)

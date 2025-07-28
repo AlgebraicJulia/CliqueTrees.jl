@@ -98,35 +98,6 @@ end
 # Bodlaender, Koster, Eijkhof, and van der Gaag
 #
 #  PR-4 (PR-3 + Simplicial)
-function pr4(graph, width::Integer)
-    return pr4(BipartiteGraph(graph), width)
-end
-
-function pr4(graph::AbstractGraph, width::Integer)
-    graph0 = graph; width0 = width
-    n0 = nv(graph0)
-
-    graph1, stack1, inject1, width1 = pr3(graph0, width0)
-    n1 = nv(graph1); m1 = n0 - n1
-
-    graph2, stack2, inject2, width2 = sr(graph1, width1)
-    n2 = nv(graph2); m2 = n1 - n2
-
-    @inbounds for i in oneto(m2)
-        stack1[i + m1] = inject1[stack2[i]]
-    end
-
-    @inbounds for i in oneto(n2)
-        inject2[i] = inject1[inject2[i]]
-    end
-
-    return (graph2, stack1, inject2, width2)
-end
-
-function pr4(weights::AbstractVector, graph, width::Number)
-    return pr4(weights, BipartiteGraph(graph), width)
-end
-
 function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
     weights0 = weights; graph0 = graph; width0 = width
     n0 = nv(graph0); weights1 = Vector{W}(undef, n0)
@@ -150,20 +121,6 @@ function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) wh
     end
 
     return (graph2, stack1, inject2, width2)
-end
-
-function sr(graph, width::Number)
-    return sr(BipartiteGraph(graph), width)
-end
-
-function sr(graph::AbstractGraph{V}, width::V) where {V <: Integer}
-    weights = Ones{V}(nv(graph))
-    kernel, stack, inject, width = sr(weights, graph, width + one(width))
-    return (kernel, stack, inject, width - one(V))
-end
-
-function sr(weights::AbstractVector, graph, width::Number)
-    return sr(weights, BipartiteGraph(graph), width)
 end
 
 function sr(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}

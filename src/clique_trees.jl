@@ -447,19 +447,6 @@ function treewidth_impl!(
     return width
 end
 
-function bestwidth(graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
-    return bestwidth(BipartiteGraph(graph), algs)
-end
-
-function bestwidth(graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {V}
-    n = nv(graph); weights = Ones{V}(n)
-    return bestwidth(weights, graph, algs)
-end
-
-function bestwidth(weights::AbstractVector, graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
-    return bestwidth(weights, BipartiteGraph(graph), algs)
-end
-
 function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}
     E = etype(graph); m = de(graph); n = nv(graph)
     
@@ -662,19 +649,6 @@ function treefill_impl!(
     end
 
     return fill
-end
-
-function bestfill(graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
-    return bestfill(BipartiteGraph(graph), algs)
-end
-
-function bestfill(graph::AbstractGraph, algs::NTuple{<:Any, PermutationOrAlgorithm})
-    E = etype(graph); n = nv(graph); weights = Ones{E}(n)
-    return bestfill(weights, graph, algs)
-end
-
-function bestfill(weights::AbstractVector, graph, algs::NTuple{<:Any, PermutationOrAlgorithm})
-    return bestfill(weights, BipartiteGraph(graph), algs)
 end
 
 function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}

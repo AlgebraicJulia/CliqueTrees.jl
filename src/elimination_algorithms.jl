@@ -1372,10 +1372,6 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFil
     return bestfill(weights, graph, alg.algs)
 end
 
-function bfs(graph)
-    return bfs(BipartiteGraph(graph))
-end
-
 # Algorithmic Aspects of Vertex Elimination on Graphs
 # Rose, Tarjan, and Lueker
 # BFS
