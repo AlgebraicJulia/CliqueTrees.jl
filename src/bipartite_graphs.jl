@@ -221,28 +221,12 @@ end
 #
 # Permute the vertices of a graph and orient the edges from lower to higher.
 # The complexity is O(m), where m = |E|.
-function sympermute(graph, index::AbstractVector, order::Ordering)
-    return sympermute(BipartiteGraph(graph), index, order)
-end
-
 function sympermute(graph::AbstractGraph{V}, index::AbstractVector, order::Ordering) where {V}
     E = etype(graph); m = half(de(graph)); n = nv(graph); nn = n + one(V)
     count = FVector{E}(undef, n)
     ptr = FVector{E}(undef, nn)
     tgt = FVector{V}(undef, m)
     return sympermute!_impl!(count, ptr, tgt, graph, index, order)
-end
-
-function sympermute!(
-        result::BipartiteGraph{V, E},
-        graph::AbstractGraph,
-        index::AbstractVector,
-        order::Ordering,
-    ) where {V, E}
-    n = nv(graph)
-    count = FVector{E}(undef, n)
-    sympermute!_impl!(count, result, graph, index, order)
-    return result
 end
 
 function sympermute!_impl!(

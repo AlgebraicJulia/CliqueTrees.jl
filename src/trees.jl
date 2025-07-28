@@ -88,10 +88,6 @@ function eliminationtree(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATIO
     return eliminationtree(graph, alg)
 end
 
-function eliminationtree(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
-    return eliminationtree(weights, graph, alg)
-end
-
 function eliminationtree(graph, alg::PermutationOrAlgorithm)
     return eliminationtree(BipartiteGraph(graph), alg)
 end
@@ -109,6 +105,10 @@ function eliminationtree(graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V
     tree = Parent{V}(n)
     eliminationtree_impl!(count, ancestor, pointer, target, tree, graph, index)
     return order, Tree(tree)
+end
+
+function eliminationtree(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
+    return eliminationtree(weights, graph, alg)
 end
 
 function eliminationtree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)

@@ -1,14 +1,16 @@
 """
     CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
 
-A tree T = (V, E) and functions
-    clique: V → 2ᵁ
+A rooted forest T = (V, E) and functions
+
+       clique: V → 2ᵁ
     separator: V → 2ᵁ
+
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
 struct CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
     """
-    The tree T = (V, E).
+    The rooted forest T = (V, E).
     """
     tree::SupernodeTree{V}
 
@@ -308,8 +310,9 @@ julia> treewidth(tree)
 
 """
 function treewidth(tree::CliqueTree{V}) where {V}
-    n::V = maximum(length, tree; init = 0) - 1
-    return n
+    n = nov(residuals(tree)); weights = Ones{V}(n)
+    width = treewidth(weights, tree)
+    return width - one(V)
 end
 
 function treewidth(weights::AbstractVector{W}, tree::CliqueTree{V}) where {W, V}
@@ -379,35 +382,13 @@ function treewidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
 end
 
 function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
-    E = etype(graph); m = half(de(graph)); n = nv(graph); nn = n + one(V)
+    E = etype(graph); m = half(de(graph)); n = nv(graph)
     order, index = permutation(weights, graph, alg)
-    
-    lower = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
 
-    upper = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-    
-    tree = Parent(
-        n,
-        FVector{V}(undef, n),    
-    )
-
-    sets = UnionFind(
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-    )
+    lower = BipartiteGraph{V, E}(n, n, m)
+    upper = BipartiteGraph{V, E}(n, n, m)
+    tree = Parent{V}(n)
+    sets = UnionFind{V}(n)
     
     wwork0 = FVector{W}(undef, n)
     wwork1 = FVector{W}(undef, n)
@@ -480,7 +461,7 @@ function bestwidth(weights::AbstractVector, graph, algs::NTuple{<:Any, Permutati
 end
 
 function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}
-    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    E = etype(graph); m = de(graph); n = nv(graph)
     
     pairs = map(algs) do alg
         return permutation(weights, graph, alg)
@@ -490,32 +471,10 @@ function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NT
         return index
     end
 
-    lower = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-
-    upper = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-    
-    tree = Parent(
-        n,
-        FVector{V}(undef, n),    
-    )
-
-    sets = UnionFind(
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-    )
+    lower = BipartiteGraph{V, E}(n, n, m)
+    upper = BipartiteGraph{V, E}(n, n, m)
+    tree = Parent{V}(n)
+    sets = UnionFind{V}(n)
 
     wwork0 = FVector{W}(undef, n)
     wwork1 = FVector{W}(undef, n)
@@ -592,20 +551,9 @@ function bestwidth_impl!(
 end
 
 function treefill(tree::CliqueTree{<:Any, E}) where {E}
-    fill = zero(E)
-
-    @inbounds for bag in tree
-        res = residual(bag)
-
-        for vv in bag
-            for v in res
-                v == vv && break
-                fill += one(E)
-            end
-        end
-    end
-
-    return fill
+    n = nov(residuals(tree)); weights = Ones{E}(n)
+    fill = treefill(weights, tree)
+    return fill - convert(E, n)
 end
 
 function treefill(weights::AbstractVector{W}, tree::CliqueTree) where {W}
@@ -615,12 +563,12 @@ function treefill(weights::AbstractVector{W}, tree::CliqueTree) where {W}
         res = residual(bag)
 
         for vv in bag
-            wvv = weights[vv]
+            ww = weights[vv]
 
             for v in res
                 v > vv && break
-                wv = weights[v]
-                fill += wvv * wv
+                w = weights[v]
+                fill += ww * w
             end
         end
     end
@@ -651,35 +599,13 @@ function treefill(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
 end
 
 function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
-    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    E = etype(graph); m = de(graph); n = nv(graph)
     order, index = permutation(weights, graph, alg)
     
-    lower = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-
-    upper = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-    
-    tree = Parent(
-        n,
-        FVector{V}(undef, n),    
-    )
-
-    sets = UnionFind(
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-    )
+    lower = BipartiteGraph{V, E}(n, n, m)
+    upper = BipartiteGraph{V, E}(n, n, m)
+    tree = Parent{V}(n)
+    sets = UnionFind{V}(n)
     
     wwork0 = FVector{W}(undef, n)
     wwork1 = FVector{W}(undef, n)
@@ -752,7 +678,7 @@ function bestfill(weights::AbstractVector, graph, algs::NTuple{<:Any, Permutatio
 end
 
 function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}) where {W, V}
-    E = etype(graph); m = de(graph); n = nv(graph); nn = n + one(V)
+    E = etype(graph); m = de(graph); n = nv(graph)
     
     pairs = map(algs) do alg
         return permutation(weights, graph, alg)
@@ -762,32 +688,10 @@ function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTu
         return index
     end
 
-    lower = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-
-    upper = BipartiteGraph(
-        n,
-        n,
-        m,
-        FVector{E}(undef, nn),
-        FVector{V}(undef, m),
-    )
-    
-    tree = Parent(
-        n,
-        FVector{V}(undef, n),    
-    )
-
-    sets = UnionFind(
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-        FVector{V}(undef, n),
-    )
+    lower = BipartiteGraph{V, E}(n, n, m)
+    upper = BipartiteGraph{V, E}(n, n, m)
+    tree = Parent{V}(n)
+    sets = UnionFind{V}(n)
 
     wwork0 = FVector{W}(undef, n)
     wwork1 = FVector{W}(undef, n)

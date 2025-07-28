@@ -75,34 +75,6 @@ function metis(weights::Vector{INT}, graph::BipartiteGraph{INT, INT}, alg::METIS
     return order, index
 end
 
-function metis(graph::BipartiteGraph{INT, INT}, alg::METIS)
-    n = nv(graph)
-
-    # construct options
-    options = Vector{INT}(undef, NOPTIONS)
-    setoptions!(options, alg)
-
-    # construct METIS graph
-    xadj = pointers(graph)
-    adjncy = targets(graph)
-
-    # construct permutation
-    order = Vector{INT}(undef, n)
-    index = Vector{INT}(undef, n)
-
-    Metis.@check Metis.METIS_NodeND(
-        Ref{INT}(n),
-        xadj,
-        adjncy,
-        C_NULL,
-        options,
-        order,
-        index,
-    )
-
-    return order, index
-end
-
 function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, part::AbstractVector{INT}, weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, imbalance::INT, alg::METISND)
     @argcheck NOPTIONS <= length(options)
     @argcheck nv(graph) <= length(part)

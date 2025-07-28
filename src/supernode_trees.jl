@@ -1,12 +1,12 @@
 """
     SupernodeTree{V} <: AbstractVector{UnitRange{V}}
 
-A forest T = (V, E) and a function snd: U → V.
+A rooted forest T = (V, E) and a function snd: U → V.
 This type implements the [indexed tree interface](https://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface).
 """
 struct SupernodeTree{V} <: AbstractVector{UnitRange{V}}
     """
-    The tree T.
+    The rooted forest T.
     """
     tree::Tree{V, FVector{V}, FVector{V}, FVector{V}}
 

@@ -67,19 +67,6 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
     return
 end
 
-function dissect(graph, alg::ND)
-    return dissect(BipartiteGraph(graph), alg)
-end
-
-function dissect(graph::AbstractGraph, alg::ND)
-    weights = ones(WINT2, nv(graph))
-    return dissect(weights, graph, alg)
-end
-
-function dissect(weights::AbstractVector, graph, alg::ND)
-    return dissect(weights, BipartiteGraph(graph), alg)
-end
-
 function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
     n = nv(graph); new = FVector{WINT2}(undef, n)
 

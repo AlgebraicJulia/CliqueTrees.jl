@@ -9,6 +9,7 @@ struct Parent{V <: Integer, Prnt <: AbstractVector{V}} <: AbstractUnitRange{V}
     V is equal to the set
 
         V := {1, 2, ..., nv}
+
     """
     nv::V
 
@@ -48,14 +49,6 @@ end
 #
 # Construct the elimination tree of an ordered graph.
 # The complexity is O(m log n), where m = |E| and n = |V|.
-function etree(upper::AbstractGraph{V}) where {V}
-    n = nv(upper)
-    tree = Parent(n, Vector{V}(undef, n))
-    ancestor = Vector{V}(undef, n)
-    etree_impl!(tree, ancestor, upper)
-    return tree
-end
-
 function etree_impl!(
         tree::Parent{V},
         ancestor::AbstractVector{V},
@@ -159,33 +152,6 @@ function reverse!_impl!(
     end
 
     return
-end
-
-function supcnt(lower::AbstractGraph{V}, tree::Parent{V}) where {V}
-    n = nv(lower); weights = Ones{V}(n)
-    return supcnt(weights, lower, tree)
-end
-
-function supcnt(weights::AbstractVector{W}, lower::AbstractGraph{V}, tree::Parent{V}) where {W, V}
-    n = nv(lower)
-
-    wt = FixedSizeVector{W}(undef, n)
-    map0 = FixedSizeVector{V}(undef, n)
-    inv0 = FixedSizeVector{V}(undef, n)
-    inv1 = FixedSizeVector{V}(undef, n)
-    fdesc = FixedSizeVector{V}(undef, n)
-    prev_p = FixedSizeVector{V}(undef, n)
-    prev_nbr = FixedSizeVector{V}(undef, n)
-
-    rank = FixedSizeVector{V}(undef, n)
-    parent = FixedSizeVector{V}(undef, n)
-    stack = FixedSizeVector{V}(undef, n)
-    sets = UnionFind(rank, parent, stack)
-
-    supcnt_impl!(wt, map0, inv0, inv1, fdesc,
-        prev_p, prev_nbr, sets, weights, lower, tree)
-
-    return wt
 end
 
 # An Efficient Algorithm to Compute Row and Column Counts for Sparse Cholesky Factorization
@@ -497,17 +463,6 @@ function postorder!_impl!(
     return
 end
 
-"""
-    firstdescendants(tree::Parent, index::AbstractVector)
-
-Get the first descendant of every vertex of a topologically ordered forest.
-"""
-function firstdescendants(tree::Parent{V}, index::AbstractVector{V}) where {V}
-    n = length(tree); fdesc = Vector{V}(undef, n)
-    firstdescendants_impl!(fdesc, tree, index)
-    return fdesc
-end
-
 function firstdescendants_impl!(
         fdesc::AbstractVector{V},
         tree::Parent{V},
@@ -529,18 +484,6 @@ function firstdescendants_impl!(
     end
 
     return
-end
-
-"""
-    invpermute!(tree::Parent, index::AbstractVector)
-
-Permute the vertices of a forest.
-"""
-function Base.invpermute!(tree::Parent{V}, index::AbstractVector{V}) where {V}
-    n = length(tree)
-    parent = Vector{V}(undef, n)
-    invpermute!_impl!(parent, tree, index)
-    return tree
 end
 
 function invpermute!_impl!(

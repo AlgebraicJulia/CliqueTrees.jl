@@ -23,32 +23,7 @@ end
 @testset "errors" begin
     weights = [1]
     @test_throws Exception lowerbound(weights, 1)
-    @test_throws Exception lowerbound(weights, MMW())
     @test_throws Exception permutation(weights, [1])
-    @test_throws Exception permutation(weights, ([1], [1]))
-    @test_throws Exception permutation(weights, BFS())
-    @test_throws Exception permutation(weights, MCS())
-    @test_throws Exception permutation(weights, LexBFS())
-    @test_throws Exception permutation(weights, RCMMD())
-    @test_throws Exception permutation(weights, RCMGL())
-    @test_throws Exception permutation(weights, LexM())
-    @test_throws Exception permutation(weights, MCSM())
-    @test_throws Exception permutation(weights, AMF())
-    @test_throws Exception permutation(weights, MF())
-    @test_throws Exception permutation(weights, MMD())
-    @test_throws Exception permutation(weights, AMD())
-    @test_throws Exception permutation(weights, SymAMD())
-    @test_throws Exception permutation(weights, METIS())
-    @test_throws Exception permutation(weights, ND())
-    @test_throws Exception permutation(weights, Spectral())
-    @test_throws Exception permutation(weights, BT())
-    @test_throws Exception permutation(weights, SAT{CryptoMiniSat_jll}())
-    @test_throws Exception permutation(weights, MinimalChordal())
-    @test_throws Exception permutation(weights, CompositeRotations([1]))
-    @test_throws Exception permutation(weights, SafeRules())
-    @test_throws Exception permutation(weights, ConnectedComponents())
-    @test_throws Exception permutation(weights, BestWidth())
-    @test_throws Exception permutation(weights, BestFill())
     @test_throws Exception eliminationtree(weights, [1])
     @test_throws Exception treewidth(weights, [1])
     @test_throws Exception treefill(weights, LexM())
@@ -1170,6 +1145,10 @@ end
             @test fill1 <= fill2 <= fill3 <= fill
         end
     end
+
+    name = "mycielskian14"; fill = 14000000
+    matrix = readmatrix(name)
+    @test treefill(matrix; alg=AMF()) <= fill
 end
 
 @testset "exact treewidth" begin
