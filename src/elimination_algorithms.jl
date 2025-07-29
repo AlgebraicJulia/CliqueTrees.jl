@@ -1097,18 +1097,23 @@ struct SafeRules{A <: EliminationAlgorithm, L <: WidthOrAlgorithm, U <: Eliminat
     alg::A
     lb::L
     ub::U
+    tao::Float64
 end
 
-function SafeRules(alg::PermutationOrAlgorithm, lb::WidthOrAlgorithm)
-    return SafeRules(alg, lb, DEFAULT_ELIMINATION_ALGORITHM)
+function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm; tao::Float64 = 1.0)
+    return SafeRules(alg, lb, ub, tao)
 end
 
-function SafeRules(alg::PermutationOrAlgorithm)
-    return SafeRules(alg, DEFAULT_LOWER_BOUND_ALGORITHM)
+function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm; kwargs...)
+    return SafeRules(alg, lb, DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
 end
 
-function SafeRules()
-    return SafeRules(DEFAULT_ELIMINATION_ALGORITHM)
+function SafeRules(alg::EliminationAlgorithm; kwargs...)
+    return SafeRules(alg, DEFAULT_LOWER_BOUND_ALGORITHM; kwargs...)
+end
+
+function SafeRules(; kwargs...)
+    return SafeRules(DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
 end
 
 # deprecated
@@ -1117,10 +1122,15 @@ RuleReduction(alg) = SafeRules(alg, MMW(), MF())
 
 struct SimplicialRule{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
+    tao::Float64
 end
 
-function SimplicialRule()
-    return SimplicialRule(DEFAULT_ELIMINATION_ALGORITHM)
+function SimplicialRule(alg::EliminationAlgorithm; tao::Float64 = 1.0)
+    return SimplicialRule(alg, tao)
+end
+
+function SimplicialRule(; kwargs...)
+    return SimplicialRule(DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
 end
 
 """
@@ -1347,12 +1357,12 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Composi
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules)
-    order = saferules(weights, graph, alg.alg, alg.lb, alg.ub)
+    order = saferules(weights, graph, alg.alg, alg.lb, alg.ub, alg.tao)
     return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SimplicialRule)
-    order = simplicialrule(weights, graph, alg.alg)
+    order = simplicialrule(weights, graph, alg.alg, alg.tao)
     return order, invperm(order)
 end
 
@@ -2508,14 +2518,14 @@ end
 
 function twins(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     n = nv(graph); nn = n + one(V)
-    new = Scalar{V}(undef)
-    var = Vector{V}(undef, nn)
-    svar = Vector{V}(undef, n)
-    flag = Vector{V}(undef, n)
-    size = Vector{V}(undef, n)
-    head = Vector{V}(undef, n)
-    prev = Vector{V}(undef, n)
-    next = Vector{V}(undef, n)
+    new = FScalar{V}(undef)
+    var = FVector{V}(undef, nn)
+    svar = FVector{V}(undef, n)
+    flag = FVector{V}(undef, n)
+    size = FVector{V}(undef, n)
+    head = FVector{V}(undef, n)
+    prev = FVector{V}(undef, n)
+    next = FVector{V}(undef, n)
     partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
     return svar, partition
 end
@@ -2646,6 +2656,163 @@ function twins_impl!(
     return partition
 end
 
+# Algorithms for Sparse Linear Systems
+# Scott & Tuma
+#
+# Algorithm 3.8: Find approximately indistinguishable vertex sets
+# in an undirected graph
+function twins(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
+    if isone(tao)
+        return twins(graph, Val(S))
+    else
+        n = nv(graph); nn = n + one(V)
+        head = FScalar{V}(undef)
+        prev = FVector{V}(undef, nn)
+        next = FVector{V}(undef, n)
+        adjmap = FVector{V}(undef, n)
+        cosine = FVector{V}(undef, n)
+        degree = FVector{V}(undef, n)
+        partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tao)
+        return adjmap, partition
+    end
+end
+
+function twins_impl!(
+        head::AbstractScalar{V},
+        prev::AbstractVector{V},
+        next::AbstractVector{V},
+        adjmap::AbstractVector{V},
+        cosine::AbstractVector{V},
+        degree::AbstractVector{V},
+        graph::AbstractGraph{V},
+        ::Val{S},
+        tao::T,
+    ) where {V, S, T}
+    @argcheck nv(graph) < length(prev)
+    @argcheck nv(graph) <= length(next)
+    @argcheck nv(graph) <= length(adjmap)
+    @argcheck nv(graph) <= length(cosine)
+    @argcheck nv(graph) <= length(degree)
+    @argcheck zero(T) < tao <= one(T)
+    n = nv(graph); nb = zero(V)
+    list = DoublyLinkedList(head, prev, next)
+
+    @inbounds for i in vertices(graph)
+        adjmap[i] = zero(V)
+        cosine[i] = zero(V)
+
+        if S
+            degree[i] = one(V)
+        else
+            degree[i] = zero(V)
+        end
+
+        for j in neighbors(graph, i)
+            i == j && continue
+            degree[i] += one(V)
+        end
+    end
+
+    @inbounds head[] = zero(V)
+
+    @inbounds for i in vertices(graph)
+        if iszero(adjmap[i])
+            # start a new set
+            adjmap[i] = nb += one(V)
+
+            # for each entry j in row i...
+            for j in neighbors(graph, i)
+                i == j && continue
+                    
+                for k in neighbors(graph, j)
+                    j == k && continue
+                        
+                    # both rows i and k have an entry
+                    # in column j
+                    if i < k
+                        # k has not yet been added to a part
+                        if iszero(adjmap[k])
+                            # increase partial dot product
+                            iszero(cosine[k]) && pushfirst!(list, k)
+                            cosine[k] += one(V)
+                        end
+                    end
+                end
+
+                if S && i < j
+                    # k has not yet been added to a part
+                    if iszero(adjmap[j])
+                        # increase partial dot product
+                        iszero(cosine[j]) && pushfirst!(list, j)
+                        cosine[j] += one(V)
+                    end
+                end
+            end
+
+            if S
+                for k in neighbors(graph, i)
+                    # both rows i and k have an entry
+                    # in column j
+                    if i < k
+                        # k has not yet been added to a part
+                        if iszero(adjmap[k])
+                            # increase partial dot product
+                            iszero(cosine[k]) && pushfirst!(list, k)
+                            cosine[k] += one(V)
+                        end
+                    end
+                end
+            end
+
+            for k in list
+                cos = convert(T, cosine[k])
+                nzi = convert(T, degree[i])
+                nzk = convert(T, degree[k])
+
+                # test similarity of row patterns
+                if cos * cos >= tao * tao * nzi * nzk
+                    adjmap[k] = nb
+                end
+
+                delete!(list, k)
+                cosine[k] = zero(V)
+            end
+        end
+    end
+
+    pointer = prev; target = next
+    
+    @inbounds for j in oneto(nb)
+        jj = j + one(V)
+        pointer[jj] = zero(V)
+    end
+
+    @inbounds for i in vertices(graph)
+        j = adjmap[i]
+
+        if j < nb
+            jj = j + two(V)
+            pointer[jj] += one(V)
+        end
+    end
+
+    @inbounds pointer[begin] = p = one(V)
+
+    @inbounds for j in oneto(nb)
+        jj = j + one(V)
+        pointer[jj] = p += pointer[jj]
+    end
+
+    @inbounds for i in vertices(graph)
+        j = adjmap[i]; jj = j + one(V)
+        target[pointer[jj]] = i
+        pointer[jj] += one(V)
+    end
+        
+    partition = BipartiteGraph(n, nb, n, pointer, target)
+    return partition  
+end
+
 # A Practical Algorithm for Making Filled Graphs Minimal
 # Barry, Heggernes, and Telle
 # MinimalChordal
@@ -2752,16 +2919,16 @@ end
 # Reduction 3 (Twin Reduction)
 function compress(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
-    new = Scalar{V}(undef)
-    var = Vector{V}(undef, nn)
-    svar = Vector{V}(undef, n)
-    flag = Vector{V}(undef, n)
-    size = Vector{V}(undef, n)
-    head = Vector{V}(undef, n)
-    prev = Vector{V}(undef, n)
-    next = Vector{V}(undef, n)
-    outptr = Vector{E}(undef, nn)
-    outtgt = Vector{V}(undef, m)
+    new = FScalar{V}(undef)
+    var = FVector{V}(undef, nn)
+    svar = FVector{V}(undef, n)
+    flag = FVector{V}(undef, n)
+    size = FVector{V}(undef, n)
+    head = FVector{V}(undef, n)
+    prev = FVector{V}(undef, n)
+    next = FVector{V}(undef, n)
+    outptr = FVector{E}(undef, nn)
+    outtgt = FVector{V}(undef, m)
     return compress_impl!(new, var, svar, flag, size, head, prev, next, outptr, outtgt, graph, Val(S))
 end
 
@@ -2811,10 +2978,71 @@ function compress_impl!(
     return outgraph, partition
 end
 
-function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm) where {V}
+function compress(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
+    if isone(tao)
+        return compress(graph, Val(S))
+    else
+        E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+        head = FScalar{V}(undef)
+        prev = FVector{V}(undef, nn)
+        next = FVector{V}(undef, n)
+        adjmap = FVector{V}(undef, n)
+        cosine = FVector{V}(undef, n)
+        degree = FVector{V}(undef, n)
+        outptr = FVector{E}(undef, nn)
+        outtgt = FVector{V}(undef, m)
+        return compress_impl!(head, prev, next, adjmap, cosine, degree, outptr, outtgt, graph, Val(S), tao)
+    end
+end
+
+function compress_impl!(
+        head::AbstractScalar{V},
+        prev::AbstractVector{V},
+        next::AbstractVector{V},
+        adjmap::AbstractVector{V},
+        cosine::AbstractVector{V},
+        degree::AbstractVector{V},
+        outptr::AbstractVector{E},
+        outtgt::AbstractVector{V},
+        graph::AbstractGraph{V},
+        ::Val{S},
+        tao::Number,
+    ) where {V, E, S}
+    @argcheck nv(graph) < length(outptr)
+    @argcheck ne(graph) <= length(outtgt)
+
+    partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tao)
+    project = adjmap; marker = cosine; tag = zero(V)
+
+    @inbounds for v in vertices(graph)
+        marker[v] = zero(V)
+    end
+
+    outptr[begin] = p = one(E)
+
+    @inbounds for i in vertices(partition)
+        ii = i + one(V)
+
+        for v in neighbors(partition, i), w in neighbors(graph, v)
+            j = project[w]
+
+            if i != j && marker[j] < i
+                marker[j] = i; outtgt[p] = j; p += one(E)
+            end
+        end
+
+        outptr[ii] = p
+    end
+
+    outn = nv(partition); outm = p - one(E)
+    outgraph = BipartiteGraph(outn, outn, outm, outptr, outtgt)
+    return outgraph, partition
+end
+
+function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm, tao::Number) where {V}
     n = nv(graph)
     width = lowerbound(weights, graph, lb)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, weights, graph, width)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, weights, graph, width, tao)
     innerorder, innerindex = permutation(innerweights, innergraph, ub)
 
     if innerwidth < treewidth(innerweights, innergraph, (innerorder, innerindex))
@@ -2834,10 +3062,10 @@ function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::Elimin
     return order
 end
 
-function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
+function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tao::Number) where {W, V}
     n = nv(graph)
     width = zero(W)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, weights, graph, width)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, weights, graph, width, tao)
     innerorder, innerindex = permutation(innerweights, innergraph, alg)
 
     order = Vector{V}(undef, n); i = zero(V)
@@ -3063,6 +3291,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SimplicialRule{A}) where {A}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "SimplicialRule{$A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    println(io, " "^indent * "    tao: $(alg.tao)")
     return
 end
 
@@ -3072,6 +3301,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{A, L, U}) where {A
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.ub)
+    println(io, " "^indent * "    tao: $(alg.tao)")
     return
 end
 

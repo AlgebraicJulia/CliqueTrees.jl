@@ -222,7 +222,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
                 end
             end
 
-            sympermute!_impl!(vwork3, upper, graph, index, Forward)
+            sympermute!_impl!(upper, graph, index, Forward)
 
             for i in oneto(k)
                 clique[i] = index[clique[i]]

@@ -1,4 +1,4 @@
-function compressreduce(reduce::Function, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V <: Integer}
+function compressreduce(reduce::Function, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W, tao::Number) where {W <: Number, V <: Integer}
     weights00 = weights; graph00 = graph; width00 = width; n00 = nv(graph00)
     inject03 = Vector{V}(undef, n00); n03 = zero(V)
     # V01
@@ -9,7 +9,7 @@ function compressreduce(reduce::Function, weights::AbstractVector{W}, graph::Abs
     #  ↓ project10
     # V10
     graph02, inject01, inject02, width10 = reduce(weights00, graph00, width00)
-    graph10, project10 = compress(graph02, Val(true))
+    graph10, project10 = compress(graph02, Val(true), tao)
     n02 = nv(graph02); n10 = nv(graph10)
 
     @inbounds for v01 in oneto(n00 - n02)
@@ -49,7 +49,7 @@ function compressreduce(reduce::Function, weights::AbstractVector{W}, graph::Abs
         #  ↓ project20
         # V20
         graph12, inject11, inject12, width20 = reduce(weights10, graph10, width10)
-        graph20, project20 = compress(graph12, Val(true))
+        graph20, project20 = compress(graph12, Val(true), tao)
         n12 = nv(graph12); n20 = nv(graph20)
 
         for v11 in oneto(n10 - n12)

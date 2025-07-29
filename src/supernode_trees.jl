@@ -81,7 +81,6 @@ function supernodetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Pe
     target2 = FVector{V}(undef, m)
     target3 = FVector{V}(undef, n)
 
-    ework1 = FVector{E}(undef, n)
     pointer1 = FVector{E}(undef, nn)
     pointer2 = FVector{E}(undef, nn)
     pointer3 = FVector{V}(undef, nnn)
@@ -98,7 +97,7 @@ function supernodetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Pe
     order, index = permutation(weights, graph, alg)
 
     sndtree, upper, lower = supernodetree_impl!(target1, target2,
-        target3, ework1, pointer1, pointer2, pointer3, colcount,
+        target3, pointer1, pointer2, pointer3, colcount,
         elmorder, elmindex, sndptr, sepptr, new, parent, elmtree, graph,
         order, index, snd)
 
@@ -109,7 +108,6 @@ function supernodetree_impl!(
         target1::AbstractVector{V},
         target2::AbstractVector{V},
         target3::AbstractVector{V},
-        ework1::AbstractVector{E},
         pointer1::AbstractVector{E},
         pointer2::AbstractVector{E},
         pointer3::AbstractVector{V},
@@ -129,10 +127,10 @@ function supernodetree_impl!(
 
     n = nv(graph)
 
-    upper = eliminationtree_impl!(ework1, elmorder,
+    upper = eliminationtree_impl!(elmorder,
         pointer1, target1, elmtree, graph, index)
 
-    lower = reverse!_impl!(ework1, pointer2, target2, upper)
+    lower = reverse!_impl!(pointer2, target2, upper)
 
     supcnt_impl!(colcount, new, parent, index, elmorder,
         elmindex, sndptr, UnionFind(target1, pointer3, target3),
@@ -141,7 +139,7 @@ function supernodetree_impl!(
     ancestor = index
 
     tree = stree_impl!(new, parent, ancestor, elmorder,
-        tree_impl!(target1, pointer3, target3, elmtree),
+        tree_impl!(pointer3, target3, elmtree),
         colcount, snd)
 
     postorder!_impl!(target1, sndptr, elmindex, elmorder, tree)
@@ -177,7 +175,7 @@ function supernodetree_impl!(
 
     h = last(tree)
     residual = BipartiteGraph(n, h, n, sndptr, oneto(n))
-    sndtree = SupernodeTree(tree_impl!(target1, pointer3, target3, tree), residual)
+    sndtree = SupernodeTree(tree_impl!(pointer3, target3, tree), residual)
     return sndtree, upper, lower
 end
 

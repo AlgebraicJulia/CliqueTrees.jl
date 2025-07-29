@@ -539,8 +539,10 @@ end
             BT(),
             MinimalChordal(),
             CompositeRotations([]),
-            SafeRules(),
-            SimplicialRule(),
+            SafeRules(; tao=1.0),
+            SafeRules(; tao=0.9),
+            SimplicialRule(; tao=1.0),
+            SimplicialRule(; tao=0.9),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
         )
@@ -601,8 +603,10 @@ end
             SafeFlowCutter(; time = 1),
             BT(),
             CompositeRotations([1]),
-            SafeRules(),
-            SimplicialRule(),
+            SafeRules(; tao=1.0),
+            SafeRules(; tao=0.9),
+            SimplicialRule(; tao=1.0),
+            SimplicialRule(; tao=0.9),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -705,7 +709,8 @@ end
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
-                @inferred CliqueTrees.twins(graph, Val(true))
+                @inferred CliqueTrees.twins(graph, Val(true), 1.0)
+                @inferred CliqueTrees.twins(graph, Val(true), 0.9)
                 @inferred CliqueTrees.sr(weights, graph, zero(V))
                 @inferred CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @inferred treewidth(graph; alg = 1:17)
@@ -740,7 +745,8 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true))
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 1.0)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 0.9)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.sr(weights, graph, zero(V))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @test_call target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
@@ -787,7 +793,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true))
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 1.0)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 0.9)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.sr(weights, graph, zero(V))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
                 @test_opt target_modules = (CliqueTrees,) treewidth(graph; alg = 1:17)
@@ -878,8 +885,10 @@ end
                         BT(),
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
-                        SafeRules(),
-                        SimplicialRule(),
+                        SafeRules(; tao=1.0),
+                        SafeRules(; tao=0.9),
+                        SimplicialRule(; tao=1.0),
+                        SimplicialRule(; tao=0.9),
                         ConnectedComponents(),
                         BestWidth(MCS(), MF()),
                         BestFill(MCS(), MF()),
@@ -1116,8 +1125,8 @@ end
         MMD(),
         MMD(; delta = 5),
         AMF(),
-        SimplicialRule(ND{2}(MMD(), METISND())),
-        SimplicialRule(ND{2}(MMD(), METIS_OR_KAHYPAR())),
+        SimplicialRule(ND{2}(MMD(), METISND()); tao=1.0),
+        SimplicialRule(ND{2}(MMD(), METIS_OR_KAHYPAR()); tao=0.9),
         MF(),
     )
 

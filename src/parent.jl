@@ -109,49 +109,47 @@ function lcrs_impl!(
 end
 
 function reverse!_impl!(
-        count::AbstractVector{V},
         graph::BipartiteGraph{V, V},
         tree::Parent{V},
     ) where {V}
-    @argcheck length(tree) < length(count)
-    @argcheck length(tree) < nv(graph)
-    @argcheck length(tree) <= nov(graph)
-    @argcheck length(tree) <= ne(graph)
-    n = last(tree); nn = n + one(V)
+    @argcheck length(tree) == nv(graph) - one(V)
+    @argcheck length(tree) == nov(graph)
+    @argcheck length(tree) == ne(graph)
 
-    @inbounds for i in oneto(nn)
-        count[i] = zero(V)
+    @inbounds for i in vertices(graph)
+        ii = i + one(V)
+        pointers(graph)[ii] = zero(V)
     end
 
     @inbounds for i in tree
         j = parentindex(tree, i)
-
-        if isnothing(j)
-            j = nn
+        
+        if !isnothing(j)
+            jj = j + two(V)
+            pointers(graph)[jj] += one(V)
         end
-
-        count[j] += one(V)
     end
+    
+    @inbounds pointers(graph)[begin] = p = one(V)
 
-    @inbounds i = one(V); pointers(graph)[i] = p = one(V)
-
-    @inbounds while i <= nn
-        deg = count[i]; count[i] = p
-        i += one(V); pointers(graph)[i] = p += deg
+    @inbounds for i in vertices(graph)
+        ii = i + one(V)
+        pointers(graph)[ii] = p += pointers(graph)[ii]
     end
-
+    
     @inbounds for i in tree
         j = parentindex(tree, i)
-
+                
         if isnothing(j)
-            j = nn
+            j = nv(graph)
         end
 
-        p = count[j]; count[j] = p + one(V)
-        targets(graph)[p] = i
+        jj = j + one(V)
+        targets(graph)[pointers(graph)[jj]] = i
+        pointers(graph)[jj] += one(V)
     end
 
-    return
+    return graph
 end
 
 # An Efficient Algorithm to Compute Row and Column Counts for Sparse Cholesky Factorization
@@ -278,25 +276,10 @@ function compositerotations(upper::AbstractGraph{V}, clique::AbstractVector{V}) 
     order = Vector{V}(undef, n)
     index = Vector{V}(undef, n)
     fdesc = Vector{V}(undef, n)
-    count = Vector{E}(undef, n)
     lower = BipartiteGraph{V, E}(n, n, m)
     tree = Parent{V}(n)
-    compositerotations_impl!(alpha, order, index, fdesc, count, lower, tree, upper, clique)
+    compositerotations_impl!(alpha, order, index, fdesc, lower, tree, upper, clique)
     return alpha
-end
-
-function compositerotations_impl!(
-        alpha::AbstractVector{I},
-        order::AbstractVector{I},
-        index::AbstractVector{I},
-        fdesc::AbstractVector{I},
-        lower::BipartiteGraph{I, I},
-        tree::Parent{I},
-        upper::AbstractGraph{I},
-        clique::AbstractVector{I},
-    ) where {I}
-    count = order
-    return compositerotations_impl!(alpha, order, index, fdesc, count, lower, tree, upper, clique)
 end
 
 # Equivalent Sparse Matrix Reorderings by Elimination Tree Rotations
@@ -311,7 +294,6 @@ function compositerotations_impl!(
         order::AbstractVector{V},
         index::AbstractVector{V},
         fdesc::AbstractVector{V},
-        count::AbstractVector{E},
         lower::BipartiteGraph{V, E},
         tree::Parent{V},
         upper::AbstractGraph{V},
@@ -324,7 +306,7 @@ function compositerotations_impl!(
     @argcheck nv(upper) == nv(lower)
     n = nv(upper)
     etree_impl!(tree, fdesc, upper)
-    reverse!_impl!(count, lower, upper)
+    reverse!_impl!(lower, upper)
     postorder_impl!(alpha, fdesc, index, order, tree)
     firstdescendants_impl!(fdesc, tree, index)
 

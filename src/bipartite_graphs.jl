@@ -223,44 +223,36 @@ end
 # The complexity is O(m), where m = |E|.
 function sympermute(graph::AbstractGraph{V}, index::AbstractVector, order::Ordering) where {V}
     E = etype(graph); m = half(de(graph)); n = nv(graph); nn = n + one(V)
-    count = FVector{E}(undef, n)
-    ptr = FVector{E}(undef, nn)
-    tgt = FVector{V}(undef, m)
-    return sympermute!_impl!(count, ptr, tgt, graph, index, order)
+    pointer = FVector{E}(undef, nn)
+    target = FVector{V}(undef, m)
+    return sympermute!_impl!(pointer, target, graph, index, order)
 end
 
 function sympermute!_impl!(
-        count::AbstractVector{E},
         target::BipartiteGraph{V, E},
         source::AbstractGraph{V},
         index::AbstractVector{V},
         order::Ordering
     ) where {V, E}
-    ptr = pointers(target)
-    tgt = targets(target)
-
-    sympermute!_impl!(count, ptr,
-        tgt, source, index, order)
-
+    sympermute!_impl!(pointers(target), targets(target), source, index, order)
     return target
 end
 
 function sympermute!_impl!(
-        count::AbstractVector{E},
-        ptr::AbstractVector{E},
-        tgt::AbstractVector{V},
+        pointer::AbstractVector{E},
+        target::AbstractVector{V},
         source::AbstractGraph,
         index::AbstractVector,
         order::Ordering,
     ) where {V, E}
-    @argcheck nv(source) < length(ptr)
-    @argcheck nv(source) <= length(count)
+    @argcheck nv(source) < length(pointer)
     @argcheck nv(source) <= length(index)
-    @argcheck half(de(source)) <= length(tgt)
+    @argcheck half(de(source)) <= length(target)
     n = nv(source)
 
     @inbounds for i in oneto(n)
-        count[i] = zero(E)
+        ii = i + one(V)
+        pointer[ii] = zero(E)
     end
 
     @inbounds for j in vertices(source)
@@ -275,17 +267,19 @@ function sympermute!_impl!(
                     kk = ii
                 end
 
-                count[kk] += one(E)
+                if kk < n
+                    kkk = kk + two(V)
+                    pointer[kkk] += one(E)
+                end
             end
         end
     end
 
-    ptr[begin] = p = one(E)
+    @inbounds pointer[begin] = p = one(E)
 
     @inbounds for i in oneto(n)
-        ii = i + one(V); pp = p + count[i]
-        count[i] = p; ptr[ii] = pp
-        p = pp
+        ii = i + one(V)
+        pointer[ii] = p += pointer[ii]
     end
 
     @inbounds for j in vertices(source)
@@ -300,14 +294,15 @@ function sympermute!_impl!(
                     ii, kk = kk, ii
                 end
 
-                tgt[count[kk]] = ii
-                count[kk] += one(E)
+                kkk = kk + one(V)
+                target[pointer[kkk]] = ii
+                pointer[kkk] += one(E)
             end
         end
     end
 
-    m = p - one(E)
-    return BipartiteGraph(n, n, m, ptr, tgt)
+    @inbounds m = pointer[n + one(V)] - one(E)
+    return BipartiteGraph(n, n, m, pointer, target)
 end
 
 # Compute the transpose of a graph.
@@ -319,53 +314,53 @@ end
 
 function Base.reverse!(result::BipartiteGraph{V, E}, graph::AbstractGraph{V}) where {V, E}
     n = nov(graph)
-    count = FVector{E}(undef, n)
-    reverse!_impl!(count, result, graph)
+    reverse!_impl!(result, graph)
     return result
 end
 
 function reverse!_impl!(
-        count::AbstractVector{E},
         target::BipartiteGraph{V, E},
         source::AbstractGraph{V},
     ) where {V, E}
     @argcheck nov(target) == nv(source)
     @argcheck nov(source) == nv(target)
     @argcheck de(source) == de(target)
-    reverse!_impl!(count, pointers(target), targets(target), source)
+    reverse!_impl!(pointers(target), targets(target), source)
     return target
 end
 
 function reverse!_impl!(
-        count::AbstractVector{E},
         pointer::AbstractVector{E},
         target::AbstractVector{V},
         graph::AbstractGraph{V},
     ) where {V, E}
     @argcheck nov(graph) < length(pointer)
     @argcheck de(graph) <= length(target)
-    @argcheck nov(graph) <= length(count)
     h = nov(graph); n = nv(graph); m = de(graph)
-
+    
     @inbounds for i in outvertices(graph)
-        count[i] = zero(E)
+        ii = i + one(V)
+        pointer[ii] = zero(E)
     end
 
     @inbounds for j in vertices(graph), i in neighbors(graph, j)
-        count[i] += one(E)
+        if i < h
+            ii = i + two(V)
+            pointer[ii] += one(E)
+        end
     end
 
-    pointer[begin] = p = one(E)
+    @inbounds pointer[begin] = p = one(E)
 
     @inbounds for i in outvertices(graph)
-        ii = i + one(V); pp = p + count[i]
-        count[i] = p; pointer[ii] = pp
-        p = pp
+        ii = i + one(V)
+        pointer[ii] = p += pointer[ii]
     end
 
     @inbounds for j in vertices(graph), i in neighbors(graph, j)
-        target[count[i]] = j
-        count[i] += one(E)
+        ii = i += one(V)
+        target[pointer[ii]] = j
+        pointer[ii] += one(E)
     end
 
     return BipartiteGraph(n, h, m, pointer, target)

@@ -33,9 +33,8 @@ end
 
 function Tree{I, Prnt, Ptr, Tgt}(tree::Parent{I, Prnt}) where {I, Prnt, Ptr, Tgt}
     n = last(tree); nn = n + one(I)
-    count = FVector{I}(undef, nn)
     graph = BipartiteGraph{I, I, Ptr, Tgt}(n, nn, n)
-    return tree_impl!(count, graph, tree)
+    return tree_impl!(graph, tree)
 end
 
 function Tree(tree::Tree)
@@ -98,12 +97,11 @@ end
 
 function eliminationtree(graph::AbstractGraph{V}, (order, index)::Tuple{Vector{V}, Vector{V}}) where {V}
     E = etype(graph); n = nv(graph); m = half(de(graph)); nn = n + one(V)
-    count = FVector{E}(undef, n)
     ancestor = FVector{V}(undef, n)
     pointer = FVector{E}(undef, nn)
     target = FVector{V}(undef, m)
     tree = Parent{V}(n)
-    eliminationtree_impl!(count, ancestor, pointer, target, tree, graph, index)
+    eliminationtree_impl!(ancestor, pointer, target, tree, graph, index)
     return order, Tree(tree)
 end
 
@@ -120,7 +118,6 @@ function eliminationtree(weights::AbstractVector, graph::AbstractGraph, alg::Per
 end
 
 function eliminationtree_impl!(
-        count::AbstractVector{E},
         ancestor::AbstractVector{V},
         pointer::AbstractVector{E},
         target::AbstractVector{V},
@@ -128,29 +125,27 @@ function eliminationtree_impl!(
         graph,
         index::AbstractVector{V},
     ) where {V, E}
-    upper = sympermute!_impl!(count, pointer, target, graph, index, Forward)
+    upper = sympermute!_impl!(pointer, target, graph, index, Forward)
     etree_impl!(tree, ancestor, upper)
     return upper
 end
 
 function tree_impl!(
-        count::AbstractVector{V},
         graph::BipartiteGraph{V, V},
         tree::Parent{V},
     ) where {V}
-    reverse!_impl!(count, graph, tree)
+    reverse!_impl!(graph, tree)
     return Tree(tree, graph)
 end
 
 function tree_impl!(
-        count::AbstractVector{V},
         pointer::AbstractVector{V},
         target::AbstractVector{V},
         tree::Parent{V},
     ) where {V}
     n = last(tree); nn = n + one(V)
     graph = BipartiteGraph(n, nn, n, pointer, target)
-    return tree_impl!(count, graph, tree)
+    return tree_impl!(graph, tree)
 end
 
 function Base.copy(tree::Tree)

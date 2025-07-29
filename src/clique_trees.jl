@@ -111,7 +111,6 @@ function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Permu
     target2 = FVector{V}(undef, m)
     target3 = FVector{V}(undef, n)
 
-    ework1 = FVector{E}(undef, n)
     pointer1 = FVector{E}(undef, nn)
     pointer2 = FVector{E}(undef, nn)
     pointer3 = FVector{V}(undef, nnn)
@@ -128,7 +127,7 @@ function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Permu
     order, index = permutation(weights, graph, alg)
 
     sndtree, upper, lower = supernodetree_impl!(target1, target2,
-        target3, ework1, pointer1, pointer2, pointer3, colcount,
+        target3, pointer1, pointer2, pointer3, colcount,
         elmorder, elmindex, sndptr, sepptr, new, parent, elmtree, graph,
         order, index, snd)
 
@@ -136,14 +135,13 @@ function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Permu
     septgt = FVector{V}(undef, k)
     separator = BipartiteGraph(n, h, k, sepptr, septgt)
 
-    clqtree = cliquetree_impl!(ework1, elmindex,
+    clqtree = cliquetree_impl!(elmindex,
         upper, lower, separator, sndtree)
 
     return order, clqtree
 end
 
 function cliquetree_impl!(
-        count::AbstractVector{E},
         index::AbstractVector{V},
         target::BipartiteGraph{V, E},
         source::BipartiteGraph{V, E},
@@ -151,7 +149,7 @@ function cliquetree_impl!(
         sndtree::SupernodeTree{V},
     ) where {V, E}
     n = last(sndtree.tree)
-    lower = sympermute!_impl!(count, target, source, index, Reverse)
+    lower = sympermute!_impl!(target, source, index, Reverse)
     residual = residuals(sndtree); cache = index
 
     for j in oneto(n)
@@ -398,17 +396,16 @@ function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::Per
     vwork3 = FVector{V}(undef, n)
     vwork4 = FVector{V}(undef, n)
     vwork5 = FVector{V}(undef, n)
-    ework0 = FVector{E}(undef, n)
     
     width = treewidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, index)
+        vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, index)
 
     return width
 end
 
 function treewidth_impl!(
-        lower::BipartiteGraph{V},
-        upper::BipartiteGraph{V},
+        lower::BipartiteGraph{V, E},
+        upper::BipartiteGraph{V, E},
         tree::Parent{V},
         sets::UnionFind{V},
         wwork0::AbstractVector{W},
@@ -419,7 +416,6 @@ function treewidth_impl!(
         vwork3::AbstractVector{V},
         vwork4::AbstractVector{V},
         vwork5::AbstractVector{V},
-        ework0::AbstractVector{E},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         index::AbstractVector{V},
@@ -431,8 +427,8 @@ function treewidth_impl!(
         wwork1[index[v]] = weights[v]
     end
     
-    sympermute!_impl!(ework0, upper, graph, index, Forward)
-    reverse!_impl!(ework0, lower, upper)
+    sympermute!_impl!(upper, graph, index, Forward)
+    reverse!_impl!(lower, upper)
     etree_impl!(tree, vwork0, upper)
     
     supcnt_impl!(wwork0, vwork0, vwork1, vwork2, vwork3,
@@ -471,42 +467,16 @@ function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NT
     vwork3 = FVector{V}(undef, n)
     vwork4 = FVector{V}(undef, n)
     vwork5 = FVector{V}(undef, n)
-    ework0 = FVector{E}(undef, n)
 
     index = bestwidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices)
+        vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, indices)
 
     return pairs[index]
 end
 
 function bestwidth_impl!(
-        lower::BipartiteGraph{I},
-        upper::BipartiteGraph{I},
-        tree::Parent{I},
-        sets::UnionFind{I},
-        wwork0::AbstractVector{W},
-        wwork1::AbstractVector{W},
-        vwork0::AbstractVector{I},
-        vwork1::AbstractVector{I},
-        vwork2::AbstractVector{I},
-        vwork3::AbstractVector{I},
-        vwork4::AbstractVector{I},
-        vwork5::AbstractVector{I},
-        weights::AbstractVector{W},
-        graph::AbstractGraph{I},
-        indices::NTuple{N, AbstractVector{I}},
-    ) where {W, I, N}
-    ework0 = vwork0
-
-    index = bestwidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices)
-
-    return index
-end
-
-function bestwidth_impl!(
-        lower::BipartiteGraph{V},
-        upper::BipartiteGraph{V},
+        lower::BipartiteGraph{V, E},
+        upper::BipartiteGraph{V, E},
         tree::Parent{V},
         sets::UnionFind{V},
         wwork0::AbstractVector{W},
@@ -517,7 +487,6 @@ function bestwidth_impl!(
         vwork3::AbstractVector{V},
         vwork4::AbstractVector{V},
         vwork5::AbstractVector{V},
-        ework0::AbstractVector{E},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         indices::NTuple{N, AbstractVector{V}},
@@ -527,7 +496,7 @@ function bestwidth_impl!(
 
     for index in oneto(N)
         width = treewidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-            vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices[index])
+            vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, indices[index])
 
         if width < minwidth
             minindex, minwidth = index, width
@@ -602,17 +571,16 @@ function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::Perm
     vwork3 = FVector{V}(undef, n)
     vwork4 = FVector{V}(undef, n)
     vwork5 = FVector{V}(undef, n)
-    ework0 = FVector{E}(undef, n)
     
     fill = treefill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, index)
+        vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, index)
 
     return fill
 end
 
 function treefill_impl!(
-        lower::BipartiteGraph{V},
-        upper::BipartiteGraph{V},
+        lower::BipartiteGraph{V, E},
+        upper::BipartiteGraph{V, E},
         tree::Parent{V},
         sets::UnionFind{V},
         wwork0::AbstractVector{W},
@@ -623,7 +591,6 @@ function treefill_impl!(
         vwork3::AbstractVector{V},
         vwork4::AbstractVector{V},
         vwork5::AbstractVector{V},
-        ework0::AbstractVector{E},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         index::AbstractVector{V},
@@ -635,8 +602,8 @@ function treefill_impl!(
         wwork1[index[v]] = weights[v]
     end
     
-    sympermute!_impl!(ework0, upper, graph, index, Forward)
-    reverse!_impl!(ework0, lower, upper)
+    sympermute!_impl!(upper, graph, index, Forward)
+    reverse!_impl!(lower, upper)
     etree_impl!(tree, vwork0, upper)
     
     supcnt_impl!(wwork0, vwork0, vwork1, vwork2, vwork3,
@@ -675,42 +642,16 @@ function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTu
     vwork3 = FVector{V}(undef, n)
     vwork4 = FVector{V}(undef, n)
     vwork5 = FVector{V}(undef, n)
-    ework0 = FVector{E}(undef, n)
 
     index = bestfill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices)
+        vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, indices)
 
     return pairs[index]
 end
 
 function bestfill_impl!(
-        lower::BipartiteGraph{I},
-        upper::BipartiteGraph{I},
-        tree::Parent{I},
-        sets::UnionFind{I},
-        wwork0::AbstractVector{W},
-        wwork1::AbstractVector{W},
-        vwork0::AbstractVector{I},
-        vwork1::AbstractVector{I},
-        vwork2::AbstractVector{I},
-        vwork3::AbstractVector{I},
-        vwork4::AbstractVector{I},
-        vwork5::AbstractVector{I},
-        weights::AbstractVector{W},
-        graph::AbstractGraph{I},
-        indices::NTuple{N, AbstractVector{I}},
-    ) where {W, I, N}
-    ework0 = vwork0
-
-    index = bestfill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-        vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices)
-
-    return index
-end
-
-function bestfill_impl!(
-        lower::BipartiteGraph{V},
-        upper::BipartiteGraph{V},
+        lower::BipartiteGraph{V, E},
+        upper::BipartiteGraph{V, E},
         tree::Parent{V},
         sets::UnionFind{V},
         wwork0::AbstractVector{W},
@@ -721,7 +662,6 @@ function bestfill_impl!(
         vwork3::AbstractVector{V},
         vwork4::AbstractVector{V},
         vwork5::AbstractVector{V},
-        ework0::AbstractVector{E},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         indices::NTuple{N, AbstractVector{V}},
@@ -731,7 +671,7 @@ function bestfill_impl!(
 
     for index in oneto(N)
         fill = treefill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
-            vwork1, vwork2, vwork3, vwork4, vwork5, ework0, weights, graph, indices[index])
+            vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, indices[index])
 
         if fill < minfill
             minindex, minfill = index, fill

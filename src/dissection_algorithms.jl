@@ -265,6 +265,7 @@ end
 # Construct a β-quasi-clique cover.
 # The complexity is O( ∑ |N(v)|² ) ≤ O( Δ|E| ).
 function qcc!(graph::BipartiteGraph{V, E}, beta::W, order::Ordering) where {W, V, E}
+    @argcheck zero(W) < beta <= one(W)
     n = nv(graph); m = ne(graph); mm = m + one(E)
     marker = zeros(V, n)
 
