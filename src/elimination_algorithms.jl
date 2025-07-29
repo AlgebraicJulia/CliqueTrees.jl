@@ -1067,17 +1067,18 @@ julia> alg1 = BT()
 BT
 
 julia> alg2 = SafeRules(BT(), MMW(), MF())
-SafeRules{BT, MMW, MF}:
+SafeRules{BT, MMW{3}, MF}:
     BT
-    MMW
+    MMW{3}
     MF
+    tao: 1.0
 
 julia> @time treewidth(graph; alg=alg1) # slow
-  0.000177 seconds (1.41 k allocations: 90.031 KiB)
+  0.000163 seconds (1.37 k allocations: 88.094 KiB)
 2
 
 julia> @time treewidth(graph; alg=alg2) # fast
-  0.000044 seconds (282 allocations: 15.969 KiB)
+  0.000043 seconds (100 allocations: 7.250 KiB)
 2
 ```
 
@@ -1086,6 +1087,7 @@ julia> @time treewidth(graph; alg=alg2) # fast
   - `alg`: elimination algorithm
   - `lb`: lower bound algorithm (used to lower bound the treiwidth)
   - `ub`: elimination algorithm (used to upper bound the treewidth)
+  - `tao`: threshold parameter for graph compression
 
 ### References
 
@@ -2661,6 +2663,11 @@ end
 #
 # Algorithm 3.8: Find approximately indistinguishable vertex sets
 # in an undirected graph
+#
+# Finding Exact and Approximate Block Structures for ILU Preconditioning
+# Yousef Saad
+#
+# Algorithm 2.2: Cosine-based compression
 function twins(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
     if isone(tao)
         return twins(graph, Val(S))
