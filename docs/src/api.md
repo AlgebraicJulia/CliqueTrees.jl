@@ -107,3 +107,9 @@ FilledGraph
 ischordal
 isperfect
 ```
+
+## Matrix Factorization
+```@docs
+CholFact
+CliqueTrees.cholesky
+```

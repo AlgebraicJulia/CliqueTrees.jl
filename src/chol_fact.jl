@@ -1,3 +1,8 @@
+"""
+    CholFact{T, I}
+
+A Cholesky factorization object.
+"""
 struct CholFact{T, I}
     tree::CliqueTree{I, I}
     perm::Vector{I}
@@ -7,23 +12,62 @@ struct CholFact{T, I}
     status::Bool
 end
 
-function cholesky(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=AMF())
-    F = cholesky(matrix, alg)
+"""
+    cholesky(matrix::AbstractMatrix;
+        alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
+        snd::SupernodeType=DEFAULT_SUPERNODE_TYPE,
+    )
+
+Compute the Cholesky factorization of a sparse positive definite matrix.
+The factorization occurs in two phases: symbolic and numeric. During the
+symbolic phase, a *tree decomposition* is constructed which will control
+the numeric phase. The speed of the numeric phase is dependant on the
+quality of this tree decomposition.
+
+The symbolic phase is controlled by the parameters `alg` and `snd`.
+See the function [`cliquetree`](@ref) for more information.
+
+### Parameters
+
+  - `alg`: elimination algorithm
+  - `snd`: supernode type
+
+```julia
+julia> import CliqueTrees
+
+julia> M = [
+           1.5   94.2    0.8 0.0
+           94.2  15080.4 0.0 0.0
+           0.8   0.0     3.1 0.0
+           0.0   0.0     0.0 1.6
+       ];
+
+julia> b = [1.0, 2.0, 1.0, 2.0];
+
+julia> F = CliqueTrees.cholesky(M)
+CholFact{Float64, Int64}:
+    success: true
+
+julia> x = F \\ b; # solve M x = b
+```
+"""
+function cholesky(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
+    F = cholesky(matrix, alg, snd)
     return F
 end
 
-function cholesky(matrix::AbstractMatrix, alg::PermutationOrAlgorithm)
-    F = cholesky!(sparse(matrix), alg)
+function cholesky(matrix::AbstractMatrix, alg::PermutationOrAlgorithm, snd::SupernodeType)
+    F = cholesky!(sparse(matrix), alg, snd)
     return F
 end
 
-function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=AMF())
-    F = cholesky!(matrix, alg)
+function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
+    F = cholesky!(matrix, alg, snd)
     return F
 end
 
-function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm) where {T, I}
-    perm, tree = cliquetree(matrix; alg)
+function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {T, I}
+    perm, tree = cliquetree(matrix; alg, snd)
     tril!(permute!(matrix, perm, perm))
 
     residual = residuals(tree)
