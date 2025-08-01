@@ -1165,6 +1165,26 @@ end
     @test treefill(matrix; alg=AMF()) <= fill
 end
 
+@testset "cholesky" begin
+    matrices = ("torsion1", "obstclae", "jnlbrng1", "minsurfo", "cvxbqp1",
+        "wathen100", "gridgena", "apache1", "wathen120", "oilpan")
+
+    for name in matrices
+        matrix = readmatrix(name); n = size(matrix, 2)
+        M = SparseMatrixCSC{Float64}(matrix)
+        F = CliqueTrees.cholesky(M)
+        b1 = rand(Float64, n)
+        b2 = M * (F \ b1)
+        @test sum(abs.(b1 - b2)) / n < 0.01
+    end
+
+    matrix = readmatrix("torsion1")
+    M = SparseMatrixCSC{Float64}(matrix)
+    @inferred CliqueTrees.cholesky(M)
+    @test_call target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
+    @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
+end
+
 @testset "exact treewidth" begin
     lb_algs = (
         MMW{1}(),

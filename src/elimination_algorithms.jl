@@ -3339,11 +3339,11 @@ function Base.show(io::IO, ::MIME"text/plain", alg::BestWidth{A}) where {A}
 end
 
 """
-    DEFAULT_ELIMINATION_ALGORITHM = MMD()
+    DEFAULT_ELIMINATION_ALGORITHM = AMF()
 
 The default algorithm.
 """
-const DEFAULT_ELIMINATION_ALGORITHM = MMD()
+const DEFAULT_ELIMINATION_ALGORITHM = AMF()
 
 """
     RCM = RCMGL

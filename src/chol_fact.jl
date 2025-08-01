@@ -7,22 +7,22 @@ struct CholFact{T, I}
     status::Bool
 end
 
-function cholesky(matrix::AbstractMatrix; alg::EliminationAlgorithm=AMF())
+function cholesky(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=AMF())
     F = cholesky(matrix, alg)
     return F
 end
 
-function cholesky(matrix::AbstractMatrix, alg::EliminationAlgorithm)
+function cholesky(matrix::AbstractMatrix, alg::PermutationOrAlgorithm)
     F = cholesky!(sparse(matrix), alg)
     return F
 end
 
-function cholesky!(matrix::SparseMatrixCSC; alg::EliminationAlgorithm=AMF())
+function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=AMF())
     F = cholesky!(matrix, alg)
     return F
 end
 
-function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::EliminationAlgorithm) where {T, I}
+function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm) where {T, I}
     perm, tree = cliquetree(matrix; alg)
     tril!(permute!(matrix, perm, perm))
 
@@ -538,7 +538,8 @@ function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Fl
     return
 end
 
-function lacpy!(A::AbstractMatrix, B::AbstractMatrix)
+# copy the lower triangular part of B to A
+function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
     m = size(B, 1)
 
     for j in axes(B, 2)
@@ -550,12 +551,12 @@ function lacpy!(A::AbstractMatrix, B::AbstractMatrix)
     return
 end
 
-function potrf!(A::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    status = iszero(last(LAPACK.potrf!('L', A)))
-    return status
-end
-
-function potrf!(A::AbstractMatrix)
+# factorize A as
+#
+#     A = L Lᵀ
+#
+# and store A ← L
+function potrf!(A::AbstractMatrix{T}) where {T}
     status = true; m = size(A, 1)
 
     for j in axes(A, 2)
@@ -567,20 +568,69 @@ function potrf!(A::AbstractMatrix)
             end
         end
 
-        Ajj = A[j, j] = sqrt(A[j, j])
+        Ajj = A[j, j]
+
+        if !ispositive(Ajj)
+            status = false; Ajj = one(T)
+        end
+
+        Ajj = A[j, j] = sqrt(Ajj)
 
         for i in j + 1:m
             A[i, j] /= Ajj
         end
-
-        status = status && ispositive(Ajj)
     end
 
     return status
 end
 
+function potrf!(A::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    status = iszero(last(LAPACK.potrf!('L', A)))
+    return status
+end
+
+# compute the difference
+#
+#     C = B - A * A'
+#
+# and store B ← C
+function syrk!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
+    m = size(A, 1)
+
+    @inbounds for j in axes(A, 1)
+        for k in axes(A, 2)
+            Ajk = A[j, k]
+
+            for i in j:m
+                B[i, j] -= A[i, k] * Ajk
+            end
+        end
+    end
+
+    return
+end
+
 function syrk!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
     BLAS.syrk!('L', 'N', -one(T), A, one(T), B)
+    return
+end
+
+# solve for x in
+#
+#     A x = b
+#
+# and store b ← x
+function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{false}) where {T}
+    for i in axes(A, 1)
+        tmp = b[i]
+
+        for j in oneto(i - 1)
+            tmp -= A[i, j] * b[j]
+        end
+
+        b[i] = tmp / A[i, i]
+    end
+
     return
 end
 
@@ -589,8 +639,56 @@ function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{false}) where
     return
 end
 
+# solve for x in
+#
+#     Aᵀ x = b
+#
+# and store b ← x
+function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, ::Val{true}) where {T}
+    m = size(A, 1)
+ 
+    for j in reverse(axes(A, 2))
+        tmp = b[j]
+
+        for i in j + 1:m
+            tmp -= A[i, j] * b[i]
+        end
+
+        b[j] = tmp / A[j, j]
+    end
+
+    return
+end
+
 function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
     BLAS.trsv!('L', 'T', 'N', A, b)
+    return
+end
+
+# solve for X in
+#
+#     X Aᵀ = B
+#
+# and store B ← X
+function trsm!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, tA::Val{true}) where {T}
+    m = size(A, 1)
+
+    for j in axes(A, 1)
+        Ajj = A[j, j]
+
+        for k in axes(B, 1)
+            B[k, j] /= Ajj
+        end
+
+        for i in j + 1:m
+            Aij = A[i, j]
+
+            for k in axes(B, 1)
+                B[k, i] -= Aij * B[k, j]
+            end
+        end
+    end
+
     return
 end
 
@@ -599,12 +697,55 @@ function trsm!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, tA::Val{true}) where 
     return
 end
 
+# compute the difference
+#
+#     z = y - A x
+#
+# and store y ← z
+function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T}
+    for i in axes(A, 1)
+        tmp = zero(T)
+
+        for j in axes(A, 2)
+            tmp += A[i, j] * x[j]
+        end
+
+        y[i] -= tmp
+    end
+
+    return
+end
+
 function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
     BLAS.gemv!('N', -one(T), A, x, one(T), y)
+    return
+end
+
+# compute the difference
+#
+#     z = y - Aᵀ x
+#
+# and store y ← z
+function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T}
+    for j in axes(A, 2)
+        tmp = zero(T)
+
+        for i in axes(A, 1)
+            tmp += A[i, j] * x[i]
+        end
+
+        y[j] -= tmp
+    end
+
     return
 end
 
 function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
     BLAS.gemv!('T', -one(T), A, x, one(T), y)
     return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", F::CholFact{T, I}) where {T, I}
+    println(io, "CholFact{$T, $I}:")
+    println(io, "    success: $(F.status)")
 end
