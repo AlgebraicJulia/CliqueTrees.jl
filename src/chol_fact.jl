@@ -533,11 +533,6 @@ function ldiv!_loop_bwd!(
     return
 end
 
-function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    LAPACK.lacpy!(A, B, 'L')
-    return
-end
-
 # copy the lower triangular part of B to A
 function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
     m = size(B, 1)
@@ -549,6 +544,15 @@ function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
     end
 
     return
+end
+
+@static if VERSION >= v"1.11"
+
+function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    LAPACK.lacpy!(A, B, 'L')
+    return
+end
+
 end
 
 # factorize A as
