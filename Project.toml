@@ -2,7 +2,7 @@ name = "CliqueTrees"
 uuid = "60701a23-6482-424a-84db-faee86b9b1f8"
 license = "MIT"
 authors = ["Richard Samuelson <rsamuelson@ufl.edu>"]
-version = "1.8.0"
+version = "1.9.0"
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
@@ -43,7 +43,7 @@ libpicosat_jllExt = "libpicosat_jll"
 AMD = "0.5"
 AbstractTrees = "0.4"
 ArgCheck = "2.4"
-Catlab = "0.16"
+Catlab = "0.16, 0.17"
 CryptoMiniSat_jll = "5"
 FillArrays = "1"
 FixedSizeArrays = "1"
