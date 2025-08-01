@@ -1,63 +1,25 @@
-function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    LAPACK.lacpy!(A, B, 'L')
-    return
-end
-
-function potrf!(A::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    LAPACK.potrf!('L', A)
-    return
-end
-
-function trsm!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.trsm!('R', 'L', 'T', 'N', one(T), A, B)
-    return
-end
-
-function syrk!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.syrk!('L', 'N', -one(T), A, one(T), B)
-    return
-end
-
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.trsv!('L', 'N', 'N', A, b)
-    return
-end
-
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.trsv!('L', 'T', 'N', A, b)
-    return
-end
-
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.gemv!('N', -one(T), A, x, one(T), y)
-    return
-end
-
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.gemv!('T', -one(T), A, x, one(T), y)
-    return
-end
-
 struct CholFact{T, I}
     tree::CliqueTree{I, I}
     perm::Vector{I}
     blkptr::FVector{I}
     blkval::FVector{T}
     frtval::FVector{T}
+    status::Bool
 end
 
 function cholesky(matrix::AbstractMatrix; alg::EliminationAlgorithm=AMF())
-    fact = cholesky(matrix, alg)
-    return fact
+    F = cholesky(matrix, alg)
+    return F
 end
 
 function cholesky(matrix::AbstractMatrix, alg::EliminationAlgorithm)
-    return cholesky!(sparse(matrix), alg)
+    F = cholesky!(sparse(matrix), alg)
+    return F
 end
 
 function cholesky!(matrix::SparseMatrixCSC; alg::EliminationAlgorithm=AMF())
-    fact = cholesky!(matrix, alg)
-    return fact
+    F = cholesky!(matrix, alg)
+    return F
 end
 
 function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::EliminationAlgorithm) where {T, I}
@@ -104,10 +66,10 @@ function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::EliminationAlgorithm) whe
     relptr = pointers(separator)
     mapping = BipartiteGraph(njmax, treln, relln, relptr, relidx)
 
-    cholesky!_impl!(namax, mapping, blkptr,
+    status = cholesky!_impl!(namax, mapping, blkptr,
         updval, blkval, frtval, tree, matrix)
 
-    return CholFact(tree, perm, blkptr, blkval, frtval)
+    return CholFact(tree, perm, blkptr, blkval, frtval, status)
 end 
 
 function cholesky!_impl!(
@@ -122,17 +84,19 @@ function cholesky!_impl!(
     ) where {T, I}
     separator = separators(tree)
     relidx = targets(mapping)
-    ns = zero(I)
+    status = true; ns = zero(I)
 
     cholesky!_init!(relidx, blkptr,
         blkval, tree, matrix)
 
     for j in vertices(separator)
-        ns = cholesky!_loop!(namax, mapping, blkptr,
+        iterstatus, ns = cholesky!_loop!(namax, mapping, blkptr,
             updval, blkval, frtval, tree, ns, j)
+
+        status = status && iterstatus
     end
 
-    return
+    return status
 end
 
 function cholesky!_init!(
@@ -278,7 +242,7 @@ function cholesky!_loop!(
     #     F₁₁ = L₁₁ L₁₁ᵀ
     #
     # and store F₁₁ ← L₁₁
-    potrf!(F₁₁)
+    status = potrf!(F₁₁)
 
     if ispositive(na)
         # solve for L₂₁ in
@@ -286,7 +250,7 @@ function cholesky!_loop!(
         #     L₂₁ L₁₁ᵀ = F₂₁
         #
         # and store F₂₁ ← L₂₁
-        trsm!(F₁₁, F₂₁)
+        trsm!(F₁₁, F₂₁, Val(true))
     
         # compute
         #
@@ -308,7 +272,7 @@ function cholesky!_loop!(
     #     B₂₁ ← F₂₁
     #
     lacpy!(B, F₁)
-    return ns
+    return status, ns
 end
 
 function cholesky!_add_update!(
@@ -358,18 +322,23 @@ function cholesky!_add_update!(
     return
 end
 
-function LinearAlgebra.ldiv(F::CholFact{T}, b::AbstractVector) where {T}
-    n = length(b)
-    x = Vector{T}(undef, n)
+function Base.:\(F::CholFact, b::AbstractArray)
+    return ldiv(F, b)
+end
 
-    for i in oneto(n)
-        x[i] = b[i]
+function LinearAlgebra.ldiv(F::CholFact{T}, b::AbstractVector) where {T}
+    @argcheck nov(separators(F.tree)) == length(b)
+    x = Vector{T}(undef, size(b))
+
+    for v in eachindex(b)
+        x[v] = b[v]
     end
 
     return ldiv!(F, x)
 end
 
 function LinearAlgebra.ldiv!(F::CholFact{T}, b::AbstractVector{T}) where {T}
+    @argcheck nov(separators(F.tree)) == length(b)
     tree = F.tree
     perm = F.perm
     blkptr = F.blkptr
@@ -379,8 +348,7 @@ function LinearAlgebra.ldiv!(F::CholFact{T}, b::AbstractVector{T}) where {T}
     residual = residuals(tree)
     separator = separators(tree)
 
-    n = nov(separator)
-    x = FVector{T}(undef, n)
+    x = FVector{T}(undef, size(b))
 
     for v in outvertices(separator) 
         x[v] = b[perm[v]]
@@ -406,7 +374,7 @@ function ldiv!_loop_fwd!(
         blkval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I}, 
-        x::AbstractVector{T},
+        b::AbstractVector{T},
         j::I,
     ) where {T, I}
     residual = residuals(tree)
@@ -446,7 +414,7 @@ function ldiv!_loop_fwd!(
     L₁₁ = view(L, oneto(nn),      oneto(nn))
     L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
-    # X is part of the RHS
+    # X is part of b
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
@@ -456,17 +424,28 @@ function ldiv!_loop_fwd!(
     X₂ = view(X, nn + one(I):nj)
 
     for k in oneto(nj)
-        X[k] = x[bag[k]]
+        X[k] = b[bag[k]]
     end
 
+    # solve for Y₁ in
+    #
+    #     L₁₁ Y₁ = X₁
+    #
+    # and store X₁ ← Y₁
     trsv!(L₁₁, X₁, Val(false))
     
     if ispositive(na)
+        # compute the difference
+        #
+        #     Y₂ = X₂ - L₂₁ Y₁
+        #
+        # and store X₂ ← Y₂ 
         gemv!(L₂₁, X₁, X₂, Val(false))
     end
 
+    # copy X into b
     for k in oneto(nj)
-        x[bag[k]] = X[k]
+        b[bag[k]] = X[k]
     end
 
     return
@@ -477,7 +456,7 @@ function ldiv!_loop_bwd!(
         blkval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I}, 
-        x::AbstractVector{T},
+        b::AbstractVector{T},
         j::I,
     ) where {T, I}
     residual = residuals(tree)
@@ -517,7 +496,7 @@ function ldiv!_loop_bwd!(
     L₁₁ = view(L, oneto(nn),      oneto(nn))
     L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
-    # X is part of the RHS
+    # X is part of b
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
@@ -527,18 +506,105 @@ function ldiv!_loop_bwd!(
     X₂ = view(X, nn + one(I):nj)
 
     for k in oneto(nj)
-        X[k] = x[bag[k]]
+        X[k] = b[bag[k]]
     end
     
     if ispositive(na)
+        # compute the difference
+        #
+        #     Y₁ = X₁ - L₂₁ᵀ X₂
+        #
+        # and store X₁ ← Y₁ 
         gemv!(L₂₁, X₂, X₁, Val(true))
     end
 
+    # solve for Z₁ in
+    #
+    #     L₁₁ᵀ Z₁ = Y₁
+    #
+    # and store X₁ ← Z₁
     trsv!(L₁₁, X₁, Val(true))
 
+    # copy X into b
     for k in oneto(nj)
-        x[bag[k]] = X[k]
+        b[bag[k]] = X[k]
     end
 
+    return
+end
+
+function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    LAPACK.lacpy!(A, B, 'L')
+    return
+end
+
+function lacpy!(A::AbstractMatrix, B::AbstractMatrix)
+    m = size(B, 1)
+
+    for j in axes(B, 2)
+        for i in j:m
+            A[i, j] = B[i, j]
+        end
+    end
+
+    return
+end
+
+function potrf!(A::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    status = iszero(last(LAPACK.potrf!('L', A)))
+    return status
+end
+
+function potrf!(A::AbstractMatrix)
+    status = true; m = size(A, 1)
+
+    for j in axes(A, 2)
+        for k in oneto(j - 1)
+            Ajk = A[j, k]
+
+            for i in j:m
+                A[i, j] -= A[i, k] * Ajk
+            end
+        end
+
+        Ajj = A[j, j] = sqrt(A[j, j])
+
+        for i in j + 1:m
+            A[i, j] /= Ajj
+        end
+
+        status = status && ispositive(Ajj)
+    end
+
+    return status
+end
+
+function syrk!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    BLAS.syrk!('L', 'N', -one(T), A, one(T), B)
+    return
+end
+
+function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    BLAS.trsv!('L', 'N', 'N', A, b)
+    return
+end
+
+function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    BLAS.trsv!('L', 'T', 'N', A, b)
+    return
+end
+
+function trsm!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    BLAS.trsm!('R', 'L', 'T', 'N', one(T), A, B)
+    return
+end
+
+function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    BLAS.gemv!('N', -one(T), A, x, one(T), y)
+    return
+end
+
+function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
+    BLAS.gemv!('T', -one(T), A, x, one(T), y)
     return
 end

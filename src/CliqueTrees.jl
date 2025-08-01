@@ -11,6 +11,7 @@ using FixedSizeArrays
 using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra
+using LinearAlgebra: ldiv
 using SparseArrays
 using SparseArrays: getcolptr
 
