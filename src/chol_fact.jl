@@ -73,55 +73,59 @@ function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, s
     residual = residuals(tree)
     separator = separators(tree)
 
-    ns = nsmax = namax = njmax = blkln = zero(I)
+    up = ns = nsmax = njmax = upmax = blkln = zero(I)
 
     for j in vertices(separator)
-        for i in childindices(tree, j)
-            ns -= one(I)
-        end
-
-        if !isnothing(parentindex(tree, j))
-            ns += one(I)
-        end
-
         nn = eltypedegree(residual, j)
         na = eltypedegree(separator, j)
         nj = nn + na
 
+        for i in childindices(tree, j)
+            ma = eltypedegree(separator, i)
+
+            ns -= one(I)
+            up -= ma * ma
+        end
+
+        if !isnothing(parentindex(tree, j))
+            ns += one(I)
+            up += na * na 
+        end
+
         nsmax = max(nsmax, ns)
-        namax = max(namax, na)
         njmax = max(njmax, nj)
+        upmax = max(upmax, up)
 
         blkln = blkln + nn * nj
     end
 
     treln = nv(separator)
     relln = ne(separator)
-    updln = nsmax * namax * namax 
     frtln = njmax * njmax
 
     blkptr = FVector{I}(undef, treln + one(I))
+    updptr = FVector{I}(undef, nsmax + one(I))
     relidx = FVector{I}(undef, relln)
 
-    updval = FVector{T}(undef, updln)
     blkval = FVector{T}(undef, blkln)
+    updval = FVector{T}(undef, upmax)
     frtval = FVector{T}(undef, frtln)
 
     relptr = pointers(separator)
     mapping = BipartiteGraph(njmax, treln, relln, relptr, relidx)
 
-    status = cholesky!_impl!(namax, mapping, blkptr,
-        updval, blkval, frtval, tree, matrix)
+    status = cholesky!_impl!(mapping, blkptr,
+        updptr, blkval, updval, frtval, tree, matrix)
 
     return CholFact(tree, perm, blkptr, blkval, frtval, status)
 end 
 
 function cholesky!_impl!(
-        namax::I,
         mapping::BipartiteGraph{I, I},        
         blkptr::AbstractVector{I},
-        updval::AbstractVector{T},
+        updptr::AbstractVector{I},
         blkval::AbstractVector{T},
+        updval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I},
         matrix::SparseMatrixCSC{T, I},
@@ -131,11 +135,11 @@ function cholesky!_impl!(
     status = true; ns = zero(I)
 
     cholesky!_init!(relidx, blkptr,
-        blkval, tree, matrix)
+        updptr, blkval, tree, matrix)
 
     for j in vertices(separator)
-        iterstatus, ns = cholesky!_loop!(namax, mapping, blkptr,
-            updval, blkval, frtval, tree, ns, j)
+        iterstatus, ns = cholesky!_loop!(mapping, blkptr,
+            updptr, blkval, updval, frtval, tree, ns, j)
 
         status = status && iterstatus
     end
@@ -146,6 +150,7 @@ end
 function cholesky!_init!(
         relidx::AbstractVector{I},
         blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
         blkval::AbstractVector{T},
         tree::CliqueTree{I, I},
         matrix::SparseMatrixCSC{T, I},
@@ -153,7 +158,8 @@ function cholesky!_init!(
     residual = residuals(tree)
     separator = separators(tree)
     treln = nv(separator)
-    p = q = one(I)
+
+    updptr[one(I)] = p = q = one(I)
 
     for j in vertices(separator)
         blkptr[j] = p
@@ -214,11 +220,11 @@ function cholesky!_init!(
 end
 
 function cholesky!_loop!(
-        namax::I,
         mapping::BipartiteGraph{I, I},        
         blkptr::AbstractVector{I},
-        updval::AbstractVector{T},
+        updptr::AbstractVector{I},
         blkval::AbstractVector{T},
+        updval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I},
         ns::I,
@@ -277,7 +283,7 @@ function cholesky!_loop!(
     lacpy!(F, B); fill!(F₂₂, zero(T))
 
     for i in Iterators.reverse(childindices(tree, j))
-        cholesky!_add_update!(F, namax, ns, i, mapping, updval)
+        cholesky!_add_update!(F, ns, i, mapping, updptr, updval)
         ns -= one(I)
     end
 
@@ -304,8 +310,8 @@ function cholesky!_loop!(
         syrk!(F₂₁, F₂₂)
 
         ns += one(I)
-        pstrt = namax * namax * (ns - one(I)) + one(I)
-        pstop = pstrt + na * na
+        pstrt = updptr[ns]
+        pstop = updptr[ns + one(I)] = pstrt + na * na
         U₂₂ = reshape(view(updval, pstrt:pstop - one(I)), na, na)
         lacpy!(U₂₂, F₂₂)
     end
@@ -321,10 +327,10 @@ end
 
 function cholesky!_add_update!(
         F::AbstractMatrix{T},
-        namax::I,
         ns::I,
         i::I,
         mapping::BipartiteGraph{I, I},
+        updptr::AbstractVector{I},
         updval::AbstractVector{T},
     ) where {T, I}
     # na is the size of the separator at node i.
@@ -340,7 +346,7 @@ function cholesky!_add_update!(
     ind = neighbors(mapping, i)
 
     # U is the na × na update matrix for node i.
-    pstrt = namax * namax * (ns - one(I)) + one(I)
+    pstrt = updptr[ns]
     pstop = pstrt + na * na
     U = reshape(view(updval, pstrt:pstop - one(I)), na, na)
 
