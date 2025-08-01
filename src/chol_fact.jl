@@ -692,7 +692,7 @@ end
 #     Aᵀ x = b
 #
 # and store b ← x
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, ::Val{true}) where {T}
+function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{true}) where {T}
     m = size(A, 1)
  
     for j in reverse(axes(A, 2))
