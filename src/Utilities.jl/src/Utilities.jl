@@ -7,7 +7,7 @@ using FixedSizeArrays
 using Graphs
 
 # arrays
-export AbstractScalar, Scalar, FScalar, FVector
+export AbstractScalar, Scalar, FScalar, FVector, FMatrix, FArray
 
 # arithmetic
 export tolerance, twice, half, two, three, four, five, six, eight, ispositive, isnegative, istwo, isthree, isfour
@@ -23,8 +23,12 @@ export MAX_ITEMS_PRINTED, printiterator
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
-const FScalar{T} = FixedSizeArrayDefault{T, 0}
-const FVector{T} = FixedSizeArrayDefault{T, 1}
+
+const FArray{T} = FixedSizeArrayDefault{T}
+const FMatrix{T} = FArray{T, 2}
+const FVector{T} = FArray{T, 1}
+const FScalar{T} = FArray{T, 0}
+
 const MAX_ITEMS_PRINTED = 5
 
 # `tol = tolerance(W)` should satisfy

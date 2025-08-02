@@ -115,6 +115,6 @@ include("ambiguities.jl")
 include("packages.jl")
 include("pr3.jl")
 include("pr4.jl")
-include("chol_fact.jl")
+include("cholesky.jl")
 
 end

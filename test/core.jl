@@ -1173,9 +1173,14 @@ end
         matrix = readmatrix(name); n = size(matrix, 2)
         M = SparseMatrixCSC{Float64}(matrix)
         F = CliqueTrees.cholesky(M)
+
         b1 = rand(Float64, n)
         b2 = M * (F \ b1)
         @test sum(abs.(b1 - b2)) / n < 0.01
+
+        B1 = rand(Float64, n, 5)
+        B2 = M * (F \ B1)
+        @test sum(abs.(B1 - B2)) / n / 5 < 0.01
     end
 
     matrix = readmatrix("torsion1")

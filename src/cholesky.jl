@@ -6,9 +6,9 @@ A Cholesky factorization object.
 struct CholFact{T, I}
     tree::CliqueTree{I, I}
     perm::Vector{I}
+    width::I
     blkptr::FVector{I}
     blkval::FVector{T}
-    frtval::FVector{T}
     status::Bool
 end
 
@@ -117,7 +117,7 @@ function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, s
     status = cholesky!_impl!(mapping, blkptr,
         updptr, blkval, updval, frtval, tree, matrix)
 
-    return CholFact(tree, perm, blkptr, blkval, frtval, status)
+    return CholFact(tree, perm, njmax, blkptr, blkval, status)
 end 
 
 function cholesky!_impl!(
@@ -300,7 +300,7 @@ function cholesky!_loop!(
         #     L₂₁ L₁₁ᵀ = F₂₁
         #
         # and store F₂₁ ← L₂₁
-        trsm!(F₁₁, F₂₁, Val(true))
+        trsm!(F₁₁, F₂₁, Val(true), Val(true))
     
         # compute
         #
@@ -351,7 +351,7 @@ function cholesky!_add_update!(
     U = reshape(view(updval, pstrt:pstop - one(I)), na, na)
 
     # for all uj in sep(i) ...
-    for uj in oneto(na)
+    @inbounds for uj in oneto(na)
         # let fj = ind(uj)
         fj = ind[uj]
 
@@ -372,51 +372,53 @@ function cholesky!_add_update!(
     return
 end
 
-function Base.:\(F::CholFact, b::AbstractArray)
-    return ldiv(F, b)
+function Base.:\(F::CholFact, B)
+    return ldiv(F, B)
 end
 
-function LinearAlgebra.ldiv(F::CholFact{T}, b::AbstractVector) where {T}
-    @argcheck nov(separators(F.tree)) == length(b)
-    x = Vector{T}(undef, size(b))
+function LinearAlgebra.ldiv(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
+    @argcheck nov(separators(F.tree)) == size(B, 1)
+    X = Array{T}(undef, size(B))
 
-    for v in eachindex(b)
-        x[v] = b[v]
+    for w in axes(B, 2), v in axes(B, 1)
+        X[v, w] = B[v, w]
     end
 
-    return ldiv!(F, x)
+    return ldiv!(F, X)
 end
 
-function LinearAlgebra.ldiv!(F::CholFact{T}, b::AbstractVector{T}) where {T}
-    @argcheck nov(separators(F.tree)) == length(b)
+function LinearAlgebra.ldiv!(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
+    @argcheck nov(separators(F.tree)) == size(B, 1)
     tree = F.tree
     perm = F.perm
+    width = F.width
     blkptr = F.blkptr
     blkval = F.blkval
-    frtval = F.frtval
+
+    frtval = FVector{T}(undef, width * size(B, 2))
 
     residual = residuals(tree)
     separator = separators(tree)
 
-    x = FVector{T}(undef, size(b))
+    X = FArray{T}(undef, size(B))
 
-    for v in outvertices(separator) 
-        x[v] = b[perm[v]]
+    for w in axes(B, 2), v in axes(B, 1)
+        X[v, w] = B[perm[v], w]
     end
     
     for j in vertices(separator)
-        ldiv!_loop_fwd!(blkptr, blkval, frtval, tree, x, j)
+        ldiv!_loop_fwd!(blkptr, blkval, frtval, tree, X, j)
     end
     
     for j in reverse(vertices(separator))
-        ldiv!_loop_bwd!(blkptr, blkval, frtval, tree, x, j)
+        ldiv!_loop_bwd!(blkptr, blkval, frtval, tree, X, j)
     end
 
-    for v in outvertices(separator)
-        b[perm[v]] = x[v]
+    for w in axes(B, 2), v in axes(B, 1)
+        B[perm[v], w] = X[v, w]
     end
     
-    return b
+    return B
 end
 
 function ldiv!_loop_fwd!(
@@ -424,7 +426,7 @@ function ldiv!_loop_fwd!(
         blkval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I}, 
-        b::AbstractVector{T},
+        B::AbstractVector{T},
         j::I,
     ) where {T, I}
     residual = residuals(tree)
@@ -464,7 +466,7 @@ function ldiv!_loop_fwd!(
     L₁₁ = view(L, oneto(nn),      oneto(nn))
     L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
-    # X is part of b
+    # X is part of B
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
@@ -474,7 +476,7 @@ function ldiv!_loop_fwd!(
     X₂ = view(X, nn + one(I):nj)
 
     for k in oneto(nj)
-        X[k] = b[bag[k]]
+        X[k] = B[bag[k]]
     end
 
     # solve for Y₁ in
@@ -495,7 +497,90 @@ function ldiv!_loop_fwd!(
 
     # copy X into b
     for k in oneto(nj)
-        b[bag[k]] = X[k]
+        B[bag[k]] = X[k]
+    end
+
+    return
+end
+
+function ldiv!_loop_fwd!(
+        blkptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    nn = eltypedegree(residual, j)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # bag is the bag at node j
+    bag = tree[j] 
+    
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    pstrt = blkptr[j]
+    pstop = blkptr[j + one(I)]
+    L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    
+    L₁₁ = view(L, oneto(nn),      oneto(nn))
+    L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+
+    # X is part of B
+    #
+    #     X = [ X₁ ] res(j)
+    #         [ X₂ ] sep(j)
+    #
+    X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
+    X₁ = view(X, oneto(nn),      axes(B, 2))
+    X₂ = view(X, nn + one(I):nj, axes(B, 2))
+
+    for w in axes(B, 2), k in oneto(nj)
+        X[k, w] = B[bag[k], w]
+    end
+
+    # solve for Y₁ in
+    #
+    #     L₁₁ Y₁ = X₁
+    #
+    # and store X₁ ← Y₁
+    trsm!(L₁₁, X₁, Val(false), Val(false))
+    
+    if ispositive(na)
+        # compute the difference
+        #
+        #     Y₂ = X₂ - L₂₁ Y₁
+        #
+        # and store X₂ ← Y₂ 
+        gemm!(L₂₁, X₁, X₂, Val(false))
+    end
+
+    # copy X into b
+
+    for w in axes(B, 2), k in oneto(nj)
+        B[bag[k], w] = X[k, w]
     end
 
     return
@@ -506,7 +591,7 @@ function ldiv!_loop_bwd!(
         blkval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I}, 
-        b::AbstractVector{T},
+        B::AbstractVector{T},
         j::I,
     ) where {T, I}
     residual = residuals(tree)
@@ -546,7 +631,7 @@ function ldiv!_loop_bwd!(
     L₁₁ = view(L, oneto(nn),      oneto(nn))
     L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
-    # X is part of b
+    # X is part of B
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
@@ -556,7 +641,7 @@ function ldiv!_loop_bwd!(
     X₂ = view(X, nn + one(I):nj)
 
     for k in oneto(nj)
-        X[k] = b[bag[k]]
+        X[k] = B[bag[k]]
     end
     
     if ispositive(na)
@@ -577,7 +662,89 @@ function ldiv!_loop_bwd!(
 
     # copy X into b
     for k in oneto(nj)
-        b[bag[k]] = X[k]
+        B[bag[k]] = X[k]
+    end
+
+    return
+end
+
+function ldiv!_loop_bwd!(
+        blkptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    nn = eltypedegree(residual, j)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # bag is the bag at node j
+    bag = tree[j]        
+ 
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    pstrt = blkptr[j]
+    pstop = blkptr[j + one(I)]
+    L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    
+    L₁₁ = view(L, oneto(nn),      oneto(nn))
+    L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+
+    # X is part of B
+    #
+    #     X = [ X₁ ] res(j)
+    #         [ X₂ ] sep(j)
+    #
+    X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
+    X₁ = view(X, oneto(nn),      axes(B, 2))
+    X₂ = view(X, nn + one(I):nj, axes(B, 2))
+
+    for w in axes(B, 2), k in oneto(nj)
+        X[k, w] = B[bag[k], w]
+    end
+    
+    if ispositive(na)
+        # compute the difference
+        #
+        #     Y₁ = X₁ - L₂₁ᵀ X₂
+        #
+        # and store X₁ ← Y₁ 
+        gemm!(L₂₁, X₂, X₁, Val(true))
+    end
+
+    # solve for Z₁ in
+    #
+    #     L₁₁ᵀ Z₁ = Y₁
+    #
+    # and store X₁ ← Z₁
+    trsm!(L₁₁, X₁, Val(true), Val(false))
+
+    # copy X into b
+    for w in axes(B, 2), k in oneto(nj)
+        B[bag[k], w] = X[k, w]
     end
 
     return
@@ -587,7 +754,7 @@ end
 function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
     m = size(B, 1)
 
-    for j in axes(B, 2)
+    @inbounds for j in axes(B, 2)
         for i in j:m
             A[i, j] = B[i, j]
         end
@@ -605,149 +772,92 @@ end
 
 end
 
+# Algorithms for Sparse Linear Systems
+# Scott and Tuma
+# Algorithm 5.1: In-place left-looking Cholesky factorization
+#
 # factorize A as
 #
 #     A = L Lᵀ
 #
 # and store A ← L
-function potrf!(A::AbstractMatrix{T}) where {T}
-    status = true; m = size(A, 1)
-
-    for j in axes(A, 2)
-        for k in oneto(j - 1)
-            Ajk = A[j, k]
-
-            for i in j:m
-                A[i, j] -= A[i, k] * Ajk
-            end
-        end
-
-        Ajj = A[j, j]
-
-        if !ispositive(Ajj)
-            status = false; Ajj = one(T)
-        end
-
-        Ajj = A[j, j] = sqrt(Ajj)
-
-        for i in j + 1:m
-            A[i, j] /= Ajj
-        end
-    end
-
+function potrf!(A::AbstractMatrix)
+    F = LinearAlgebra.cholesky!(Symmetric(A, :L), NoPivot())
+    status = iszero(F.info)
     return status
 end
 
-function potrf!(A::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    status = iszero(last(LAPACK.potrf!('L', A)))
-    return status
-end
-
-# compute the difference
+# compute the lower triangular part of the difference
 #
-#     C = B - A * A'
+#     C = L - A * Aᵀ
 #
-# and store B ← C
-function syrk!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
+# and store L ← C
+function syrk!(A::AbstractMatrix, L::AbstractMatrix)
     m = size(A, 1)
 
-    @inbounds for j in axes(A, 1)
-        for k in axes(A, 2)
-            Ajk = A[j, k]
+    @inbounds for j in axes(A, 1), k in axes(A, 2)
+        Ajk = A[j, k]
 
-            for i in j:m
-                B[i, j] -= A[i, k] * Ajk
-            end
+        for i in j:m
+            L[i, j] -= A[i, k] * Ajk
         end
     end
 
     return
 end
 
-function syrk!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.syrk!('L', 'N', -one(T), A, one(T), B)
+function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: Union{Float32, Float64}}
+    BLAS.syrk!('L', 'N', -one(T), A, one(T), L)
     return
 end
 
 # solve for x in
 #
-#     A x = b
+#     L x = b
 #
 # and store b ← x
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{false}) where {T}
-    for i in axes(A, 1)
-        tmp = b[i]
-
-        for j in oneto(i - 1)
-            tmp -= A[i, j] * b[j]
-        end
-
-        b[i] = tmp / A[i, i]
-    end
-
-    return
-end
-
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.trsv!('L', 'N', 'N', A, b)
+function trsv!(L::AbstractMatrix, b::AbstractVector, tL::Val{false})
+    ldiv!(LowerTriangular(L), b)
     return
 end
 
 # solve for x in
 #
-#     Aᵀ x = b
+#     Lᵀ x = b
 #
 # and store b ← x
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{true}) where {T}
-    m = size(A, 1)
- 
-    for j in reverse(axes(A, 2))
-        tmp = b[j]
-
-        for i in j + 1:m
-            tmp -= A[i, j] * b[i]
-        end
-
-        b[j] = tmp / A[j, j]
-    end
-
-    return
-end
-
-function trsv!(A::AbstractMatrix{T}, b::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.trsv!('L', 'T', 'N', A, b)
+function trsv!(L::AbstractMatrix, b::AbstractVector, tL::Val{true})
+    ldiv!(LowerTriangular(L) |> transpose, b)
     return
 end
 
 # solve for X in
 #
-#     X Aᵀ = B
+#     L X = B
 #
 # and store B ← X
-function trsm!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, tA::Val{true}) where {T}
-    m = size(A, 1)
-
-    for j in axes(A, 1)
-        Ajj = A[j, j]
-
-        for k in axes(B, 1)
-            B[k, j] /= Ajj
-        end
-
-        for i in j + 1:m
-            Aij = A[i, j]
-
-            for k in axes(B, 1)
-                B[k, i] -= Aij * B[k, j]
-            end
-        end
-    end
-
+function trsm!(L::AbstractMatrix, B::AbstractMatrix, tL::Val{false}, side::Val{false})
+    ldiv!(LowerTriangular(L), B)
     return
 end
 
-function trsm!(A::AbstractMatrix{T}, B::AbstractMatrix{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.trsm!('R', 'L', 'T', 'N', one(T), A, B)
+# solve for X in
+#
+#     Lᵀ X = B
+#
+# and store B ← X
+function trsm!(L::AbstractMatrix, B::AbstractMatrix, tL::Val{true}, side::Val{false})
+    ldiv!(LowerTriangular(L) |> transpose, B)
+    return
+end
+
+# solve for X in
+#
+#     X Lᵀ = B
+#
+# and store B ← X
+function trsm!(L::AbstractMatrix, B::AbstractMatrix, tL::Val{true}, side::Val{true})
+    rdiv!(B, LowerTriangular(L) |> transpose)
     return
 end
 
@@ -757,21 +867,7 @@ end
 #
 # and store y ← z
 function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T}
-    for i in axes(A, 1)
-        tmp = zero(T)
-
-        for j in axes(A, 2)
-            tmp += A[i, j] * x[j]
-        end
-
-        y[i] -= tmp
-    end
-
-    return
-end
-
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.gemv!('N', -one(T), A, x, one(T), y)
+    mul!(y, A, x, -one(T), one(T))
     return
 end
 
@@ -781,21 +877,27 @@ end
 #
 # and store y ← z
 function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T}
-    for j in axes(A, 2)
-        tmp = zero(T)
-
-        for i in axes(A, 1)
-            tmp += A[i, j] * x[i]
-        end
-
-        y[j] -= tmp
-    end
-
+    mul!(y, transpose(A), x, -one(T), one(T))
     return
 end
 
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    BLAS.gemv!('T', -one(T), A, x, one(T), y)
+# compute the difference
+#
+#     Z = Y - A X
+#
+# and store Y ← Z
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}) where {T}
+    mul!(Y, A, X, -one(T), one(T))
+    return
+end
+
+# compute the difference
+#
+#     Z = Y - Aᵀ X
+#
+# and store Y ← Z
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}) where {T}
+    mul!(Y, transpose(A), X, -one(T), one(T))
     return
 end
 
