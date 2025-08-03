@@ -4,8 +4,7 @@
 A Cholesky factorization object.
 """
 struct CholFact{T, I}
-    tree::CliqueTree{I, I}
-    perm::Vector{I}
+    fact::SymbFact{I}
     width::I
     blkptr::FVector{I}
     blkval::FVector{T}
@@ -52,27 +51,38 @@ julia> x = F \\ b; # solve M x = b
 ```
 """
 function cholesky(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
-    F = cholesky(matrix, alg, snd)
-    return F
+    fact = cholesky(matrix, alg, snd)
+    return fact
 end
 
 function cholesky(matrix::AbstractMatrix, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    F = cholesky!(sparse(matrix), alg, snd)
-    return F
+    fact = cholesky(matrix, symbolic(matrix, alg, snd))
+    return fact
+end
+
+function cholesky(matrix::AbstractMatrix, fact::SymbFact)
+    return cholesky!(sparse(matrix), fact)
 end
 
 function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
-    F = cholesky!(matrix, alg, snd)
-    return F
+    fact = cholesky!(matrix, alg, snd)
+    return fact
 end
 
 function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {T, I}
-    perm, tree = cliquetree(matrix; alg, snd)
-    tril!(permute!(matrix, perm, perm))
+    fact = cholesky!(matrix, symbolic(matrix, alg, snd))
+    return fact
+end
 
+function cholesky!(matrix::SparseMatrixCSC{T, I}, fact::SymbFact{I}) where {T, I}
+    @argcheck size(matrix, 1) == size(matrix, 2)
+    @argcheck size(matrix, 1) == nov(separators(fact.tree))
+    tree = fact.tree
+    perm = fact.perm
     residual = residuals(tree)
     separator = separators(tree)
 
+    tril!(permute!(matrix, perm, perm))
     up = ns = nsmax = njmax = upmax = blkln = zero(I)
 
     for j in vertices(separator)
@@ -117,7 +127,7 @@ function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, s
     status = cholesky!_impl!(mapping, blkptr,
         updptr, blkval, updval, frtval, tree, matrix)
 
-    return CholFact(tree, perm, njmax, blkptr, blkval, status)
+    return CholFact(fact, njmax, blkptr, blkval, status)
 end 
 
 function cholesky!_impl!(
@@ -377,7 +387,7 @@ function Base.:\(F::CholFact, B)
 end
 
 function LinearAlgebra.ldiv(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
-    @argcheck nov(separators(F.tree)) == size(B, 1)
+    @argcheck nov(separators(F.fact.tree)) == size(B, 1)
     X = Array{T}(undef, size(B))
 
     for w in axes(B, 2), v in axes(B, 1)
@@ -388,9 +398,9 @@ function LinearAlgebra.ldiv(F::CholFact{T}, B::Union{AbstractVector, AbstractMat
 end
 
 function LinearAlgebra.ldiv!(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
-    @argcheck nov(separators(F.tree)) == size(B, 1)
-    tree = F.tree
-    perm = F.perm
+    @argcheck nov(separators(F.fact.tree)) == size(B, 1)
+    tree = F.fact.tree
+    perm = F.fact.perm
     width = F.width
     blkptr = F.blkptr
     blkval = F.blkval
@@ -750,158 +760,7 @@ function ldiv!_loop_bwd!(
     return
 end
 
-# copy the lower triangular part of B to A
-function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
-    m = size(B, 1)
-
-    @inbounds for j in axes(B, 2)
-        for i in j:m
-            A[i, j] = B[i, j]
-        end
-    end
-
-    return
-end
-
-@static if VERSION >= v"1.11"
-
-function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: Union{Float32, Float64, ComplexF32, ComplexF64}}
-    LAPACK.lacpy!(A, B, 'L')
-    return
-end
-
-end
-
-# Algorithms for Sparse Linear Systems
-# Scott and Tuma
-# Algorithm 5.1: In-place left-looking Cholesky factorization
-#
-# factorize A as
-#
-#     A = L Lᵀ
-#
-# and store A ← L
-function potrf!(A::AbstractMatrix)
-    F = LinearAlgebra.cholesky!(Symmetric(A, :L), NoPivot())
-    status = iszero(F.info)
-    return status
-end
-
-# compute the lower triangular part of the difference
-#
-#     C = L - A * Aᵀ
-#
-# and store L ← C
-function syrk!(A::AbstractMatrix, L::AbstractMatrix)
-    m = size(A, 1)
-
-    @inbounds for j in axes(A, 1), k in axes(A, 2)
-        Ajk = A[j, k]
-
-        for i in j:m
-            L[i, j] -= A[i, k] * Ajk
-        end
-    end
-
-    return
-end
-
-function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: Union{Float32, Float64}}
-    BLAS.syrk!('L', 'N', -one(T), A, one(T), L)
-    return
-end
-
-# solve for x in
-#
-#     L x = b
-#
-# and store b ← x
-function trsv!(L::AbstractMatrix, b::AbstractVector, tL::Val{false})
-    ldiv!(LowerTriangular(L), b)
-    return
-end
-
-# solve for x in
-#
-#     Lᵀ x = b
-#
-# and store b ← x
-function trsv!(L::AbstractMatrix, b::AbstractVector, tL::Val{true})
-    ldiv!(LowerTriangular(L) |> transpose, b)
-    return
-end
-
-# solve for X in
-#
-#     L X = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix, B::AbstractMatrix, tL::Val{false}, side::Val{false})
-    ldiv!(LowerTriangular(L), B)
-    return
-end
-
-# solve for X in
-#
-#     Lᵀ X = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix, B::AbstractMatrix, tL::Val{true}, side::Val{false})
-    ldiv!(LowerTriangular(L) |> transpose, B)
-    return
-end
-
-# solve for X in
-#
-#     X Lᵀ = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix, B::AbstractMatrix, tL::Val{true}, side::Val{true})
-    rdiv!(B, LowerTriangular(L) |> transpose)
-    return
-end
-
-# compute the difference
-#
-#     z = y - A x
-#
-# and store y ← z
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T}
-    mul!(y, A, x, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     z = y - Aᵀ x
-#
-# and store y ← z
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T}
-    mul!(y, transpose(A), x, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     Z = Y - A X
-#
-# and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}) where {T}
-    mul!(Y, A, X, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     Z = Y - Aᵀ X
-#
-# and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}) where {T}
-    mul!(Y, transpose(A), X, -one(T), one(T))
-    return
-end
-
 function Base.show(io::IO, ::MIME"text/plain", F::CholFact{T, I}) where {T, I}
     println(io, "CholFact{$T, $I}:")
-    println(io, "    success: $(F.status)")
+    print(io,   "    success: $(F.status)")
 end

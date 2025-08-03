@@ -329,6 +329,20 @@ function treewidth(weights::AbstractVector{W}, tree::CliqueTree{V}) where {W, V}
     return maxwidth
 end
 
+function treewidth(weights::Ones{W}, tree::CliqueTree) where {W}
+    residual = residuals(tree)
+    separator = separators(tree)
+    width = zero(W)
+
+    @inbounds for i in vertices(residual)
+        nn = convert(W, outdegree(residual, i))
+        na = convert(W, outdegree(separator, i))
+        width = max(width, nn + na)
+    end
+
+    return width
+end
+
 """
     treewidth([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
@@ -527,6 +541,20 @@ function treefill(weights::AbstractVector{W}, tree::CliqueTree) where {W}
                 fill += ww * w
             end
         end
+    end
+
+    return fill
+end
+
+function treefill(weights::Ones{W}, tree::CliqueTree) where {W}
+    residual = residuals(tree)
+    separator = separators(tree)
+    fill = zero(W)
+
+    @inbounds for i in vertices(residual)
+        nn = convert(W, outdegree(residual, i))
+        na = convert(W, outdegree(separator, i))
+        fill += half(nn * (nn + one(I))) + nn * na
     end
 
     return fill
