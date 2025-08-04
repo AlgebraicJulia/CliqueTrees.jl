@@ -5,7 +5,22 @@ A symbolic factorization object.
 """
 struct SymbFact{I}
     tree::CliqueTree{I, I}
-    perm::Vector{I}
+    perm::FVector{I}
+    invp::FVector{I}
+end
+
+function SymbFact(tree::CliqueTree{I, I}, perm::AbstractVector{I}) where {I}
+    n = nov(separators(tree))
+    perm1 = FVector{I}(undef, n)
+    invp1 = FVector{I}(undef, n)
+
+    @inbounds for v in oneto(n)
+        w = perm[v]
+        perm1[v] = w
+        invp1[w] = v        
+    end
+
+    return SymbFact(tree, perm1, invp1)
 end
 
 """
@@ -26,23 +41,16 @@ the parameters `alg` and `snd`.
 ```julia
 julia> import CliqueTrees
 
-julia> M = [
+julia> matrix = [
            1.5   94.2    0.8 0.0
            94.2  15080.4 0.0 0.0
            0.8   0.0     3.1 0.0
            0.0   0.0     0.0 1.6
        ];
 
-julia> F = CliqueTrees.symbolic(M)
+julia> CliqueTrees.symbolic(matrix)
 SymbFact{Int64}:
     nnz: 6
-    flop: 14
-
-julia> CliqueTrees.nnz(F)
-6
-
-julia> CliqueTrees.flop(F)
-14
 ```
 """
 function symbolic(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
@@ -61,24 +69,7 @@ function SparseArrays.nnz(fact::SymbFact{I}) where {I}
     return treefill(weights, fact.tree)
 end
 
-function flop(fact::SymbFact{I}) where {I}
-    tree = fact.tree
-    residual = residuals(tree)
-    separator = separators(tree)
-    total = zero(I)
-
-    @inbounds for i in vertices(residual)
-        nn = eltypedegree(residual, i)
-        na = eltypedegree(separator, i)
-        flop = half(nn * (nn + one(I))) + nn * na
-        total += flop * flop
-    end
-
-    return total
-end
-
 function Base.show(io::IO, ::MIME"text/plain", fact::SymbFact{I}) where {I}
     println(io, "SymbFact{$I}:")
-    println(io,   "    nnz: $(nnz(fact))")
-    print(io,     "    flop: $(flop(fact))")
+    print(io,   "    nnz: $(nnz(fact))")
 end

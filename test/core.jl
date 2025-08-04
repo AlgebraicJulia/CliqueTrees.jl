@@ -1172,15 +1172,20 @@ end
     for name in matrices
         matrix = readmatrix(name); n = size(matrix, 2)
         M = SparseMatrixCSC{Float64}(matrix)
-        F = CliqueTrees.cholesky(M)
+        F1 = CliqueTrees.cholesky(M)
+        F2 = CliqueTrees.cholesky!(copy(M))
 
         b1 = rand(Float64, n)
-        b2 = M * (F \ b1)
+        b2 = M * (F1 \ b1)
+        b3 = M * (F2 \ b1)
         @test sum(abs.(b1 - b2)) / n < 0.01
+        @test sum(abs.(b1 - b3)) / n < 0.01
 
         B1 = rand(Float64, n, 5)
-        B2 = M * (F \ B1)
+        B2 = M * (F1 \ B1)
+        B3 = M * (F2 \ B1)
         @test sum(abs.(B1 - B2)) / n / 5 < 0.01
+        @test sum(abs.(B1 - B3)) / n / 5 < 0.01
     end
 
     matrix = readmatrix("torsion1")

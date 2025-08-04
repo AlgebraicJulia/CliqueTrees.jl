@@ -64,6 +64,40 @@ function cholesky(matrix::AbstractMatrix, fact::SymbFact)
     return cholesky!(sparse(matrix), fact)
 end
 
+function cholesky(matrix::SparseMatrixCSC{T, I}, fact::SymbFact{I}) where {T, I}
+    @argcheck size(matrix, 1) == size(matrix, 2)
+    @argcheck size(matrix, 1) == nov(separators(fact.tree))
+    tree = fact.tree
+    perm = fact.perm 
+    invp = fact.invp
+
+    neqns = nov(separators(tree))
+    adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
+
+    colptr0 = matrix.colptr
+    colptr1 = FVector{I}(undef, neqns + one(I))
+    colptr2 = FVector{I}(undef, neqns + one(I))
+
+    rowval0 = matrix.rowval
+    rowval1 = FVector{I}(undef, adjln)
+    rowval2 = FVector{I}(undef, adjln)
+    
+    nzval0 = matrix.nzval
+    nzval1 = FVector{T}(undef, adjln)
+    nzval2 = FVector{T}(undef, adjln)
+
+    cholesky_permute!(colptr0, colptr1, rowval0, rowval1, nzval0, nzval1, neqns, invp)
+    cholesky_reverse!(colptr1, colptr2, rowval1, rowval2, nzval1, nzval2, neqns)
+
+    width, mapping, blkptr, updptr, blkval,
+        updval, frtval = cholesky_alloc(T, fact)
+
+    status = cholesky_impl!(mapping, blkptr, updptr,
+        blkval, updval, frtval, tree, colptr2, rowval2, nzval2)
+
+    return CholFact(fact, width, blkptr, blkval, status)
+end
+
 function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
     fact = cholesky!(matrix, alg, snd)
     return fact
@@ -78,11 +112,41 @@ function cholesky!(matrix::SparseMatrixCSC{T, I}, fact::SymbFact{I}) where {T, I
     @argcheck size(matrix, 1) == size(matrix, 2)
     @argcheck size(matrix, 1) == nov(separators(fact.tree))
     tree = fact.tree
-    perm = fact.perm
+    perm = fact.perm 
+    invp = fact.invp
+
+    neqns = nov(separators(tree))
+    adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
+
+    colptr0 = matrix.colptr
+    colptr1 = FVector{I}(undef, neqns + one(I))
+    colptr2 = matrix.colptr
+
+    rowval0 = matrix.rowval
+    rowval1 = FVector{I}(undef, adjln)
+    rowval2 = matrix.rowval
+    
+    nzval0 = matrix.nzval
+    nzval1 = FVector{T}(undef, adjln)
+    nzval2 = matrix.nzval
+
+    cholesky_permute!(colptr0, colptr1, rowval0, rowval1, nzval0, nzval1, neqns, invp)
+    cholesky_reverse!(colptr1, colptr2, rowval1, rowval2, nzval1, nzval2, neqns)
+
+    width, mapping, blkptr, updptr, blkval,
+        updval, frtval = cholesky_alloc(T, fact)
+
+    status = cholesky_impl!(mapping, blkptr, updptr,
+        blkval, updval, frtval, tree, colptr2, rowval2, nzval2)
+
+    return CholFact(fact, width, blkptr, blkval, status)
+end 
+
+function cholesky_alloc(::Type{T}, fact::SymbFact{I}) where {T, I}
+    tree = fact.tree
     residual = residuals(tree)
     separator = separators(tree)
 
-    tril!(permute!(matrix, perm, perm))
     up = ns = nsmax = njmax = upmax = blkln = zero(I)
 
     for j in vertices(separator)
@@ -123,14 +187,132 @@ function cholesky!(matrix::SparseMatrixCSC{T, I}, fact::SymbFact{I}) where {T, I
 
     relptr = pointers(separator)
     mapping = BipartiteGraph(njmax, treln, relln, relptr, relidx)
+    return njmax, mapping, blkptr, updptr, blkval, updval, frtval
+end
 
-    status = cholesky!_impl!(mapping, blkptr,
-        updptr, blkval, updval, frtval, tree, matrix)
+function cholesky_permute!(
+        colptr1::AbstractVector{I},
+        colptr2::AbstractVector{I},
+        rowval1::AbstractVector{I},
+        rowval2::AbstractVector{I},
+        nzval1::AbstractVector{T},
+        nzval2::AbstractVector{T},
+        neqns::I,
+        invp::AbstractVector{I},
+    ) where {T, I}
+    @inbounds for i2 in oneto(neqns)
+        colptr2[i2 + one(I)] = zero(I)
+    end
 
-    return CholFact(fact, njmax, blkptr, blkval, status)
-end 
+    @inbounds for j1 in oneto(neqns)
+        j2 = invp[j1]
+        pstrt1 = colptr1[j1]
+        pstop1 = colptr1[j1 + one(I)]
 
-function cholesky!_impl!(
+        for p1 in pstrt1:pstop1 - one(I)
+            i1 = rowval1[p1]
+
+            if i1 <= j1
+                i2 = invp[i1]
+                k2 = j2
+
+                if k2 < i2
+                    k2 = i2
+                end
+
+                if k2 < neqns
+                    colptr2[k2 + two(I)] += one(I)
+                end
+            end
+        end
+    end
+
+    @inbounds colptr2[begin] = p2 = one(I)
+
+    @inbounds for i2 in oneto(neqns)
+        colptr2[i2 + one(I)] = p2 += colptr2[i2 + one(I)]
+    end
+
+    @inbounds for j1 in oneto(neqns)
+        j2 = invp[j1]
+        pstrt1 = colptr1[j1]
+        pstop1 = colptr1[j1 + one(I)]
+
+        for p1 in pstrt1:pstop1 - one(I)
+            i1 = rowval1[p1]
+
+            if i1 <= j1
+                x1 = nzval1[p1]
+                i2 = invp[i1]
+                k2 = j2
+
+                if k2 < i2
+                    i2, k2 = k2, i2
+                end
+
+                p2 = colptr2[k2 + one(I)]
+
+                colptr2[k2 + one(I)] = p2 + one(I)
+                rowval2[p2] = i2
+                nzval2[p2] = x1
+            end
+        end
+    end
+
+    return
+end
+
+function cholesky_reverse!(
+        colptr1::AbstractVector{I},
+        colptr2::AbstractVector{I},
+        rowval1::AbstractVector{I},
+        rowval2::AbstractVector{I},
+        nzval1::AbstractVector{T},
+        nzval2::AbstractVector{T},
+        neqns::I,
+    ) where {T, I}
+    @inbounds for i2 in oneto(neqns)
+        colptr2[i2 + one(I)] = zero(I)
+    end
+
+    @inbounds for j1 in oneto(neqns)
+        pstrt1 = colptr1[j1]
+        pstop1 = colptr1[j1 + one(I)]
+
+        for p1 in pstrt1:pstop1 - one(I)
+            i1 = rowval1[p1]
+
+            if i1 < neqns
+                colptr2[i1 + two(I)] += one(I)
+            end
+        end
+    end
+
+    @inbounds colptr2[begin] = p2 = one(I)
+
+    @inbounds for i2 in oneto(neqns)
+        colptr2[i2 + one(I)] = p2 += colptr2[i2 + one(I)]
+    end
+
+    @inbounds for j1 in oneto(neqns)
+        pstrt1 = colptr1[j1]
+        pstop1 = colptr1[j1 + one(I)]
+
+        for p1 in pstrt1:pstop1 - one(I)
+            i1 = rowval1[p1]
+            x1 = nzval1[p1]
+            p2 = colptr2[i1 + one(I)]
+
+            colptr2[i1 + one(I)] = p2 + one(I)
+            rowval2[p2] = j1
+            nzval2[p2] = x1
+        end
+    end
+
+    return
+end
+
+function cholesky_impl!(
         mapping::BipartiteGraph{I, I},        
         blkptr::AbstractVector{I},
         updptr::AbstractVector{I},
@@ -138,17 +320,19 @@ function cholesky!_impl!(
         updval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I},
-        matrix::SparseMatrixCSC{T, I},
+        colptr::AbstractVector{I},
+        rowval::AbstractVector{I},
+        nzval::AbstractVector{T},
     ) where {T, I}
     separator = separators(tree)
     relidx = targets(mapping)
     status = true; ns = zero(I)
 
-    cholesky!_init!(relidx, blkptr,
-        updptr, blkval, tree, matrix)
+    cholesky_init!(relidx, blkptr, updptr,
+        blkval, tree, colptr, rowval, nzval)
 
     for j in vertices(separator)
-        iterstatus, ns = cholesky!_loop!(mapping, blkptr,
+        iterstatus, ns = cholesky_loop!(mapping, blkptr,
             updptr, blkval, updval, frtval, tree, ns, j)
 
         status = status && iterstatus
@@ -157,21 +341,23 @@ function cholesky!_impl!(
     return status
 end
 
-function cholesky!_init!(
+function cholesky_init!(
         relidx::AbstractVector{I},
         blkptr::AbstractVector{I},
         updptr::AbstractVector{I},
         blkval::AbstractVector{T},
         tree::CliqueTree{I, I},
-        matrix::SparseMatrixCSC{T, I},
+        colptr::AbstractVector{I},
+        rowval::AbstractVector{I},
+        nzval::AbstractVector{T},
     ) where {T, I}
     residual = residuals(tree)
     separator = separators(tree)
     treln = nv(separator)
 
-    updptr[one(I)] = p = q = one(I)
+    @inbounds updptr[one(I)] = p = q = one(I)
 
-    for j in vertices(separator)
+    @inbounds for j in vertices(separator)
         blkptr[j] = p
 
         res = neighbors(residual, j)
@@ -184,9 +370,11 @@ function cholesky!_init!(
 
         for v in res
             k = one(I)
+            qstrt = colptr[v]
+            qstop = colptr[v + one(I)]
 
-            for q in nzrange(matrix, v)
-                w = rowvals(matrix)[q]
+            for q in qstrt:qstop - one(I)
+                w = rowval[q]
 
                 while bag[k] < w
                     blkval[p] = zero(T)
@@ -194,7 +382,7 @@ function cholesky!_init!(
                     p += one(I)
                 end
 
-                blkval[p] = nonzeros(matrix)[q]
+                blkval[p] = nzval[q]
                 k += one(I)
                 p += one(I) 
             end
@@ -225,11 +413,11 @@ function cholesky!_init!(
         end
     end
 
-    blkptr[treln + one(I)] = p
+    @inbounds blkptr[treln + one(I)] = p
     return
 end
 
-function cholesky!_loop!(
+function cholesky_loop!(
         mapping::BipartiteGraph{I, I},        
         blkptr::AbstractVector{I},
         updptr::AbstractVector{I},
@@ -293,13 +481,13 @@ function cholesky!_loop!(
     lacpy!(F, B); fill!(F₂₂, zero(T))
 
     for i in Iterators.reverse(childindices(tree, j))
-        cholesky!_add_update!(F, ns, i, mapping, updptr, updval)
+        cholesky_add_update!(F, ns, i, mapping, updptr, updval)
         ns -= one(I)
     end
 
     # factorize F₁₁ as
     #
-    #     F₁₁ = L₁₁ L₁₁ᵀ
+    #     F₁₁ = L₁₁ L₁₁ᴴ
     #
     # and store F₁₁ ← L₁₁
     status = potrf!(F₁₁)
@@ -307,14 +495,14 @@ function cholesky!_loop!(
     if ispositive(na)
         # solve for L₂₁ in
         #
-        #     L₂₁ L₁₁ᵀ = F₂₁
+        #     L₂₁ L₁₁ᴴ = F₂₁
         #
         # and store F₂₁ ← L₂₁
         trsm!(F₁₁, F₂₁, Val(true), Val(true))
     
         # compute
         #
-        #    U₂₂ = F₂₂ - L₂₁ L₂₁ᵀ
+        #    U₂₂ = F₂₂ - L₂₁ L₂₁ᴴ
         #
         # and store F₂₂ ← U₂₂
         syrk!(F₂₁, F₂₂)
@@ -335,7 +523,7 @@ function cholesky!_loop!(
     return status, ns
 end
 
-function cholesky!_add_update!(
+function cholesky_add_update!(
         F::AbstractMatrix{T},
         ns::I,
         i::I,
@@ -365,8 +553,8 @@ function cholesky!_add_update!(
         # let fj = ind(uj)
         fj = ind[uj]
 
-        # for all ui in sep(i) ...
-        for ui in oneto(na)
+        # for all ui ≥ uj in sep(i) ...
+        for ui in uj:na
             # let fi = ind(ui)
             fi = ind[ui]
 
@@ -388,12 +576,7 @@ end
 
 function LinearAlgebra.ldiv(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
     @argcheck nov(separators(F.fact.tree)) == size(B, 1)
-    X = Array{T}(undef, size(B))
-
-    for w in axes(B, 2), v in axes(B, 1)
-        X[v, w] = B[v, w]
-    end
-
+    X = Array{T}(undef, size(B)); copyto!(X, B)
     return ldiv!(F, X)
 end
 
@@ -404,7 +587,6 @@ function LinearAlgebra.ldiv!(F::CholFact{T}, B::Union{AbstractVector, AbstractMa
     width = F.width
     blkptr = F.blkptr
     blkval = F.blkval
-
     frtval = FVector{T}(undef, width * size(B, 2))
 
     residual = residuals(tree)
@@ -446,13 +628,13 @@ function ldiv!_loop_fwd!(
     #
     #     nn = | res(j) |
     #
-    nn = eltypedegree(residual, j)
+    @inbounds nn = eltypedegree(residual, j)
 
     # na is the size of the separator at node j.
     #
     #     na = | sep(j) |
     #
-    na = eltypedegree(separator, j)
+    @inbounds na = eltypedegree(separator, j)
 
     # nj is the size of the bag at node j
     #
@@ -461,7 +643,7 @@ function ldiv!_loop_fwd!(
     nj = nn + na
 
     # bag is the bag at node j
-    bag = tree[j] 
+    @inbounds bag = tree[j] 
     
     # L is part of the Cholesky factor
     #
@@ -469,23 +651,23 @@ function ldiv!_loop_fwd!(
     #     L = [ L₁₁  ] res(j)
     #         [ L₂₁  ] sep(j)
     #
-    pstrt = blkptr[j]
-    pstop = blkptr[j + one(I)]
-    L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
     
-    L₁₁ = view(L, oneto(nn),      oneto(nn))
-    L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
     # X is part of B
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
     #
-    X = view(frtval, oneto(nj))
-    X₁ = view(X, oneto(nn))
-    X₂ = view(X, nn + one(I):nj)
+    @inbounds X = view(frtval, oneto(nj))
+    @inbounds X₁ = view(X, oneto(nn))
+    @inbounds X₂ = view(X, nn + one(I):nj)
 
-    for k in oneto(nj)
+    @inbounds for k in oneto(nj)
         X[k] = B[bag[k]]
     end
 
@@ -506,7 +688,7 @@ function ldiv!_loop_fwd!(
     end
 
     # copy X into b
-    for k in oneto(nj)
+    @inbounds for k in oneto(nj)
         B[bag[k]] = X[k]
     end
 
@@ -528,13 +710,13 @@ function ldiv!_loop_fwd!(
     #
     #     nn = | res(j) |
     #
-    nn = eltypedegree(residual, j)
+    @inbounds nn = eltypedegree(residual, j)
 
     # na is the size of the separator at node j.
     #
     #     na = | sep(j) |
     #
-    na = eltypedegree(separator, j)
+    @inbounds na = eltypedegree(separator, j)
 
     # nj is the size of the bag at node j
     #
@@ -543,7 +725,7 @@ function ldiv!_loop_fwd!(
     nj = nn + na
 
     # bag is the bag at node j
-    bag = tree[j] 
+    @inbounds bag = tree[j] 
     
     # L is part of the Cholesky factor
     #
@@ -551,23 +733,23 @@ function ldiv!_loop_fwd!(
     #     L = [ L₁₁  ] res(j)
     #         [ L₂₁  ] sep(j)
     #
-    pstrt = blkptr[j]
-    pstop = blkptr[j + one(I)]
-    L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
     
-    L₁₁ = view(L, oneto(nn),      oneto(nn))
-    L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
     # X is part of B
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
     #
-    X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
-    X₁ = view(X, oneto(nn),      axes(B, 2))
-    X₂ = view(X, nn + one(I):nj, axes(B, 2))
+    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
+    @inbounds X₁ = view(X, oneto(nn),      axes(B, 2))
+    @inbounds X₂ = view(X, nn + one(I):nj, axes(B, 2))
 
-    for w in axes(B, 2), k in oneto(nj)
+    @inbounds for w in axes(B, 2), k in oneto(nj)
         X[k, w] = B[bag[k], w]
     end
 
@@ -589,7 +771,7 @@ function ldiv!_loop_fwd!(
 
     # copy X into b
 
-    for w in axes(B, 2), k in oneto(nj)
+    @inbounds for w in axes(B, 2), k in oneto(nj)
         B[bag[k], w] = X[k, w]
     end
 
@@ -611,13 +793,13 @@ function ldiv!_loop_bwd!(
     #
     #     nn = | res(j) |
     #
-    nn = eltypedegree(residual, j)
+    @inbounds nn = eltypedegree(residual, j)
 
     # na is the size of the separator at node j.
     #
     #     na = | sep(j) |
     #
-    na = eltypedegree(separator, j)
+    @inbounds na = eltypedegree(separator, j)
 
     # nj is the size of the bag at node j
     #
@@ -626,7 +808,7 @@ function ldiv!_loop_bwd!(
     nj = nn + na
 
     # bag is the bag at node j
-    bag = tree[j]        
+    @inbounds bag = tree[j]        
  
     # L is part of the Cholesky factor
     #
@@ -634,30 +816,30 @@ function ldiv!_loop_bwd!(
     #     L = [ L₁₁  ] res(j)
     #         [ L₂₁  ] sep(j)
     #
-    pstrt = blkptr[j]
-    pstop = blkptr[j + one(I)]
-    L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
     
-    L₁₁ = view(L, oneto(nn),      oneto(nn))
-    L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
     # X is part of B
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
     #
-    X = view(frtval, oneto(nj))
-    X₁ = view(X, oneto(nn))
-    X₂ = view(X, nn + one(I):nj)
+    @inbounds X = view(frtval, oneto(nj))
+    @inbounds X₁ = view(X, oneto(nn))
+    @inbounds X₂ = view(X, nn + one(I):nj)
 
-    for k in oneto(nj)
+    @inbounds for k in oneto(nj)
         X[k] = B[bag[k]]
     end
     
     if ispositive(na)
         # compute the difference
         #
-        #     Y₁ = X₁ - L₂₁ᵀ X₂
+        #     Y₁ = X₁ - L₂₁ᴴ X₂
         #
         # and store X₁ ← Y₁ 
         gemv!(L₂₁, X₂, X₁, Val(true))
@@ -665,13 +847,13 @@ function ldiv!_loop_bwd!(
 
     # solve for Z₁ in
     #
-    #     L₁₁ᵀ Z₁ = Y₁
+    #     L₁₁ᴴ Z₁ = Y₁
     #
     # and store X₁ ← Z₁
     trsv!(L₁₁, X₁, Val(true))
 
     # copy X into b
-    for k in oneto(nj)
+    @inbounds for k in oneto(nj)
         B[bag[k]] = X[k]
     end
 
@@ -693,13 +875,13 @@ function ldiv!_loop_bwd!(
     #
     #     nn = | res(j) |
     #
-    nn = eltypedegree(residual, j)
+    @inbounds nn = eltypedegree(residual, j)
 
     # na is the size of the separator at node j.
     #
     #     na = | sep(j) |
     #
-    na = eltypedegree(separator, j)
+    @inbounds na = eltypedegree(separator, j)
 
     # nj is the size of the bag at node j
     #
@@ -708,7 +890,7 @@ function ldiv!_loop_bwd!(
     nj = nn + na
 
     # bag is the bag at node j
-    bag = tree[j]        
+    @inbounds bag = tree[j]        
  
     # L is part of the Cholesky factor
     #
@@ -716,30 +898,30 @@ function ldiv!_loop_bwd!(
     #     L = [ L₁₁  ] res(j)
     #         [ L₂₁  ] sep(j)
     #
-    pstrt = blkptr[j]
-    pstop = blkptr[j + one(I)]
-    L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
     
-    L₁₁ = view(L, oneto(nn),      oneto(nn))
-    L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
     # X is part of B
     #
     #     X = [ X₁ ] res(j)
     #         [ X₂ ] sep(j)
     #
-    X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
-    X₁ = view(X, oneto(nn),      axes(B, 2))
-    X₂ = view(X, nn + one(I):nj, axes(B, 2))
+    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
+    @inbounds X₁ = view(X, oneto(nn),      axes(B, 2))
+    @inbounds X₂ = view(X, nn + one(I):nj, axes(B, 2))
 
-    for w in axes(B, 2), k in oneto(nj)
+    @inbounds for w in axes(B, 2), k in oneto(nj)
         X[k, w] = B[bag[k], w]
     end
     
     if ispositive(na)
         # compute the difference
         #
-        #     Y₁ = X₁ - L₂₁ᵀ X₂
+        #     Y₁ = X₁ - L₂₁ᴴ X₂
         #
         # and store X₁ ← Y₁ 
         gemm!(L₂₁, X₂, X₁, Val(true))
@@ -747,13 +929,13 @@ function ldiv!_loop_bwd!(
 
     # solve for Z₁ in
     #
-    #     L₁₁ᵀ Z₁ = Y₁
+    #     L₁₁ᴴ Z₁ = Y₁
     #
     # and store X₁ ← Z₁
     trsm!(L₁₁, X₁, Val(true), Val(false))
 
     # copy X into b
-    for w in axes(B, 2), k in oneto(nj)
+    @inbounds for w in axes(B, 2), k in oneto(nj)
         B[bag[k], w] = X[k, w]
     end
 
@@ -763,4 +945,176 @@ end
 function Base.show(io::IO, ::MIME"text/plain", F::CholFact{T, I}) where {T, I}
     println(io, "CholFact{$T, $I}:")
     print(io,   "    success: $(F.status)")
+end
+
+
+##################################
+# Dense Numerical Linear Algebra #
+##################################
+
+
+# copy the lower triangular part of B to A
+function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
+    m = size(B, 1)
+
+    @inbounds for j in axes(B, 2)
+        for i in j:m
+            A[i, j] = B[i, j]
+        end
+    end
+
+    return
+end
+
+@static if VERSION >= v"1.11"
+
+function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: BLAS.BlasFloat}
+    LAPACK.lacpy!(A, B, 'L')
+    return
+end
+
+end
+
+# factorize A as
+#
+#     A = L Lᴴ
+#
+# and store A ← L
+function potrf!(A::AbstractMatrix)
+    F = LinearAlgebra.cholesky!(Hermitian(A, :L), NoPivot())
+    status = iszero(F.info)
+    return status
+end
+
+# compute the lower triangular part of the difference
+#
+#     C = L - A * Aᴴ
+#
+# and store L ← C
+function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T}
+    m = size(A, 1)
+
+    @inbounds for j in axes(A, 1), k in axes(A, 2)
+        Ajk = A[j, k]
+
+        for i in j:m
+            L[i, j] -= A[i, k] * Ajk
+        end
+    end
+
+    return
+end
+
+function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: Complex}
+    m = size(A, 1)
+
+    @inbounds for j in axes(A, 1), k in axes(A, 2)
+        Ajk = conj(A[j, k])
+
+        for i in j:m
+            L[i, j] -= A[i, k] * Ajk
+        end
+    end
+
+    return
+end
+
+function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: BLAS.BlasReal}
+    BLAS.syrk!('L', 'N', -one(T), A, one(T), L)
+    return
+end
+
+function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: BLAS.BlasComplex}
+    BLAS.herk!('L', 'N', -one(real(T)), A, one(real(T)), L)
+    return
+end
+
+# solve for x in
+#
+#     L x = b
+#
+# and store b ← x
+function trsv!(L::AbstractMatrix{T}, b::AbstractVector{T}, tL::Val{false}) where {T}
+    ldiv!(LowerTriangular(L), b)
+    return
+end
+
+# solve for x in
+#
+#     Lᴴ x = b
+#
+# and store b ← x
+function trsv!(L::AbstractMatrix{T}, b::AbstractVector{T}, tL::Val{true}) where {T}
+    ldiv!(LowerTriangular(L) |> adjoint, b)
+    return
+end
+
+# solve for X in
+#
+#     L X = B
+#
+# and store B ← X
+function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{false}, side::Val{false}) where {T}
+    ldiv!(LowerTriangular(L), B)
+    return
+end
+
+# solve for X in
+#
+#     Lᴴ X = B
+#
+# and store B ← X
+function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{true}, side::Val{false}) where {T}
+    ldiv!(LowerTriangular(L) |> adjoint, B)
+    return
+end
+
+# solve for X in
+#
+#     X Lᴴ = B
+#
+# and store B ← X
+function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{true}, side::Val{true}) where {T}
+    rdiv!(B, LowerTriangular(L) |> adjoint)
+    return
+end
+
+# compute the difference
+#
+#     z = y - A x
+#
+# and store y ← z
+function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T}
+    mul!(y, A, x, -one(T), one(T))
+    return
+end
+
+# compute the difference
+#
+#     z = y - Aᴴ x
+#
+# and store y ← z
+function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T}
+    mul!(y, A |> adjoint, x, -one(T), one(T))
+    return
+end
+
+# compute the difference
+#
+#     Z = Y - A X
+#
+# and store Y ← Z
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}) where {T}
+    mul!(Y, A, X, -one(T), one(T))
+    return
+end
+
+# compute the difference
+#
+#     Z = Y - Aᴴ X
+#
+# and store Y ← Z
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}) where {T}
+    mul!(Y, A |> adjoint, X, -one(T), one(T))
+    return
 end
