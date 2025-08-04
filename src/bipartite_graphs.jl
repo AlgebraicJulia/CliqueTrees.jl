@@ -411,6 +411,19 @@ function targets(graph::BipartiteGraph)
     return graph.tgt
 end
 
+@propagate_inbounds function incident(graph::BipartiteGraph{V}, i::Integer) where {V <: Integer}
+    @boundscheck checkbounds(vertices(graph), i)
+    range = @inbounds incident(graph, convert(V, i))
+    return range
+end
+
+@propagate_inbounds function incident(graph::BipartiteGraph{V, E}, i::V) where {V <: Integer, E <: Integer}
+    @boundscheck checkbounds(vertices(graph), i)
+    @inbounds pstrt = pointers(graph)[i]
+    @inbounds pstop = pointers(graph)[i + one(V)]
+    return pstrt:pstop - one(E)
+end
+
 function Base.convert(::Type{BipartiteGraph{V, E, Ptr, Tgt}}, graph) where {V, E, Ptr, Tgt}
     return BipartiteGraph{V, E, Ptr, Tgt}(graph)
 end
@@ -539,12 +552,9 @@ function Graphs.vertices(graph::BipartiteGraph{V}) where {V}
     return oneto(nv(graph))
 end
 
-@propagate_inbounds function Graphs.outneighbors(graph::BipartiteGraph{<:Any, E}, i::I) where {E, I <: Integer}
-    j = i + one(I); ptr = pointers(graph); tgt = targets(graph)
+@propagate_inbounds function Graphs.outneighbors(graph::BipartiteGraph, i::Integer)
     @boundscheck checkbounds(vertices(graph), i)
-    @inbounds strt = ptr[i]
-    @inbounds stop = ptr[j]
-    @inbounds neighbors = view(tgt, strt:stop - one(E))
+    @inbounds neighbors = view(targets(graph), incident(graph, i))
     return neighbors
 end
 
@@ -555,13 +565,10 @@ function Graphs.inneighbors(graph::BipartiteGraph, i::Integer)
     end
 end
 
-@propagate_inbounds function Graphs.outdegree(graph::BipartiteGraph, i::I) where {I <: Integer}
-    j = i + one(I); ptr = pointers(graph); tgt = targets(graph)
+@propagate_inbounds function Graphs.outdegree(graph::BipartiteGraph, i::Integer)
     @boundscheck checkbounds(vertices(graph), i)
-    @inbounds strt = ptr[i]
-    @inbounds stop = ptr[j]
-    degree = convert(Int, stop - strt)
-    return degree
+    @inbounds degree = length(incident(graph, i))
+    return degree 
 end
 
 # slow

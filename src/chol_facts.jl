@@ -1,14 +1,24 @@
 """
-    CholFact{T, I}
+    CholFact{T, I} <: Factorization{T}
 
 A Cholesky factorization object.
 """
-struct CholFact{T, I}
-    fact::SymbFact{I}
+struct CholFact{T, I} <: Factorization{T}
+    symbfact::SymbFact{I}
     width::I
     blkptr::FVector{I}
     blkval::FVector{T}
     status::Bool
+end
+
+"""
+    SymbFact(cholfact::CholFact)
+
+Get the underlying symbolic factorization of a Cholesky
+factorization.
+"""
+function SymbFact(cholfact::CholFact)
+    return cholfact.symbfact
 end
 
 """
@@ -26,124 +36,213 @@ quality of this tree decomposition.
 The symbolic phase is controlled by the parameters `alg` and `snd`.
 See the function [`cliquetree`](@ref) for more information.
 
+```julia-repl
+julia> import CliqueTrees
+
+julia> matrix = [
+           3 1 0 0 0 0 0 0
+           1 3 1 0 0 2 0 0
+           0 1 3 1 0 1 2 1
+           0 0 1 3 0 0 0 0
+           0 0 0 0 3 1 1 0
+           0 2 1 0 1 3 0 0
+           0 0 2 0 1 0 3 1
+           0 0 1 0 0 0 1 3
+       ];
+
+julia> cholfact = CliqueTrees.cholesky(matrix)
+CholFact{Float64, Int64}:
+    nnz: 19
+    success: true
+```
+
 ### Parameters
 
+  - `matrix`: sparse positive-definite matrix
   - `alg`: elimination algorithm
   - `snd`: supernode type
 
-```julia
-julia> import CliqueTrees
-
-julia> M = [
-           1.5   94.2    0.8 0.0
-           94.2  15080.4 0.0 0.0
-           0.8   0.0     3.1 0.0
-           0.0   0.0     0.0 1.6
-       ];
-
-julia> b = [1.0, 2.0, 1.0, 2.0];
-
-julia> F = CliqueTrees.cholesky(M)
-CholFact{Float64, Int64}:
-    success: true
-
-julia> x = F \\ b; # solve M x = b
-```
 """
 function cholesky(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
-    fact = cholesky(matrix, alg, snd)
-    return fact
+    cholfact = cholesky(matrix, alg, snd)
+    return cholfact
 end
 
 function cholesky(matrix::AbstractMatrix, alg::PermutationOrAlgorithm, snd::SupernodeType)
-    fact = cholesky(matrix, symbolic(matrix, alg, snd))
-    return fact
+    cholfact = cholesky(matrix, symbolic(matrix, alg, snd))
+    return cholfact
 end
 
-function cholesky(matrix::AbstractMatrix, fact::SymbFact)
-    return cholesky!(sparse(matrix), fact)
+"""
+    cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
+
+Compute the Cholesky factorization of a sparse positive definite matrix
+using a symbolic factorization `fact` computed by [`symbolic`](@ref).
+
+```julia-repl
+julia> import CliqueTrees
+
+julia> matrix = [
+           3 1 0 0 0 0 0 0
+           1 3 1 0 0 2 0 0
+           0 1 3 1 0 1 2 1
+           0 0 1 3 0 0 0 0
+           0 0 0 0 3 1 1 0
+           0 2 1 0 1 3 0 0
+           0 0 2 0 1 0 3 1
+           0 0 1 0 0 0 1 3
+       ];
+
+julia> symbfact = CliqueTrees.symbolic(matrix)
+SymbFact{Int64}:
+    nnz: 19
+
+julia> cholfact = CliqueTrees.cholesky(matrix, symbfact)
+CholFact{Float64, Int64}:
+    nnz: 19
+    success: true
+```
+
+### Parameters
+
+  - `matrix`: sparse positive-definite matrix
+  - `symbfact`: symbolic factorization
+"""
+function cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
+    cholfact = cholesky!(sparse(matrix), symbfact)
+    return cholfact
 end
 
-function cholesky(matrix::SparseMatrixCSC{T, I}, fact::SymbFact{I}) where {T, I}
+function cholesky(matrix::AbstractMatrix{T}, symbfact::SymbFact) where {T <: Integer}
+    F = float(T)
+    cholfact = cholesky(Matrix{F}(matrix), symbfact)
+    return cholfact
+end
+
+function cholesky(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T <: Integer, I <: Integer}
+    F = float(T)
+    cholfact = cholesky!(SparseMatrixCSC{F}(matrix), symbfact)
+    return cholfact
+end
+
+function cholesky(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
     @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(fact.tree))
-    tree = fact.tree
-    perm = fact.perm 
-    invp = fact.invp
+    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    tree = symbfact.tree
+    perm = symbfact.perm 
+    invp = symbfact.invp
 
     neqns = nov(separators(tree))
-    adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
+
+    adjln0 = convert(I, nnz(matrix))
+    adjln1 = half(adjln0 - neqns) + neqns
+    adjln2 = adjln1
 
     colptr0 = matrix.colptr
     colptr1 = FVector{I}(undef, neqns + one(I))
     colptr2 = FVector{I}(undef, neqns + one(I))
 
     rowval0 = matrix.rowval
-    rowval1 = FVector{I}(undef, adjln)
-    rowval2 = FVector{I}(undef, adjln)
+    rowval1 = FVector{I}(undef, adjln1)
+    rowval2 = FVector{I}(undef, adjln2)
     
     nzval0 = matrix.nzval
-    nzval1 = FVector{T}(undef, adjln)
-    nzval2 = FVector{T}(undef, adjln)
+    nzval1 = FVector{T}(undef, adjln1)
+    nzval2 = FVector{T}(undef, adjln2)
 
-    cholesky_permute!(colptr0, colptr1, rowval0, rowval1, nzval0, nzval1, neqns, invp)
-    cholesky_reverse!(colptr1, colptr2, rowval1, rowval2, nzval1, nzval2, neqns)
+    pattern0 = BipartiteGraph(neqns, neqns, adjln0, colptr0, rowval0)
+    pattern1 = BipartiteGraph(neqns, neqns, adjln1, colptr1, rowval1)
+    pattern2 = BipartiteGraph(neqns, neqns, adjln2, colptr2, rowval2)
+
+    cholesky_permute!(pattern0, pattern1, nzval0, nzval1, invp)
+    cholesky_reverse!(pattern1, pattern2, nzval1, nzval2)
 
     width, mapping, blkptr, updptr, blkval,
-        updval, frtval = cholesky_alloc(T, fact)
+        updval, frtval = cholesky_alloc(T, symbfact)
 
     status = cholesky_impl!(mapping, blkptr, updptr,
         blkval, updval, frtval, tree, colptr2, rowval2, nzval2)
 
-    return CholFact(fact, width, blkptr, blkval, status)
+    return CholFact(symbfact, width, blkptr, blkval, status)
 end
 
+"""
+    cholesky!(matrix::SparseMatrixCSC;
+        alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
+        snd::SupernodeType=DEFAULT_SUPERNODE_TYPE,
+    )
+
+An in-place version of [`cholesky`](@ref).
+
+### Parameters
+
+  - `matrix`: sparse positive-definite matrix
+  - `alg`: elimination algorithm
+  - `snd`: supernode type
+"""
 function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
-    fact = cholesky!(matrix, alg, snd)
-    return fact
+    cholfact = cholesky!(matrix, alg, snd)
+    return cholfact
 end
 
 function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {T, I}
-    fact = cholesky!(matrix, symbolic(matrix, alg, snd))
-    return fact
+    cholfact = cholesky!(matrix, symbolic(matrix, alg, snd))
+    return cholfact
 end
 
-function cholesky!(matrix::SparseMatrixCSC{T, I}, fact::SymbFact{I}) where {T, I}
+"""
+    cholesky!(matrix::SparseMatrixCSC, symbfact::SymbFact)
+
+An in-place version of [`cholesky`](@ref).
+
+### Parameters
+
+  - `matrix`: sparse positive-definite matrix
+  - `symbfact`: symbolic factorization
+"""
+function cholesky!(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
     @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(fact.tree))
-    tree = fact.tree
-    perm = fact.perm 
-    invp = fact.invp
+    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    tree = symbfact.tree
+    perm = symbfact.perm 
+    invp = symbfact.invp
 
     neqns = nov(separators(tree))
-    adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
+
+    adjln0 = convert(I, nnz(matrix))
+    adjln1 = half(adjln0 - neqns) + neqns
+    adjln2 = adjln1
 
     colptr0 = matrix.colptr
     colptr1 = FVector{I}(undef, neqns + one(I))
     colptr2 = matrix.colptr
 
     rowval0 = matrix.rowval
-    rowval1 = FVector{I}(undef, adjln)
+    rowval1 = FVector{I}(undef, adjln1)
     rowval2 = matrix.rowval
     
     nzval0 = matrix.nzval
-    nzval1 = FVector{T}(undef, adjln)
+    nzval1 = FVector{T}(undef, adjln1)
     nzval2 = matrix.nzval
 
-    cholesky_permute!(colptr0, colptr1, rowval0, rowval1, nzval0, nzval1, neqns, invp)
-    cholesky_reverse!(colptr1, colptr2, rowval1, rowval2, nzval1, nzval2, neqns)
+    pattern0 = BipartiteGraph(neqns, neqns, adjln0, colptr0, rowval0)
+    pattern1 = BipartiteGraph(neqns, neqns, adjln1, colptr1, rowval1)
+    pattern2 = BipartiteGraph(neqns, neqns, adjln2, colptr2, rowval2)
+
+    cholesky_permute!(pattern0, pattern1, nzval0, nzval1, invp)
+    cholesky_reverse!(pattern1, pattern2, nzval1, nzval2)
 
     width, mapping, blkptr, updptr, blkval,
-        updval, frtval = cholesky_alloc(T, fact)
+        updval, frtval = cholesky_alloc(T, symbfact)
 
     status = cholesky_impl!(mapping, blkptr, updptr,
         blkval, updval, frtval, tree, colptr2, rowval2, nzval2)
 
-    return CholFact(fact, width, blkptr, blkval, status)
+    return CholFact(symbfact, width, blkptr, blkval, status)
 end 
 
-function cholesky_alloc(::Type{T}, fact::SymbFact{I}) where {T, I}
-    tree = fact.tree
+function cholesky_alloc(::Type{T}, symbfact::SymbFact{I}) where {T, I}
+    tree = symbfact.tree
     residual = residuals(tree)
     separator = separators(tree)
 
@@ -191,71 +290,58 @@ function cholesky_alloc(::Type{T}, fact::SymbFact{I}) where {T, I}
 end
 
 function cholesky_permute!(
-        colptr1::AbstractVector{I},
-        colptr2::AbstractVector{I},
-        rowval1::AbstractVector{I},
-        rowval2::AbstractVector{I},
+        pattern1::BipartiteGraph{I, I},
+        pattern2::BipartiteGraph{I, I},
         nzval1::AbstractVector{T},
         nzval2::AbstractVector{T},
-        neqns::I,
         invp::AbstractVector{I},
     ) where {T, I}
-    @inbounds for i2 in oneto(neqns)
-        colptr2[i2 + one(I)] = zero(I)
+    neqns = nv(pattern1)
+
+    @inbounds for i2 in vertices(pattern1)
+        pointers(pattern2)[i2 + one(I)] = zero(I)
     end
 
-    @inbounds for j1 in oneto(neqns)
+    @inbounds for j1 in vertices(pattern1)
         j2 = invp[j1]
-        pstrt1 = colptr1[j1]
-        pstop1 = colptr1[j1 + one(I)]
+        j2 == neqns && continue
 
-        for p1 in pstrt1:pstop1 - one(I)
-            i1 = rowval1[p1]
+        for i1 in neighbors(pattern1, j1)
+            i1 > j1 && continue
 
-            if i1 <= j1
-                i2 = invp[i1]
-                k2 = j2
+            i2 = invp[i1]
+            i2 == neqns && continue
 
-                if k2 < i2
-                    k2 = i2
-                end
-
-                if k2 < neqns
-                    colptr2[k2 + two(I)] += one(I)
-                end
-            end
+            k2 = max(i2, j2)
+            pointers(pattern2)[k2 + two(I)] += one(I)
         end
     end
 
-    @inbounds colptr2[begin] = p2 = one(I)
+    @inbounds pointers(pattern2)[begin] = p2 = one(I)
 
-    @inbounds for i2 in oneto(neqns)
-        colptr2[i2 + one(I)] = p2 += colptr2[i2 + one(I)]
+    @inbounds for i2 in vertices(pattern1)
+        pointers(pattern2)[i2 + one(I)] = p2 += pointers(pattern2)[i2 + one(I)]
     end
 
-    @inbounds for j1 in oneto(neqns)
+    @inbounds for j1 in vertices(pattern1)
         j2 = invp[j1]
-        pstrt1 = colptr1[j1]
-        pstop1 = colptr1[j1 + one(I)]
 
-        for p1 in pstrt1:pstop1 - one(I)
-            i1 = rowval1[p1]
+        for p1 in incident(pattern1, j1)
+            i1 = targets(pattern1)[p1]
+            i1 > j1 && continue
 
-            if i1 <= j1
-                x1 = nzval1[p1]
-                i2 = invp[i1]
-                k2 = j2
+            x1 = nzval1[p1]
+            i2 = invp[i1]
+            k2 = j2
 
-                if k2 < i2
-                    i2, k2 = k2, i2
-                end
-
-                p2 = colptr2[k2 + one(I)]
-
-                colptr2[k2 + one(I)] = p2 + one(I)
-                rowval2[p2] = i2
-                nzval2[p2] = x1
+            if k2 < i2
+                i2, k2 = k2, i2
             end
+
+            p2 = pointers(pattern2)[k2 + one(I)]
+            pointers(pattern2)[k2 + one(I)] = p2 + one(I)
+            targets(pattern2)[p2] = i2
+            nzval2[p2] = x1
         end
     end
 
@@ -263,50 +349,34 @@ function cholesky_permute!(
 end
 
 function cholesky_reverse!(
-        colptr1::AbstractVector{I},
-        colptr2::AbstractVector{I},
-        rowval1::AbstractVector{I},
-        rowval2::AbstractVector{I},
+        pattern1::BipartiteGraph{I, I},
+        pattern2::BipartiteGraph{I, I},
         nzval1::AbstractVector{T},
         nzval2::AbstractVector{T},
-        neqns::I,
     ) where {T, I}
-    @inbounds for i2 in oneto(neqns)
-        colptr2[i2 + one(I)] = zero(I)
+    @inbounds for i2 in vertices(pattern1)
+        pointers(pattern2)[i2 + one(I)] = zero(I)
     end
 
-    @inbounds for j1 in oneto(neqns)
-        pstrt1 = colptr1[j1]
-        pstop1 = colptr1[j1 + one(I)]
-
-        for p1 in pstrt1:pstop1 - one(I)
-            i1 = rowval1[p1]
-
-            if i1 < neqns
-                colptr2[i1 + two(I)] += one(I)
-            end
-        end
+    @inbounds for j1 in vertices(pattern1), i1 in neighbors(pattern1, j1)
+        i1 == nv(pattern1) && continue
+        pointers(pattern2)[i1 + two(I)] += one(I)
     end
 
-    @inbounds colptr2[begin] = p2 = one(I)
+    @inbounds pointers(pattern2)[begin] = p2 = one(I)
 
-    @inbounds for i2 in oneto(neqns)
-        colptr2[i2 + one(I)] = p2 += colptr2[i2 + one(I)]
+    @inbounds for i2 in vertices(pattern1)
+        pointers(pattern2)[i2 + one(I)] = p2 += pointers(pattern2)[i2 + one(I)]
     end
 
-    @inbounds for j1 in oneto(neqns)
-        pstrt1 = colptr1[j1]
-        pstop1 = colptr1[j1 + one(I)]
+    @inbounds for j1 in vertices(pattern1), p1 in incident(pattern1, j1)
+        i1 = targets(pattern1)[p1]
+        x1 = nzval1[p1]
+        p2 = pointers(pattern2)[i1 + one(I)]
 
-        for p1 in pstrt1:pstop1 - one(I)
-            i1 = rowval1[p1]
-            x1 = nzval1[p1]
-            p2 = colptr2[i1 + one(I)]
-
-            colptr2[i1 + one(I)] = p2 + one(I)
-            rowval2[p2] = j1
-            nzval2[p2] = x1
-        end
+        pointers(pattern2)[i1 + one(I)] = p2 + one(I)
+        targets(pattern2)[p2] = j1
+        nzval2[p2] = x1
     end
 
     return
@@ -570,23 +640,13 @@ function cholesky_add_update!(
     return
 end
 
-function Base.:\(F::CholFact, B)
-    return ldiv(F, B)
-end
-
-function LinearAlgebra.ldiv(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
-    @argcheck nov(separators(F.fact.tree)) == size(B, 1)
-    X = Array{T}(undef, size(B)); copyto!(X, B)
-    return ldiv!(F, X)
-end
-
-function LinearAlgebra.ldiv!(F::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
-    @argcheck nov(separators(F.fact.tree)) == size(B, 1)
-    tree = F.fact.tree
-    perm = F.fact.perm
-    width = F.width
-    blkptr = F.blkptr
-    blkval = F.blkval
+function LinearAlgebra.ldiv!(cholfact::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
+    @argcheck nov(separators(cholfact.symbfact.tree)) == size(B, 1)
+    tree = cholfact.symbfact.tree
+    perm = cholfact.symbfact.perm
+    width = cholfact.width
+    blkptr = cholfact.blkptr
+    blkval = cholfact.blkval
     frtval = FVector{T}(undef, width * size(B, 2))
 
     residual = residuals(tree)
@@ -608,6 +668,39 @@ function LinearAlgebra.ldiv!(F::CholFact{T}, B::Union{AbstractVector, AbstractMa
 
     for w in axes(B, 2), v in axes(B, 1)
         B[perm[v], w] = X[v, w]
+    end
+    
+    return B
+end
+
+function LinearAlgebra.rdiv!(B::AbstractMatrix, cholfact::CholFact{T}) where {T}
+    @argcheck size(B, 2) == nov(separators(cholfact.symbfact.tree))
+    tree = cholfact.symbfact.tree
+    perm = cholfact.symbfact.perm
+    width = cholfact.width
+    blkptr = cholfact.blkptr
+    blkval = cholfact.blkval
+    frtval = FVector{T}(undef, width * size(B, 1))
+
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    X = FArray{T}(undef, size(B))
+
+    for w in axes(B, 1), v in axes(B, 2)
+        X[w, v] = B[w, perm[v]]
+    end
+    
+    for j in vertices(separator)
+        rdiv!_loop_fwd!(blkptr, blkval, frtval, tree, X, j)
+    end
+    
+    for j in reverse(vertices(separator))
+        rdiv!_loop_bwd!(blkptr, blkval, frtval, tree, X, j)
+    end
+
+    for w in axes(B, 1), v in axes(B, 2)
+        B[w, perm[v]] = X[w, v]
     end
     
     return B
@@ -766,7 +859,7 @@ function ldiv!_loop_fwd!(
         #     Y₂ = X₂ - L₂₁ Y₁
         #
         # and store X₂ ← Y₂ 
-        gemm!(L₂₁, X₁, X₂, Val(false))
+        gemm!(L₂₁, X₁, X₂, Val(false), Val(false))
     end
 
     # copy X into b
@@ -924,7 +1017,7 @@ function ldiv!_loop_bwd!(
         #     Y₁ = X₁ - L₂₁ᴴ X₂
         #
         # and store X₁ ← Y₁ 
-        gemm!(L₂₁, X₂, X₁, Val(true))
+        gemm!(L₂₁, X₂, X₁, Val(true), Val(false))
     end
 
     # solve for Z₁ in
@@ -942,11 +1035,283 @@ function ldiv!_loop_bwd!(
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", F::CholFact{T, I}) where {T, I}
-    println(io, "CholFact{$T, $I}:")
-    print(io,   "    success: $(F.status)")
+function rdiv!_loop_fwd!(
+        blkptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # bag is the bag at node j
+    @inbounds bag = tree[j] 
+    
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+
+    # X is part of B
+    #
+    #     X = [ X₁ ] res(j)
+    #         [ X₂ ] sep(j)
+    #
+    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 1))), size(B, 1), nj)
+    @inbounds X₁ = view(X, axes(B, 1), oneto(nn))
+    @inbounds X₂ = view(X, axes(B, 1), nn + one(I):nj)
+
+    @inbounds for k in oneto(nj), w in axes(B, 1)
+        X[w, k] = B[w, bag[k]]
+    end
+
+    # solve for Y₁ in
+    #
+    #     Y₁ L₁₁ᴴ = X₁
+    #
+    # and store X₁ ← Y₁
+    trsm!(L₁₁, X₁, Val(true), Val(true))
+    
+    if ispositive(na)
+        # compute the difference
+        #
+        #     Y₂ = X₂ - Y₁ L₂₁ᴴ
+        #
+        # and store X₂ ← Y₂ 
+        gemm!(X₁, L₂₁, X₂, Val(false), Val(true))
+    end
+
+    # copy X into B
+    @inbounds for k in oneto(nj), w in axes(B, 1)
+        B[w, bag[k]] = X[w, k]
+    end
+
+    return
 end
 
+function rdiv!_loop_bwd!(
+        blkptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # bag is the bag at node j
+    @inbounds bag = tree[j]        
+ 
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+
+    # X is part of B
+    #
+    #     X = [ X₁ ] res(j)
+    #         [ X₂ ] sep(j)
+    #
+    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 1))), size(B, 1), nj)
+    @inbounds X₁ = view(X, axes(B, 1), oneto(nn))
+    @inbounds X₂ = view(X, axes(B, 1), nn + one(I):nj)
+
+    @inbounds for k in oneto(nj), w in axes(B, 1)
+        X[w, k] = B[w, bag[k]]
+    end
+    
+    if ispositive(na)
+        # compute the difference
+        #
+        #     Y₁ = X₁ - X₂ L₂₁
+        #
+        # and store X₁ ← Y₁ 
+        gemm!(X₂, L₂₁, X₁, Val(false), Val(false))
+    end
+
+    # solve for Z₁ in
+    #
+    #     Z₁ L₁₁ = Y₁
+    #
+    # and store X₁ ← Z₁
+    trsm!(L₁₁, X₁, Val(false), Val(true))
+
+    # copy X into B
+    @inbounds for k in oneto(nj), w in axes(B, 1)
+        B[w, bag[k]] = X[w, k]
+    end
+
+    return
+end
+
+function LinearAlgebra.issuccess(cholfact::CholFact)
+    return cholfact.status
+end
+
+function LinearAlgebra.isposdef(cholfact::CholFact)
+    return issuccess(cholfact)
+end
+
+function LinearAlgebra.det(cholfact::CholFact{T, I}) where {T, I}
+    tree = cholfact.symbfact.tree
+    blkptr = cholfact.blkptr
+    blkval = cholfact.blkval
+
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    det = one(real(T))
+
+    @inbounds for j in vertices(separator)
+        # nn is the size of the residual at node j
+        #
+        #     nn = | res(j) |
+        #
+        nn = eltypedegree(residual, j)
+
+        # na is the size of the separator at node j
+        #
+        #     na = | sep(j) |
+        #
+        na = eltypedegree(separator, j)
+
+        # nj is the size of the bag at node j
+        #
+        #     nj = | bag(j) |
+        #
+        nj = nn + na
+
+        # L is part of the Cholesky factor
+        #
+        #          res(j)
+        #     L = [ L₁₁  ] res(j)
+        #         [ L₂₁  ] sep(j)
+        #
+        pstrt = blkptr[j]
+        pstop = blkptr[j + one(I)]
+        L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+ 
+        for k in oneto(nn)
+            Lkk = real(L[k, k])
+            det *= Lkk * Lkk
+        end
+    end
+
+    return det
+end
+
+function LinearAlgebra.logdet(cholfact::CholFact{T, I}) where {T, I}
+    tree = cholfact.symbfact.tree
+    blkptr = cholfact.blkptr
+    blkval = cholfact.blkval
+
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    logdet = zero(real(T))
+
+    @inbounds for j in vertices(separator)
+        # nn is the size of the residual at node j
+        #
+        #     nn = | res(j) |
+        #
+        nn = eltypedegree(residual, j)
+
+        # na is the size of the separator at node j
+        #
+        #     na = | sep(j) |
+        #
+        na = eltypedegree(separator, j)
+
+        # nj is the size of the bag at node j
+        #
+        #     nj = | bag(j) |
+        #
+        nj = nn + na
+
+        # L is part of the Cholesky factor
+        #
+        #          res(j)
+        #     L = [ L₁₁  ] res(j)
+        #         [ L₂₁  ] sep(j)
+        #
+        pstrt = blkptr[j]
+        pstop = blkptr[j + one(I)]
+        L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+ 
+        for k in oneto(nn)
+            Lkk = log(real(L[k, k]))
+            logdet += Lkk + Lkk
+        end
+    end
+
+    return logdet
+end
+
+function SparseArrays.nnz(cholfact::CholFact)
+    return nnz(cholfact.symbfact)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", cholfact::CholFact{T, I}) where {T, I}
+    println(io, "CholFact{$T, $I}:")
+    println(io, "    nnz: $(nnz(cholfact))")
+    print(io,   "    success: $(issuccess(cholfact))")
+end
 
 ##################################
 # Dense Numerical Linear Algebra #
@@ -1071,6 +1436,16 @@ end
 
 # solve for X in
 #
+#     X L = B
+#
+# and store B ← X
+function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{false}, side::Val{true}) where {T}
+    rdiv!(B, LowerTriangular(L))
+    return
+end
+
+# solve for X in
+#
 #     X Lᴴ = B
 #
 # and store B ← X
@@ -1104,7 +1479,7 @@ end
 #     Z = Y - A X
 #
 # and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}) where {T}
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}, tX::Val{false}) where {T}
     mul!(Y, A, X, -one(T), one(T))
     return
 end
@@ -1114,7 +1489,27 @@ end
 #     Z = Y - Aᴴ X
 #
 # and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}) where {T}
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}, tX::Val{false}) where {T}
     mul!(Y, A |> adjoint, X, -one(T), one(T))
+    return
+end
+
+# compute the difference
+#
+#     Z = Y - A Xᴴ
+#
+# and store Y ← Z
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}, tX::Val{true}) where {T}
+    mul!(Y, A, X |> adjoint, -one(T), one(T))
+    return
+end
+
+# compute the difference
+#
+#     Z = Y - Aᴴ Xᴴ
+#
+# and store Y ← Z
+function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}, tX::Val{true}) where {T}
+    mul!(Y, A |> adjoint, X |> adjoint, -one(T), one(T))
     return
 end

@@ -110,6 +110,9 @@ isperfect
 
 ## Matrix Factorization
 ```@docs
+SymbFact
 CholFact
+CliqueTrees.symbolic
 CliqueTrees.cholesky
+CliqueTrees.cholesky!
 ```

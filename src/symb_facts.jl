@@ -33,25 +33,29 @@ Compute a symbolic factorization of a sparse symmetric matrix.
 See the function [`cliquetree`](@ref) for more information about
 the parameters `alg` and `snd`.
 
+```julia-repl
+julia> import CliqueTrees
+
+julia> matrix = [
+           3 1 0 0 0 0 0 0
+           1 3 1 0 0 2 0 0
+           0 1 3 1 0 1 2 1
+           0 0 1 3 0 0 0 0
+           0 0 0 0 3 1 1 0
+           0 2 1 0 1 3 0 0
+           0 0 2 0 1 0 3 1
+           0 0 1 0 0 0 1 3
+       ];
+
+julia> symbfact = CliqueTrees.symbolic(matrix)
+SymbFact{Int64}:
+    nnz: 19
+```
+
 ### Parameters
 
   - `alg`: elimination algorithm
   - `snd`: supernode type
-
-```julia
-julia> import CliqueTrees
-
-julia> matrix = [
-           1.5   94.2    0.8 0.0
-           94.2  15080.4 0.0 0.0
-           0.8   0.0     3.1 0.0
-           0.0   0.0     0.0 1.6
-       ];
-
-julia> CliqueTrees.symbolic(matrix)
-SymbFact{Int64}:
-    nnz: 6
-```
 """
 function symbolic(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
     fact = symbolic(matrix, alg, snd)
