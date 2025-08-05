@@ -8,7 +8,7 @@ struct CholFact{T, I} <: Factorization{T}
     width::I
     blkptr::FVector{I}
     blkval::FVector{T}
-    status::Bool
+    status::FScalar{Bool}
 end
 
 """
@@ -109,7 +109,7 @@ CholFact{Float64, Int64}:
   - `symbfact`: symbolic factorization
 """
 function cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
-    cholfact = cholesky!(sparse(matrix), symbfact)
+    cholfact = cholesky(sparse(matrix), symbfact)
     return cholfact
 end
 
@@ -121,172 +121,42 @@ end
 
 function cholesky(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T <: Integer, I <: Integer}
     F = float(T)
-    cholfact = cholesky!(SparseMatrixCSC{F}(matrix), symbfact)
+    cholfact = cholesky(SparseMatrixCSC{F}(matrix), symbfact)
     return cholfact
 end
 
 function cholesky(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
     @argcheck size(matrix, 1) == size(matrix, 2)
     @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    return cholesky!(cholinit(matrix, symbfact)..., matrix, symbfact) 
+end
+
+function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
     tree = symbfact.tree
-    perm = symbfact.perm 
     invp = symbfact.invp
 
-    neqns = nov(separators(tree))
-
-    adjln0 = convert(I, nnz(matrix))
-    adjln1 = half(adjln0 - neqns) + neqns
-    adjln2 = adjln1
-
-    colptr0 = matrix.colptr
-    colptr1 = FVector{I}(undef, neqns + one(I))
-    colptr2 = FVector{I}(undef, neqns + one(I))
-
-    rowval0 = matrix.rowval
-    rowval1 = FVector{I}(undef, adjln1)
-    rowval2 = FVector{I}(undef, adjln2)
+    blkptr = cholfact.blkptr
+    blkval = cholfact.blkval
     
-    nzval0 = matrix.nzval
-    nzval1 = FVector{T}(undef, adjln1)
-    nzval2 = FVector{T}(undef, adjln2)
+    mapping = cholwork.mapping
+    updptr = cholwork.updptr
+    updval = cholwork.updval
+    frtval = cholwork.frtval
 
-    pattern0 = BipartiteGraph(neqns, neqns, adjln0, colptr0, rowval0)
-    pattern1 = BipartiteGraph(neqns, neqns, adjln1, colptr1, rowval1)
-    pattern2 = BipartiteGraph(neqns, neqns, adjln2, colptr2, rowval2)
+    pattern0 = BipartiteGraph(matrix)
+    pattern1 = cholwork.pattern1
+    pattern2 = cholwork.pattern2
+
+    nzval0 = matrix.nzval
+    nzval1 = cholwork.nzval1
+    nzval2 = cholwork.nzval2
 
     cholesky_permute!(pattern0, pattern1, nzval0, nzval1, invp)
     cholesky_reverse!(pattern1, pattern2, nzval1, nzval2)
 
-    width, mapping, blkptr, updptr, blkval,
-        updval, frtval = cholesky_alloc(T, symbfact)
+    cholfact.status[] = cholesky_impl!(mapping, blkptr, updptr, blkval, updval, frtval, tree, pattern2, nzval2) 
 
-    status = cholesky_impl!(mapping, blkptr, updptr,
-        blkval, updval, frtval, tree, colptr2, rowval2, nzval2)
-
-    return CholFact(symbfact, width, blkptr, blkval, status)
-end
-
-"""
-    cholesky!(matrix::SparseMatrixCSC;
-        alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
-        snd::SupernodeType=DEFAULT_SUPERNODE_TYPE,
-    )
-
-An in-place version of [`cholesky`](@ref).
-
-### Parameters
-
-  - `matrix`: sparse positive-definite matrix
-  - `alg`: elimination algorithm
-  - `snd`: supernode type
-"""
-function cholesky!(matrix::SparseMatrixCSC; alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType=DEFAULT_SUPERNODE_TYPE)
-    cholfact = cholesky!(matrix, alg, snd)
-    return cholfact
-end
-
-function cholesky!(matrix::SparseMatrixCSC{T, I}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {T, I}
-    cholfact = cholesky!(matrix, symbolic(matrix, alg, snd))
-    return cholfact
-end
-
-"""
-    cholesky!(matrix::SparseMatrixCSC, symbfact::SymbFact)
-
-An in-place version of [`cholesky`](@ref).
-
-### Parameters
-
-  - `matrix`: sparse positive-definite matrix
-  - `symbfact`: symbolic factorization
-"""
-function cholesky!(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
-    @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
-    tree = symbfact.tree
-    perm = symbfact.perm 
-    invp = symbfact.invp
-
-    neqns = nov(separators(tree))
-
-    adjln0 = convert(I, nnz(matrix))
-    adjln1 = half(adjln0 - neqns) + neqns
-    adjln2 = adjln1
-
-    colptr0 = matrix.colptr
-    colptr1 = FVector{I}(undef, neqns + one(I))
-    colptr2 = matrix.colptr
-
-    rowval0 = matrix.rowval
-    rowval1 = FVector{I}(undef, adjln1)
-    rowval2 = matrix.rowval
-    
-    nzval0 = matrix.nzval
-    nzval1 = FVector{T}(undef, adjln1)
-    nzval2 = matrix.nzval
-
-    pattern0 = BipartiteGraph(neqns, neqns, adjln0, colptr0, rowval0)
-    pattern1 = BipartiteGraph(neqns, neqns, adjln1, colptr1, rowval1)
-    pattern2 = BipartiteGraph(neqns, neqns, adjln2, colptr2, rowval2)
-
-    cholesky_permute!(pattern0, pattern1, nzval0, nzval1, invp)
-    cholesky_reverse!(pattern1, pattern2, nzval1, nzval2)
-
-    width, mapping, blkptr, updptr, blkval,
-        updval, frtval = cholesky_alloc(T, symbfact)
-
-    status = cholesky_impl!(mapping, blkptr, updptr,
-        blkval, updval, frtval, tree, colptr2, rowval2, nzval2)
-
-    return CholFact(symbfact, width, blkptr, blkval, status)
-end 
-
-function cholesky_alloc(::Type{T}, symbfact::SymbFact{I}) where {T, I}
-    tree = symbfact.tree
-    residual = residuals(tree)
-    separator = separators(tree)
-
-    up = ns = nsmax = njmax = upmax = blkln = zero(I)
-
-    for j in vertices(separator)
-        nn = eltypedegree(residual, j)
-        na = eltypedegree(separator, j)
-        nj = nn + na
-
-        for i in childindices(tree, j)
-            ma = eltypedegree(separator, i)
-
-            ns -= one(I)
-            up -= ma * ma
-        end
-
-        if !isnothing(parentindex(tree, j))
-            ns += one(I)
-            up += na * na 
-        end
-
-        nsmax = max(nsmax, ns)
-        njmax = max(njmax, nj)
-        upmax = max(upmax, up)
-
-        blkln = blkln + nn * nj
-    end
-
-    treln = nv(separator)
-    relln = ne(separator)
-    frtln = njmax * njmax
-
-    blkptr = FVector{I}(undef, treln + one(I))
-    updptr = FVector{I}(undef, nsmax + one(I))
-    relidx = FVector{I}(undef, relln)
-
-    blkval = FVector{T}(undef, blkln)
-    updval = FVector{T}(undef, upmax)
-    frtval = FVector{T}(undef, frtln)
-
-    relptr = pointers(separator)
-    mapping = BipartiteGraph(njmax, treln, relln, relptr, relidx)
-    return njmax, mapping, blkptr, updptr, blkval, updval, frtval
+    return cholfact    
 end
 
 function cholesky_permute!(
@@ -390,8 +260,7 @@ function cholesky_impl!(
         updval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I},
-        colptr::AbstractVector{I},
-        rowval::AbstractVector{I},
+        pattern::BipartiteGraph{I, I},
         nzval::AbstractVector{T},
     ) where {T, I}
     separator = separators(tree)
@@ -399,7 +268,7 @@ function cholesky_impl!(
     status = true; ns = zero(I)
 
     cholesky_init!(relidx, blkptr, updptr,
-        blkval, tree, colptr, rowval, nzval)
+        blkval, tree, pattern, nzval)
 
     for j in vertices(separator)
         iterstatus, ns = cholesky_loop!(mapping, blkptr,
@@ -417,8 +286,7 @@ function cholesky_init!(
         updptr::AbstractVector{I},
         blkval::AbstractVector{T},
         tree::CliqueTree{I, I},
-        colptr::AbstractVector{I},
-        rowval::AbstractVector{I},
+        pattern::BipartiteGraph{I, I},
         nzval::AbstractVector{T},
     ) where {T, I}
     residual = residuals(tree)
@@ -440,11 +308,9 @@ function cholesky_init!(
 
         for v in res
             k = one(I)
-            qstrt = colptr[v]
-            qstop = colptr[v + one(I)]
 
-            for q in qstrt:qstop - one(I)
-                w = rowval[q]
+            for q in incident(pattern, v)
+                w = targets(pattern)[q]
 
                 while bag[k] < w
                     blkval[p] = zero(T)
@@ -1200,7 +1066,7 @@ function rdiv!_loop_bwd!(
 end
 
 function LinearAlgebra.issuccess(cholfact::CholFact)
-    return cholfact.status
+    return cholfact.status[]
 end
 
 function LinearAlgebra.isposdef(cholfact::CholFact)

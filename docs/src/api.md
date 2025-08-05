@@ -114,5 +114,4 @@ SymbFact
 CholFact
 CliqueTrees.symbolic
 CliqueTrees.cholesky
-CliqueTrees.cholesky!
 ```

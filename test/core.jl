@@ -1174,40 +1174,29 @@ end
         M = SparseMatrixCSC{Float64}(matrix)
         F1 = cholesky(M)
         F2 = CliqueTrees.cholesky(M)
-        F3 = CliqueTrees.cholesky!(copy(M))
 
         @test issuccess(F1)
         @test issuccess(F2)
 
         b1 = rand(Float64, n)
         b2 = M * (F2 \ b1)
-        b3 = M * (F3 \ b1)
         @test sum(abs.(b1 - b2)) / n < 0.01
-        @test sum(abs.(b1 - b3)) / n < 0.01
 
         B1 = rand(Float64, n, 5)
         B2 = M * (F2 \ B1)
-        B3 = M * (F3 \ B1)
         @test sum(abs.(B1 - B2)) / n / 5 < 0.01
-        @test sum(abs.(B1 - B3)) / n / 5 < 0.01
 
         C1 = rand(Float64, 5, n)
         C2 = (C1 / F2) * M
-        C3 = (C2 / F3) * M
         @test sum(abs.(C1 - C2)) / n / 5 < 0.01
-        @test sum(abs.(C1 - C3)) / n / 5 < 0.01
 
         det1 = det(F1)
         det2 = det(F2)
-        det3 = det(F3)
         @test det1 ≈ det2
-        @test det1 ≈ det3
  
         logdet1 = logdet(F1)
         logdet2 = logdet(F2)
-        logdet3 = logdet(F3)
         @test logdet1 ≈ logdet2
-        @test logdet1 ≈ logdet3
     end
 
     matrix = readmatrix("torsion1")
