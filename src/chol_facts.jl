@@ -73,11 +73,21 @@ function cholesky(matrix::AbstractMatrix, alg::PermutationOrAlgorithm, snd::Supe
     return cholfact
 end
 
-"""
-    cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
+function cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
+    cholfact = cholesky(sparse(matrix), symbfact)
+    return cholfact
+end
 
-Compute the Cholesky factorization of a sparse positive definite matrix
-using a symbolic factorization `fact` computed by [`symbolic`](@ref).
+function cholesky(matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {I}
+    @argcheck size(matrix, 1) == size(matrix, 2)
+    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    return cholesky!(cholinit(matrix, symbfact)..., matrix, symbfact) 
+end
+
+"""
+    cholesky!(cholfact::CholFact, cholwork::CholWork, matrix::AbstractMatrix, symbfact::SymbFact)
+
+A non-allocating version of [`cholesky`](@ref).
 
 ```julia-repl
 julia> import CliqueTrees
@@ -97,7 +107,9 @@ julia> symbfact = CliqueTrees.symbolic(matrix)
 SymbFact{Int64}:
     nnz: 19
 
-julia> cholfact = CliqueTrees.cholesky(matrix, symbfact)
+julia> cholfact, cholwork = CliqueTrees.cholinit(matrix, symbfact);
+
+julia> CliqueTrees.cholesky!(cholfact, cholwork, matrix, symbfact)
 CholFact{Float64, Int64}:
     nnz: 19
     success: true
@@ -105,33 +117,16 @@ CholFact{Float64, Int64}:
 
 ### Parameters
 
+  - `cholfact`: Cholesky factor
+  - `cholwork`: workspace
   - `matrix`: sparse positive-definite matrix
-  - `symbfact`: symbolic factorization
+  - `symbfact`: symbolic factorization 
 """
-function cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
-    cholfact = cholesky(sparse(matrix), symbfact)
-    return cholfact
+function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::AbstractMatrix, symbfact::SymbFact{I}) where {T, I}
+    return cholesky!(cholfact, cholwork, sparse(matrix), symbfact)
 end
 
-function cholesky(matrix::AbstractMatrix{T}, symbfact::SymbFact) where {T <: Integer}
-    F = float(T)
-    cholfact = cholesky(Matrix{F}(matrix), symbfact)
-    return cholfact
-end
-
-function cholesky(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T <: Integer, I <: Integer}
-    F = float(T)
-    cholfact = cholesky(SparseMatrixCSC{F}(matrix), symbfact)
-    return cholfact
-end
-
-function cholesky(matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
-    @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
-    return cholesky!(cholinit(matrix, symbfact)..., matrix, symbfact) 
-end
-
-function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::SparseMatrixCSC{T, I}, symbfact::SymbFact{I}) where {T, I}
+function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {T, I}
     tree = symbfact.tree
     invp = symbfact.invp
 
@@ -162,10 +157,10 @@ end
 function cholesky_permute!(
         pattern1::BipartiteGraph{I, I},
         pattern2::BipartiteGraph{I, I},
-        nzval1::AbstractVector{T},
-        nzval2::AbstractVector{T},
+        nzval1::AbstractVector,
+        nzval2::AbstractVector,
         invp::AbstractVector{I},
-    ) where {T, I}
+    ) where {I}
     neqns = nv(pattern1)
 
     @inbounds for i2 in vertices(pattern1)
@@ -221,9 +216,9 @@ end
 function cholesky_reverse!(
         pattern1::BipartiteGraph{I, I},
         pattern2::BipartiteGraph{I, I},
-        nzval1::AbstractVector{T},
-        nzval2::AbstractVector{T},
-    ) where {T, I}
+        nzval1::AbstractVector,
+        nzval2::AbstractVector,
+    ) where {I}
     @inbounds for i2 in vertices(pattern1)
         pointers(pattern2)[i2 + one(I)] = zero(I)
     end
@@ -261,7 +256,7 @@ function cholesky_impl!(
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I},
         pattern::BipartiteGraph{I, I},
-        nzval::AbstractVector{T},
+        nzval::AbstractVector,
     ) where {T, I}
     separator = separators(tree)
     relidx = targets(mapping)
@@ -287,7 +282,7 @@ function cholesky_init!(
         blkval::AbstractVector{T},
         tree::CliqueTree{I, I},
         pattern::BipartiteGraph{I, I},
-        nzval::AbstractVector{T},
+        nzval::AbstractVector,
     ) where {T, I}
     residual = residuals(tree)
     separator = separators(tree)

@@ -108,10 +108,13 @@ ischordal
 isperfect
 ```
 
-## Matrix Factorization
+## Cholesky Factorization
 ```@docs
 SymbFact
+CholWork
 CholFact
 CliqueTrees.symbolic
+CliqueTrees.cholinit
+CliqueTrees.cholesky!
 CliqueTrees.cholesky
 ```

@@ -47,7 +47,7 @@ Construct a tree decomposition of a simple graph.
 The vertices of the graph are first ordered by a fill-reducing permutation computed by the algorithm `alg`.
 The size of the resulting decomposition is determined by the supernode partition `snd`.
 
-```julia
+```julia-repl
 julia> using CliqueTrees
 
 julia> graph = [
@@ -286,7 +286,7 @@ end
 
 Compute the [width](https://en.wikipedia.org/wiki/Treewidth) of a clique tree.
 
-```julia
+```julia-repl
 julia> using CliqueTrees
 
 julia> graph = [

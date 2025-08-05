@@ -208,26 +208,6 @@ julia> cholfact \ rhs # inv(matrix) * rhs
   0.0793129   0.127395
 ```
 
-The function `symbolic` computes symbolic factorizations.
-
-```julia-repl
-julia> symbfact = CliqueTrees.symbolic(matrix)
-SymbFact{Int64}:
-    nnz: 19
-```
-
-Symbolic factorizations can be reused to factorize matrices with
-the same sparsity pattern.
-
-```julia-repl
-julia> matrix[1, 2] = matrix[2, 1] = 2;
-
-julia> cholfact = CliqueTrees.cholesky(matrix, symbfact)
-CholFact{Float64, Int64}:
-    nnz: 19
-    success: true
-```
-
 ## Graphs
 
 Users can input graphs as adjacency matrices. Additionally, CliqueTrees.jl supports the `HasGraph` type from [Catlab.jl](https://github.com/AlgebraicJulia/Catlab.jl) and the `AbstractGraph` type from [Graphs.jl](https://github.com/JuliaGraphs/Graphs.jl). Instances of the latter should implement the following subset of the [abstract graph interface](https://juliagraphs.org/Graphs.jl/stable/core_functions/interface/).

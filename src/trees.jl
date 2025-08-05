@@ -55,7 +55,7 @@ end
 
 Construct a [tree-depth decomposition](https://en.wikipedia.org/wiki/Tr%C3%A9maux_tree) of a simple graph.
 
-```julia
+```julia-repl
 julia> using CliqueTrees
 
 julia> graph = [
