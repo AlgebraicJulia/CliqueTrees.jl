@@ -9,9 +9,9 @@ struct CholWork{T, I}
     nzval2::FVector{T}
     updval::FVector{T}
     frtval::FVector{T}
+    mapping::BipartiteGraph{I, I, FVector{I}, FVector{I}}
     pattern1::BipartiteGraph{I, I, FVector{I}, FVector{I}}
     pattern2::BipartiteGraph{I, I, FVector{I}, FVector{I}} 
-    mapping::BipartiteGraph{I, I, FVector{I}, FVector{I}}       
 end
 
 """
@@ -44,7 +44,7 @@ julia> cholfact, cholwork = CliqueTrees.cholinit(matrix, symbfact);
 
   - `T`: element type (optional)
   - `matrix`: sparse positive definite matrix
-  - `symbact`: symbolic factorization
+  - `symbfact`: symbolic factorization
 """
 function cholinit(matrix::AbstractMatrix{T}, symbfact::SymbFact) where {T}
     return cholinit(T, matrix, symbfact)
@@ -63,38 +63,15 @@ function cholinit(::Type{T}, matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFa
     @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
 
     tree = symbfact.tree
-    residual = residuals(tree)
     separator = separators(tree)
 
-    up = ns = nsmax = njmax = upmax = blkln = zero(I)
+    adjln = symbfact.adjln
+    blkln = symbfact.blkln
+    njmax = symbfact.njmax
+    nsmax = symbfact.nsmax
+    upmax = symbfact.upmax
 
-    @inbounds for j in vertices(separator)
-        nn = eltypedegree(residual, j)
-        na = eltypedegree(separator, j)
-        nj = nn + na
-
-        for i in childindices(tree, j)
-            ma = eltypedegree(separator, i)
-
-            ns -= one(I)
-            up -= ma * ma
-        end
-
-        if !isnothing(parentindex(tree, j))
-            ns += one(I)
-            up += na * na 
-        end
-
-        nsmax = max(nsmax, ns)
-        njmax = max(njmax, nj)
-        upmax = max(upmax, up)
-
-        blkln = blkln + nn * nj
-    end
-
-    neqns = nov(separators(tree))
-    adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
-
+    neqns = nov(separator)
     treln = nv(separator)
     relln = ne(separator)
     frtln = njmax * njmax
@@ -117,12 +94,12 @@ function cholinit(::Type{T}, matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFa
 
     status = FScalar{Bool}(undef)
 
+    mapping = BipartiteGraph(njmax, treln, relln, relptr, relidx)
     pattern1 = BipartiteGraph(neqns, neqns, adjln, colptr1, rowval1)
     pattern2 = BipartiteGraph(neqns, neqns, adjln, colptr2, rowval2)
-    mapping = BipartiteGraph(njmax, treln, relln, relptr, relidx)
 
-    cholfact = CholFact{T, I}(symbfact, frtln, blkptr, blkval, status) 
-    cholwork = CholWork{T, I}(updptr, nzval1, nzval2, updval, frtval, pattern1, pattern2, mapping)
+    cholfact = CholFact{T, I}(symbfact, blkptr, blkval, status) 
+    cholwork = CholWork{T, I}(updptr, nzval1, nzval2, updval, frtval, mapping, pattern1, pattern2)
     return cholfact, cholwork
 end
 

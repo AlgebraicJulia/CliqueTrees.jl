@@ -118,5 +118,6 @@ include("pr4.jl")
 include("symb_facts.jl")
 include("chol_works.jl")
 include("chol_facts.jl")
+include("lin_works.jl")
 
 end

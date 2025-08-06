@@ -161,14 +161,9 @@ You can solve linear systems of equations with the operators
 `/` and `\`.
 
 ```julia-repl
-julia> lhs = rand(2, 8); rhs = copy(transpose(lhs));
+julia> rhs = rand(8, 2);
 
-julia> lhs / cholfact # lhs * inv(matrix)
-2×8 Matrix{Float64}:
- -0.202009  0.661177   0.173183  0.110932   0.375653  -0.556495  -0.0751984  0.0793129
- -0.164852  0.665989  -0.126911  0.0915613  0.187998  -0.378656   0.0536805  0.127395
-
-julia> cholfact \ rhs # inv(matrix) * rhs
+julia> sol = cholfact \ rhs # sol = inv(matrix) * rhs
 8×2 Matrix{Float64}:
  -0.202009   -0.164852
   0.661177    0.665989

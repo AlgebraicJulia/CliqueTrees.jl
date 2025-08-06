@@ -7,20 +7,11 @@ struct SymbFact{I}
     tree::CliqueTree{I, I}
     perm::FVector{I}
     invp::FVector{I}
-end
-
-function SymbFact(tree::CliqueTree{I, I}, perm::AbstractVector{I}) where {I}
-    n = nov(separators(tree))
-    perm1 = FVector{I}(undef, n)
-    invp1 = FVector{I}(undef, n)
-
-    @inbounds for v in oneto(n)
-        w = perm[v]
-        perm1[v] = w
-        invp1[w] = v        
-    end
-
-    return SymbFact(tree, perm1, invp1)
+    adjln::I
+    blkln::I
+    njmax::I
+    nsmax::I
+    upmax::I
 end
 
 """
@@ -63,8 +54,52 @@ function symbolic(matrix::AbstractMatrix; alg::PermutationOrAlgorithm=DEFAULT_EL
 end
 
 function symbolic(matrix::AbstractMatrix, alg::PermutationOrAlgorithm, snd::SupernodeType)
+    return symbolic(sparse(matrix), alg, snd)
+end
+
+function symbolic(matrix::SparseMatrixCSC{<:Any, I}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {I}
     perm, tree = cliquetree(matrix, alg, snd)
-    return SymbFact(tree, perm)
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    neqns = nov(separator)
+    adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
+    up = ns = nsmax = njmax = upmax = blkln = zero(I)
+
+    @inbounds for j in vertices(separator)
+        nn = eltypedegree(residual, j)
+        na = eltypedegree(separator, j)
+        nj = nn + na
+
+        for i in childindices(tree, j)
+            ma = eltypedegree(separator, i)
+
+            ns -= one(I)
+            up -= ma * ma
+        end
+
+        if !isnothing(parentindex(tree, j))
+            ns += one(I)
+            up += na * na
+        end
+
+        nsmax = max(nsmax, ns)
+        njmax = max(njmax, nj)
+        upmax = max(upmax, up)
+
+        blkln = blkln + nn * nj
+    end
+
+    perm1 = FVector{I}(undef, neqns)
+    invp1 = FVector{I}(undef, neqns)
+
+    @inbounds for v in outvertices(separator)
+        w = perm[v]
+        perm1[v] = w
+        invp1[w] = v        
+    end
+
+    return SymbFact{I}(tree, perm1, invp1, adjln, blkln, njmax, nsmax, upmax)
 end
 
 function SparseArrays.nnz(fact::SymbFact{I}) where {I}

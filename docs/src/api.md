@@ -111,10 +111,13 @@ isperfect
 ## Cholesky Factorization
 ```@docs
 SymbFact
-CholWork
 CholFact
+CholWork
+LinWork
 CliqueTrees.symbolic
-CliqueTrees.cholinit
-CliqueTrees.cholesky!
 CliqueTrees.cholesky
+CliqueTrees.cholesky!
+CliqueTrees.linsolve!
+CliqueTrees.cholinit
+CliqueTrees.lininit
 ```

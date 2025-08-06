@@ -5,7 +5,6 @@ A Cholesky factorization object.
 """
 struct CholFact{T, I} <: Factorization{T}
     symbfact::SymbFact{I}
-    width::I
     blkptr::FVector{I}
     blkval::FVector{T}
     status::FScalar{Bool}
@@ -81,13 +80,14 @@ end
 function cholesky(matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {I}
     @argcheck size(matrix, 1) == size(matrix, 2)
     @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
-    return cholesky!(cholinit(matrix, symbfact)..., matrix, symbfact) 
+    return cholesky!(cholinit(matrix, symbfact)..., matrix) 
 end
 
 """
-    cholesky!(cholfact::CholFact, cholwork::CholWork, matrix::AbstractMatrix, symbfact::SymbFact)
+    cholesky!(cholfact::CholFact, cholwork::CholWork, matrix::AbstractMatrix)
 
-A non-allocating version of [`cholesky`](@ref).
+Compute the Cholesky factorization of a sparse positive definite matrix
+using a pre-allocated workspace. See [`cholesky`](@ref).
 
 ```julia-repl
 julia> import CliqueTrees
@@ -120,23 +120,25 @@ CholFact{Float64, Int64}:
   - `cholfact`: Cholesky factor
   - `cholwork`: workspace
   - `matrix`: sparse positive-definite matrix
-  - `symbfact`: symbolic factorization 
 """
-function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::AbstractMatrix, symbfact::SymbFact{I}) where {T, I}
-    return cholesky!(cholfact, cholwork, sparse(matrix), symbfact)
+function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::AbstractMatrix) where {T, I}
+    return cholesky!(cholfact, cholwork, sparse(matrix))
 end
 
-function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {T, I}
+function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::SparseMatrixCSC{<:Any, I}) where {T, I}
+    symbfact = cholfact.symbfact
+
     tree = symbfact.tree
     invp = symbfact.invp
 
     blkptr = cholfact.blkptr
     blkval = cholfact.blkval
-    
-    mapping = cholwork.mapping
+
     updptr = cholwork.updptr
     updval = cholwork.updval
     frtval = cholwork.frtval
+
+    mapping = cholwork.mapping
 
     pattern0 = BipartiteGraph(matrix)
     pattern1 = cholwork.pattern1
@@ -424,6 +426,14 @@ function cholesky_loop!(
     status = potrf!(F₁₁)
 
     if ispositive(na)
+        ns += one(I)
+
+        # U₂₂ is the update matrix for node j
+        pstrt = updptr[ns]
+        pstop = updptr[ns + one(I)] = pstrt + na * na
+        U₂₂ = reshape(view(updval, pstrt:pstop - one(I)), na, na)
+        lacpy!(U₂₂, F₂₂)
+
         # solve for L₂₁ in
         #
         #     L₂₁ L₁₁ᴴ = F₂₁
@@ -431,21 +441,15 @@ function cholesky_loop!(
         # and store F₂₁ ← L₂₁
         trsm!(F₁₁, F₂₁, Val(true), Val(true))
     
-        # compute
+        # compute the difference
         #
-        #    U₂₂ = F₂₂ - L₂₁ L₂₁ᴴ
+        #    L₂₂ = U₂₂ - L₂₁ L₂₁ᴴ
         #
-        # and store F₂₂ ← U₂₂
-        syrk!(F₂₁, F₂₂)
-
-        ns += one(I)
-        pstrt = updptr[ns]
-        pstop = updptr[ns + one(I)] = pstrt + na * na
-        U₂₂ = reshape(view(updval, pstrt:pstop - one(I)), na, na)
-        lacpy!(U₂₂, F₂₂)
+        # and store U₂₂ ← L₂₂
+        syrk!(F₂₁, U₂₂)
     end
  
-    # copy F₁  into B
+    # copy F₁ into B
     #
     #     B₁₁ ← F₁₁
     #     B₂₁ ← F₂₁
@@ -499,72 +503,6 @@ function cholesky_add_update!(
     end
 
     return
-end
-
-function LinearAlgebra.ldiv!(cholfact::CholFact{T}, B::Union{AbstractVector, AbstractMatrix}) where {T}
-    @argcheck nov(separators(cholfact.symbfact.tree)) == size(B, 1)
-    tree = cholfact.symbfact.tree
-    perm = cholfact.symbfact.perm
-    width = cholfact.width
-    blkptr = cholfact.blkptr
-    blkval = cholfact.blkval
-    frtval = FVector{T}(undef, width * size(B, 2))
-
-    residual = residuals(tree)
-    separator = separators(tree)
-
-    X = FArray{T}(undef, size(B))
-
-    for w in axes(B, 2), v in axes(B, 1)
-        X[v, w] = B[perm[v], w]
-    end
-    
-    for j in vertices(separator)
-        ldiv!_loop_fwd!(blkptr, blkval, frtval, tree, X, j)
-    end
-    
-    for j in reverse(vertices(separator))
-        ldiv!_loop_bwd!(blkptr, blkval, frtval, tree, X, j)
-    end
-
-    for w in axes(B, 2), v in axes(B, 1)
-        B[perm[v], w] = X[v, w]
-    end
-    
-    return B
-end
-
-function LinearAlgebra.rdiv!(B::AbstractMatrix, cholfact::CholFact{T}) where {T}
-    @argcheck size(B, 2) == nov(separators(cholfact.symbfact.tree))
-    tree = cholfact.symbfact.tree
-    perm = cholfact.symbfact.perm
-    width = cholfact.width
-    blkptr = cholfact.blkptr
-    blkval = cholfact.blkval
-    frtval = FVector{T}(undef, width * size(B, 1))
-
-    residual = residuals(tree)
-    separator = separators(tree)
-
-    X = FArray{T}(undef, size(B))
-
-    for w in axes(B, 1), v in axes(B, 2)
-        X[w, v] = B[w, perm[v]]
-    end
-    
-    for j in vertices(separator)
-        rdiv!_loop_fwd!(blkptr, blkval, frtval, tree, X, j)
-    end
-    
-    for j in reverse(vertices(separator))
-        rdiv!_loop_bwd!(blkptr, blkval, frtval, tree, X, j)
-    end
-
-    for w in axes(B, 1), v in axes(B, 2)
-        B[w, perm[v]] = X[w, v]
-    end
-    
-    return B
 end
 
 function ldiv!_loop_fwd!(
@@ -807,7 +745,7 @@ function ldiv!_loop_bwd!(
     trsv!(L₁₁, X₁, Val(true))
 
     # copy X into b
-    @inbounds for k in oneto(nj)
+    @inbounds for k in oneto(nn)
         B[bag[k]] = X[k]
     end
 
@@ -889,7 +827,7 @@ function ldiv!_loop_bwd!(
     trsm!(L₁₁, X₁, Val(true), Val(false))
 
     # copy X into b
-    @inbounds for w in axes(B, 2), k in oneto(nj)
+    @inbounds for w in axes(B, 2), k in oneto(nn)
         B[bag[k], w] = X[k, w]
     end
 
@@ -1053,11 +991,33 @@ function rdiv!_loop_bwd!(
     trsm!(L₁₁, X₁, Val(false), Val(true))
 
     # copy X into B
-    @inbounds for k in oneto(nj), w in axes(B, 1)
+    @inbounds for k in oneto(nn), w in axes(B, 1)
         B[w, bag[k]] = X[w, k]
     end
 
     return
+end
+
+function SparseArrays.nnz(cholfact::CholFact)
+    return nnz(cholfact.symbfact)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", cholfact::CholFact{T, I}) where {T, I}
+    println(io, "CholFact{$T, $I}:")
+    println(io, "    nnz: $(nnz(cholfact))")
+    print(io,   "    success: $(issuccess(cholfact))")
+end
+
+###########################
+# Factorization Interface #
+###########################
+
+function LinearAlgebra.ldiv!(cholfact::CholFact, B::AbstractArray)
+    return linsolve!(B, cholfact, Val(false))
+end
+
+function LinearAlgebra.rdiv!(B::AbstractArray, cholfact::CholFact)
+    return linsolve!(B, cholfact, Val(true))
 end
 
 function LinearAlgebra.issuccess(cholfact::CholFact)
@@ -1164,20 +1124,9 @@ function LinearAlgebra.logdet(cholfact::CholFact{T, I}) where {T, I}
     return logdet
 end
 
-function SparseArrays.nnz(cholfact::CholFact)
-    return nnz(cholfact.symbfact)
-end
-
-function Base.show(io::IO, ::MIME"text/plain", cholfact::CholFact{T, I}) where {T, I}
-    println(io, "CholFact{$T, $I}:")
-    println(io, "    nnz: $(nnz(cholfact))")
-    print(io,   "    success: $(issuccess(cholfact))")
-end
-
 ##################################
 # Dense Numerical Linear Algebra #
 ##################################
-
 
 # copy the lower triangular part of B to A
 function lacpy!(A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
