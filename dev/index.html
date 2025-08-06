@@ -76,14 +76,9 @@ julia&gt; matrix = [
 julia&gt; cholfact = CliqueTrees.cholesky(matrix)
 CholFact{Float64, Int64}:
     nnz: 19
-    success: true</code></pre><p>You can solve linear systems of equations with the operators <code>/</code> and <code>\</code>.</p><pre><code class="language-julia-repl hljs">julia&gt; lhs = rand(2, 8); rhs = copy(transpose(lhs));
+    success: true</code></pre><p>You can solve linear systems of equations with the operators <code>/</code> and <code>\</code>.</p><pre><code class="language-julia-repl hljs">julia&gt; rhs = rand(8, 2);
 
-julia&gt; lhs / cholfact # lhs * inv(matrix)
-2×8 Matrix{Float64}:
- -0.202009  0.661177   0.173183  0.110932   0.375653  -0.556495  -0.0751984  0.0793129
- -0.164852  0.665989  -0.126911  0.0915613  0.187998  -0.378656   0.0536805  0.127395
-
-julia&gt; cholfact \ rhs # inv(matrix) * rhs
+julia&gt; sol = cholfact \ rhs # sol = inv(matrix) * rhs
 8×2 Matrix{Float64}:
  -0.202009   -0.164852
   0.661177    0.665989
@@ -97,4 +92,4 @@ julia&gt; cholfact \ rhs # inv(matrix) * rhs
   url = {https://github.com/AlgebraicJulia/CliqueTrees.jl},
   title = {CliqueTrees.jl: A Julia library for computing tree decompositions and chordal completions of graphs},
   year = {2025}
-}</code></pre></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="api/">Library Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Tuesday 5 August 2025 03:38">Tuesday 5 August 2025</span>. Using Julia version 1.11.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+}</code></pre></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="api/">Library Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Wednesday 6 August 2025 02:16">Wednesday 6 August 2025</span>. Using Julia version 1.11.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
