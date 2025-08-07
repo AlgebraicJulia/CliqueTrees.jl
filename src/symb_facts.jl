@@ -12,6 +12,7 @@ struct SymbFact{I}
     njmax::I
     nsmax::I
     upmax::I
+    lsmax::I
 end
 
 """
@@ -64,7 +65,7 @@ function symbolic(matrix::SparseMatrixCSC{<:Any, I}, alg::PermutationOrAlgorithm
 
     neqns = nov(separator)
     adjln = half(convert(I, nnz(matrix)) - neqns) + neqns
-    up = ns = nsmax = njmax = upmax = blkln = zero(I)
+    up = ls = ns = nsmax = njmax = upmax = lsmax = blkln = zero(I)
 
     @inbounds for j in vertices(separator)
         nn = eltypedegree(residual, j)
@@ -76,16 +77,19 @@ function symbolic(matrix::SparseMatrixCSC{<:Any, I}, alg::PermutationOrAlgorithm
 
             ns -= one(I)
             up -= ma * ma
+            ls -= ma
         end
 
         if !isnothing(parentindex(tree, j))
             ns += one(I)
             up += na * na
+            ls += na
         end
 
         nsmax = max(nsmax, ns)
         njmax = max(njmax, nj)
         upmax = max(upmax, up)
+        lsmax = max(lsmax, ls)
 
         blkln = blkln + nn * nj
     end
@@ -99,7 +103,7 @@ function symbolic(matrix::SparseMatrixCSC{<:Any, I}, alg::PermutationOrAlgorithm
         invp1[w] = v        
     end
 
-    return SymbFact{I}(tree, perm1, invp1, adjln, blkln, njmax, nsmax, upmax)
+    return SymbFact{I}(tree, perm1, invp1, adjln, blkln, njmax, nsmax, upmax, lsmax)
 end
 
 function SparseArrays.nnz(fact::SymbFact{I}) where {I}

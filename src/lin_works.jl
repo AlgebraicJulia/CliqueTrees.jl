@@ -1,9 +1,11 @@
 """
-    LinWork{T}
+    LinWork{T, I}
 
 A workspace for the function [`linsolve!`](@ref).
 """
-struct LinWork{T}
+struct LinWork{T, I}
+    updptr::FVector{I}
+    updval::FVector{T}
     frtval::FVector{T}
     vecval::FVector{T}
 end
@@ -41,17 +43,23 @@ LinWork{Float64}:
   - `nrhs`: number of right-hand sides
   - `cholfact`: factorized coefficient matrix
 """
-function lininit(nrhs::Integer, cholfact::CholFact{T}) where {T}
+function lininit(nrhs::Integer, cholfact::CholFact{T, I}) where {T, I}
     @argcheck !isnegative(nrhs)
     symbfact = cholfact.symbfact
+    tree = symbfact.tree
+    separator = separators(tree)
 
+    treln = nv(separator)
+    updln = symbfact.lsmax * nrhs
     frtln = symbfact.njmax * nrhs
     vecln = nov(separators(symbfact.tree)) * nrhs
 
+    updptr = FVector{I}(undef, treln + one(I))
+    updval = FVector{T}(undef, updln)
     frtval = FVector{T}(undef, frtln)
     vecval = FVector{T}(undef, vecln)
 
-    return LinWork{T}(frtval, vecval)
+    return LinWork{T, I}(updptr, updval, frtval, vecval)
 end
 
 """
@@ -159,43 +167,76 @@ julia> sol = CliqueTrees.linsolve!(rhs, linwork, cholfact, Val(false)) # sol = i
     - `Val(true)`: right division
 
 """
-function linsolve!(rhs::Union{AbstractVector, AbstractMatrix}, linwork::LinWork{T}, cholfact::CholFact{T}, side::Val{false}) where {T}
+function linsolve!(rhs::AbstractVector, linwork::LinWork, cholfact::CholFact, side::Val{false})
+    return linsolve!(rhs, linwork, cholfact, Val(true))
+end
+
+function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, cholfact::CholFact{T, I}, side::Val{false}) where {T, I}
     @argcheck nov(separators(cholfact.symbfact.tree)) == size(rhs, 1)
-    @argcheck length(linwork.frtval) >= cholfact.symbfact.njmax * size(rhs, 2)
+    @argcheck length(linwork.vecval) >= length(rhs)
+
+    tree = cholfact.symbfact.tree
+    neqns = nov(separators(tree))
+    nrhs = convert(I, size(rhs, 2))
+
+    adj = reshape(rhs, nrhs, neqns)
+    tmp = view(linwork.vecval, oneto(nrhs * neqns))
+
+    copyto!(adj, adjoint!(reshape(tmp, nrhs, neqns), rhs))
+    linsolve!(adj, linwork, cholfact, Val(true))    
+    copyto!(rhs, adjoint!(reshape(tmp, neqns, nrhs), adj))
+
+    return rhs
+end
+
+function linsolve!(rhs::AbstractVector, linwork::LinWork{T, I}, cholfact::CholFact{T, I}, side::Val{true}) where {T, I}
+    @argcheck nov(separators(cholfact.symbfact.tree)) == length(rhs)
+    @argcheck length(linwork.frtval) >= cholfact.symbfact.njmax
     @argcheck length(linwork.vecval) >= length(rhs)
 
     tree = cholfact.symbfact.tree
     perm = cholfact.symbfact.perm
 
+    mapping = cholfact.mapping
+
     blkptr = cholfact.blkptr
     blkval = cholfact.blkval
+
+    updptr = linwork.updptr
+    updval = linwork.updval
     frtval = linwork.frtval
     vecval = linwork.vecval
 
+    residual = residuals(tree)
     separator = separators(tree)
 
-    vec = reshape(view(vecval, eachindex(rhs)), size(rhs))
+    neqns = nov(separators(tree))
+    vec = view(vecval, oneto(neqns))
 
-    @inbounds for w in axes(rhs, 2), v in axes(rhs, 1)
-        vec[v, w] = rhs[perm[v], w]
+    updptr[begin] = one(I); ns = zero(I)
+
+    @inbounds for v in oneto(neqns)
+        vec[v] = rhs[perm[v]]
     end
 
     @inbounds for j in vertices(separator)
-        ldiv!_loop_fwd!(blkptr, blkval, frtval, tree, vec, j)
+        ns = rdiv!_loop_fwd!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, vec, ns, j)
     end
 
     @inbounds for j in reverse(vertices(separator))
-        ldiv!_loop_bwd!(blkptr, blkval, frtval, tree, vec, j)
+        ns = rdiv!_loop_bwd!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, vec, ns, j)
     end
 
-    @inbounds for w in axes(rhs, 2), v in axes(rhs, 1)
-        rhs[perm[v], w] = vec[v, w]
+    @inbounds for v in oneto(neqns)
+        rhs[perm[v]] = vec[v]
     end
 
     return rhs
 end
 
-function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T}, cholfact::CholFact{T}, side::Val{true}) where {T}
+function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, cholfact::CholFact{T, I}, side::Val{true}) where {T, I}
     @argcheck nov(separators(cholfact.symbfact.tree)) == size(rhs, 2)
     @argcheck length(linwork.frtval) >= cholfact.symbfact.njmax * size(rhs, 1)
     @argcheck length(linwork.vecval) >= length(rhs)
@@ -203,30 +244,41 @@ function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T}, cholfact::CholFact{
     tree = cholfact.symbfact.tree
     perm = cholfact.symbfact.perm
 
+    mapping = cholfact.mapping
+
     blkptr = cholfact.blkptr
     blkval = cholfact.blkval
+
+    updptr = linwork.updptr
+    updval = linwork.updval
     frtval = linwork.frtval
     vecval = linwork.vecval
 
     residual = residuals(tree)
     separator = separators(tree)
 
-    vec = reshape(view(vecval, eachindex(rhs)), size(rhs))
+    neqns = nov(separators(tree))
+    nrhs = convert(I, size(rhs, 1))
+    vec = reshape(view(vecval, oneto(nrhs * neqns)), nrhs, neqns)
 
-    @inbounds for w in axes(rhs, 1), v in axes(rhs, 2)
-        vec[w, v] = rhs[w, perm[v]]
+    updptr[begin] = one(I); ns = zero(I)
+
+    @inbounds for c in oneto(nrhs), v in oneto(neqns)
+        vec[c, v] = rhs[c, perm[v]]
     end
 
     @inbounds for j in vertices(separator)
-        rdiv!_loop_fwd!(blkptr, blkval, frtval, tree, vec, j)
+        ns = rdiv!_loop_fwd!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, vec, ns, j)
     end
 
     @inbounds for j in reverse(vertices(separator))
-        rdiv!_loop_bwd!(blkptr, blkval, frtval, tree, vec, j)
+        ns = rdiv!_loop_bwd!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, vec, ns, j)
     end
 
-    @inbounds for w in axes(rhs, 1), v in axes(rhs, 2)
-        rhs[w, perm[v]] = vec[w, v]
+    @inbounds for c in oneto(nrhs), v in oneto(neqns)
+        rhs[c, perm[v]] = vec[c, v]
     end
 
     return rhs

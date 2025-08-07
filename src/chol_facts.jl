@@ -8,6 +8,7 @@ struct CholFact{T, I} <: Factorization{T}
     blkptr::FVector{I}
     blkval::FVector{T}
     status::FScalar{Bool}
+    mapping::BipartiteGraph{I, I, FVector{I}, FVector{I}}
 end
 
 """
@@ -131,14 +132,14 @@ function cholesky!(cholfact::CholFact{T, I}, cholwork::CholWork{T, I}, matrix::S
     tree = symbfact.tree
     invp = symbfact.invp
 
+    mapping = cholfact.mapping
+
     blkptr = cholfact.blkptr
     blkval = cholfact.blkval
 
     updptr = cholwork.updptr
     updval = cholwork.updval
     frtval = cholwork.frtval
-
-    mapping = cholwork.mapping
 
     pattern0 = BipartiteGraph(matrix)
     pattern1 = cholwork.pattern1
@@ -243,7 +244,7 @@ function cholesky_reverse!(
 
         pointers(pattern2)[i1 + one(I)] = p2 + one(I)
         targets(pattern2)[p2] = j1
-        nzval2[p2] = x1
+        nzval2[p2] = conj(x1)
     end
 
     return
@@ -267,7 +268,7 @@ function cholesky_impl!(
     cholesky_init!(relidx, blkptr, updptr,
         blkval, tree, pattern, nzval)
 
-    for j in vertices(separator)
+    @inbounds for j in vertices(separator)
         iterstatus, ns = cholesky_loop!(mapping, blkptr,
             updptr, blkval, updval, frtval, tree, ns, j)
 
@@ -362,19 +363,50 @@ function cholesky_loop!(
         j::I,
     ) where {T, I}
     residual = residuals(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    if isone(nn)
+        status, ns = cholesky_loop_nod!(mapping, blkptr,
+            updptr, blkval, updval, frtval, tree, ns, j)
+    else
+        status, ns = cholesky_loop_snd!(mapping, blkptr,
+            updptr, blkval, updval, frtval, tree, ns, j)
+    end
+
+    return status, ns
+end
+
+
+function cholesky_loop_snd!(
+        mapping::BipartiteGraph{I, I},        
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
     separator = separators(tree)
 
     # nn is the size of the residual at node j
     #
     #     nn = | res(j) |
     #
-    nn = eltypedegree(residual, j)
+    @inbounds nn = eltypedegree(residual, j)
 
     # na is the size of the separator at node j
     #
     #     na = | sep(j) |
     #
-    na = eltypedegree(separator, j)
+    @inbounds na = eltypedegree(separator, j)
 
     # nj is the size of the bag at node j
     #
@@ -384,17 +416,18 @@ function cholesky_loop!(
 
     # F is the frontal matrix at node j
     #
-    #     F = [ F₁  F₂  ]
+    #           nn  na
+    #     F = [ F₁  F₂  ] nj
     #
-    #       = [ F₁₁ F₁₂ ]
-    #         [ F₂₁ F₂₂ ]
+    #       = [ F₁₁ F₁₂ ] nn
+    #         [ F₂₁ F₂₂ ] na
     #
     # only the lower triangular part is used
-    F = reshape(view(frtval, oneto(nj * nj)), nj, nj)
-    F₁ =  view(F, oneto(nj),      oneto(nn))
-    F₁₁ = view(F, oneto(nn),      oneto(nn))
-    F₂₁ = view(F, nn + one(I):nj, oneto(nn))
-    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+    @inbounds F = reshape(view(frtval, oneto(nj * nj)), nj, nj)
+    @inbounds F₁ =  view(F, oneto(nj),      oneto(nn))
+    @inbounds F₁₁ = view(F, oneto(nn),      oneto(nn))
+    @inbounds F₂₁ = view(F, nn + one(I):nj, oneto(nn))
+    @inbounds F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
 
     # B is part of the Cholesky factor
     #
@@ -402,9 +435,9 @@ function cholesky_loop!(
     #     B = [ B₁₁  ] res(j)
     #         [ B₂₁  ] sep(j)
     #
-    pstrt = blkptr[j]
-    pstop = blkptr[j + one(I)]
-    B = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds B = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
 
     # copy B into F₁
     #
@@ -413,7 +446,7 @@ function cholesky_loop!(
     #
     lacpy!(F, B); fill!(F₂₂, zero(T))
 
-    for i in Iterators.reverse(childindices(tree, j))
+    @inbounds for i in Iterators.reverse(childindices(tree, j))
         cholesky_add_update!(F, ns, i, mapping, updptr, updval)
         ns -= one(I)
     end
@@ -429,9 +462,9 @@ function cholesky_loop!(
         ns += one(I)
 
         # U₂₂ is the update matrix for node j
-        pstrt = updptr[ns]
-        pstop = updptr[ns + one(I)] = pstrt + na * na
-        U₂₂ = reshape(view(updval, pstrt:pstop - one(I)), na, na)
+        @inbounds pstrt = updptr[ns]
+        @inbounds pstop = updptr[ns + one(I)] = pstrt + na * na
+        @inbounds U₂₂ = reshape(view(updval, pstrt:pstop - one(I)), na, na)
         lacpy!(U₂₂, F₂₂)
 
         # solve for L₂₁ in
@@ -455,6 +488,123 @@ function cholesky_loop!(
     #     B₂₁ ← F₂₁
     #
     lacpy!(B, F₁)
+    return status, ns
+end
+
+function cholesky_loop_nod!(
+        mapping::BipartiteGraph{I, I},        
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    nn = one(I)
+
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # F is the frontal matrix at node j
+    #
+    #           nn  na
+    #     F = [ F₁  F₂  ] nj
+    #
+    #       = [ F₁₁ F₁₂ ] nn
+    #         [ F₂₁ F₂₂ ] na
+    #
+    # only the lower triangular part is used
+    @inbounds F = reshape(view(frtval, oneto(nj * nj)), nj, nj)
+    @inbounds F₁ =  view(F, oneto(nj),      nn)
+    @inbounds F₁₁ = view(F, nn,             nn)
+    @inbounds F₂₁ = view(F, nn + one(I):nj, nn)
+    @inbounds F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    # B is part of the Cholesky factor
+    #
+    #          res(j)
+    #     B = [ B₁₁  ] res(j)
+    #         [ B₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds B = view(blkval, pstrt:pstop - one(I))
+    @inbounds B₁ = view(B, nn)
+    @inbounds B₂ = view(B, nn + one(I):nj)
+
+    # copy B into F₁
+    #
+    #     F₁₁ ← B₁₁
+    #     F₂₁ ← B₂₁
+    #
+    F₁₁[] = B₁[]; copyto!(F₂₁, B₂); fill!(F₂₂, zero(T))
+
+    @inbounds for i in Iterators.reverse(childindices(tree, j))
+        cholesky_add_update!(F, ns, i, mapping, updptr, updval)
+        ns -= one(I)
+    end
+
+    # factorize F₁₁ as
+    #
+    #     F₁₁ = L₁₁ L₁₁ᴴ
+    #
+    # and store F₁₁ ← L₁₁
+    f₁₁ = F₁₁[]
+
+    if ispositive(real(f₁₁))
+        f₁₁ = sqrt(f₁₁); status = true
+    else
+        f₁₁ = one(T);    status = false
+    end
+
+    if ispositive(na)
+        ns += one(I)
+
+        # U₂₂ is the update matrix for node j
+        @inbounds pstrt = updptr[ns]
+        @inbounds pstop = updptr[ns + one(I)] = pstrt + na * na
+        @inbounds U₂₂ = reshape(view(updval, pstrt:pstop - one(I)), na, na)
+        lacpy!(U₂₂, F₂₂)
+
+        # solve for L₂₁ in
+        #
+        #     L₂₁ L₁₁ᴴ = F₂₁
+        #
+        # and store F₂₁ ← L₂₁
+        F₂₁ ./= conj(f₁₁)
+    
+        # compute the difference
+        #
+        #    L₂₂ = U₂₂ - L₂₁ L₂₁ᴴ
+        #
+        # and store U₂₂ ← L₂₂
+        syr!(F₂₁, U₂₂)
+    end
+
+    # copy F₁ into B
+    #
+    #     B₁₁ ← F₁₁
+    #     B₂₁ ← F₂₁
+    #
+    B₁[] = f₁₁; copyto!(B₂, F₂₁)
     return status, ns
 end
 
@@ -505,341 +655,213 @@ function cholesky_add_update!(
     return
 end
 
-function ldiv!_loop_fwd!(
-        blkptr::AbstractVector{I},
-        blkval::AbstractVector{T},
-        frtval::AbstractVector{T},
-        tree::CliqueTree{I, I}, 
-        B::AbstractVector{T},
-        j::I,
+function rdiv!_fwd_add_update!(
+        F::AbstractVector{T},
+        ns::I,
+        i::I,
+        mapping::BipartiteGraph{I, I},
+        updptr::AbstractVector{I},
+        updval::AbstractVector{T},
     ) where {T, I}
-    residual = residuals(tree)
-    separator = separators(tree)
+    # na is the size of the separator at node i.
+    #
+    #     na = | sep(i) |
+    #
+    @inbounds na = eltypedegree(mapping, i)
 
-    # nn is the size of the residual at node j
+    # ind is the subset inclusion
     #
-    #     nn = | res(j) |
+    #     ind: sep(i) → sep(parent(i))
     #
-    @inbounds nn = eltypedegree(residual, j)
+    @inbounds ind = neighbors(mapping, i)
 
-    # na is the size of the separator at node j.
-    #
-    #     na = | sep(j) |
-    #
-    @inbounds na = eltypedegree(separator, j)
+    # U is the update vector for node i.
+    @inbounds pstrt = updptr[ns]
+    pstop = pstrt + na
+    @inbounds U = view(updval, pstrt:pstop - one(I))
 
-    # nj is the size of the bag at node j
-    #
-    #     nj = | bag(j) |
-    #
-    nj = nn + na
+    # for all u in sep(i) ...
+    @inbounds for u in oneto(na)
+        # let f = ind(u)
+        f = ind[u]
 
-    # bag is the bag at node j
-    @inbounds bag = tree[j] 
-    
-    # L is part of the Cholesky factor
-    #
-    #          res(j)
-    #     L = [ L₁₁  ] res(j)
-    #         [ L₂₁  ] sep(j)
-    #
-    @inbounds pstrt = blkptr[j]
-    @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
-
-    # X is part of B
-    #
-    #     X = [ X₁ ] res(j)
-    #         [ X₂ ] sep(j)
-    #
-    @inbounds X = view(frtval, oneto(nj))
-    @inbounds X₁ = view(X, oneto(nn))
-    @inbounds X₂ = view(X, nn + one(I):nj)
-
-    @inbounds for k in oneto(nj)
-        X[k] = B[bag[k]]
-    end
-
-    # solve for Y₁ in
-    #
-    #     L₁₁ Y₁ = X₁
-    #
-    # and store X₁ ← Y₁
-    trsv!(L₁₁, X₁, Val(false))
-    
-    if ispositive(na)
-        # compute the difference
+        # compute the sum
         #
-        #     Y₂ = X₂ - L₂₁ Y₁
+        #     F[f] + U[u]
         #
-        # and store X₂ ← Y₂ 
-        gemv!(L₂₁, X₁, X₂, Val(false))
-    end
-
-    # copy X into b
-    @inbounds for k in oneto(nj)
-        B[bag[k]] = X[k]
+        # and assign it to F[f]
+        F[f] += U[u]
     end
 
     return
 end
 
-function ldiv!_loop_fwd!(
-        blkptr::AbstractVector{I},
-        blkval::AbstractVector{T},
-        frtval::AbstractVector{T},
-        tree::CliqueTree{I, I}, 
-        B::AbstractMatrix{T},
-        j::I,
+function rdiv!_fwd_add_update!(
+        F::AbstractMatrix{T},
+        ns::I,
+        i::I,
+        mapping::BipartiteGraph{I, I},
+        updptr::AbstractVector{I},
+        updval::AbstractVector{T},
     ) where {T, I}
-    residual = residuals(tree)
-    separator = separators(tree)
+    nrhs = convert(I, size(F, 1))
 
-    # nn is the size of the residual at node j
+    # na is the size of the separator at node i.
     #
-    #     nn = | res(j) |
+    #     na = | sep(i) |
     #
-    @inbounds nn = eltypedegree(residual, j)
+    @inbounds na = eltypedegree(mapping, i)
 
-    # na is the size of the separator at node j.
+    # ind is the subset inclusion
     #
-    #     na = | sep(j) |
+    #     ind: sep(i) → sep(parent(i))
     #
-    @inbounds na = eltypedegree(separator, j)
+    @inbounds ind = neighbors(mapping, i)
 
-    # nj is the size of the bag at node j
-    #
-    #     nj = | bag(j) |
-    #
-    nj = nn + na
+    # U is the update vector for node i.
+    @inbounds pstrt = updptr[ns]
+    pstop = pstrt + na * nrhs
+    @inbounds U = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
 
-    # bag is the bag at node j
-    @inbounds bag = tree[j] 
-    
-    # L is part of the Cholesky factor
-    #
-    #          res(j)
-    #     L = [ L₁₁  ] res(j)
-    #         [ L₂₁  ] sep(j)
-    #
-    @inbounds pstrt = blkptr[j]
-    @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    # for all u in sep(i) ...
+    @inbounds for u in oneto(na)
+        # let f = ind(u)
+        f = ind[u]
 
-    # X is part of B
-    #
-    #     X = [ X₁ ] res(j)
-    #         [ X₂ ] sep(j)
-    #
-    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
-    @inbounds X₁ = view(X, oneto(nn),      axes(B, 2))
-    @inbounds X₂ = view(X, nn + one(I):nj, axes(B, 2))
-
-    @inbounds for w in axes(B, 2), k in oneto(nj)
-        X[k, w] = B[bag[k], w]
-    end
-
-    # solve for Y₁ in
-    #
-    #     L₁₁ Y₁ = X₁
-    #
-    # and store X₁ ← Y₁
-    trsm!(L₁₁, X₁, Val(false), Val(false))
-    
-    if ispositive(na)
-        # compute the difference
-        #
-        #     Y₂ = X₂ - L₂₁ Y₁
-        #
-        # and store X₂ ← Y₂ 
-        gemm!(L₂₁, X₁, X₂, Val(false), Val(false))
-    end
-
-    # copy X into b
-
-    @inbounds for w in axes(B, 2), k in oneto(nj)
-        B[bag[k], w] = X[k, w]
+        # for all rows c ...
+        for c in oneto(nrhs)
+            # compute the sum
+            #
+            #     F[c, f] + U[c, u]
+            #
+            # and assign it to F[c, f]
+            F[c, f] += U[c, u]
+        end
     end
 
     return
 end
 
-function ldiv!_loop_bwd!(
-        blkptr::AbstractVector{I},
-        blkval::AbstractVector{T},
-        frtval::AbstractVector{T},
-        tree::CliqueTree{I, I}, 
-        B::AbstractVector{T},
-        j::I,
+function rdiv!_bwd_add_update!(
+        F::AbstractVector{T},
+        ns::I,
+        i::I,
+        mapping::BipartiteGraph{I, I},
+        updptr::AbstractVector{I},
+        updval::AbstractVector{T},
     ) where {T, I}
-    residual = residuals(tree)
-    separator = separators(tree)
+    # na is the size of the separator at node i.
+    #
+    #     na = | sep(i) |
+    #
+    @inbounds na = eltypedegree(mapping, i)
 
-    # nn is the size of the residual at node j
+    # ind is the subset inclusion
     #
-    #     nn = | res(j) |
+    #     ind: sep(i) → sep(parent(i))
     #
-    @inbounds nn = eltypedegree(residual, j)
+    @inbounds ind = neighbors(mapping, i)
 
-    # na is the size of the separator at node j.
-    #
-    #     na = | sep(j) |
-    #
-    @inbounds na = eltypedegree(separator, j)
+    # U is the update vector for node i.
+    @inbounds pstrt = updptr[ns]
+    @inbounds pstop = updptr[ns + one(I)] = pstrt + na
+    @inbounds U = view(updval, pstrt:pstop - one(I))
 
-    # nj is the size of the bag at node j
-    #
-    #     nj = | bag(j) |
-    #
-    nj = nn + na
+    # for all u in sep(i) ...
+    @inbounds for u in oneto(na)
+        # let f = ind(u)
+        f = ind[u]
 
-    # bag is the bag at node j
-    @inbounds bag = tree[j]        
- 
-    # L is part of the Cholesky factor
-    #
-    #          res(j)
-    #     L = [ L₁₁  ] res(j)
-    #         [ L₂₁  ] sep(j)
-    #
-    @inbounds pstrt = blkptr[j]
-    @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
-
-    # X is part of B
-    #
-    #     X = [ X₁ ] res(j)
-    #         [ X₂ ] sep(j)
-    #
-    @inbounds X = view(frtval, oneto(nj))
-    @inbounds X₁ = view(X, oneto(nn))
-    @inbounds X₂ = view(X, nn + one(I):nj)
-
-    @inbounds for k in oneto(nj)
-        X[k] = B[bag[k]]
-    end
-    
-    if ispositive(na)
-        # compute the difference
-        #
-        #     Y₁ = X₁ - L₂₁ᴴ X₂
-        #
-        # and store X₁ ← Y₁ 
-        gemv!(L₂₁, X₂, X₁, Val(true))
-    end
-
-    # solve for Z₁ in
-    #
-    #     L₁₁ᴴ Z₁ = Y₁
-    #
-    # and store X₁ ← Z₁
-    trsv!(L₁₁, X₁, Val(true))
-
-    # copy X into b
-    @inbounds for k in oneto(nn)
-        B[bag[k]] = X[k]
+        # assign U[u] ← F[f]
+        U[u] = F[f]
     end
 
     return
 end
 
-function ldiv!_loop_bwd!(
-        blkptr::AbstractVector{I},
-        blkval::AbstractVector{T},
-        frtval::AbstractVector{T},
-        tree::CliqueTree{I, I}, 
-        B::AbstractMatrix{T},
-        j::I,
+function rdiv!_bwd_add_update!(
+        F::AbstractMatrix{T},
+        ns::I,
+        i::I,
+        mapping::BipartiteGraph{I, I},
+        updptr::AbstractVector{I},
+        updval::AbstractVector{T},
     ) where {T, I}
-    residual = residuals(tree)
-    separator = separators(tree)
+    nrhs = convert(I, size(F, 1))
 
-    # nn is the size of the residual at node j
+    # na is the size of the separator at node i.
     #
-    #     nn = | res(j) |
+    #     na = | sep(i) |
     #
-    @inbounds nn = eltypedegree(residual, j)
+    @inbounds na = eltypedegree(mapping, i)
 
-    # na is the size of the separator at node j.
+    # ind is the subset inclusion
     #
-    #     na = | sep(j) |
+    #     ind: sep(i) → sep(parent(i))
     #
-    @inbounds na = eltypedegree(separator, j)
+    @inbounds ind = neighbors(mapping, i)
 
-    # nj is the size of the bag at node j
-    #
-    #     nj = | bag(j) |
-    #
-    nj = nn + na
+    # U is the update vector for node i.
+    @inbounds pstrt = updptr[ns]
+    @inbounds pstop = updptr[ns + one(I)] = pstrt + na * nrhs
+    @inbounds U = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
 
-    # bag is the bag at node j
-    @inbounds bag = tree[j]        
- 
-    # L is part of the Cholesky factor
-    #
-    #          res(j)
-    #     L = [ L₁₁  ] res(j)
-    #         [ L₂₁  ] sep(j)
-    #
-    @inbounds pstrt = blkptr[j]
-    @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    # for all u in sep(i) ...
+    @inbounds for u in oneto(na)
+        # let f = ind(u)
+        f = ind[u]
 
-    # X is part of B
-    #
-    #     X = [ X₁ ] res(j)
-    #         [ X₂ ] sep(j)
-    #
-    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 2))), nj, size(B, 2))
-    @inbounds X₁ = view(X, oneto(nn),      axes(B, 2))
-    @inbounds X₂ = view(X, nn + one(I):nj, axes(B, 2))
-
-    @inbounds for w in axes(B, 2), k in oneto(nj)
-        X[k, w] = B[bag[k], w]
-    end
-    
-    if ispositive(na)
-        # compute the difference
-        #
-        #     Y₁ = X₁ - L₂₁ᴴ X₂
-        #
-        # and store X₁ ← Y₁ 
-        gemm!(L₂₁, X₂, X₁, Val(true), Val(false))
-    end
-
-    # solve for Z₁ in
-    #
-    #     L₁₁ᴴ Z₁ = Y₁
-    #
-    # and store X₁ ← Z₁
-    trsm!(L₁₁, X₁, Val(true), Val(false))
-
-    # copy X into b
-    @inbounds for w in axes(B, 2), k in oneto(nn)
-        B[bag[k], w] = X[k, w]
+        # for all rows c...
+        for c in oneto(nrhs)
+            # assign U[c, u] ← F[c, f]
+            U[c, u] = F[c, f]
+        end
     end
 
     return
 end
 
 function rdiv!_loop_fwd!(
+        mapping::BipartiteGraph{I, I},
         blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
         blkval::AbstractVector{T},
+        updval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I}, 
-        B::AbstractMatrix{T},
+        B::AbstractArray{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    if isone(nn)
+        ns = rdiv!_loop_fwd_nod!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, B, ns, j)
+    else
+        ns = rdiv!_loop_fwd_snd!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, B, ns, j)
+    end
+
+    return ns
+end
+
+function rdiv!_loop_fwd_snd!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractVector{T},
+        ns::I,
         j::I,
     ) where {T, I}
     residual = residuals(tree)
@@ -851,7 +873,7 @@ function rdiv!_loop_fwd!(
     #
     @inbounds nn = eltypedegree(residual, j)
 
-    # na is the size of the separator at node j
+    # na is the size of the separator at node j.
     #
     #     na = | sep(j) |
     #
@@ -863,8 +885,8 @@ function rdiv!_loop_fwd!(
     #
     nj = nn + na
 
-    # bag is the bag at node j
-    @inbounds bag = tree[j] 
+    # res is the residual at node j
+    @inbounds res = neighbors(residual, j)
     
     # L is part of the Cholesky factor
     #
@@ -875,55 +897,74 @@ function rdiv!_loop_fwd!(
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
     @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    
     @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
     @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
-    # X is part of B
+    # F is part of B
     #
-    #     X = [ X₁ ] res(j)
-    #         [ X₂ ] sep(j)
+    #     F = [ F₁ ] res(j)
+    #         [ F₂ ] sep(j)
     #
-    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 1))), size(B, 1), nj)
-    @inbounds X₁ = view(X, axes(B, 1), oneto(nn))
-    @inbounds X₂ = view(X, axes(B, 1), nn + one(I):nj)
+    @inbounds F = view(frtval, oneto(nj))
+    @inbounds F₁ = view(F, oneto(nn))
+    @inbounds F₂ = view(F, nn + one(I):nj)
 
-    @inbounds for k in oneto(nj), w in axes(B, 1)
-        X[w, k] = B[w, bag[k]]
+    @inbounds for k in oneto(nn)
+        F₁[k] = B[res[k]]
+    end
+
+    fill!(F₂, zero(T))
+
+    @inbounds for i in Iterators.reverse(childindices(tree, j))
+        rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
+        ns -= one(I)
     end
 
     # solve for Y₁ in
     #
-    #     Y₁ L₁₁ᴴ = X₁
+    #     L₁₁ Y₁ = F₁
     #
-    # and store X₁ ← Y₁
-    trsm!(L₁₁, X₁, Val(true), Val(true))
-    
+    # and store F₁ ← Y₁
+    trsv!(L₁₁, F₁, Val(false))
+ 
     if ispositive(na)
+        # U₂ is the update matrix for node j
+        ns += one(I)
+        @inbounds pstrt = updptr[ns]
+        @inbounds pstop = updptr[ns + one(I)] = pstrt + na
+        @inbounds U₂ = view(updval, pstrt:pstop - one(I))
+        copyto!(U₂, F₂)
+
         # compute the difference
         #
-        #     Y₂ = X₂ - Y₁ L₂₁ᴴ
+        #     Y₂ = U₂ - L₂₁ F₁
         #
-        # and store X₂ ← Y₂ 
-        gemm!(X₁, L₂₁, X₂, Val(false), Val(true))
+        # and store U₂ ← Y₂ 
+        gemv!(L₂₁, F₁, U₂, Val(false))
+    end
+   
+    # copy B ← F₁
+    @inbounds for k in oneto(nn)
+        B[res[k]] = F₁[k]
     end
 
-    # copy X into B
-    @inbounds for k in oneto(nj), w in axes(B, 1)
-        B[w, bag[k]] = X[w, k]
-    end
-
-    return
+    return ns
 end
 
-function rdiv!_loop_bwd!(
+function rdiv!_loop_fwd_snd!(
+        mapping::BipartiteGraph{I, I},
         blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
         blkval::AbstractVector{T},
+        updval::AbstractVector{T},
         frtval::AbstractVector{T},
         tree::CliqueTree{I, I}, 
         B::AbstractMatrix{T},
+        ns::I,
         j::I,
     ) where {T, I}
+    nrhs = convert(I, size(B, 1))
+
     residual = residuals(tree)
     separator = separators(tree)
 
@@ -933,7 +974,7 @@ function rdiv!_loop_bwd!(
     #
     @inbounds nn = eltypedegree(residual, j)
 
-    # na is the size of the separator at node j
+    # na is the size of the separator at node j.
     #
     #     na = | sep(j) |
     #
@@ -945,8 +986,349 @@ function rdiv!_loop_bwd!(
     #
     nj = nn + na
 
-    # bag is the bag at node j
-    @inbounds bag = tree[j]        
+    # res is the residual at node j
+    @inbounds res = neighbors(residual, j)
+    
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+
+    # F is part of B
+    #
+    #         res(j) sep(j)
+    #     F = [ F₁    F₂ ]
+    #
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
+    @inbounds F₁ = view(F, oneto(nrhs), oneto(nn))
+    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+
+    @inbounds for k in oneto(nn)
+        v = res[k]
+
+        for c in oneto(nrhs)
+            F₁[c, k] = B[c, v]
+        end
+    end
+
+    fill!(F₂, zero(T))
+
+    @inbounds for i in Iterators.reverse(childindices(tree, j))
+        rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
+        ns -= one(I)
+    end
+
+    # solve for Y₁ in
+    #
+    #     Y₁ L₁₁ᴴ = F₁
+    #
+    # and store F₁ ← Y₁
+    trsm!(L₁₁, F₁, Val(true), Val(true))
+ 
+    if ispositive(na)
+        # U₂ is the update matrix for node j
+        ns += one(I)
+        @inbounds pstrt = updptr[ns]
+        @inbounds pstop = updptr[ns + one(I)] = pstrt + na * nrhs
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
+        copyto!(U₂, F₂)
+
+        # compute the difference
+        #
+        #     Y₂ = U₂ - Y₁ L₂₁ᴴ
+        #
+        # and store U₂ ← Y₂ 
+        gemm!(F₁, L₂₁, U₂, Val(false), Val(true))
+    end
+   
+    # copy B ← F₁
+    @inbounds for k in oneto(nn)
+        v = res[k]
+
+        for c in oneto(nrhs)
+            B[c, v] = F₁[c, k]
+        end
+    end
+
+    return ns
+end
+
+function rdiv!_loop_fwd_nod!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractVector{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = one(I)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # res is the residual at node j
+    @inbounds res = only(neighbors(residual, j))
+    
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L₁₁ = view(L, nn)
+    @inbounds L₂₁ = view(L, nn + one(I):nj)
+
+    # F is part of B
+    #
+    #     F = [ F₁ ] res(j)
+    #         [ F₂ ] sep(j)
+    #
+    @inbounds F = view(frtval, oneto(nj))
+    @inbounds F₁ = view(F, nn)
+    @inbounds F₂ = view(F, nn + one(I):nj)
+
+    @inbounds F₁[] = B[res]
+    fill!(F₂, zero(T))
+
+    @inbounds for i in Iterators.reverse(childindices(tree, j))
+        rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
+        ns -= one(I)
+    end
+
+    # solve for Y₁ in
+    #
+    #     L₁₁ Y₁ = F₁
+    #
+    # and store F₁ ← Y₁
+    f₁ = F₁[] / L₁₁[]
+ 
+    if ispositive(na)
+        # U₂ is the update matrix for node j
+        ns += one(I)
+        @inbounds pstrt = updptr[ns]
+        @inbounds pstop = updptr[ns + one(I)] = pstrt + na
+        @inbounds U₂ = view(updval, pstrt:pstop - one(I))
+        copyto!(U₂, F₂)
+
+        # compute the difference
+        #
+        #     Y₂ = U₂ - L₂₁ F₁
+        #
+        # and store U₂ ← Y₂
+        @inbounds for k in oneto(na)
+            U₂[k] -= L₂₁[k] * f₁
+        end
+    end
+   
+    # copy B ← F₁
+    @inbounds B[res] = f₁
+
+    return ns
+end
+
+function rdiv!_loop_fwd_nod!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    nrhs = convert(I, size(B, 1))
+
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = one(I)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # res is the residual at node j
+    @inbounds res = only(neighbors(residual, j))
+    
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L₁₁ = view(L, nn)
+    @inbounds L₂₁ = view(L, nn + one(I):nj)
+
+    # F is part of B
+    #
+    #         res(j) sep(j)
+    #     F = [ F₁    F₂ ]
+    #
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
+    @inbounds F₁ = view(F, oneto(nrhs), nn)
+    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+
+    @inbounds for c in oneto(nrhs)
+        F₁[c] = B[c, res]
+    end
+
+    fill!(F₂, zero(T))
+
+    @inbounds for i in Iterators.reverse(childindices(tree, j))
+        rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
+        ns -= one(I)
+    end
+
+    # solve for Y₁ in
+    #
+    #     Y₁ L₁₁ᴴ = F₁
+    #
+    # and store F₁ ← Y₁
+    F₁ ./= conj(L₁₁[])
+ 
+    if ispositive(na)
+        # U₂ is the update matrix for node j
+        ns += one(I)
+        @inbounds pstrt = updptr[ns]
+        @inbounds pstop = updptr[ns + one(I)] = pstrt + na * nrhs
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
+        copyto!(U₂, F₂)
+
+        # compute the difference
+        #
+        #     Y₂ = U₂ - Y₁ L₂₁ᴴ
+        #
+        # and store U₂ ← Y₂ 
+        @inbounds for c in oneto(nrhs)
+            f₁ = F₁[c]
+
+            for k in oneto(na)
+                U₂[c, k] -= f₁ * conj(L₂₁[k])
+            end
+        end
+    end
+   
+    # copy B ← F₁
+    @inbounds for c in oneto(nrhs)
+        B[c, res] = F₁[c]
+    end
+
+    return ns
+end
+
+function rdiv!_loop_bwd!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractArray{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    if isone(nn)
+        ns = rdiv!_loop_bwd_nod!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, B, ns, j)
+    else
+        ns = rdiv!_loop_bwd_snd!(mapping, blkptr, updptr,
+            blkval, updval, frtval, tree, B, ns, j)
+    end
+
+    return ns
+end
+
+function rdiv!_loop_bwd_snd!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractVector{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # res is the res at node j
+    @inbounds res = neighbors(residual, j)
  
     # L is part of the Cholesky factor
     #
@@ -957,45 +1339,372 @@ function rdiv!_loop_bwd!(
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
     @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    
     @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
     @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
 
-    # X is part of B
+    # F is part of B
     #
-    #     X = [ X₁ ] res(j)
-    #         [ X₂ ] sep(j)
+    #     F = [ F₁ ] res(j)
+    #         [ F₂ ] sep(j)
     #
-    @inbounds X = reshape(view(frtval, oneto(nj * size(B, 1))), size(B, 1), nj)
-    @inbounds X₁ = view(X, axes(B, 1), oneto(nn))
-    @inbounds X₂ = view(X, axes(B, 1), nn + one(I):nj)
+    @inbounds F = view(frtval, oneto(nj))
+    @inbounds F₁ = view(F, oneto(nn))
+    @inbounds F₂ = view(F, nn + one(I):nj)
 
-    @inbounds for k in oneto(nj), w in axes(B, 1)
-        X[w, k] = B[w, bag[k]]
+    @inbounds for k in oneto(nn)
+        F₁[k] = B[res[k]]
     end
     
     if ispositive(na)
+        # U₂ is the update matrix for node j
+        @inbounds pstrt = updptr[ns]
+        pstop = pstrt + na
+        @inbounds U₂ = view(updval, pstrt:pstop - one(I))
+        ns -= one(I)
+
         # compute the difference
         #
-        #     Y₁ = X₁ - X₂ L₂₁
+        #     Y₁ = F₁ - L₂₁ᴴ U₂
+        #
+        # and store F₁ ← Y₁ 
+        gemv!(L₂₁, U₂, F₁, Val(true))
+
+        # copy F₂ ← U₂
+        copyto!(F₂, U₂)
+    end
+
+    # solve for Z₁ in
+    #
+    #     L₁₁ᴴ Z₁ = Y₁
+    #
+    # and store F₁ ← Z₁
+    trsv!(L₁₁, F₁, Val(true))
+
+    @inbounds for i in childindices(tree, j)
+        ns += one(I)
+        rdiv!_bwd_add_update!(F, ns, i, mapping, updptr, updval)
+    end
+
+    # copy B ← F₁
+    @inbounds for k in oneto(nn)
+        B[res[k]] = F₁[k]
+    end
+
+    return ns
+end
+
+function rdiv!_loop_bwd_snd!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    nrhs = convert(I, size(B, 1))
+
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = eltypedegree(residual, j)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # res is the res at node j
+    @inbounds res = neighbors(residual, j)
+ 
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
+    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
+    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+
+    # F is part of B
+    #
+    #         res(j) sep(j)
+    #     F = [ F₁    F₂ ]
+    #
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
+    @inbounds F₁ = view(F, oneto(nrhs), oneto(nn))
+    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+
+    @inbounds for k in oneto(nn)
+        v = res[k]
+
+        for c in oneto(nrhs)
+            F₁[c, k] = B[c, v]
+        end
+    end
+    
+    if ispositive(na)
+        # U₂ is the update matrix for node j
+        @inbounds pstrt = updptr[ns]
+        pstop = pstrt + na * nrhs
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
+        ns -= one(I)
+
+        # compute the difference
+        #
+        #     Y₁ = F₁ - U₂ L₂₁
         #
         # and store X₁ ← Y₁ 
-        gemm!(X₂, L₂₁, X₁, Val(false), Val(false))
+        gemm!(U₂, L₂₁, F₁, Val(false), Val(false))
+
+        # copy F₂ ← U₂
+        copyto!(F₂, U₂)
     end
 
     # solve for Z₁ in
     #
     #     Z₁ L₁₁ = Y₁
     #
-    # and store X₁ ← Z₁
-    trsm!(L₁₁, X₁, Val(false), Val(true))
+    # and store F₁ ← Z₁
+    trsm!(L₁₁, F₁, Val(false), Val(true))
 
-    # copy X into B
-    @inbounds for k in oneto(nn), w in axes(B, 1)
-        B[w, bag[k]] = X[w, k]
+    @inbounds for i in childindices(tree, j)
+        ns += one(I)
+        rdiv!_bwd_add_update!(F, ns, i, mapping, updptr, updval)
     end
 
-    return
+    # copy B ← F₁
+    @inbounds for k in oneto(nn)
+        v = res[k]
+
+        for c in oneto(nrhs)
+            B[c, v] = F₁[c, k]
+        end
+    end
+
+    return ns
+end
+
+function rdiv!_loop_bwd_nod!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractVector{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = one(I)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # res is the res at node j
+    @inbounds res = only(neighbors(residual, j))
+ 
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L₁₁ = view(L, nn)
+    @inbounds L₂₁ = view(L, nn + one(I):nj)
+
+    # F is part of B
+    #
+    #     F = [ F₁ ] res(j)
+    #         [ F₂ ] sep(j)
+    #
+    @inbounds F = view(frtval, oneto(nj))
+    @inbounds F₁ = view(F, nn)
+    @inbounds F₂ = view(F, nn + one(I):nj)
+
+    @inbounds f₁ = F₁[] = B[res]
+    
+    if ispositive(na)
+        # U₂ is the update matrix for node j
+        @inbounds pstrt = updptr[ns]
+        pstop = pstrt + na
+        @inbounds U₂ = view(updval, pstrt:pstop - one(I))
+        ns -= one(I)
+
+        # compute the difference
+        #
+        #     Y₁ = F₁ - L₂₁ᴴ U₂
+        #
+        # and store F₁ ← Y₁ 
+        @inbounds for k in oneto(na)
+            f₁ -= U₂[k] * conj(L₂₁[k])
+        end
+
+        # copy F₂ ← U₂
+        copyto!(F₂, U₂)
+    end
+
+    # solve for Z₁ in
+    #
+    #     L₁₁ᴴ Z₁ = Y₁
+    #
+    # and store F₁ ← Z₁
+    F₁[] = f₁ / conj(L₁₁[])
+
+    @inbounds for i in childindices(tree, j)
+        ns += one(I)
+        rdiv!_bwd_add_update!(F, ns, i, mapping, updptr, updval)
+    end
+
+    # copy B ← F₁
+    @inbounds B[res] = F₁[]
+    return ns
+end
+
+function rdiv!_loop_bwd_nod!(
+        mapping::BipartiteGraph{I, I},
+        blkptr::AbstractVector{I},
+        updptr::AbstractVector{I},
+        blkval::AbstractVector{T},
+        updval::AbstractVector{T},
+        frtval::AbstractVector{T},
+        tree::CliqueTree{I, I}, 
+        B::AbstractMatrix{T},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    nrhs = convert(I, size(B, 1))
+
+    residual = residuals(tree)
+    separator = separators(tree)
+
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
+    #
+    @inbounds nn = one(I)
+
+    # na is the size of the separator at node j.
+    #
+    #     na = | sep(j) |
+    #
+    @inbounds na = eltypedegree(separator, j)
+
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) |
+    #
+    nj = nn + na
+
+    # res is the res at node j
+    @inbounds res = only(neighbors(residual, j))
+ 
+    # L is part of the Cholesky factor
+    #
+    #          res(j)
+    #     L = [ L₁₁  ] res(j)
+    #         [ L₂₁  ] sep(j)
+    #
+    @inbounds pstrt = blkptr[j]
+    @inbounds pstop = blkptr[j + one(I)]
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L₁₁ = view(L, nn)
+    @inbounds L₂₁ = view(L, nn + one(I):nj)
+
+    # F is part of B
+    #
+    #         res(j) sep(j)
+    #     F = [ F₁    F₂ ]
+    #
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
+    @inbounds F₁ = view(F, oneto(nrhs), nn)
+    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+
+    @inbounds for c in oneto(nrhs)
+        F₁[c] = B[c, res]
+    end
+    
+    if ispositive(na)
+        # U₂ is the update matrix for node j
+        @inbounds pstrt = updptr[ns]
+        pstop = pstrt + na * nrhs
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
+        ns -= one(I)
+
+        # compute the difference
+        #
+        #     Y₁ = F₁ - U₂ L₂₁
+        #
+        # and store F₁ ← Y₁
+        @inbounds for c in oneto(nrhs)
+            f₁ = F₁[c]
+
+            for k in oneto(na)
+                f₁ -= U₂[c, k] * L₂₁[k]
+            end
+
+            F₁[c] = f₁
+        end
+ 
+        # copy F₂ ← U₂
+        copyto!(F₂, U₂)
+    end
+
+    # solve for Z₁ in
+    #
+    #     Z₁ L₁₁ = Y₁
+    #
+    # and store F₁ ← Z₁
+    F₁ ./= L₁₁[]
+
+    @inbounds for i in childindices(tree, j)
+        ns += one(I)
+        rdiv!_bwd_add_update!(F, ns, i, mapping, updptr, updval)
+    end
+
+    # copy B ← F₁
+    @inbounds for c in oneto(nrhs)
+        B[c, res] = F₁[c]
+    end
+
+    return ns
 end
 
 function SparseArrays.nnz(cholfact::CholFact)
@@ -1170,20 +1879,6 @@ function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T}
     m = size(A, 1)
 
     @inbounds for j in axes(A, 1), k in axes(A, 2)
-        Ajk = A[j, k]
-
-        for i in j:m
-            L[i, j] -= A[i, k] * Ajk
-        end
-    end
-
-    return
-end
-
-function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: Complex}
-    m = size(A, 1)
-
-    @inbounds for j in axes(A, 1), k in axes(A, 2)
         Ajk = conj(A[j, k])
 
         for i in j:m
@@ -1201,6 +1896,35 @@ end
 
 function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T <: BLAS.BlasComplex}
     BLAS.herk!('L', 'N', -one(real(T)), A, one(real(T)), L)
+    return
+end
+
+# compute the lower triangular part of the difference
+#
+#     C = L - a * aᴴ
+#
+# and store L ← C
+function syr!(a::AbstractVector{T}, L::AbstractMatrix{T}) where {T}
+    m = length(a)
+
+    @inbounds for j in eachindex(a)
+        aj = conj(a[j])
+
+        for i in j:m
+            L[i, j] -= a[i] * aj
+        end
+    end
+
+    return
+end
+
+function syr!(a::AbstractVector{T}, L::AbstractMatrix{T}) where {T <: BLAS.BlasReal}
+    BLAS.syr!('L', -one(T), a, L)
+    return
+end
+
+function syr!(a::AbstractVector{T}, L::AbstractMatrix{T}) where {T <: BLAS.BlasComplex}
+    BLAS.her!('L', -one(real(T)), a, L)
     return
 end
 

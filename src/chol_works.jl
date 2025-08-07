@@ -9,7 +9,6 @@ struct CholWork{T, I}
     nzval2::FVector{T}
     updval::FVector{T}
     frtval::FVector{T}
-    mapping::BipartiteGraph{I, I, FVector{I}, FVector{I}}
     pattern1::BipartiteGraph{I, I, FVector{I}, FVector{I}}
     pattern2::BipartiteGraph{I, I, FVector{I}, FVector{I}} 
 end
@@ -98,8 +97,8 @@ function cholinit(::Type{T}, matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFa
     pattern1 = BipartiteGraph(neqns, neqns, adjln, colptr1, rowval1)
     pattern2 = BipartiteGraph(neqns, neqns, adjln, colptr2, rowval2)
 
-    cholfact = CholFact{T, I}(symbfact, blkptr, blkval, status) 
-    cholwork = CholWork{T, I}(updptr, nzval1, nzval2, updval, frtval, mapping, pattern1, pattern2)
+    cholfact = CholFact{T, I}(symbfact, blkptr, blkval, status, mapping) 
+    cholwork = CholWork{T, I}(updptr, nzval1, nzval2, updval, frtval, pattern1, pattern2)
     return cholfact, cholwork
 end
 

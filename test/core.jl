@@ -1166,29 +1166,26 @@ end
 end
 
 @testset "cholesky" begin
-    matrices = ("torsion1", "obstclae", "jnlbrng1", "minsurfo", "cvxbqp1",
-        "wathen100", "gridgena", "apache1", "wathen120", "oilpan")
+    matrices = ("torsion1", "obstclae", "jnlbrng1", "minsurfo", "cvxbqp1", "wathen100",
+        "gridgena", "apache1", "wathen120", "oilpan", "mhd1280b", "Trefethen_2000")
 
     for name in matrices
-        matrix = readmatrix(name); n = size(matrix, 2)
-        M = SparseMatrixCSC{Float64}(matrix)
+        M = readmatrix(name); n = size(M, 2)
         F1 = cholesky(M)
         F2 = CliqueTrees.cholesky(M)
+        @test issuccess(F1) == issuccess(F2)
 
-        @test issuccess(F1)
-        @test issuccess(F2)
-
-        b1 = rand(Float64, n)
+        b1 = rand(n)
         b2 = M * (F2 \ b1)
-        @test sum(abs.(b1 - b2)) / n < 0.01
+        @test sum(abs.(b1 - b2)) / n < 0.001
 
-        B1 = rand(Float64, n, 5)
+        B1 = rand(n, 5)
         B2 = M * (F2 \ B1)
-        @test sum(abs.(B1 - B2)) / n / 5 < 0.01
+        @test sum(abs.(B1 - B2)) / n / 5 < 0.001
 
-        C1 = rand(Float64, 5, n)
+        C1 = rand(5, n)
         C2 = (C1 / F2) * M
-        @test sum(abs.(C1 - C2)) / n / 5 < 0.01
+        @test sum(abs.(C1 - C2)) / n / 5 < 0.001
 
         det1 = det(F1)
         det2 = det(F2)
