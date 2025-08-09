@@ -47,6 +47,7 @@ BT
 SAT
 MinimalChordal
 CompositeRotations
+Compression
 SafeRules
 ConnectedComponents
 permutation

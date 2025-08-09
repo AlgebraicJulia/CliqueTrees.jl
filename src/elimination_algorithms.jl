@@ -1040,6 +1040,53 @@ function CompositeRotations(clique::AbstractVector)
 end
 
 """
+    Compression{A} <: EliminationAlgorithm
+
+    Compression(alg::EliminationAlgorithm; tao = 1.0)
+
+Preprocess a graph by identifying indistinguishable vertices.
+The algorithm `alg` is run on the compressed graph.
+
+```julia-repl
+julia> using CliqueTrees
+
+julia> graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia> alg = Compression(; tao=0.9)
+
+julia> treewidth(graph; alg)
+2
+```
+
+### Parameters
+
+  - `alg`: elimination algorithm
+  - `tao`: threshold parameter for graph compression
+
+"""
+struct Compression{A <: EliminationAlgorithm} <: EliminationAlgorithm
+    alg::A
+    tao::Float64
+end
+
+function Compression(alg::EliminationAlgorithm; tao::Float64 = 1.0)
+    return Compression(alg, tao)
+end
+
+function Compression(; kwargs...)
+    return Compression(DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
+end
+
+"""
     SafeRules{A, L, U} <: EliminationAlgorithm
 
     SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgororithm)
@@ -1356,6 +1403,11 @@ end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::CompositeRotations)
     return compositerotations(graph, alg.clique, alg.alg)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Compression)
+    order = compress(weights, graph, alg.alg, alg.tao)
+    return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules)
@@ -3046,6 +3098,39 @@ function compress_impl!(
     return outgraph, partition
 end
 
+function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tao::Number) where {W, V}
+    weights0 = weights; graph0 = graph
+    graph1, project1 = compress(graph0, Val(true), tao)
+
+    n0 = nv(graph0)
+    n1 = nv(graph1)
+
+    order0 = Vector{V}(undef, n0)
+    weights1 = Vector{W}(undef, n1)
+
+    @inbounds for v1 in vertices(graph1)
+        wgt = zero(W)
+
+        for v0 in neighbors(project1, v1)
+            wgt += weights0[v0]
+        end
+
+        weights1[v1] = wgt
+    end
+
+    i0 = zero(V); order1, index1 = permutation(weights1, graph1, alg)
+
+    @inbounds for i1 in vertices(graph1)
+        v1 = order1[i1]
+
+        for v0 in neighbors(project1, v1)
+            i0 += one(V); order0[i0] = v0
+        end
+    end
+
+    return order0
+end
+
 function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm, tao::Number) where {V}
     n = nv(graph)
     width = lowerbound(weights, graph, lb)
@@ -3291,6 +3376,14 @@ function Base.show(io::IO, ::MIME"text/plain", alg::CompositeRotations{C, A}) wh
     println(io, " "^indent * "CompositeRotations{$C, $A}:")
     println(io, " "^indent * "    clique: $(alg.clique)")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::Compression{A}) where {A}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "Compression{$A}:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    println(io, " "^indent * "    tao: $(alg.tao)")
     return
 end
 

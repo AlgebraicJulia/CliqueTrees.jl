@@ -472,7 +472,7 @@ function cholesky_loop_snd!(
         #     L₂₁ L₁₁ᴴ = F₂₁
         #
         # and store F₂₁ ← L₂₁
-        trsm!(F₁₁, F₂₁, Val(true), Val(true))
+        rdiv!(F₂₁, LowerTriangular(F₁₁) |> adjoint)
     
         # compute the difference
         #
@@ -896,9 +896,9 @@ function rdiv!_loop_fwd_snd!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, :)
+    @inbounds L₁₁ = view(L, oneto(nn),      :)
+    @inbounds L₂₁ = view(L, nn + one(I):nj, :)
 
     # F is part of B
     #
@@ -909,11 +909,8 @@ function rdiv!_loop_fwd_snd!(
     @inbounds F₁ = view(F, oneto(nn))
     @inbounds F₂ = view(F, nn + one(I):nj)
 
-    @inbounds for k in oneto(nn)
-        F₁[k] = B[res[k]]
-    end
-
-    fill!(F₂, zero(T))
+    @inbounds F₁ .= view(B, res)
+    F₂ .= zero(T)
 
     @inbounds for i in Iterators.reverse(childindices(tree, j))
         rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
@@ -925,7 +922,7 @@ function rdiv!_loop_fwd_snd!(
     #     L₁₁ Y₁ = F₁
     #
     # and store F₁ ← Y₁
-    trsv!(L₁₁, F₁, Val(false))
+    ldiv!(LowerTriangular(L₁₁), F₁)
  
     if ispositive(na)
         # U₂ is the update matrix for node j
@@ -933,21 +930,18 @@ function rdiv!_loop_fwd_snd!(
         @inbounds pstrt = updptr[ns]
         @inbounds pstop = updptr[ns + one(I)] = pstrt + na
         @inbounds U₂ = view(updval, pstrt:pstop - one(I))
-        copyto!(U₂, F₂)
+        U₂ .= F₂
 
         # compute the difference
         #
         #     Y₂ = U₂ - L₂₁ F₁
         #
         # and store U₂ ← Y₂ 
-        gemv!(L₂₁, F₁, U₂, Val(false))
+        mul!(U₂, L₂₁, F₁, -one(T), one(T))
     end
    
     # copy B ← F₁
-    @inbounds for k in oneto(nn)
-        B[res[k]] = F₁[k]
-    end
-
+    @inbounds B[res] .= F₁
     return ns
 end
 
@@ -997,28 +991,21 @@ function rdiv!_loop_fwd_snd!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, :)
+    @inbounds L₁₁ = view(L, oneto(nn),      :)
+    @inbounds L₂₁ = view(L, nn + one(I):nj, :)
 
     # F is part of B
     #
     #         res(j) sep(j)
     #     F = [ F₁    F₂ ]
     #
-    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
-    @inbounds F₁ = view(F, oneto(nrhs), oneto(nn))
-    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), :, nj)
+    @inbounds F₁ = view(F, :, oneto(nn))
+    @inbounds F₂ = view(F, :, nn + one(I):nj)
 
-    @inbounds for k in oneto(nn)
-        v = res[k]
-
-        for c in oneto(nrhs)
-            F₁[c, k] = B[c, v]
-        end
-    end
-
-    fill!(F₂, zero(T))
+    @inbounds F₁ .= view(B, :, res)
+    F₂ .= zero(T)
 
     @inbounds for i in Iterators.reverse(childindices(tree, j))
         rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
@@ -1030,7 +1017,7 @@ function rdiv!_loop_fwd_snd!(
     #     Y₁ L₁₁ᴴ = F₁
     #
     # and store F₁ ← Y₁
-    trsm!(L₁₁, F₁, Val(true), Val(true))
+    rdiv!(F₁, LowerTriangular(L₁₁) |> adjoint)
  
     if ispositive(na)
         # U₂ is the update matrix for node j
@@ -1038,25 +1025,18 @@ function rdiv!_loop_fwd_snd!(
         @inbounds pstrt = updptr[ns]
         @inbounds pstop = updptr[ns + one(I)] = pstrt + na * nrhs
         @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
-        copyto!(U₂, F₂)
+        U₂ .= F₂
 
         # compute the difference
         #
         #     Y₂ = U₂ - Y₁ L₂₁ᴴ
         #
         # and store U₂ ← Y₂ 
-        gemm!(F₁, L₂₁, U₂, Val(false), Val(true))
+        mul!(U₂, F₁, L₂₁ |> adjoint, -one(T), one(T))
     end
    
     # copy B ← F₁
-    @inbounds for k in oneto(nn)
-        v = res[k]
-
-        for c in oneto(nrhs)
-            B[c, v] = F₁[c, k]
-        end
-    end
-
+    @inbounds B[:, res] .= F₁
     return ns
 end
 
@@ -1104,7 +1084,7 @@ function rdiv!_loop_fwd_nod!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L = view(blkval, pstrt:pstop - one(I))
     @inbounds L₁₁ = view(L, nn)
     @inbounds L₂₁ = view(L, nn + one(I):nj)
 
@@ -1118,7 +1098,7 @@ function rdiv!_loop_fwd_nod!(
     @inbounds F₂ = view(F, nn + one(I):nj)
 
     @inbounds F₁[] = B[res]
-    fill!(F₂, zero(T))
+    F₂ .= zero(T)
 
     @inbounds for i in Iterators.reverse(childindices(tree, j))
         rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
@@ -1138,16 +1118,14 @@ function rdiv!_loop_fwd_nod!(
         @inbounds pstrt = updptr[ns]
         @inbounds pstop = updptr[ns + one(I)] = pstrt + na
         @inbounds U₂ = view(updval, pstrt:pstop - one(I))
-        copyto!(U₂, F₂)
+        U₂ .= F₂
 
         # compute the difference
         #
         #     Y₂ = U₂ - L₂₁ F₁
         #
         # and store U₂ ← Y₂
-        @inbounds for k in oneto(na)
-            U₂[k] -= L₂₁[k] * f₁
-        end
+        mul!(U₂, L₂₁, f₁, -one(T), one(T))
     end
    
     # copy B ← F₁
@@ -1202,7 +1180,7 @@ function rdiv!_loop_fwd_nod!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L = view(blkval, pstrt:pstop - one(I))
     @inbounds L₁₁ = view(L, nn)
     @inbounds L₂₁ = view(L, nn + one(I):nj)
 
@@ -1211,15 +1189,13 @@ function rdiv!_loop_fwd_nod!(
     #         res(j) sep(j)
     #     F = [ F₁    F₂ ]
     #
-    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
-    @inbounds F₁ = view(F, oneto(nrhs), nn)
-    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), :, nj)
+    @inbounds F₁ = view(F, :, nn)
+    @inbounds F₂ = view(F, :, nn + one(I):nj)
 
-    @inbounds for c in oneto(nrhs)
-        F₁[c] = B[c, res]
-    end
+    @inbounds F₁ .= view(B, :, res)
 
-    fill!(F₂, zero(T))
+    F₂ .= zero(T)
 
     @inbounds for i in Iterators.reverse(childindices(tree, j))
         rdiv!_fwd_add_update!(F, ns, i, mapping, updptr, updval)
@@ -1238,28 +1214,19 @@ function rdiv!_loop_fwd_nod!(
         ns += one(I)
         @inbounds pstrt = updptr[ns]
         @inbounds pstop = updptr[ns + one(I)] = pstrt + na * nrhs
-        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
-        copyto!(U₂, F₂)
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), :, na)
+        U₂ .= F₂
 
         # compute the difference
         #
         #     Y₂ = U₂ - Y₁ L₂₁ᴴ
         #
         # and store U₂ ← Y₂ 
-        @inbounds for c in oneto(nrhs)
-            f₁ = F₁[c]
-
-            for k in oneto(na)
-                U₂[c, k] -= f₁ * conj(L₂₁[k])
-            end
-        end
+        mul!(U₂, F₁, L₂₁ |> adjoint, -one(T), one(T))
     end
    
     # copy B ← F₁
-    @inbounds for c in oneto(nrhs)
-        B[c, res] = F₁[c]
-    end
-
+    @inbounds B[:, res] .= F₁
     return ns
 end
 
@@ -1338,9 +1305,9 @@ function rdiv!_loop_bwd_snd!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, :)
+    @inbounds L₁₁ = view(L, oneto(nn),      :)
+    @inbounds L₂₁ = view(L, nn + one(I):nj, :)
 
     # F is part of B
     #
@@ -1351,9 +1318,7 @@ function rdiv!_loop_bwd_snd!(
     @inbounds F₁ = view(F, oneto(nn))
     @inbounds F₂ = view(F, nn + one(I):nj)
 
-    @inbounds for k in oneto(nn)
-        F₁[k] = B[res[k]]
-    end
+    @inbounds F₁ .= view(B, res)
     
     if ispositive(na)
         # U₂ is the update matrix for node j
@@ -1367,10 +1332,10 @@ function rdiv!_loop_bwd_snd!(
         #     Y₁ = F₁ - L₂₁ᴴ U₂
         #
         # and store F₁ ← Y₁ 
-        gemv!(L₂₁, U₂, F₁, Val(true))
+        mul!(F₁, L₂₁ |> adjoint, U₂, -one(T), one(T))
 
         # copy F₂ ← U₂
-        copyto!(F₂, U₂)
+        F₂ .= U₂
     end
 
     # solve for Z₁ in
@@ -1378,7 +1343,7 @@ function rdiv!_loop_bwd_snd!(
     #     L₁₁ᴴ Z₁ = Y₁
     #
     # and store F₁ ← Z₁
-    trsv!(L₁₁, F₁, Val(true))
+    ldiv!(LowerTriangular(L₁₁) |> adjoint, F₁)
 
     @inbounds for i in childindices(tree, j)
         ns += one(I)
@@ -1386,10 +1351,7 @@ function rdiv!_loop_bwd_snd!(
     end
 
     # copy B ← F₁
-    @inbounds for k in oneto(nn)
-        B[res[k]] = F₁[k]
-    end
-
+    @inbounds B[res] .= F₁
     return ns
 end
 
@@ -1439,43 +1401,37 @@ function rdiv!_loop_bwd_snd!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, nn)
-    @inbounds L₁₁ = view(L, oneto(nn),      oneto(nn))
-    @inbounds L₂₁ = view(L, nn + one(I):nj, oneto(nn))
+    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj, :)
+    @inbounds L₁₁ = view(L, oneto(nn),      :)
+    @inbounds L₂₁ = view(L, nn + one(I):nj, :)
 
     # F is part of B
     #
     #         res(j) sep(j)
     #     F = [ F₁    F₂ ]
     #
-    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
-    @inbounds F₁ = view(F, oneto(nrhs), oneto(nn))
-    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), :, nj)
+    @inbounds F₁ = view(F, :, oneto(nn))
+    @inbounds F₂ = view(F, :, nn + one(I):nj)
 
-    @inbounds for k in oneto(nn)
-        v = res[k]
+    @inbounds F₁ .= view(B, :, res)
 
-        for c in oneto(nrhs)
-            F₁[c, k] = B[c, v]
-        end
-    end
-    
     if ispositive(na)
         # U₂ is the update matrix for node j
         @inbounds pstrt = updptr[ns]
         pstop = pstrt + na * nrhs
-        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), :, na)
         ns -= one(I)
 
         # compute the difference
         #
         #     Y₁ = F₁ - U₂ L₂₁
         #
-        # and store X₁ ← Y₁ 
-        gemm!(U₂, L₂₁, F₁, Val(false), Val(false))
+        # and store F₁ ← Y₁ 
+        mul!(F₁, U₂, L₂₁, -one(T), one(T))
 
         # copy F₂ ← U₂
-        copyto!(F₂, U₂)
+        F₂ .= U₂
     end
 
     # solve for Z₁ in
@@ -1483,7 +1439,7 @@ function rdiv!_loop_bwd_snd!(
     #     Z₁ L₁₁ = Y₁
     #
     # and store F₁ ← Z₁
-    trsm!(L₁₁, F₁, Val(false), Val(true))
+    rdiv!(F₁, LowerTriangular(L₁₁))
 
     @inbounds for i in childindices(tree, j)
         ns += one(I)
@@ -1491,14 +1447,7 @@ function rdiv!_loop_bwd_snd!(
     end
 
     # copy B ← F₁
-    @inbounds for k in oneto(nn)
-        v = res[k]
-
-        for c in oneto(nrhs)
-            B[c, v] = F₁[c, k]
-        end
-    end
-
+    @inbounds B[:, res] .= F₁
     return ns
 end
 
@@ -1546,7 +1495,7 @@ function rdiv!_loop_bwd_nod!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L = view(blkval, pstrt:pstop - one(I))
     @inbounds L₁₁ = view(L, nn)
     @inbounds L₂₁ = view(L, nn + one(I):nj)
 
@@ -1573,12 +1522,10 @@ function rdiv!_loop_bwd_nod!(
         #     Y₁ = F₁ - L₂₁ᴴ U₂
         #
         # and store F₁ ← Y₁ 
-        @inbounds for k in oneto(na)
-            f₁ -= U₂[k] * conj(L₂₁[k])
-        end
+        f₁ -= dot(L₂₁, U₂)
 
         # copy F₂ ← U₂
-        copyto!(F₂, U₂)
+        F₂ .= U₂
     end
 
     # solve for Z₁ in
@@ -1644,7 +1591,7 @@ function rdiv!_loop_bwd_nod!(
     #
     @inbounds pstrt = blkptr[j]
     @inbounds pstop = blkptr[j + one(I)]
-    @inbounds L = reshape(view(blkval, pstrt:pstop - one(I)), nj)
+    @inbounds L = view(blkval, pstrt:pstop - one(I))
     @inbounds L₁₁ = view(L, nn)
     @inbounds L₂₁ = view(L, nn + one(I):nj)
 
@@ -1653,19 +1600,17 @@ function rdiv!_loop_bwd_nod!(
     #         res(j) sep(j)
     #     F = [ F₁    F₂ ]
     #
-    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), nrhs, nj)
-    @inbounds F₁ = view(F, oneto(nrhs), nn)
-    @inbounds F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    @inbounds F = reshape(view(frtval, oneto(nj * nrhs)), :, nj)
+    @inbounds F₁ = view(F, :, nn)
+    @inbounds F₂ = view(F, :, nn + one(I):nj)
 
-    @inbounds for c in oneto(nrhs)
-        F₁[c] = B[c, res]
-    end
+    F₁ .= view(B, :, res)
     
     if ispositive(na)
         # U₂ is the update matrix for node j
         @inbounds pstrt = updptr[ns]
         pstop = pstrt + na * nrhs
-        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), nrhs, na)
+        @inbounds U₂ = reshape(view(updval, pstrt:pstop - one(I)), :, na)
         ns -= one(I)
 
         # compute the difference
@@ -1673,18 +1618,10 @@ function rdiv!_loop_bwd_nod!(
         #     Y₁ = F₁ - U₂ L₂₁
         #
         # and store F₁ ← Y₁
-        @inbounds for c in oneto(nrhs)
-            f₁ = F₁[c]
-
-            for k in oneto(na)
-                f₁ -= U₂[c, k] * L₂₁[k]
-            end
-
-            F₁[c] = f₁
-        end
+        mul!(F₁, U₂, L₂₁, -one(T), one(T))
  
         # copy F₂ ← U₂
-        copyto!(F₂, U₂)
+        F₂ .= U₂
     end
 
     # solve for Z₁ in
@@ -1700,10 +1637,7 @@ function rdiv!_loop_bwd_nod!(
     end
 
     # copy B ← F₁
-    @inbounds for c in oneto(nrhs)
-        B[c, res] = F₁[c]
-    end
-
+    @inbounds B[:, res] .= F₁
     return ns
 end
 
@@ -1865,8 +1799,8 @@ end
 #
 # and store A ← L
 function potrf!(A::AbstractMatrix)
-    F = LinearAlgebra.cholesky!(Hermitian(A, :L), NoPivot())
-    status = iszero(F.info)
+    fact = LinearAlgebra.cholesky!(Hermitian(A, :L), NoPivot(); check = false)
+    status = iszero(fact.info)
     return status
 end
 
@@ -1925,125 +1859,5 @@ end
 
 function syr!(a::AbstractVector{T}, L::AbstractMatrix{T}) where {T <: BLAS.BlasComplex}
     BLAS.her!('L', -one(real(T)), a, L)
-    return
-end
-
-# solve for x in
-#
-#     L x = b
-#
-# and store b ← x
-function trsv!(L::AbstractMatrix{T}, b::AbstractVector{T}, tL::Val{false}) where {T}
-    ldiv!(LowerTriangular(L), b)
-    return
-end
-
-# solve for x in
-#
-#     Lᴴ x = b
-#
-# and store b ← x
-function trsv!(L::AbstractMatrix{T}, b::AbstractVector{T}, tL::Val{true}) where {T}
-    ldiv!(LowerTriangular(L) |> adjoint, b)
-    return
-end
-
-# solve for X in
-#
-#     L X = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{false}, side::Val{false}) where {T}
-    ldiv!(LowerTriangular(L), B)
-    return
-end
-
-# solve for X in
-#
-#     Lᴴ X = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{true}, side::Val{false}) where {T}
-    ldiv!(LowerTriangular(L) |> adjoint, B)
-    return
-end
-
-# solve for X in
-#
-#     X L = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{false}, side::Val{true}) where {T}
-    rdiv!(B, LowerTriangular(L))
-    return
-end
-
-# solve for X in
-#
-#     X Lᴴ = B
-#
-# and store B ← X
-function trsm!(L::AbstractMatrix{T}, B::AbstractMatrix{T}, tL::Val{true}, side::Val{true}) where {T}
-    rdiv!(B, LowerTriangular(L) |> adjoint)
-    return
-end
-
-# compute the difference
-#
-#     z = y - A x
-#
-# and store y ← z
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{false}) where {T}
-    mul!(y, A, x, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     z = y - Aᴴ x
-#
-# and store y ← z
-function gemv!(A::AbstractMatrix{T}, x::AbstractVector{T}, y::AbstractVector{T}, tA::Val{true}) where {T}
-    mul!(y, A |> adjoint, x, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     Z = Y - A X
-#
-# and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}, tX::Val{false}) where {T}
-    mul!(Y, A, X, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     Z = Y - Aᴴ X
-#
-# and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}, tX::Val{false}) where {T}
-    mul!(Y, A |> adjoint, X, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     Z = Y - A Xᴴ
-#
-# and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{false}, tX::Val{true}) where {T}
-    mul!(Y, A, X |> adjoint, -one(T), one(T))
-    return
-end
-
-# compute the difference
-#
-#     Z = Y - Aᴴ Xᴴ
-#
-# and store Y ← Z
-function gemm!(A::AbstractMatrix{T}, X::AbstractMatrix{T}, Y::AbstractMatrix{T}, tA::Val{true}, tX::Val{true}) where {T}
-    mul!(Y, A |> adjoint, X |> adjoint, -one(T), one(T))
     return
 end
