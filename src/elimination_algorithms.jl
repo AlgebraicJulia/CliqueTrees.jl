@@ -1072,6 +1072,11 @@ julia> treewidth(graph; alg)
   - `alg`: elimination algorithm
   - `tao`: threshold parameter for graph compression
 
+
+### References
+
+  - Ashcraft, Cleve. "Compressed graphs and the minimum degree algorithm." *SIAM Journal on Scientific Computing* 16.6 (1995): 1404-1411.
+
 """
 struct Compression{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
