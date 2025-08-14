@@ -99,12 +99,20 @@ function two(::I) where {I}
     return two(I)
 end
 
-function ispositive(i::I) where {I}
-    return i > zero(I)
+@static if isdefined(Base, :ispositive)
+    import Base.ispositive
+else
+    function ispositive(i::I) where {I}
+        return i > zero(I)
+    end
 end
 
-function isnegative(i::I) where {I}
-    return i < zero(I)
+@static if isdefined(Base, :isnegative)
+    import Base.isnegative
+else
+    function isnegative(i::I) where {I}
+        return i < zero(I)
+    end
 end
 
 function isfour(i::I) where {I}
