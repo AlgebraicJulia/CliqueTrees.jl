@@ -1812,7 +1812,7 @@ end
 function syrk!(A::AbstractMatrix{T}, L::AbstractMatrix{T}) where {T}
     m = size(A, 1)
 
-    @inbounds for j in axes(A, 1), k in axes(A, 2)
+    @inbounds for k in axes(A, 2), j in axes(A, 1)
         Ajk = conj(A[j, k])
 
         for i in j:m

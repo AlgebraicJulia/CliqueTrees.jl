@@ -108,12 +108,18 @@ julia> sol = CliqueTrees.linsolve!(rhs, cholfact, Val(false)) # sol = inv(matrix
     - `Val(false)`: left division
     - `Val(true)`: right division
 """
-function linsolve!(rhs::AbstractArray, cholfact::CholFact{T}, side::Val{false}) where {T}
+linsolve!(rhs::AbstractArray, cholfact::CholFact, side::Val)
+
+function linsolve!(rhs::AbstractMatrix, cholfact::CholFact, side::Val{false})
     return linsolve!(rhs, lininit(size(rhs, 2), cholfact), cholfact, side)
 end
 
-function linsolve!(rhs::AbstractArray, cholfact::CholFact{T}, side::Val{true}) where {T}
+function linsolve!(rhs::AbstractMatrix, cholfact::CholFact, side::Val{true})
     return linsolve!(rhs, lininit(size(rhs, 1), cholfact), cholfact, side)
+end
+
+function linsolve!(rhs::AbstractVector, cholfact::CholFact, side::Val)
+    return linsolve!(rhs, lininit(1, cholfact), cholfact, side)
 end
 
 """
