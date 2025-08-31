@@ -207,15 +207,14 @@ function supcnt_impl!(
     map1 = inv0
 
     function find(u::V)
-        vv = @inbounds find!(sets, u)
-        v = @inbounds inv1[vv]
+        v = @inbounds inv1[sets[u]]
         return v
     end
 
     function union(u::V, v::V)
         @inbounds uu = map1[u]
         @inbounds vv = map1[v]
-        @inbounds vv = map1[v] = rootunion!(sets, uu, vv)
+        @inbounds vv = map1[v] = union!(sets, uu, vv)
         @inbounds inv1[vv] = v
         return
     end

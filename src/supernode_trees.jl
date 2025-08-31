@@ -133,7 +133,7 @@ function supernodetree_impl!(
     lower = reverse!_impl!(pointer2, target2, upper)
 
     supcnt_impl!(colcount, new, parent, index, elmorder,
-        elmindex, sndptr, UnionFind(target1, pointer3, target3),
+        elmindex, sndptr, UnionFind(n, target1, pointer3, target3),
         Ones{V}(n), lower, elmtree)
 
     ancestor = index

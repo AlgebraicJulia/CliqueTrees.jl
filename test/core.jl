@@ -1183,34 +1183,50 @@ end
         M = readmatrix(name); n = size(M, 2)
         F1 = cholesky(M)
         F2 = CliqueTrees.cholesky(M)
+        F3 = CliqueTrees.ldlt(M)
         @test issuccess(F1) == issuccess(F2)
+        @test issuccess(F1) == issuccess(F3)
 
-        b1 = rand(n)
-        b2 = M * (F2 \ b1)
-        @test sum(abs.(b1 - b2)) / n < 0.001
+        b0 = rand(n)
+        b2 = M * (F2 \ b0)
+        b3 = M * (F3 \ b0)        
+        @test sum(abs.(b0 - b2)) / n < 0.001
+        @test sum(abs.(b0 - b3)) / n < 0.001
 
-        B1 = rand(n, 5)
-        B2 = M * (F2 \ B1)
-        @test sum(abs.(B1 - B2)) / n / 5 < 0.001
+        B0 = rand(n, 4)
+        B2 = M * (F2 \ B0)
+        B3 = M * (F3 \ B0)  
+        @test sum(abs.(B0 - B2)) / n / 5 < 0.001
+        @test sum(abs.(B0 - B3)) / n / 5 < 0.001
 
-        C1 = rand(5, n)
-        C2 = (C1 / F2) * M
-        @test sum(abs.(C1 - C2)) / n / 5 < 0.001
 
+        C0 = rand(5, n)
+        C2 = (C0 / F2) * M
+        C3 = (C0 / F3) * M
+        @test sum(abs.(C0 - C2)) / n / 5 < 0.001
+        @test sum(abs.(C0 - C3)) / n / 5 < 0.001
+        
         det1 = det(F1)
         det2 = det(F2)
+        det3 = det(F3)
         @test det1 ≈ det2
+        @test det1 ≈ det3
  
         logdet1 = logdet(F1)
         logdet2 = logdet(F2)
+        logdet3 = logdet(F3)
         @test logdet1 ≈ logdet2
+        @test logdet1 ≈ logdet3
     end
 
     matrix = readmatrix("torsion1")
     M = SparseMatrixCSC{Float64}(matrix)
     @inferred CliqueTrees.cholesky(M)
+    @inferred CliqueTrees.ldlt(M)
     @test_call target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
+    @test_call target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
+    @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
 end
 
 @testset "exact treewidth" begin

@@ -203,7 +203,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
                 index = invperm(order)
 
                 if isone(S) || istwo(S)
-                    sets = UnionFind(vwork3, vwork4, vwork5)
+                    sets = UnionFind(n, vwork3, vwork4, vwork5)
                     greedyorder, greedyindex = permutation(weights, graph, alg.alg)
 
                     if isone(S)
