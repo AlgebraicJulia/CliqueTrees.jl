@@ -1315,6 +1315,13 @@ function rdiv!_ldlt_loop_bwd_nod!(
     return ns
 end
 
+function Base.size(ldltfact::LDLTFact)
+    tree = ldltfact.symbfact.tree
+    separator = separators(tree)
+    neqns = convert(Int, nov(separator))
+    return (neqns, neqns)
+end
+
 function SparseArrays.nnz(ldltfact::LDLTFact)
     return nnz(ldltfact.symbfact)
 end

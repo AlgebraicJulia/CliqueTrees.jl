@@ -1641,6 +1641,13 @@ function rdiv!_loop_bwd_nod!(
     return ns
 end
 
+function Base.size(cholfact::CholFact)
+    tree = cholfact.symbfact.tree
+    separator = separators(tree)
+    neqns = convert(Int, nov(separator))
+    return (neqns, neqns)
+end
+
 function SparseArrays.nnz(cholfact::CholFact)
     return nnz(cholfact.symbfact)
 end
