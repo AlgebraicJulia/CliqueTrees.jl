@@ -123,12 +123,10 @@ function amf_impl!(
     @inbounds p = pe[begin] = xadj[begin]
 
     @inbounds for i in oneto(n)
-        ii = i + one(E)
-        pp = xadj[ii]
-
+        pp = pe[i + one(E)] = xadj[i + one(E)]
         nv[i] = trunc(V, vwght[i])
         len[i] = convert(V, pp - p)
-        pe[ii] = p = pp
+        p = pp
     end
 
     ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe,
@@ -842,7 +840,6 @@ function hamf_impl!(
 
     if iszero(nbelts)                         # if graph has no elements and only variables
         @inbounds for i in oneto(n)
-            elen[i] = zero(V)                 # already done before calling
             w[i] = one(I)
 
             if isnegative(len[i])
@@ -920,6 +917,7 @@ function hamf_impl!(
         end
 
         deg = degree[i]
+
         if deg == n2                          # V1 variables (`deg == n2`): flagged variables stored in degree list of `nbbuck + 1`
             deg = nbbuck + one(V)
 
@@ -1057,9 +1055,8 @@ function hamf_impl!(
             pme1 = pfree
             slenme = len[me] - elenme
             knt1_updated = zero(V)
-            knt1 = one(V)
 
-            while knt1 <= elenme + one(V)
+            for knt1 in oneto(elenme + one(V))
                 knt1_updated += one(V)
 
                 if knt1 > elenme              # search the supervariables in `me`
@@ -1067,19 +1064,16 @@ function hamf_impl!(
                     pj = p
                     ln = slenme
                 else                          # search the elements in `me`
-                    e = iw[p]
-                    p += one(E)
+                    e = iw[p]; p += one(E)
                     pj = pe[e]
                     ln = len[e]
                 end
 
                 knt2_updated = zero(V)
-                knt2 = one(V)
 
-                while knt2 <= ln              # search for different supervariables and add to new list
+                for knt2 in oneto(ln)              # search for different supervariables and add to new list
                     knt2_updated += one(V)
-                    i = iw[pj]
-                    pj += one(E)
+                    i = iw[pj]; pj += one(E)
                     nvi = nv[i]
 
                     if ispositive(nvi)
@@ -1121,13 +1115,11 @@ function hamf_impl!(
 
                                 if ispositive(j)
                                     iw[pdst] = convert(V, pe[j])
-                                    pe[j] = pdst
-                                    pdst += one(E)
+                                    pe[j] = pdst; pdst += one(E)
                                     lenj = len[j]
 
                                     for knt3 in zero(V):(lenj - two(V)) # L90
-                                        pnt3 = convert(E, knt3)
-                                        iw[pdst + pnt3] = iw[psrc + pnt3]
+                                        iw[pdst + convert(E, knt3)] = iw[psrc + convert(E, knt3)]
                                     end
 
                                     pdst += convert(E, lenj - one(V))
@@ -1136,12 +1128,10 @@ function hamf_impl!(
                             end
 
                             p1 = pdst         # move the new partially-constructed element
-                            psrc = pme1
 
-                            while psrc < pfree # L100
+                            for psrc in pme1:pfree - one(E) # L100
                                 iw[pdst] = iw[psrc]
                                 pdst += one(E)
-                                psrc += one(E)
                             end
 
                             pme1 = p1
@@ -1152,8 +1142,7 @@ function hamf_impl!(
 
                         degme += nvi          # `i` is a principal variable not yet placed in Lme; store `i` in new list
                         nv[i] = -nvi
-                        iw[pfree] = i
-                        pfree += one(E)
+                        iw[pfree] = i; pfree += one(E)
 
                         if degree[i] != n2    # remove variable `i` from degree link list (only if `i` in V0)
                             ilast = last[i]
@@ -1176,16 +1165,12 @@ function hamf_impl!(
                             end
                         end
                     end
-
-                    knt2 += one(V)
                 end                           # L110:
 
                 if e != me                    # set tree pointer and flag to indicate element `e` is absorbed into new element `me` (the parent of `e` is `me`)
                     pe[e] = convert(E, -me)
                     w[e] = zero(I)
                 end
-
-                knt1 += one(V)
             end                               # L120:
 
             pme2 = pfree - one(E)
@@ -1215,6 +1200,7 @@ function hamf_impl!(
             if ispositive(eln)                # note that `nv[i]` has been negated to denote `i` in Lme
                 nvi = -nv[i]
                 wnvi = wflg - convert(I, nvi)
+
                 # L140:
                 for p in pe[i]:(pe[i] + convert(E, eln) - one(E))
                     e = iw[p]
@@ -1254,8 +1240,7 @@ function hamf_impl!(
 
                     wf4 += wf[e]
                     deg += dext
-                    iw[pn] = e
-                    pn += one(E)
+                    iw[pn] = e; pn += one(E)
                     hash += convert(E, e)
                 elseif iszero(dext)           # aggressive absorption: `e` is not adjacent to `me`, but |Le\Lme| is 0, so absorb it into `me`
                     pe[e] = convert(E, -me)
@@ -1273,8 +1258,7 @@ function hamf_impl!(
                 if ispositive(nvj)            # `j` is unabsorbed, and not in Lme; add to degree and add to new list
                     deg += nvj
                     wf3 += nvj
-                    iw[pn] = j
-                    pn += one(E)
+                    iw[pn] = j; pn += one(E)
                     hash += convert(E, j)
                 end
             end
@@ -1361,13 +1345,7 @@ function hamf_impl!(
                     last[j] = zero(V)
                 end
 
-                if iszero(i)
-                    continue
-                end
-
-                @label L200                  # while loop L200:
-
-                if !iszero(next[i])
+                while !iszero(i) && !iszero(next[i]) # while loop L200:
                     ln = len[i]
                     eln = elen[i]
 
@@ -1378,51 +1356,38 @@ function hamf_impl!(
                     jlast = i
                     j = next[i]
 
-                    @label L220              # while loop L220:
+                    while !iszero(j)         # while loop L220:
+                        L240 = false
+                        L240 = L240 || len[j] != ln   # jump if `i` and `j` do not have same size data structure
+                        L240 = L240 || elen[j] != eln # jump if `i` and `j` do not have same number adj elts
 
-                    if !iszero(j)
-                        if len[j] != ln      # jump if `i` and `j` do not have same size data structure
-                            @goto L240
+                        if !L240
+                            for p in (pe[j] + one(E)):(pe[j] + convert(E, ln) - one(E))
+                                L240 && break
+                                L240 = w[iw[p]] != wflg # jump if an entry `w[iw[p]]` is in `j` but not in `i`
+                            end
                         end
 
-                        if elen[j] != eln    # jump if `i` and `j` do not have same number adj elts
-                            @goto L240
+                        if L240
+                            jlast = j        # `j` cannot be absorbed into `i`
+                            j = next[j]
+                        else
+                            pe[j] = convert(E, -i) # found it! `j` can be absorbed into `i`
+
+                            if wf[j] > wf[i]
+                                wf[i] = wf[j]
+                            end
+
+                            nv[i] += nv[j]   # both `nv[i]` and `nv[j]` are negated since they are in Lme
+                            nv[j] = zero(V)
+                            elen[j] = zero(V)
+                            j = next[j]      # delete `j` from hash bucket
+                            next[jlast] = j
                         end
-
-                        for p in (pe[j] + one(E)):(pe[j] + convert(E, ln) - one(E))
-                            if w[iw[p]] != wflg # jump if an entry `[iw[p]]` is in `j` but not in `i`
-                                @goto L240
-                            end              # L230:
-                        end
-
-                        pe[j] = convert(E, -i) # found it! `j` can be absorbed into `i`
-
-                        if wf[j] > wf[i]
-                            wf[i] = wf[j]
-                        end
-
-                        nv[i] += nv[j]       # both `nv[i]` and `nv[j]` are negated since they are in Lme
-                        nv[j] = zero(V)
-                        elen[j] = zero(V)
-                        j = next[j]          # delete `j` from hash bucket
-                        next[jlast] = j
-
-                        @goto L220
-
-                        @label L240
-
-                        jlast = j            # `j` cannot be absorbed into `i`
-                        j = next[j]
-
-                        @goto L220
                     end
 
                     wflg += one(I)
                     i = next[i]
-
-                    if !iszero(i)
-                        @goto L200
-                    end
                 end
             end
         end
@@ -1486,8 +1451,7 @@ function hamf_impl!(
                     end
                 end
 
-                iw[p] = i                    # place the supervariable in the element pattern
-                p += one(E)
+                iw[p] = i; p += one(E)       # place the supervariable in the element pattern
             end
         end # L260:
 
@@ -1548,8 +1512,7 @@ function hamf_impl!(
                 pe[j] = convert(E, -e)
 
                 if iszero(elen[j])
-                    elen[j] = k
-                    k += one(V)
+                    elen[j] = k; k += one(V)
                 end
 
                 j = jnext

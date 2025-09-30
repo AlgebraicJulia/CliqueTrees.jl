@@ -53,8 +53,37 @@ function KaHyParND(order::Ordering = Forward; beta::Number = 1.0)
     return KaHyParND(order, beta)
 end
 
-function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, project1::AbstractVector{V}, weights::AbstractVector{W}, graph::AbstractGraph{V}) where {W, V}
-    E = etype(graph)
+function partition!(
+        work0::AbstractScalar{V},
+        work1::AbstractVector{V},
+        work2::AbstractVector{V},
+        work3::AbstractVector{V},
+        work4::AbstractVector{V},
+        work5::AbstractVector{V},
+        label0::AbstractVector{V},
+        label1::AbstractVector{V},
+        pointer0::AbstractVector{E},
+        pointer1::AbstractVector{E},
+        target0::AbstractVector{V},
+        target1::AbstractVector{V},
+        project0::AbstractVector{V},
+        project1::AbstractVector{V},
+        part::AbstractVector{V},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+    ) where {W, V, E}
+    @argcheck nv(graph) <= length(label0)
+    @argcheck nv(graph) <= length(label1)
+    @argcheck nv(graph) < length(pointer0)
+    @argcheck nv(graph) < length(pointer1)
+    @argcheck de(graph) <= length(target0)
+    @argcheck de(graph) <= length(target1)
+    @argcheck nv(graph) <= length(part)
+    @argcheck nv(graph) <= length(project0)
+    @argcheck nv(graph) <= length(project1)
+    @argcheck nv(graph) <= length(weights)
+
+    n = nv(graph)
 
     # V = W ∪ B
     n0 = zero(V); m0 = zero(E)
@@ -85,11 +114,9 @@ function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, projec
         end
     end
 
-    t0 = zero(V); label0 = FVector{V}(undef, n0)
-    t1 = zero(V); label1 = FVector{V}(undef, n1)
+    t0 = zero(V)
+    t1 = zero(V)
     t2 = zero(V); label2 = FVector{V}(undef, n2)
-    clique0 = FVector{V}(undef, n2)
-    clique1 = FVector{V}(undef, n2)
 
     @inbounds for v in vertices(graph)
         vv = part[v]
@@ -100,34 +127,36 @@ function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, projec
             project1[v] = t1 += one(V); label1[t1] = v
         else             # v ∈ W ∩ B
             t2 += one(V); label2[t2] = v
-            clique0[t2] = project0[v] = t0 += one(V); label0[t0] = v
-            clique1[t2] = project1[v] = t1 += one(V); label1[t1] = v
+            project0[v] = t0 += one(V); label0[t0] = v
+            project1[v] = t1 += one(V); label1[t1] = v
         end
     end
 
-    weights0 = FVector{V}(undef, n0); graph0 = BipartiteGraph{V, E}(n0, n0, m0)
-    weights1 = FVector{V}(undef, n1); graph1 = BipartiteGraph{V, E}(n1, n1, m1)
+    if max(m0, m1) > length(target0)
+        resize!(target0, max(m0, m1))
+        resize!(target1, max(m0, m1))
+    end
+
+    graph0 = BipartiteGraph{V, E}(n0, n0, m0, pointer0, target0)
+    graph1 = BipartiteGraph{V, E}(n1, n1, m1, pointer1, target1)
     t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
     t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
-    width0 = zero(W)
-    width1 = zero(W)
 
     @inbounds for v in vertices(graph)
         vv = part[v]
-        wt = weights[v]
 
         if iszero(vv)    # v ∈ W - B
             for w in neighbors(graph, v)                     # w ∈ W
                 targets(graph0)[p0] = project0[w]; p0 += one(E)
             end
 
-            width0 += wt; weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
+            t0 += one(V); pointers(graph0)[t0] = p0
         elseif isone(vv) # v ∈ B - W
             for w in neighbors(graph, v)                     # w ∈ B
                 targets(graph1)[p1] = project1[w]; p1 += one(E)
             end
 
-            width1 += wt; weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+            t1 += one(V); pointers(graph1)[t1] = p1
         else             # v ∈ W ∩ B
             for w in neighbors(graph, v)
                 ww = part[w]
@@ -139,118 +168,238 @@ function partition!(part::AbstractVector{V}, project0::AbstractVector{V}, projec
                 end
             end
 
-            for (w, w0, w1) in zip(label2, clique0, clique1) # w ∈ W ∩ B
+            for w in label2                                  # w ∈ W ∩ B
                 v == w && continue
-                targets(graph0)[p0] = w0; p0 += one(E)
-                targets(graph1)[p1] = w1; p1 += one(E)
+                targets(graph0)[p0] = project0[w]; p0 += one(E)
+                targets(graph1)[p1] = project1[w]; p1 += one(E)
             end
 
-            width0 += wt; weights0[t0] = wt; t0 += one(V); pointers(graph0)[t0] = p0
-            width1 += wt; weights1[t1] = wt; t1 += one(V); pointers(graph1)[t1] = p1
+            t0 += one(V); pointers(graph0)[t0] = p0
+            t1 += one(V); pointers(graph1)[t1] = p1
         end
     end
 
-    child0 = (graph0, weights0, label0, clique0, width0)
-    child1 = (graph1, weights1, label1, clique1, width1)
+    child0 = compresspart(work0, work1, work2, work3,
+        work4, work5, part, weights, n, graph0, label0)
+
+    child1 = compresspart(work0, work1, work2, work3,
+        work4, work5, part, weights, n, graph1, label1)
+
     return child0, child1, label2
 end
 
-function hpartition!(hpart::AbstractVector, part::AbstractVector, project0::AbstractVector, project1::AbstractVector, graph::AbstractGraph{V}) where {V}
-    E = etype(graph)
+function hpartition!(
+        work00::AbstractScalar{V},
+        work01::AbstractVector{V},
+        work02::AbstractVector{V},
+        work03::AbstractVector{V},
+        work04::AbstractVector{V},
+        work05::AbstractVector{V},
+        work06::AbstractVector{V},
+        work07::AbstractVector{V},
+        work08::AbstractVector{E},
+        work09::AbstractVector{E},
+        work10::AbstractVector{V},
+        work11::AbstractVector{V},
+        work12::AbstractVector{V},
+        work13::AbstractVector{V},
+        hproject0::AbstractVector{V},
+        hproject1::AbstractVector{V},
+        hpart::AbstractVector{V},
+        part::AbstractVector{V},
+        weights::AbstractVector{W},
+        hgraph::AbstractGraph{HV},
+        graph::AbstractGraph{V},
+    ) where {W, V, E, HV}
 
-    t0 = one(V); h0 = one(V)
-    t1 = one(V); h1 = one(V)
+    h0 = one(V)
+    h1 = one(V)
 
-    @inbounds for w in outvertices(graph)
-        ww = hpart[w]
+    for hv in outvertices(hgraph)
+        hvv = hpart[hv]
 
-        if iszero(ww)
-            h0 += one(V); project0[w] = t0 += one(V)
+        if iszero(hvv)
+            hproject0[hv] = h0 += one(V)
+            hproject1[hv] = zero(V)
         else
-            h1 += one(V); project1[w] = t1 += one(V)
+            hproject1[hv] = h1 += one(V)
+            hproject0[hv] = zero(V)
         end
     end
 
     # V = W ∪ B
-    n0 = zero(V); m0 = zero(E)
-    n1 = zero(V); m1 = zero(E)
-
-    @inbounds for v in vertices(graph)
+    for v in vertices(graph)
         vv = three(V)
 
-        for w in neighbors(graph, v)
-            ww = hpart[w]
+        for hv in neighbors(hgraph, v)
+            hvv = hpart[hv]
 
-            if iszero(ww) # v ∈ W
-                m0 += one(E)
-
+            if iszero(hvv) # v ∈ W
                 if isthree(vv)
-                    n0 += one(V); vv = zero(V)
+                    vv = zero(V)
                 elseif isone(vv)  # v ∈ W ∩ B
-                    n0 += one(V); vv = two(V)
-                    m0 += one(E)
-                    m1 += one(E)
+                    vv = two(V)
                 end
             else          # v ∈ B
-                m1 += one(E)
-
                 if isthree(vv)
-                    n1 += one(V); vv = one(V)
+                    vv = one(V)
                 elseif iszero(vv) # v ∈ W ∩ B
-                    n1 += one(V); vv = two(V)
-                    m0 += one(E)
-                    m1 += one(E)
+                    vv = two(V)
                 end
             end
         end
 
         if isthree(vv)
-            n0 += one(V); vv = zero(V)
+            vv = zero(V)
         end
 
         part[v] = vv
     end
 
-    graph0 = BipartiteGraph{V, E}(h0, n0, m0)
-    graph1 = BipartiteGraph{V, E}(h1, n1, m1)
-    t0 = one(V); pointers(graph0)[t0] = p0 = one(E)
-    t1 = one(V); pointers(graph1)[t1] = p1 = one(E)
+    child0, child1, label2 = partition!(work00, work01, work02, work03, work04,
+        work05, work06, work07, work08, work09, work10, work11, work12, work13,
+        part, weights, graph) 
 
-    @inbounds for v in vertices(graph)
-        vv = part[v]
+    graph0, weights0, label0, clique0 = child0
+    graph1, weights1, label1, clique1 = child1
 
-        if iszero(vv)    # v ∈ W - B
-            for w in neighbors(graph, v)
-                targets(graph0)[p0] = project0[w]; p0 += one(E)
+    tag = one(V)
+
+    hgraph0, tag = hcompresspart(h0, tag, hgraph, hproject0, hpart, label0, clique0)
+    hgraph1, tag = hcompresspart(h1, tag, hgraph, hproject1, hpart, label1, clique1)
+
+    hchild0 = (hgraph0, graph0, weights0, label0, clique0)
+    hchild1 = (hgraph1, graph1, weights1, label1, clique1)
+
+    return hchild0, hchild1, label2
+end
+
+function compresspart(
+        work0::AbstractScalar{V},
+        work1::AbstractVector{V},
+        work2::AbstractVector{V},
+        work3::AbstractVector{V},
+        work4::AbstractVector{V},
+        work5::AbstractVector{V},
+        part::AbstractVector{V},
+        supweights::AbstractVector{W},
+        nsup::V,
+        subgraph::AbstractGraph{V},
+        sublabel::AbstractVector{V},
+    ) where {W, V}
+    @argcheck nsup <= length(supweights)
+    @argcheck nv(subgraph) <= length(sublabel)
+
+    E = etype(subgraph); nsub = nv(subgraph); msub = de(subgraph); nnsub = nsub + one(V)
+    #
+    #     + ------------------------- +
+    #     |          subgraph         |
+    #     |  project ↙     ↘ suplabel |
+    #     |    cmpgraph ⇷ supgraph    |
+    #     |          cmplabel         |
+    #     + ------------------------- +
+    #
+    prjpointer = FVector{V}(undef, nnsub)
+    prjtarget = FVector{V}(undef, nsub)
+    cmppointer = FVector{E}(undef, nnsub)
+    cmptarget = FVector{V}(undef, msub)
+    cmptype = Val(true) # true twins
+    
+    cmpgraph, project = compress_impl!(work0, prjpointer, work1, prjtarget,
+        work2, work3, work4, work5, cmppointer, cmptarget, subgraph, cmptype)
+
+    ncmp = nv(cmpgraph); kcmp = zero(V)
+    cmpweights = FVector{V}(undef, ncmp)
+    cmplabel = BipartiteGraph(nsup, ncmp, nsub, prjpointer, prjtarget)
+
+    @inbounds for v in vertices(subgraph)
+        prjtarget[v] = sublabel[prjtarget[v]]
+    end
+
+    @inbounds for v in vertices(cmpgraph)
+        w = zero(W); f = false
+        
+        for u in neighbors(cmplabel, v)
+            w += supweights[u]; f = f || istwo(part[u])
+        end
+
+        cmpweights[v] = w
+
+        if f
+            kcmp += one(V); sublabel[kcmp] = v
+        end
+    end
+    #
+    #     + -------------------------------- +
+    #     |              cmplabel    part    |
+    #     |        cmpgraph ⇷ supgraph → 3   |
+    #     | cmpclique ↑                  ↑ 3 |
+    #     |          kcmp        →       1   |
+    #     + -------------------------------- +
+    #
+    cmpclique = FVector{V}(undef, kcmp)
+
+    @inbounds for i in oneto(kcmp)
+        cmpclique[i] = sublabel[i]
+    end
+
+    return (cmpgraph, cmpweights, cmplabel, cmpclique)
+end
+
+function hcompresspart(
+        hh::V,
+        tag::V,
+        hgraph::AbstractGraph{HV},
+        hproject::AbstractVector{V},
+        mark::AbstractVector{V},
+        label::AbstractGraph{V},
+        clique::AbstractVector{V},
+    ) where {HV, V}
+
+    HE = etype(hgraph); hn = convert(HV, nv(label)); hm = convert(HE, length(clique))
+
+    for v in vertices(label)
+        tag += one(V)
+
+        for w in neighbors(label, v), hw in neighbors(hgraph, w)
+            hx = hproject[hw]
+
+            if ispositive(hx) && mark[hx] < tag
+                mark[hx] = tag
+                hm += one(HE)
             end
-
-            t0 += one(V); pointers(graph0)[t0] = p0
-        elseif isone(vv) # v ∈ B - W
-            for w in neighbors(graph, v)
-                targets(graph1)[p1] = project1[w]; p1 += one(E)
-            end
-
-            t1 += one(V); pointers(graph1)[t1] = p1
-        else             # v ∈ W ∩ B
-            for w in neighbors(graph, v)
-                ww = hpart[w]
-
-                if iszero(ww)
-                    targets(graph0)[p0] = project0[w]; p0 += one(E)
-                elseif isone(ww)
-                    targets(graph1)[p1] = project1[w]; p1 += one(E)
-                end
-            end
-
-            targets(graph0)[p0] = one(V); p0 += one(E)
-            targets(graph1)[p1] = one(V); p1 += one(E)
-
-            t0 += one(V); pointers(graph0)[t0] = p0
-            t1 += one(V); pointers(graph1)[t1] = p1
         end
     end
 
-    return graph0, graph1
+    hchild = BipartiteGraph{HV, HE}(hh, hn, hm)
+    pointers(hchild)[begin] = p = one(HE)
+
+    for v in vertices(label)
+        tag += one(V); flag = false
+
+        for w in neighbors(label, v), hw in neighbors(hgraph, w)
+            hx = hproject[hw]
+
+            if ispositive(hx) && mark[hx] < tag
+                mark[hx] = tag
+                targets(hchild)[p] = hx; p += one(HE)
+
+                @argcheck 1 <= hw <= nov(hgraph)
+                @argcheck 1 <= hx <= hh
+                @argcheck 1 <= v <= hn
+            end
+
+            flag = flag || iszero(hx)
+        end
+
+        if flag
+            targets(hchild)[p] = one(HV); p += one(HE)
+        end
+
+        pointers(hchild)[v + one(V)] = p
+    end
+
+    return hchild, tag
 end
 
 function qcc(::Type{V}, ::Type{E}, graph, beta::Number, order::Ordering) where {V, E}

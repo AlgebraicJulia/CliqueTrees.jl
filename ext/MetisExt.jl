@@ -4,7 +4,7 @@ using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, simplegraph, partition!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, simplegraph, partition!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!, nov
 using CliqueTrees.MMDLib: mmd_impl!
 using CliqueTrees.Utilities
 using Graphs
@@ -120,14 +120,22 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
     return
 end
 
-function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
-    n = nv(graph); new = FVector{INT}(undef, n)
+function dissect(weights::AbstractVector{W}, graph::AbstractGraph, alg::ND) where {W}
+    n = nv(graph)
+    scale = convert(W, alg.scale)
+    intweights = FVector{INT}(undef, n)
 
     @inbounds for v in oneto(n)
-        new[v] = trunc(INT, weights[v])
+        w = weights[v]
+
+        if W <: AbstractFloat
+            w *= scale
+        end
+
+        intweights[v] = trunc(INT, w)
     end
 
-    return dissect(new, graph, alg)
+    return dissect(intweights, graph, alg)
 end
 
 function dissect(weights::FVector{INT}, graph::AbstractGraph{V}, alg::ND) where {V <: Integer}
@@ -137,150 +145,170 @@ function dissect(weights::FVector{INT}, graph::AbstractGraph{V}, alg::ND) where 
 end
 
 function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::ND{S}) where {S}
-    n = nv(graph); m = ne(graph); nn = n + one(INT); width = zero(INT)
+    n = nv(graph); m = ne(graph); nn = n + one(INT)
     maxlevel = convert(INT, alg.level)
     minwidth = convert(INT, alg.width)
     imbalance = convert(INT, alg.imbalance)
 
-    @inbounds for v in oneto(n)
-        width += weights[v]
-    end
+    work00 = FScalar{INT}(undef)
+    work01 = Vector{INT}(undef, m)
+    work02 = Vector{INT}(undef, m)
+    work03 = FVector{INT}(undef, max(n, NOPTIONS))
+    work04 = FVector{INT}(undef, n)
+    work05 = FVector{INT}(undef, n)
+    work06 = FVector{INT}(undef, n)
+    work07 = FVector{INT}(undef, n)
+    work08 = FVector{INT}(undef, n)
+    work09 = FVector{INT}(undef, nn)
+    work10 = FVector{INT}(undef, nn)
+    work11 = FVector{INT}(undef, n)
+    work12 = FVector{INT}(undef, n)
+    work13 = FVector{INT}(undef, n)
+    work14 = FVector{INT}(undef, n)
+    work15 = FVector{INT}(undef, n)
+    work16 = FVector{INT}(undef, n)
 
-    swork = FScalar{INT}(undef)
-    vwork1 = Vector{INT}(undef, m)
-    vwork2 = Vector{INT}(undef, m)
-    vwork3 = FVector{INT}(undef, max(n, NOPTIONS))
-    vwork4 = FVector{INT}(undef, n)
-    vwork5 = FVector{INT}(undef, n)
-    vwork6 = FVector{INT}(undef, n)
-    vwork9 = FVector{INT}(undef, n)
-    vwork10 = FVector{INT}(undef, n)
-    vwork11 = FVector{INT}(undef, nn)
-    vwork12 = FVector{INT}(undef, nn)
-    vwork13 = FVector{INT}(undef, n)
-    vwork14 = FVector{INT}(undef, n)
-    vwork15 = FVector{INT}(undef, n)
-    vwork16 = FVector{INT}(undef, n)
-    vwork17 = FVector{INT}(undef, n)
-    vwork18 = FVector{INT}(undef, n)
-
-    orders = Vector{INT}[]
+    parts = FVector{INT}[]
+    orders = FVector{INT}[]
 
     nodes = Tuple{
         BipartiteGraph{INT, INT, FVector{INT}, FVector{INT}}, # graph
         FVector{INT},                                         # weights
-        FVector{INT},                                         # label
+        BipartiteGraph{INT, INT, FVector{INT}, FVector{INT}}, # label
         FVector{INT},                                         # clique
-        INT,                                                  # width
         INT,                                                  # level
     }[]
 
-    label = FVector{INT}(undef, n)
+    label = BipartiteGraph{INT, INT}(n, n, n)
     clique = FVector{INT}(undef, zero(INT))
     level = zero(INT)
 
     @inbounds for v in oneto(n)
-        label[v] = v
+        pointers(label)[v] = v
+        targets(label)[v] = v
     end
 
-    push!(nodes, (graph, weights, label, clique, width, level))
+    pointers(label)[nn] = nn
+    push!(nodes, (graph, weights, label, clique, level))
 
     @inbounds while !isempty(nodes)
-        graph, weights, label, clique, width, level = pop!(nodes)
-        n = nv(graph); m = ne(graph); k = convert(INT, length(clique))
-
-        if half(m) > length(vwork1)
-            resize!(vwork1, half(m))
-            resize!(vwork2, half(m))
-        end
+        graph, weights, label, clique, level = pop!(nodes)
+        n = nv(graph); m = ne(graph); l = ne(label); k = convert(INT, length(clique))
 
         if !isnegative(level) # unprocessed
-            isleaf = width <= minwidth || level >= maxlevel
+            isleaf = n <= minwidth || level >= maxlevel || m == n * (n - one(INT))
 
             if isleaf # leaf
-                push!(nodes, (graph, weights, label, clique, width, -one(INT)))
+                push!(nodes, (graph, weights, label, clique, -one(INT)))
             else      # branch
-                separator!(vwork3, swork, vwork4, weights, graph, imbalance, alg.dis)
+                if m > length(work01)
+                    resize!(work01, half(m))
+                    resize!(work02, half(m))
+                end
 
-                child0, child1, order2 = partition!(
-                    vwork4,
-                    vwork5,
-                    vwork6,
-                    weights,
-                    graph,
-                )
+                part = FVector{INT}(undef, n)
+                separator!(work03, work00, part, weights, graph, imbalance, alg.dis)
+
+                child0, child1, order2 = partition!(work00, work03, work04, work07, work08,
+                    work11, work12, work13, work09, work10, work01, work02, work05, work06,
+                    part, weights, graph)
 
                 push!(
                     nodes,
-                    (graph, weights, label, clique, width, -two(INT)),
+                    (graph, weights, label, clique, -two(INT)),
                     (child0..., level + one(INT)),
                     (child1..., level + one(INT)),
                 )
 
+                push!(parts, part)
                 push!(orders, order2)
             end
         else                  # processed
             isleaf = isone(-level)
-            tree = Parent(n, vwork6)
-            upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
-            lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
+            iscomplete = m == n * (n - one(INT))
 
-            if isleaf # leaf
-                order, index = permutation(weights, graph, alg.alg)
-            else      # branch
-                order0 = pop!(orders)
-                order1 = pop!(orders)
-                order2 = pop!(orders)
+            if iscomplete # complete graph
+                for v in oneto(n)
+                    work03[v] = v
+                end
+            else
+                tree = Parent(n, work06)
+                upper = BipartiteGraph(n, n, half(m), work09, work01)
+                lower = BipartiteGraph(n, n, half(m), work10, work02)
 
-                order = [
-                    order0
-                    order1
-                    order2
-                ]
+                if isleaf # leaf
+                    order, index = permutation(weights, graph, alg.alg)
+                else      # branch
+                    part = pop!(parts)
+                    ndsorder = Vector{INT}(undef, n)
+                    ndsindex = Vector{INT}(undef, n)
+                    i = zero(INT)
 
-                index = invperm(order)
+                    for v in pop!(orders)
+                        if !istwo(part[v])
+                            ndsindex[v] = i += one(INT)
+                            ndsorder[i] = v
+                        end
+                    end
 
-                if isone(S) || istwo(S)
-                    sets = UnionFind(n, vwork3, vwork4, vwork5)
-                    greedyorder, greedyindex = permutation(weights, graph, alg.alg)
+                    for v in pop!(orders)
+                        if !istwo(part[v])
+                            ndsindex[v] = i += one(INT)
+                            ndsorder[i] = v
+                        end
+                    end
 
-                    if isone(S)
-                        best = bestwidth_impl!(lower, upper, tree, sets, vwork9,
-                            vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
-                            vwork18, weights, graph, (index, greedyindex))
+                    for v in pop!(orders)
+                        ndsindex[v] = i += one(INT)
+                        ndsorder[i] = v
+                    end 
+
+                    if isone(S) || istwo(S)
+                        sets = UnionFind(n, work03, work04, work05)
+                        grdorder, grdindex = permutation(weights, graph, alg.alg)
+
+                        if isone(S)
+                            best = bestwidth_impl!(lower, upper, tree, sets, work07,
+                                work08, work11, work12, work13, work14, work15,
+                                work16, weights, graph, (ndsindex, grdindex))
+                        else
+                            best = bestfill_impl!(lower, upper, tree, sets, work07,
+                                work08, work11, work12, work13, work14, work15,
+                                work16, weights, graph, (ndsindex, grdindex))
+                        end
+
+                        order = (ndsorder, grdorder)[best]
+                        index = (ndsindex, grdindex)[best]
                     else
-                        best = bestfill_impl!(lower, upper, tree, sets, vwork9,
-                            vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
-                            vwork18, weights, graph, (index, greedyindex))
+                        order, index = ndsorder, ndsindex
                     end
+                end
 
-                    if istwo(best)
-                        order, index = greedyorder, greedyindex
-                    end
+                sympermute!_impl!(upper, graph, index, Forward)
+
+                for i in oneto(k)
+                    clique[i] = index[clique[i]]
+                end
+
+                compositerotations_impl!(index, work03, work04,
+                    work05, lower, tree, upper, clique)
+
+                for v in oneto(n)
+                    i = index[v]; work03[i] = order[v]
                 end
             end
 
-            sympermute!_impl!(upper, graph, index, Forward)
+            j = zero(INT); outorder = FVector{INT}(undef, l)
 
-            for i in oneto(k)
-                clique[i] = index[clique[i]]
-            end
+            for i in oneto(n)
+                v = work03[i]
 
-            compositerotations_impl!(index, vwork3, vwork4,
-                vwork5, lower, tree, upper, clique)
-
-            copyto!(vwork3, order)
-            resize!(order, n - k)
-
-            for v in oneto(n)
-                i = index[v]
-
-                if i <= n - k
-                    order[i] = label[vwork3[v]]
+                for w in neighbors(label, v)
+                    j += one(INT); outorder[j] = w
                 end
             end
 
-            push!(orders, order)
+            push!(orders, outorder)
         end
     end
 

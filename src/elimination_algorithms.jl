@@ -694,6 +694,7 @@ struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: Elimination
     width::Int
     level::Int
     imbalance::Int
+    scale::Int
 end
 
 function ND{S}(
@@ -701,11 +702,13 @@ function ND{S}(
         width::Integer = 120,
         level::Integer = 6,
         imbalance::Integer = 130,
+        scale::Integer = 1,
     ) where {S, A, D}
     @argcheck ispositive(width)
     @argcheck ispositive(level)
     @argcheck ispositive(imbalance)
-    return ND{S, A, D}(alg, dis, width, level, imbalance)
+    @argcheck ispositive(scale)
+    return ND{S, A, D}(alg, dis, width, level, imbalance, scale)
 end
 
 function ND(args...; kwargs...)
@@ -820,6 +823,25 @@ julia> treewidth(graph; alg)
 @kwdef struct FlowCutter <: EliminationAlgorithm
     time::Int = 5
     seed::Int = 0
+end
+
+"""
+    HTD <: EliminationAgorithm
+
+    HTD(; seed=-1, strategy=-1, preprocessing=-1
+        triangulation_minimization=-1, opt=-1, iterations=-1, 
+        patience=-1)
+
+An algorithm implemented in the library htd.
+"""
+@kwdef struct HTD <: EliminationAlgorithm
+    seed::Int = -1
+    strategy::Int = -1
+    preprocessing::Int = -1
+    triangulation_minimization::Int = -1
+    opt::Int = -1
+    iterations::Int = -1
+    patience::Int = -1
 end
 
 """
@@ -1269,6 +1291,29 @@ function Best{S}(algs::PermutationOrAlgorithm...) where {S}
     return Best{S}(algs)
 end
 
+struct RandPerm{A <: EliminationAlgorithm, G <: AbstractRNG} <: EliminationAlgorithm
+    alg::A
+    rng::G
+end
+
+function RandPerm(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+    return RandPerm(alg, default_rng())
+end
+
+struct Threshold{L <: EliminationAlgorithm, U <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    lower::L
+    upper::U
+    width::Int
+end
+
+function Threshold(lower::EliminationAlgorithm, upper::PermutationOrAlgorithm; width::Integer = 30)
+    return Threshold(lower, upper, width)
+end
+
+function Threshold(lalg::EliminationAlgorithm; kwargs...)
+    return Theshold(lalg, DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
+end
+
 """
     permutation([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
@@ -1384,8 +1429,8 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF)
-    order = mf(weights, graph)
-    return order, invperm(order)
+    order, index = mlf(weights, graph)
+    return order, index
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD)
@@ -1439,6 +1484,14 @@ end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFill)
     return bestfill(weights, graph, alg.algs)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RandPerm)
+    return randpermalg(weights, graph, alg.alg, alg.rng)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Threshold)
+    return threshold(weights, graph, alg.lower, alg.upper, alg.width)
 end
 
 # Algorithmic Aspects of Vertex Elimination on Graphs
@@ -2085,206 +2138,36 @@ function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V)
     return alpha
 end
 
-function mf(weights::AbstractVector, graph::AbstractGraph)
-    return mf!(weights, Graph(graph))
-end
-
-# Probabilistic Graphical Models: Principles and Techniques
-# Koller and Friedman
-# Algorithm 9.4 Greedy search for constructing an elimination ordering
-# (Weighted Min-Fill)
-function mf!(weights::AbstractVector{W}, graph::Graph{V}) where {W, V}
-    n = nv(graph)
-    order = Vector{V}(undef, n)
-    label = zeros(Int, n); tag = 0
-
-    # remove self edges
-    @inbounds for v in vertices(graph)
-        rem_edge!(graph, v, v)
-    end
-
-    # compute neighbor weights
-    nweights = Vector{W}(undef, n)
-
-    @inbounds for v in vertices(graph)
-        nweight = weights[v]
-
-        for w in neighbors(graph, v)
-            nweight += weights[w]
-        end
-
-        nweights[v] = nweight
-    end
-
-    # construct stack data structure
-    snum = zero(V) # size of stack
-    stack = Vector{V}(undef, n)
-
-    # construct min-heap data structure
-    heap = Heap{V, W}(n)
-
-    @inbounds for v in oneto(n)
-        cost = zero(W)
-
-        for w in neighbors(graph, v)
-            label[neighbors(graph, w)] .= tag += 1
-            wcost = zero(W)
-
-            for ww in neighbors(graph, v)
-                w == ww && break
-
-                if label[ww] < tag
-                    wcost += weights[ww]
-                end
-            end
-
-            cost += wcost * weights[w]
-        end
-
-        push!(heap, v => cost)
-    end
-
-    hfall!(heap)
-
-    # run algorithm
-    i = one(V)
-
-    @inbounds while i <= n
-        # select vertex from heap
-        order[i] = v = argmin(heap)
-        label[neighbors(graph, v)] .= tag += 1
-        degree = eltypedegree(graph, v)
-        weight = weights[v]
-        nweight = nweights[v]
-
-        # append distinguishable neighbors to the stack
-        snum = zero(V)
-        sweight = zero(W)
-        ii = i + one(V)
-
-        for w in neighbors(graph, v)
-            flag = false
-
-            if eltypedegree(graph, w) == degree
-                flag = true
-
-                for vv in neighbors(graph, w)
-                    if vv != v && label[vv] < tag
-                        flag = false
-                        break
-                    end
-                end
-            end
-
-            if flag
-                order[ii] = w
-                label[w] += 1
-                ii += one(V)
-            else
-                snum += one(V)
-                sweight += weights[w]
-                stack[snum] = w
-            end
-        end
-
-        # remove vertex from graph
-        graph.ne -= snum
-
-        for j in oneto(snum)
-            w = stack[j]
-            list = neighbors(graph, w)
-            nweights[w] -= weight
-            deleteat!(list, searchsortedfirst(list, v))
-        end
-
-        # remove indistinguishable neighbors from graph
-        if ii > i + one(V)
-            tag += 1
-
-            for j in oneto(snum)
-                w = stack[j]
-                list = neighbors(graph, w)
-                count = zero(V)
-                cost = weights[w]
-
-                for x in neighbors(graph, w)
-                    if label[x] < tag
-                        count += one(V)
-                        cost += weights[x]
-                        list[count] = x
-                    end
-                end
-
-                graph.ne -= (eltypedegree(graph, w) - count)
-                nweights[w] = cost
-                resize!(list, count)
-            end
-        end
-
-        # remove vertex and indistinguishable neighbors from heap
-        graph.ne -= half((ii - i) * (ii - i - one(V)))
-
-        for j in i:(ii - one(V))
-            w = order[j]
-            delete!(heap, w)
-            empty!(neighbors(graph, w))
-            nweights[w] = weights[w]
-        end
-
-        # update deficiencies
-        if ispositive(heap[v])
-            for j in oneto(snum)
-                w = stack[j]
-                wweight = weights[w]
-                label[neighbors(graph, w)] .= tag += 1
-
-                for jj in (j + one(V)):snum
-                    ww = stack[jj]
-                    wwweight = weights[ww]
-
-                    if label[ww] < tag
-                        cost = wweight + wwweight
-
-                        for xx in neighbors(graph, ww)
-                            if label[xx] == tag
-                                heap[xx] -= wweight * wwweight
-                                hrise!(heap, xx)
-                                cost += weights[xx]
-                            end
-                        end
-
-                        nweights[w] += wwweight
-                        nweights[ww] += wweight
-                        heap[w] += wwweight * (nweights[w] - cost)
-                        hrise!(heap, w)
-                        hfall!(heap, w)
-                        heap[ww] += wweight * (nweights[ww] - cost)
-                        hrise!(heap, ww)
-                        hfall!(heap, ww)
-                        add_edge!(graph, w, ww)
-                        label[ww] = tag
-                    end
-                end
-            end
-        end
-
-        # update heap
-        for j in oneto(snum)
-            w = stack[j]
-            heap[w] -= (nweight - sweight) * (nweights[w] - sweight)
-            hrise!(heap, w)
-            hfall!(heap, w)
-        end
-
-        i = ii
-    end
-
-    return order
-end
-
 function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     simple = simplegraph(graph)
     return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
+end
+
+function MLFLib.mlf(weights::AbstractVector, graph::AbstractGraph{V}; kwargs...) where {V}
+    n = convert(Int, nv(graph))
+    m = convert(Int, de(graph))
+
+    xadj = FVector{Int}(undef, n + 1)
+    adjncy = FVector{Int}(undef, m + 2n)
+
+    xadj[1] = p = 1
+
+    @inbounds for j in vertices(graph)
+        jint = convert(Int, j)
+
+        for i in neighbors(graph, j)
+            iint = convert(Int, i)
+
+            if iint != jint
+                adjncy[p] = iint; p += 1
+            end
+        end
+
+        xadj[jint + 1] = p
+    end
+
+    order::Vector{V}, index::Vector{V} = mlf(n, weights, xadj, adjncy)
+    return order, index
 end
 
 function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
@@ -3104,36 +2987,40 @@ function compress_impl!(
 end
 
 function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tao::Number) where {W, V}
-    weights0 = weights; graph0 = graph
-    graph1, project1 = compress(graph0, Val(true), tao)
+    order = Vector{V}(undef, nv(graph))
+    cmpgraph, project = compress(graph, Val(true), tao)
+    cmpweights = compressweights(weights, project)
+    cmporder, cmpindex = permutation(cmpweights, cmpgraph, alg)
+    i = zero(V)
 
-    n0 = nv(graph0)
-    n1 = nv(graph1)
+    @inbounds for vcmp in cmporder, v in neighbors(project, vcmp)
+        i += one(V); order[i] = v
+    end
 
-    order0 = Vector{V}(undef, n0)
-    weights1 = Vector{W}(undef, n1)
+    return order
+end
 
-    @inbounds for v1 in vertices(graph1)
+function compressweights(weights::AbstractVector{W}, project::AbstractGraph) where {W}
+    cmpweights = FVector{W}(undef, nv(project))
+    compressweights_impl!(cmpweights, weights, project)
+    return cmpweights
+end
+
+function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVector{W}, project::AbstractGraph) where {W}
+    @argcheck nv(project) <= length(cmpweights)
+    @argcheck nov(project) <= length(weights)
+
+    @inbounds for vcmp in vertices(project)
         wgt = zero(W)
 
-        for v0 in neighbors(project1, v1)
-            wgt += weights0[v0]
+        for v in neighbors(project, vcmp)
+            wgt += weights[v]
         end
 
-        weights1[v1] = wgt
+        cmpweights[vcmp] = wgt
     end
 
-    i0 = zero(V); order1, index1 = permutation(weights1, graph1, alg)
-
-    @inbounds for i1 in vertices(graph1)
-        v1 = order1[i1]
-
-        for v0 in neighbors(project1, v1)
-            i0 += one(V); order0[i0] = v0
-        end
-    end
-
-    return order0
+    return
 end
 
 function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm, tao::Number) where {V}
@@ -3264,6 +3151,58 @@ function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}
             vv = label[v]
             j += one(V); order[j] = vv; index[vv] = j
         end
+    end
+
+    return order, index
+end
+
+function randpermalg(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, rng::AbstractRNG) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph)
+
+    perm = randperm(rng, n)
+    permweights = FVector{W}(undef, n)
+    permpointer = FVector{E}(undef, n + one(V))
+    permtarget = FVector{V}(undef, m)
+
+    @inbounds for i in oneto(n)
+        v = perm[i]; permpointer[v + one(V)] = eltypedegree(graph, i)
+    end
+
+    @inbounds v = one(V); permpointer[v] = p = one(E)
+
+    @inbounds while v <= n
+        v += one(V); permpointer[v] = p += permpointer[v]
+    end
+
+    @inbounds for i in oneto(n)
+        v = perm[i]; permweights[v] = weights[i]
+        p = permpointer[v]
+
+        for j in neighbors(graph, i)
+            permtarget[p] = perm[j]; p += one(E)
+        end
+    end
+
+    @inbounds p = permpointer[n + one(V)] - one(E)
+    permgraph = BipartiteGraph{V, E}(n, n, p, permpointer, permtarget)
+    order, index = permutation(permweights, permgraph, alg)
+
+    @inbounds for i in oneto(n)
+        order[i] = index[perm[i]]
+    end
+
+    @inbounds for i in oneto(n)
+        index[order[i]] = i
+    end
+
+    return index, order
+end
+
+function threshold(weights::AbstractVector, graph::AbstractGraph, lower::EliminationAlgorithm, upper::EliminationAlgorithm, width::Integer)
+    if nv(graph) <= width
+        order, index = permutation(weights, graph, lower)
+    else
+        order, index = permutation(weights, graph, upper)
     end
 
     return order, index

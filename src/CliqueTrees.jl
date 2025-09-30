@@ -12,17 +12,21 @@ using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra
 using LinearAlgebra: ldiv
+using Random
+using Random: default_rng
 using SparseArrays
 using SparseArrays: getcolptr
 
 include("./Utilities.jl/src/Utilities.jl")
 include("./IPASIR.jl/src/IPASIR.jl")
 include("./AMFLib.jl/src/AMFLib.jl")
+include("./MLFLib.jl/src/MLFLib.jl")
 include("./MMDLib.jl/src/MMDLib.jl")
 
 using .Utilities
 using .IPASIR
 using .AMFLib
+using .MLFLib
 using .MMDLib
 
 const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
@@ -58,6 +62,7 @@ export BFS,
     NDS,
     Spectral,
     FlowCutter,
+    HTD,
     BT,
     SAT,
     MinimalChordal,
@@ -93,7 +98,6 @@ export rootindices, ancestorindices
 export FilledGraph, FilledEdgeIter, ischordal, isperfect
 
 include("union_find.jl")
-include("heaps.jl")
 include("abstract_linked_lists.jl")
 include("singly_linked_lists.jl")
 include("doubly_linked_lists.jl")
@@ -122,5 +126,6 @@ include("ldlt_works.jl")
 include("chol_facts.jl")
 include("ldlt_facts.jl")
 include("lin_works.jl")
+include("io.jl")
 
 end

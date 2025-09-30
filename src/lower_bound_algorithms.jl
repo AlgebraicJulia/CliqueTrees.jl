@@ -835,6 +835,9 @@ function mmw_reach!(
         # to `vv`
         pp = begptr[vv]; ppend = endptr[vv]
 
+        # `ppnxt` is the largest possible value of `ppend`
+        ppnxt = begptr[vv + one(V)]
+
         while pp < ppend
             # `ww` is adjacent to `vv` and reachable by `v`
             ww = target[pp]
@@ -846,9 +849,6 @@ function mmw_reach!(
 
             # otherwise, `ww` is a supernode
             else
-                # `ppnxt` is the largest possible value of `ppend`
-                ppnxt = begptr[vv + one(V)]
-
                 # the arcs {`qq`, ..., `qqend` - 1} are incident
                 # to `ww`
                 ww = -ww; qq = begptr[ww]; qqend = endptr[ww]

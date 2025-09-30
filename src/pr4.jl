@@ -1,4 +1,4 @@
-function compressreduce(reduce::Function, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W, tao::Number) where {W <: Number, V <: Integer}
+function compressreduce(reduce::F, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W, tao::Number) where {F <: Function, W <: Number, V <: Integer}
     weights00 = weights; graph00 = graph; width00 = width; n00 = nv(graph00)
     inject03 = Vector{V}(undef, n00); n03 = zero(V)
     # V01

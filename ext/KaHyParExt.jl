@@ -4,7 +4,7 @@ using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, partition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
 using CliqueTrees.Utilities
 using Graphs
 
@@ -67,14 +67,22 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
     return
 end
 
-function dissect(weights::AbstractVector, graph::AbstractGraph, alg::ND)
-    n = nv(graph); new = FVector{WINT2}(undef, n)
+function dissect(weights::AbstractVector{W}, graph::AbstractGraph, alg::ND) where {W}
+    n = nv(graph)
+    scale = convert(W, alg.scale)
+    intweights = FVector{PINT}(undef, n)
 
     @inbounds for v in oneto(n)
-        new[v] = trunc(WINT2, weights[v])
+        w = weights[v]
+
+        if W <: AbstractFloat
+            w *= scale
+        end
+
+        intweights[v] = trunc(PINT, w)
     end
 
-    return dissect(new, graph, alg)
+    return dissect(intweights, graph, alg)
 end
 
 function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) where {V}
@@ -85,164 +93,176 @@ function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) wher
 end
 
 function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VINT2, EINT}, graph::BipartiteGraph{PINT, PINT}, alg::ND{S}) where {S}
-    h = nov(hgraph); n = nv(graph); m = ne(graph); nn = n + one(PINT); width = zero(WINT2)
+    h = nov(hgraph); n = nv(graph); m = ne(graph); nn = n + one(PINT)
     maxlevel = convert(PINT, alg.level)
     minwidth = convert(WINT2, alg.width)
     imbalance = convert(PINT, alg.imbalance)
 
-    @inbounds for v in oneto(n)
-        width += weights[v]
-    end
-
-    swork = FScalar{WINT2}(undef)
-    vwork1 = Vector{PINT}(undef, m)
-    vwork2 = Vector{PINT}(undef, m)
-    vwork3 = FVector{PINT}(undef, max(h, n))
-    vwork4 = FVector{PINT}(undef, n)
-    vwork5 = FVector{PINT}(undef, max(h, n))
-    vwork6 = FVector{PINT}(undef, max(h, n))
-    vwork9 = FVector{WINT2}(undef, n)
-    vwork10 = FVector{WINT2}(undef, n)
-    vwork11 = FVector{PINT}(undef, nn)
-    vwork12 = FVector{PINT}(undef, nn)
-    vwork13 = FVector{PINT}(undef, n)
-    vwork14 = FVector{PINT}(undef, n)
-    vwork15 = FVector{PINT}(undef, n)
-    vwork16 = FVector{PINT}(undef, n)
-    vwork17 = FVector{PINT}(undef, n)
-    vwork18 = FVector{PINT}(undef, n)
+    work00 = FScalar{WINT2}(undef)
+    work01 = Vector{PINT}(undef, m)
+    work02 = Vector{PINT}(undef, m)
+    work03 = FVector{PINT}(undef, max(h, n))
+    work04 = FVector{PINT}(undef, n)
+    work05 = FVector{PINT}(undef, max(h, n))
+    work06 = FVector{PINT}(undef, max(h, n))
+    work07 = FVector{WINT2}(undef, n)
+    work08 = FVector{WINT2}(undef, n)
+    work09 = FVector{PINT}(undef, nn)
+    work10 = FVector{PINT}(undef, nn)
+    work11 = FVector{PINT}(undef, n)
+    work12 = FVector{PINT}(undef, n)
+    work13 = FVector{PINT}(undef, n)
+    work14 = FVector{PINT}(undef, n)
+    work15 = FVector{PINT}(undef, n)
+    work16 = FVector{PINT}(undef, n)
     hwght = FVector{WINT1}(undef, h)
 
     @inbounds for v in oneto(h)
         hwght[v] = one(WINT1)
     end
 
-    orders = Vector{PINT}[]
+    parts = FVector{PINT}[]
+    orders = FVector{PINT}[]
 
     nodes = Tuple{
         BipartiteGraph{VINT2, EINT, FVector{EINT}, FVector{VINT2}}, # hgraph
         BipartiteGraph{PINT, PINT, FVector{PINT}, FVector{PINT}},   # graph
         FVector{PINT},                                              # weights
-        FVector{PINT},                                              # label
+        BipartiteGraph{PINT, PINT, FVector{PINT}, FVector{PINT}},   # label
         FVector{PINT},                                              # clique
-        WINT2,                                                      # width
         PINT,                                                       # level
     }[]
 
-    label = FVector{PINT}(undef, n)
+    label = BipartiteGraph{PINT, PINT}(n, n, n)
     clique = FVector{PINT}(undef, zero(PINT))
     level = zero(PINT)
 
     @inbounds for v in oneto(n)
-        label[v] = v
+        pointers(label)[v] = v
+        targets(label)[v] = v
     end
 
-    push!(nodes, (hgraph, graph, weights, label, clique, width, level))
+    pointers(label)[nn] = nn
+    push!(nodes, (hgraph, graph, weights, label, clique, level))
 
     @inbounds while !isempty(nodes)
-        hgraph, graph, weights, label, clique, width, level = pop!(nodes)
-        n = nv(graph); m = ne(graph); k = convert(PINT, length(clique))
-
-        if half(m) > length(vwork1)
-            resize!(vwork1, half(m))
-            resize!(vwork2, half(m))
-        end
+        hgraph, graph, weights, label, clique, level = pop!(nodes)
+        n = nv(graph); m = ne(graph); l = ne(label); k = convert(PINT, length(clique))
 
         if !isnegative(level) # unprocessed
-            isleaf = width <= minwidth || level >= maxlevel
+            isleaf = n <= minwidth || level >= maxlevel || m == n * (n - one(PINT))
 
             if isleaf # leaf
-                push!(nodes, (hgraph, graph, weights, label, clique, width, -one(PINT)))
+                push!(nodes, (hgraph, graph, weights, label, clique, -one(PINT)))
             else      # branch
-                separator!(swork, vwork3, hwght, weights, hgraph, imbalance, alg.dis)
+                if m > length(work01)
+                    resize!(work01, half(m))
+                    resize!(work02, half(m))
+                end
 
-                hchild0, hchild1 = hpartition!(
-                    vwork3,
-                    vwork4,
-                    vwork5,
-                    vwork6,
-                    hgraph,
-                )
+                part = FVector{PINT}(undef, n)
+                separator!(work00, work03, hwght, weights, hgraph, imbalance, alg.dis)
 
-                child0, child1, order2 = partition!(
-                    vwork4,
-                    vwork5,
-                    vwork6,
-                    weights,
-                    graph,
-                )
+                child0, child1, order2 = hpartition!(work00, work14, work04, work07, work08,
+                     work11, work12, work13, work09, work10, work01, work02, work15, work16,
+                     work05, work06, work03, part, weights, hgraph, graph)
 
                 push!(
                     nodes,
-                    (hgraph, graph, weights, label, clique, width, -two(PINT)),
-                    (hchild0, child0..., level + one(PINT)),
-                    (hchild1, child1..., level + one(PINT)),
+                    (hgraph, graph, weights, label, clique, -two(PINT)),
+                    (child0..., level + one(PINT)),
+                    (child1..., level + one(PINT)),
                 )
 
+                push!(parts, part)
                 push!(orders, order2)
             end
         else                  # processed
             isleaf = isone(-level)
-            tree = Parent(n, vwork6)
-            upper = BipartiteGraph(n, n, half(m), vwork11, vwork1)
-            lower = BipartiteGraph(n, n, half(m), vwork12, vwork2)
+            iscomplete = m == n * (n - one(PINT))
 
-            if isleaf # leaf
-                order, index = permutation(weights, graph, alg.alg)
-            else      # branch
-                order0 = pop!(orders)
-                order1 = pop!(orders)
-                order2 = pop!(orders)
+            if iscomplete # complete graph
+                for v in oneto(n)
+                    work03[v] = v
+                end
+            else
+                tree = Parent(n, work06)
+                upper = BipartiteGraph(n, n, half(m), work09, work01)
+                lower = BipartiteGraph(n, n, half(m), work10, work02)
 
-                order = [
-                    order0
-                    order1
-                    order2
-                ]
+                if isleaf # leaf
+                    order, index = permutation(weights, graph, alg.alg)
+                else      # branch
+                    part = pop!(parts)
+                    ndsorder = Vector{PINT}(undef, n)
+                    ndsindex = Vector{PINT}(undef, n)
+                    i = zero(PINT)
 
-                index = invperm(order)
+                    for v in pop!(orders)
+                        if !istwo(part[v])
+                            ndsindex[v] = i += one(PINT)
+                            ndsorder[i] = v
+                        end
+                    end
 
-                if isone(S) || istwo(S)
-                    sets = UnionFind(n, vwork3, vwork4, vwork5)
-                    greedyorder, greedyindex = permutation(weights, graph, alg.alg)
+                    for v in pop!(orders)
+                        if !istwo(part[v])
+                            ndsindex[v] = i += one(PINT)
+                            ndsorder[i] = v
+                        end
+                    end
 
-                    if isone(S)
-                        best = bestwidth_impl!(lower, upper, tree, sets, vwork9,
-                            vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
-                            vwork18, weights, graph, (index, greedyindex))
+                    for v in pop!(orders)
+                        ndsindex[v] = i += one(PINT)
+                        ndsorder[i] = v
+                    end
+
+                    if isone(S) || istwo(S)
+                        sets = UnionFind(n, work03, work04, work05)
+                        grdorder, grdindex = permutation(weights, graph, alg.alg)
+
+                        if isone(S)
+                            best = bestwidth_impl!(lower, upper, tree, sets, work07,
+                                work08, work11, work12, work13, work14, work15,
+                                work16, weights, graph, (ndsindex, grdindex))
+                        else
+                            best = bestfill_impl!(lower, upper, tree, sets, work07,
+                                work08, work11, work12, work13, work14, work15,
+                                work16, weights, graph, (ndsindex, grdindex))
+                        end
+
+                        order = (ndsorder, grdorder)[best]
+                        index = (ndsindex, grdindex)[best]
                     else
-                        best = bestfill_impl!(lower, upper, tree, sets, vwork9,
-                            vwork10, vwork13, vwork14, vwork15, vwork16, vwork17,
-                            vwork18, weights, graph, (index, greedyindex))
+                        order, index = ndsorder, ndsindex
                     end
+                end
 
-                    if istwo(best)
-                        order, index = greedyorder, greedyindex
-                    end
+                sympermute!_impl!(upper, graph, index, Forward)
+
+                for i in oneto(k)
+                    clique[i] = index[clique[i]]
+                end
+
+                compositerotations_impl!(index, work03, work04,
+                    work05, lower, tree, upper, clique)
+
+                for v in oneto(n)
+                    i = index[v]; work03[i] = order[v]
                 end
             end
 
-            sympermute!_impl!(upper, graph, index, Forward)
+            j = zero(PINT); outorder = FVector{PINT}(undef, l)
 
-            for i in oneto(k)
-                clique[i] = index[clique[i]]
-            end
+            for i in oneto(n)
+                v = work03[i]
 
-            compositerotations_impl!(index, vwork3, vwork4,
-                vwork5, lower, tree, upper, clique)
-
-            copyto!(vwork3, order)
-            resize!(order, n - k)
-
-            for v in oneto(n)
-                i = index[v]
-
-                if i <= n - k
-                    order[i] = label[vwork3[v]]
+                for w in neighbors(label, v)
+                    j += one(PINT); outorder[j] = w
                 end
             end
 
-            push!(orders, order)
+            push!(orders, outorder)
         end
     end
 

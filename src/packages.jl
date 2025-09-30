@@ -14,6 +14,7 @@ package(::Type{<:AMD}) = "AMD"
 package(::Type{<:SymAMD}) = "AMD"
 package(::Type{<:Spectral}) = "Laplacians"
 package(::Type{<:FlowCutter}) = "FlowCutterPACE17_jll"
+package(::Type{<:HTD}) = "HTD_jll"
 package(::Type{<:BT}) = "TreeWidthSolver"
 
 function package(::Type{<:ND{<:Any, <:Any, D}}) where D

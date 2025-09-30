@@ -15,9 +15,6 @@ export tolerance, twice, half, two, three, four, five, six, eight, ispositive, i
 # graphs
 export eltypedegree, de
 
-# sorted collections
-export swap!
-
 # printing
 export MAX_ITEMS_PRINTED, printiterator
 
@@ -36,7 +33,7 @@ const MAX_ITEMS_PRINTED = 5
 #     v ≤ w iif v < w + tol
 # for all weights v and w.
 function tolerance(::Type{W}) where {W <: AbstractFloat}
-    return W(1.0e-5)
+    return convert(W, 1.0e-5)
 end
 
 function tolerance(::Type{W}) where {W <: Integer}
@@ -47,8 +44,12 @@ function twice(i::I) where {I}
     return i + i
 end
 
-function half(i::I) where {I}
+function half(i::I) where {I <: Integer}
     return i ÷ two(I)
+end
+
+function half(i::W) where {W <: AbstractFloat}
+    return i / two(W)
 end
 
 function eight(::Type{I}) where {I}
@@ -140,15 +141,6 @@ function de(graph::AbstractGraph)
     end
 
     return m
-end
-
-@propagate_inbounds function swap!(vector::AbstractVector, i::Integer, j::Integer)
-    @boundscheck checkbounds(vector, i)
-    @boundscheck checkbounds(vector, j)
-    @inbounds v = vector[i]
-    @inbounds vector[i] = vector[j]
-    @inbounds vector[j] = v
-    return vector
 end
 
 function printiterator(io::IO, iterator::T) where {T}
