@@ -2112,6 +2112,17 @@ function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
+function MLFLib.mlf(weights::AbstractVector{<:Integer}, graph::AbstractGraph; kwargs...)
+    n = nv(graph)
+    intweights = FVector{Int}(undef, n)
+
+    @inbounds for v in vertices(graph)
+        intweights[v] = convert(Int, weights[v])
+    end
+
+    return mlf(intweights, graph; kwargs...)
+end
+
 function MLFLib.mlf(weights::AbstractVector, graph::AbstractGraph{V}; kwargs...) where {V}
     n = convert(Int, nv(graph))
     m = convert(Int, de(graph))
