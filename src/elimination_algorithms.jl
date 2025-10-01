@@ -2093,7 +2093,7 @@ function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
-function MLFLib.mlf(weights::AbstractVector{<:Integer}, graph::AbstractGraph; kwargs...)
+function MLFLib.mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
     n = nv(graph)
     intweights = FVector{Int}(undef, n)
 
