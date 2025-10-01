@@ -826,25 +826,6 @@ julia> treewidth(graph; alg)
 end
 
 """
-    HTD <: EliminationAgorithm
-
-    HTD(; seed=-1, strategy=-1, preprocessing=-1
-        triangulation_minimization=-1, opt=-1, iterations=-1, 
-        patience=-1)
-
-An algorithm implemented in the library htd.
-"""
-@kwdef struct HTD <: EliminationAlgorithm
-    seed::Int = -1
-    strategy::Int = -1
-    preprocessing::Int = -1
-    triangulation_minimization::Int = -1
-    opt::Int = -1
-    iterations::Int = -1
-    patience::Int = -1
-end
-
-"""
     BT <: EliminationAlgorithm
 
     BT()
