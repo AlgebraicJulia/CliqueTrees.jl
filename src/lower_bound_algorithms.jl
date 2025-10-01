@@ -118,7 +118,16 @@ function lowerbound(weights::AbstractVector, graph::AbstractGraph, ::MMW{S}) whe
 end
 
 function mmw(weights::AbstractVector{W}, graph::AbstractGraph{V}, strategy::Val) where {W, V}
-    width = mmw(trunc.(V, weights), graph, strategy)
+    @argcheck nv(graph) <= length(weights)
+
+    n = nv(graph)
+    intweights = FVector{V}(undef, n)
+
+    @inbounds for v in vertices(graph)
+        intweights[v] = trunc(V, weights[v])
+    end
+
+    width = mmw(intweights, graph, strategy)
     return convert(W, width)
 end
 

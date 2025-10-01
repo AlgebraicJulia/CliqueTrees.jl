@@ -211,6 +211,10 @@ function hpartition!(
         hgraph::AbstractGraph{HV},
         graph::AbstractGraph{V},
     ) where {W, V, E, HV}
+    @argcheck nov(hgraph) <= length(hproject0)
+    @argcheck nov(hgraph) <= length(hproject1)
+    @argcheck nv(hgraph) <= length(part)
+    @argcheck nv(hgraph) == nv(graph)
 
     h0 = one(V)
     h1 = one(V)
@@ -355,6 +359,8 @@ function hcompresspart(
         label::AbstractGraph{V},
         clique::AbstractVector{V},
     ) where {HV, V}
+    @argcheck nov(hgraph) <= length(mark)
+    @argcheck nv(hgraph) == nov(label)
 
     HE = etype(hgraph); hn = convert(HV, nv(label)); hm = convert(HE, length(clique))
 
@@ -383,10 +389,6 @@ function hcompresspart(
             if ispositive(hx) && mark[hx] < tag
                 mark[hx] = tag
                 targets(hchild)[p] = hx; p += one(HE)
-
-                @argcheck 1 <= hw <= nov(hgraph)
-                @argcheck 1 <= hx <= hh
-                @argcheck 1 <= v <= hn
             end
 
             flag = flag || iszero(hx)
