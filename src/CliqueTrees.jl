@@ -12,8 +12,6 @@ using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra
 using LinearAlgebra: ldiv
-using Random
-using Random: default_rng
 using SparseArrays
 using SparseArrays: getcolptr
 

@@ -1291,29 +1291,6 @@ function Best{S}(algs::PermutationOrAlgorithm...) where {S}
     return Best{S}(algs)
 end
 
-struct RandPerm{A <: EliminationAlgorithm, G <: AbstractRNG} <: EliminationAlgorithm
-    alg::A
-    rng::G
-end
-
-function RandPerm(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
-    return RandPerm(alg, default_rng())
-end
-
-struct Threshold{L <: EliminationAlgorithm, U <: PermutationOrAlgorithm} <: EliminationAlgorithm
-    lower::L
-    upper::U
-    width::Int
-end
-
-function Threshold(lower::EliminationAlgorithm, upper::PermutationOrAlgorithm; width::Integer = 30)
-    return Threshold(lower, upper, width)
-end
-
-function Threshold(lalg::EliminationAlgorithm; kwargs...)
-    return Theshold(lalg, DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
-end
-
 """
     permutation([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
@@ -1484,14 +1461,6 @@ end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFill)
     return bestfill(weights, graph, alg.algs)
-end
-
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RandPerm)
-    return randpermalg(weights, graph, alg.alg, alg.rng)
-end
-
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Threshold)
-    return threshold(weights, graph, alg.lower, alg.upper, alg.width)
 end
 
 # Algorithmic Aspects of Vertex Elimination on Graphs
@@ -3156,58 +3125,6 @@ function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}
     return order, index
 end
 
-function randpermalg(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, rng::AbstractRNG) where {W, V}
-    E = etype(graph); n = nv(graph); m = de(graph)
-
-    perm = randperm(rng, n)
-    permweights = FVector{W}(undef, n)
-    permpointer = FVector{E}(undef, n + one(V))
-    permtarget = FVector{V}(undef, m)
-
-    @inbounds for i in oneto(n)
-        v = perm[i]; permpointer[v + one(V)] = eltypedegree(graph, i)
-    end
-
-    @inbounds v = one(V); permpointer[v] = p = one(E)
-
-    @inbounds while v <= n
-        v += one(V); permpointer[v] = p += permpointer[v]
-    end
-
-    @inbounds for i in oneto(n)
-        v = perm[i]; permweights[v] = weights[i]
-        p = permpointer[v]
-
-        for j in neighbors(graph, i)
-            permtarget[p] = perm[j]; p += one(E)
-        end
-    end
-
-    @inbounds p = permpointer[n + one(V)] - one(E)
-    permgraph = BipartiteGraph{V, E}(n, n, p, permpointer, permtarget)
-    order, index = permutation(permweights, permgraph, alg)
-
-    @inbounds for i in oneto(n)
-        order[i] = index[perm[i]]
-    end
-
-    @inbounds for i in oneto(n)
-        index[order[i]] = i
-    end
-
-    return index, order
-end
-
-function threshold(weights::AbstractVector, graph::AbstractGraph, lower::EliminationAlgorithm, upper::EliminationAlgorithm, width::Integer)
-    if nv(graph) <= width
-        order, index = permutation(weights, graph, lower)
-    else
-        order, index = permutation(weights, graph, upper)
-    end
-
-    return order, index
-end
-
 function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: EliminationAlgorithm}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "$A")
@@ -3283,6 +3200,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::ND{S, A, D}) where {S, A, D}
     println(io, " "^indent * "    width: $(alg.width)")
     println(io, " "^indent * "    level: $(alg.level)")
     println(io, " "^indent * "    imbalance: $(alg.imbalance)")
+    println(io, " "^indent * "    scale: $(alg.scale)")
     return
 end
 
