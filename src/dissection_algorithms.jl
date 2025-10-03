@@ -370,8 +370,8 @@ function hcompresspart(
         for w in neighbors(label, v), hw in neighbors(hgraph, w)
             hx = hproject[hw]
 
-            if ispositive(hx) && mark[hx] < tag
-                mark[hx] = tag
+            if ispositive(hx) && mark[hw] < tag
+                mark[hw] = tag
                 hm += one(HE)
             end
         end
@@ -386,8 +386,8 @@ function hcompresspart(
         for w in neighbors(label, v), hw in neighbors(hgraph, w)
             hx = hproject[hw]
 
-            if ispositive(hx) && mark[hx] < tag
-                mark[hx] = tag
+            if ispositive(hx) && mark[hw] < tag
+                mark[hw] = tag
                 targets(hchild)[p] = hx; p += one(HE)
             end
 
