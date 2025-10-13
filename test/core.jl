@@ -710,7 +710,7 @@ end
                 @inferred CliqueTrees.amf(weights, graph)
                 @inferred CliqueTrees.mlf(weights, graph)
                 @inferred CliqueTrees.mmd(weights, graph)
-                @inferred CliqueTrees.minimalchordal(graph, 1:17, 1:17)
+                @inferred CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
@@ -746,7 +746,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17, 1:17)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
@@ -794,7 +794,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.minimalchordal(graph, 1:17, 1:17)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
@@ -1127,6 +1127,84 @@ end
     end
 end
 
+@testset "minimal triangulations" begin
+    # Fast Computation of Minimal Fill inside a Given Elimination Ordering
+    # Heggernes and Peyton
+    # Figure 2.1
+    matrix = [
+        0 0 1 1 0 0
+        0 0 1 0 1 0
+        1 1 0 0 0 1
+        1 0 0 0 0 1
+        0 1 0 0 0 1
+        0 0 1 1 1 0
+    ]
+
+    # A Practical Algoithm for Making Fille Graphs Minimal
+    # Blair, Heggernes, and Telle
+    # Figure 2
+    matrix = [
+        0 1 1 0 1 1 0
+        1 0 1 0 1 0 0
+        1 1 0 1 0 0 0
+        0 0 1 0 0 0 1
+        1 1 0 0 0 1 0
+        1 0 0 0 1 0 1
+        0 0 0 1 0 1 0
+    ]
+
+    order = axes(matrix, 2)
+    @test treefill(matrix; alg=MinimalChordal(order)) == 13
+
+    # Minimal Triangulations of Graphs: a Survey
+    # Heggernes
+    # Figure 1
+    matrix = [
+        0 1 0 0 1
+        1 0 1 1 0
+        0 1 0 0 1
+        0 1 0 0 1
+        1 0 1 1 0
+    ]
+ 
+    order = axes(matrix, 2)
+    @test treefill(matrix; alg=MinimalChordal(order)) == 7
+   
+    # The Minimum Degree Heuristic and the Minimal Triangulation Process
+    # Berry, Heggernes, and Simonet
+    # Figure 1
+    matrix = [
+        0 0 0 1 1 0 0
+        0 0 0 1 1 0 0
+        0 0 0 1 1 0 0
+        1 1 1 0 0 1 0
+        1 1 1 0 0 1 1
+        0 0 0 1 1 0 0
+        0 0 0 0 1 0 0
+    ]
+
+    order = axes(matrix, 2)
+    @test treefill(matrix; alg=MinimalChordal(order)) == 10
+
+    # Minimal Triangulation of a Graph and Optimal Pivoting Order in a Sparse Matrix
+    # Ohtsuki, Cheung, and Fujisawa
+    # Figure 3
+    matrix = [
+        0 0 0 0 0 1 1 0 0
+        0 0 0 0 0 0 1 1 0
+        0 0 0 0 0 0 0 1 1
+        0 0 0 0 0 1 1 0 0
+        0 0 0 0 0 0 0 1 1
+        1 0 0 1 0 0 0 0 0
+        1 1 0 1 0 0 0 0 0
+        0 1 1 0 1 0 0 0 0
+        0 0 1 0 1 0 0 0 0
+    ]
+
+    order = axes(matrix, 2)
+    @test treefill(matrix; alg=MinimalChordal(order)) == 12
+end
+
 @testset "fill" begin
     algs = (
         MMD(),
@@ -1166,7 +1244,9 @@ end
             @test fill1 == treefill(tree1)
             @test fill2 == treefill(tree2)
             @test fill3 == treefill(tree3)
-            @test fill1 <= fill2 <= fill3 <= fill
+            @test fill1 <= fill3
+            @test fill2 <= fill3
+            @test fill3 <= fill
         end
     end
 

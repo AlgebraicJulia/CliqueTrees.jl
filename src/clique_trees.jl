@@ -709,6 +709,55 @@ function bestfill_impl!(
     return minindex
 end
 
+function separatorwidth(tree::CliqueTree{V}) where {V}
+    n = nov(residuals(tree)); weights = Ones{V}(n)
+    return separatorwidth(weights, tree)
+end
+
+function separatorwidth(weights::AbstractVector{W}, tree::CliqueTree) where {W}
+    maxwidth = zero(W)
+
+    @inbounds for bag in tree
+        width = zero(W)
+
+        for v in separator(bag)
+            width += weights[v]
+        end
+
+        maxwidth = max(maxwidth, width)
+    end
+
+    return maxwidth
+end
+
+function separatorwidth(weights::Ones{W}, tree::CliqueTree) where {W}
+    maxwidth = zero(W)
+
+    @inbounds for bag in tree
+        width = convert(W, length(separator(bag)))
+        maxwidth = max(maxwidth, width)
+    end
+
+    return maxwidth
+end
+
+function separatorwidth(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType = DEFAULT_SUPERNODE_TYPE)
+    return separatorwidth(graph, alg)
+end
+
+function separatorwidth(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
+    perm, tree = cliquetree(graph, alg, snd)
+    return separatorwidth(tree)
+end
+
+function separatorwidth(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType = DEFAULT_SUPERNODE_TYPE)
+    return separatorwidth(weights, graph, alg, snd)
+end
+
+function separatorwidth(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
+    perm, tree = cliquetree(graph, alg, snd)
+    return separatorwidth(weights[perm], tree)
+end
 
 """
     residual(tree::CliqueTree, i::Integer)

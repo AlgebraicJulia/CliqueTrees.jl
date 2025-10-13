@@ -251,8 +251,7 @@ function sympermute!_impl!(
     n = nv(source)
 
     @inbounds for i in oneto(n)
-        ii = i + one(V)
-        pointer[ii] = zero(E)
+        pointer[i + one(V)] = zero(E)
     end
 
     @inbounds for j in vertices(source)
@@ -260,26 +259,23 @@ function sympermute!_impl!(
 
         for i in neighbors(source, j)
             if lt(order, i, j)
-                ii = index[i]
-                kk = jj
+                ii, kk = index[i], jj
 
                 if lt(order, kk, ii)
                     kk = ii
                 end
 
                 if kk < n
-                    kkk = kk + two(V)
-                    pointer[kkk] += one(E)
+                    pointer[kk + two(V)] += one(E)
                 end
             end
         end
     end
 
-    @inbounds pointer[begin] = p = one(E)
+    @inbounds pointer[one(V)] = p = one(E)
 
     @inbounds for i in oneto(n)
-        ii = i + one(V)
-        pointer[ii] = p += pointer[ii]
+        pointer[i + one(V)] = p += pointer[i + one(V)]
     end
 
     @inbounds for j in vertices(source)
@@ -287,16 +283,14 @@ function sympermute!_impl!(
 
         for i in neighbors(source, j)
             if lt(order, i, j)
-                ii = index[i]
-                kk = jj
+                ii, kk = index[i], jj
 
                 if lt(order, kk, ii)
                     ii, kk = kk, ii
                 end
 
-                kkk = kk + one(V)
-                target[pointer[kkk]] = ii
-                pointer[kkk] += one(E)
+                target[pointer[kk + one(V)]] = ii
+                pointer[kk + one(V)] += one(E)
             end
         end
     end
@@ -339,28 +333,24 @@ function reverse!_impl!(
     h = nov(graph); n = nv(graph); m = de(graph)
     
     @inbounds for i in outvertices(graph)
-        ii = i + one(V)
-        pointer[ii] = zero(E)
+        pointer[i + one(V)] = zero(E)
     end
 
     @inbounds for j in vertices(graph), i in neighbors(graph, j)
         if i < h
-            ii = i + two(V)
-            pointer[ii] += one(E)
+            pointer[i + two(V)] += one(E)
         end
     end
 
-    @inbounds pointer[begin] = p = one(E)
+    @inbounds pointer[one(V)] = p = one(E)
 
     @inbounds for i in outvertices(graph)
-        ii = i + one(V)
-        pointer[ii] = p += pointer[ii]
+        pointer[i + one(V)] = p += pointer[i + one(V)]
     end
 
     @inbounds for j in vertices(graph), i in neighbors(graph, j)
-        ii = i += one(V)
-        target[pointer[ii]] = j
-        pointer[ii] += one(E)
+        target[pointer[i + one(V)]] = j
+        pointer[i + one(V)] += one(E)
     end
 
     return BipartiteGraph(n, h, m, pointer, target)
@@ -401,6 +391,49 @@ end
 function simplegraph(graph::AbstractGraph{V}) where {V}
     E = etype(graph)
     return simplegraph(V, E, graph)
+end
+
+function linegraph(ve::AbstractGraph{V}, ev::AbstractGraph{V}) where {V}
+    @argcheck nv(ve) == nov(ev)
+    @argcheck nv(ev) == nov(ve)
+    @argcheck ne(ve) == ne(ev)
+
+    E = etype(ve); n = nv(ve); m = zero(E)
+    marker = FVector{V}(undef, n)
+
+    @inbounds for v in vertices(ve)
+        marker[v] = zero(V)
+    end
+
+    @inbounds for v in vertices(ve)
+        tag = v
+
+        for w in neighbors(ve, v), x in neighbors(ev, w)
+            if v != x && marker[x] < tag
+                marker[x] = tag
+                m += one(E)
+            end
+        end
+    end
+
+    target = FVector{E}(undef, m)
+    pointer = FVector{V}(undef, n + one(V))
+    @inbounds pointer[one(V)] = p = one(E) 
+
+    @inbounds for v in vertices(ve)
+        tag = n + v
+
+        for w in neighbors(ve, v), x in neighbors(ev, w)
+            if v != x && marker[x] < tag
+                marker[x] = tag
+                target[p] = x; p += one(E)
+            end
+        end
+
+        pointer[v + one(V)] = p
+    end
+
+    return BipartiteGraph{V, E}(n, n, m, pointer, target)   
 end
 
 function pointers(graph::BipartiteGraph)

@@ -410,7 +410,7 @@ julia> treewidth(graph; alg)
 
 ### References
 
-  - Tinney, William F., and John W. Walker. "Direct solutions of sparse network equations by optimally ordered triangular factorization." *Proceedings of the IEEE* 55.11 (1967): 1801-1809.
+  - Ng, Esmond G., and Barry W. Peyton. "Fast implementation of the minimum local fill ordering heuristic." *CSC14: The Sixth SIAM Workshop on Combinatorial Scientific Computing.* 2014.
 """
 struct MF <: EliminationAlgorithm end
 
@@ -971,7 +971,7 @@ julia> FilledGraph(tree2) # fewer edges
 
 ### References
 
-  - Blair, Jean RS, Pinar Heggernes, and Jan Arne Telle. "A practical algorithm for making filled graphs minimal." *Theoretical Computer Science* 250.1-2 (2001): 125-141.
+  - Heggernes, Pinar, and Barry W. Peyton. "Fast computation of minimal fill inside a given elimination ordering." *SIAM journal on matrix analysis and applications* 30.4 (2009): 1424-1444.
 """
 struct MinimalChordal{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -1406,7 +1406,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SAT{H})
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal)
-    return minimalchordal(graph, permutation(weights, graph, alg = alg.alg)...)
+    return mcs_etree(weights, graph, alg.alg)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::CompositeRotations)
@@ -2719,106 +2719,6 @@ function twins_impl!(
         
     partition = BipartiteGraph(n, nb, n, pointer, target)
     return partition  
-end
-
-# A Practical Algorithm for Making Filled Graphs Minimal
-# Barry, Heggernes, and Telle
-# MinimalChordal
-function minimalchordal(graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector) where {V}
-    M = Graph(graph)
-    F = Vector{Vector{Tuple{V, V}}}(undef, nv(graph))
-
-    for (i, v) in enumerate(order)
-        F[i] = Tuple{V, V}[]
-        list = neighbors(M, v)
-        degree = eltypedegree(M, v)
-
-        for j in oneto(degree)
-            w = list[j]
-
-            if i < index[w]
-                for jj in (j + one(V)):degree
-                    ww = list[jj]
-
-                    if i < index[ww] && !has_edge(M, w, ww)
-                        add_edge!(M, w, ww)
-                        push!(F[i], (w, ww))
-                    end
-                end
-            end
-        end
-    end
-
-    Candidate = Set{Tuple{V, V}}()
-    Incident = V[]
-
-    for i in reverse(oneto(nv(graph)))
-        for (u, v) in F[i]
-            flag = true
-
-            for x in neighbors(M, u)
-                if index[x] > i && has_edge(M, x, v) && !has_edge(M, x, order[i])
-                    flag = false
-                    break
-                end
-            end
-
-            if flag
-                push!(Candidate, (u, v))
-                push!(Incident, u, v)
-            end
-        end
-
-        if !isempty(Candidate)
-            unique!(sort!(Incident))
-
-            n = length(Incident)
-            W = Graph{V}(n)
-
-            for j in oneto(n)
-                v = Incident[j]
-
-                for jj in (j + 1):n
-                    vv = Incident[jj]
-
-                    if (v, vv) ∉ Candidate
-                        add_edge!(W, j, jj)
-                    end
-                end
-            end
-
-            worder, windex = permutation(W; alg = MCSM())
-
-            for (j, v) in enumerate(worder)
-                list = neighbors(W, v)
-                degree = eltypedegree(W, v)
-
-                for k in oneto(degree)
-                    w = list[k]
-
-                    if j < windex[w]
-                        for kk in (k + 1):degree
-                            ww = list[kk]
-
-                            if j < windex[ww] && !has_edge(W, w, ww)
-                                add_edge!(W, w, ww)
-                                delete!(Candidate, (Incident[w], Incident[ww]))
-                            end
-                        end
-                    end
-                end
-            end
-
-            for (u, v) in Candidate
-                rem_edge!(M, u, v)
-            end
-
-            empty!(Candidate)
-            empty!(Incident)
-        end
-    end
-
-    return permutation(M; alg = MCS())
 end
 
 # Engineering Data Reduction for Nested Dissection

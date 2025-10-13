@@ -86,7 +86,7 @@ export SupernodeTree, supernodetree, residuals
 export Clique, separator, residual
 
 # Clique Trees
-export CliqueTree, cliquetree, treewidth, treefill, separators
+export CliqueTree, cliquetree, treewidth, treefill, separatorwidth, separators
 
 # Abstract Trees
 export rootindices, ancestorindices
@@ -115,6 +115,7 @@ include("filled_edge_iter.jl")
 include("chordal_graphs.jl")
 include("ambiguities.jl")
 include("packages.jl")
+include("mcs_etree.jl")
 include("pr3.jl")
 include("pr4.jl")
 include("symb_facts.jl")
