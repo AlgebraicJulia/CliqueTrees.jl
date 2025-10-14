@@ -69,6 +69,11 @@ The orderings computed by these algorithms induce minimum-width tree decompositi
 abstract type EliminationAlgorithm end
 
 """
+    MinimalAlgorithm <: EliminationAlgorithm
+"""
+abstract type MinimalAlgorithm <: EliminationAlgorithm end
+
+"""
     PermutationOrAlgorithm = Union{
         AbstractVector,
         Tuple{AbstractVector, AbstractVector},
@@ -310,7 +315,7 @@ julia> treewidth(graph; alg)
 
   - Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
 """
-struct LexM <: EliminationAlgorithm end
+struct LexM <: MinimalAlgorithm end
 
 """
     MCSM <: EliminationAlgorithm
@@ -344,7 +349,7 @@ julia> treewidth(graph; alg)
 
   - Berry, Anne, et al. "Maximum cardinality search for computing minimal triangulations of graphs." *Algorithmica* 39 (2004): 287-298.
 """
-struct MCSM <: EliminationAlgorithm end
+struct MCSM <: MinimalAlgorithm end
 
 """
     AMF <: EliminationAlgorithm
@@ -973,7 +978,7 @@ julia> FilledGraph(tree2) # fewer edges
 
   - Heggernes, Pinar, and Barry W. Peyton. "Fast computation of minimal fill inside a given elimination ordering." *SIAM journal on matrix analysis and applications* 30.4 (2009): 1424-1444.
 """
-struct MinimalChordal{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+struct MinimalChordal{A <: PermutationOrAlgorithm} <: MinimalAlgorithm
     alg::A
 end
 
@@ -1097,7 +1102,7 @@ end
 """
     SafeRules{A, L, U} <: EliminationAlgorithm
 
-    SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgororithm)
+    SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm)
 
     SafeRules()
 
@@ -1172,10 +1177,6 @@ end
 function SafeRules(; kwargs...)
     return SafeRules(DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
 end
-
-# deprecated
-const RuleReduction{A} = SafeRules{A, MMW{3}, MF}
-RuleReduction(alg) = SafeRules(alg, MMW(), MF())
 
 struct SimplicialRule{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -1253,9 +1254,6 @@ end
 function ConnectedComponents()
     return ConnectedComponents(DEFAULT_ELIMINATION_ALGORITHM)
 end
-
-# deprecated
-const ComponentReduction = ConnectedComponents
 
 struct Best{S, A <: NTuple{<:Any, PermutationOrAlgorithm}} <: EliminationAlgorithm
     algs::A
@@ -1419,7 +1417,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Compres
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules)
-    order = saferules(weights, graph, alg.alg, alg.lb, alg.ub, alg.tao)
+    order = saferules(weights, graph, alg.alg, alg.lb, alg.tao)
     return order, invperm(order)
 end
 
@@ -2384,10 +2382,13 @@ function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) 
 
         # initialize assumption
         count = zero(Int32)
+        state = :sat
 
-        # Σ { var(i) : i } > count
-        solver[var[m - count]] = one(Int32)
-        state = solve!(solver)
+        if ispositive(m)
+            # Σ { var(i) : i } > count
+            solver[var[m - count]] = one(Int32)
+            state = solve!(solver)
+        end
 
         if state != :sat
             error("no solutions found")
@@ -2884,15 +2885,11 @@ function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVect
     return
 end
 
-function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm, tao::Number) where {V}
+function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, tao::Number) where {V}
     n = nv(graph)
     width = lowerbound(weights, graph, lb)
     innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, weights, graph, width, tao)
-    innerorder, innerindex = permutation(innerweights, innergraph, ub)
-
-    if innerwidth < treewidth(innerweights, innergraph, (innerorder, innerindex))
-        innerorder, innerindex = permutation(innerweights, innergraph, alg)
-    end
+    innerorder, innerindex = permutation(innerweights, innergraph, alg)
 
     order = Vector{V}(undef, n); i = zero(V)
 
@@ -3154,7 +3151,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{A, L, U}) where {A
     println(io, " "^indent * "SafeRules{$A, $L, $U}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
-    show(IOContext(io, :indent => indent + 4), "text/plain", alg.ub)
     println(io, " "^indent * "    tao: $(alg.tao)")
     return
 end

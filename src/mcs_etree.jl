@@ -1,14 +1,23 @@
 # Fast Computation of Minimal Fill inside a Given Elimination Ordering
 # Heggernes and Peyton
-# MCS-ETree (basic implementation)
+# MCS-ETree (enhanced implementation)
+#
+# The time complexity is
+#
+#     O(mn α(m, n))
+#
+# m = |E|, n = |V|, and α is the extremely-slow-growing
+# inverse of the Ackermann function.
 function mcs_etree(weights::AbstractVector, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
     E = etype(graph); m = de(graph); n = nv(graph)
     
-    pointer = FVector{E}(undef, n + one(V))
-    target = FVector{V}(undef, half(m))
+    begptr = FVector{E}(undef, n + one(V))
+    endptr = FVector{E}(undef, n + one(V))
+    target = FVector{V}(undef, m)
     tree = Parent{V}(n)
     sets = UnionFind{V}(n)
     fdesc = FVector{V}(undef, n)
+    fancs = FVector{V}(undef, n)
     stack = FVector{V}(undef, n)
     count = FVector{V}(undef, n)
     
@@ -19,8 +28,8 @@ function mcs_etree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Permut
 
     order, index = permutation(weights, graph, alg)
 
-    mcs_etree_impl!(work1, work2, work3, work4, pointer,
-        target, tree, sets, fdesc, stack, count,
+    mcs_etree_impl!(work1, work2, work3, work4, begptr, endptr,
+        target, tree, sets, fdesc, fancs, stack, count,
         graph, order, index)
 
     return order, index
@@ -31,11 +40,13 @@ function mcs_etree_impl!(
         work2::AbstractVector{V},
         work3::AbstractVector{V},
         work4::AbstractVector{V},
-        pointer::AbstractVector{E},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
         target::AbstractVector{V},
         tree::Parent{V},
         sets::UnionFind{V},
         fdesc::AbstractVector{V},
+        fancs::AbstractVector{V},
         stack::AbstractVector{V},
         count::AbstractVector{V},
         graph::AbstractGraph{V},
@@ -46,42 +57,49 @@ function mcs_etree_impl!(
     @argcheck nv(graph) <= length(work2)
     @argcheck nv(graph) <= length(work3)
     @argcheck nv(graph) <= length(work4)
-    @argcheck nv(graph) < length(pointer)
-    @argcheck half(de(graph)) <= length(target)
+    @argcheck nv(graph) < length(begptr)
+    @argcheck nv(graph) < length(endptr)
+    @argcheck de(graph) <= length(target)
     @argcheck nv(graph) == length(tree)
     @argcheck nv(graph) == length(sets)
     @argcheck nv(graph) <= length(fdesc)
+    @argcheck nv(graph) <= length(fancs)
     @argcheck nv(graph) <= length(stack)
     @argcheck nv(graph) <= length(count)
     @argcheck nv(graph) <= length(order)
     @argcheck nv(graph) <= length(index)
     
-    strt = one(V)
-    stop = nv(graph)
     num = zero(V)
 
-    etree_impl!(tree, work1, sympermute!_impl!(pointer, target, graph, index, Forward))
+    upper = sympermute!_impl!(endptr, target, graph, index, Forward)
+    etree_impl!(tree, work1, upper)
     postorder!_impl!(work1, work2, work3, work4, tree)
     firstdescendants_impl!(fdesc, tree, vertices(graph))
+
+    begptr[one(V)] = p = one(E)
+    endptr[one(V)] = p - one(E)
 
     @inbounds for v in vertices(graph)
         i = index[v] = work3[index[v]]
         order[i] = v
+        begptr[v + one(V)] = p += convert(E, eltypedegree(graph, v))
+        endptr[v + one(V)] = p - one(E)
 
-        if isnothing(parentindex(tree, i))
-            num += one(V); stack[num] = i
+        if isnothing(parentindex(tree, v))
+            num += one(V); fancs[num] = v + one(V); stack[num] = v
         end
     end
 
     @inbounds while ispositive(num)
         # get an unnumbered elimination subtree T
+        fanc = fancs[num]
         stop = stack[num]
         strt = fdesc[stop]
         num -= one(V)
     
         # find a special vertex `root` in T of maximum cardinality
-        mcs_etree_supcnt!(count, work1, work2, fdesc,
-            work3, work4, sets, order, index, graph, tree, strt, stop)
+        mcs_etree_supcnt!(count, begptr, endptr, target, work1, work2, fdesc,
+            work3, work4, sets, order, index, graph, tree, strt, stop, fanc)
 
         root = stop; maxcnt = count[stop]
     
@@ -109,14 +127,23 @@ function mcs_etree_impl!(
         mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
 
         # reorder the subtree and change the root to `root`
-        mcs_etree_changeroot!(work1, work2, work3, order, index, graph, fdesc, tree, strt, stop, root)
+        fanc = mcs_etree_changeroot!(work1, work2, work3, order, index, graph, fdesc, tree, strt, stop, root)
         mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
-    
+        mcs_etree_invpermute!(work1, tree, work3, strt, stop)    
+
         # compute the elimination subtree for the new reordering
-        mcs_etree_etree!(tree, order, index, work1, graph, strt, stop)
+        mcs_etree_etree!(tree, order, index, work1, graph, strt, stop, fanc)
         mcs_etree_postorder!(work1, work2, work3, work4, tree, strt, stop)
         mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
         mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
+
+        for v in neighbors(graph, order[stop])
+            i = index[v]
+
+            if i < stop
+                target[endptr[v] += one(E)] = stop
+            end
+        end
         
         # number `root` and store the unnumbered subtrees for future processing 
         for i in strt:stop - one(V)
@@ -124,6 +151,12 @@ function mcs_etree_impl!(
 
             if j == stop
                 num += one(V); stack[num] = i
+
+                if fanc <= j
+                    fancs[num] = fanc
+                else
+                    fancs[num] = i + one(V)
+                end
             end
         end
     end
@@ -206,7 +239,7 @@ function mcs_etree_changeroot!(
         end
     end
 
-    i = node
+    fanc = n; i = node
 
     @inbounds while i < stop
         i = parentindex(tree, i)::V
@@ -229,7 +262,7 @@ function mcs_etree_changeroot!(
         alpha[i] = n; n -= one(V)
     end
 
-    return
+    return fanc
 end
 
 function mcs_etree_etree!(
@@ -240,15 +273,26 @@ function mcs_etree_etree!(
         graph::AbstractGraph{V},
         strt::V,
         stop::V,
+        fanc::V,
     ) where {V}
     @argcheck nv(graph) == length(tree)
     @argcheck nv(graph) <= length(order)
     @argcheck nv(graph) <= length(index)
     @argcheck nv(graph) <= length(ancestor)
-    @argcheck nv(graph) >= stop >= strt >= one(V)
+    @argcheck nv(graph) >= stop >= fanc >= strt >= one(V)
     n = nv(graph); parent = tree.prnt
 
-    @inbounds for i in strt:stop
+    @inbounds for i in reverse(strt:fanc - one(V))
+        j = parent[i]
+
+        if fanc <= j
+            ancestor[i] = -i
+        else
+            ancestor[i] = abs(ancestor[j])
+        end
+    end
+
+    @inbounds for i in fanc:stop
         v = order[i]; ancestor[i] = zero(V)
 
         for w in neighbors(graph, v)
@@ -257,13 +301,13 @@ function mcs_etree_etree!(
             if k < i
                 r = k
 
-                while !iszero(ancestor[r]) && ancestor[r] != i
+                while ispositive(ancestor[r]) && ancestor[r] != i
                     t = ancestor[r]
                     ancestor[r] = i
                     r = t
                 end
 
-                if iszero(ancestor[r])
+                if !ispositive(ancestor[r])
                     ancestor[r] = i
                     parent[r] = i
                 end
@@ -409,6 +453,9 @@ end
 
 function mcs_etree_supcnt!(
         wt::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        target::AbstractVector{V},
         map1::AbstractVector{V},
         inv1::AbstractVector{V},
         fdesc::AbstractVector{V},
@@ -421,8 +468,12 @@ function mcs_etree_supcnt!(
         tree::Parent{V},
         strt::V,
         stop::V,
-    ) where {V}
+        fanc::V,
+    ) where {V, E}
     @argcheck nv(graph) <= length(wt)
+    @argcheck nv(graph) < length(begptr)
+    @argcheck nv(graph) < length(endptr)
+    @argcheck de(graph) <= length(target)
     @argcheck nv(graph) <= length(map1)
     @argcheck nv(graph) <= length(inv1)
     @argcheck nv(graph) <= length(fdesc)
@@ -431,6 +482,13 @@ function mcs_etree_supcnt!(
     @argcheck nv(graph) <= length(order)
     @argcheck nv(graph) <= length(index)
     @argcheck nv(graph) <= length(tree)
+    @argcheck nv(graph) >= stop >= strt >= one(V)
+    @argcheck fanc >= strt
+
+    @inbounds for p in fanc:stop
+        v = order[p]
+        endptr[v] = begptr[v] - one(E)
+    end
 
     @inbounds for p in strt:stop
         wt[p] = zero(V)
@@ -461,10 +519,10 @@ function mcs_etree_supcnt!(
     @inbounds for p in strt:stop
         v = order[p]
 
-        for w in neighbors(graph, v)
-            u = index[w]
+        if p < fanc
+            for t in begptr[v]:endptr[v]
+                u = target[t]
 
-            if u > stop
                 if iszero(prev_nbr[u]) || prev_nbr[u] < fdesc[p]
                     wt[p] += one(V)            
                     pp = prev_p[u]
@@ -478,6 +536,27 @@ function mcs_etree_supcnt!(
                 end
     
                 prev_nbr[u] = p
+            end
+        else
+            for w in neighbors(graph, v)
+                u = index[w]
+
+                if u > stop
+                    if iszero(prev_nbr[u]) || prev_nbr[u] < fdesc[p]
+                        wt[p] += one(V)            
+                        pp = prev_p[u]
+        
+                        if !iszero(pp)
+                            q = find(pp)
+                            wt[q] -= one(V)
+                        end
+        
+                        prev_p[u] = p
+                        target[endptr[v] += one(E)] = u
+                    end
+        
+                    prev_nbr[u] = p
+                end
             end
         end
 
