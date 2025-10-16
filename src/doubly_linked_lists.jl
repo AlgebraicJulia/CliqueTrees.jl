@@ -5,9 +5,11 @@ struct DoublyLinkedList{I, Head <: AbstractScalar{I}, Prev <: AbstractVector{I},
 end
 
 function DoublyLinkedList{I}(n::Integer) where {I}
-    head = fill(zero(I))
-    prev = Vector{I}(undef, n)
-    next = Vector{I}(undef, n)
+    head = FScalar{I}(undef)
+    prev = FVector{I}(undef, n)
+    next = FVector{I}(undef, n)
+
+    head[] = zero(I)
     return DoublyLinkedList(head, prev, next)
 end
 
@@ -42,14 +44,14 @@ end
     return list
 end
 
-@propagate_inbounds function Base.prepend!(list::DoublyLinkedList, vector::AbstractVector)
-    if !isempty(vector)
-        @inbounds i = vector[begin]
+@propagate_inbounds function Base.prepend!(list::DoublyLinkedList, v::AbstractVector)
+    if !isempty(v)
+        @inbounds i = v[begin]
         @inbounds h = list.head[]
         @inbounds list.head[] = i
         @boundscheck checkbounds(list.prev, i)
 
-        for j in @view vector[(begin + 1):end]
+        for j in @view v[begin + 1:end]
             @boundscheck checkbounds(list.prev, j)
             @inbounds list.prev[j] = i
             @inbounds list.next[i] = j

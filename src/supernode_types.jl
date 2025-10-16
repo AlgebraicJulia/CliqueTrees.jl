@@ -47,11 +47,11 @@ function stree_impl!(
         colcount::AbstractVector{V},
         snd::Maximal,
     ) where {V}
-    @argcheck length(tree) <= length(new)
-    @argcheck length(tree) <= length(parent)
-    @argcheck length(tree) <= length(ancestor)
-    @argcheck length(tree) <= length(new_in_clique)
-    @argcheck length(tree) <= length(colcount)
+    @assert length(tree) <= length(new)
+    @assert length(tree) <= length(parent)
+    @assert length(tree) <= length(ancestor)
+    @assert length(tree) <= length(new_in_clique)
+    @assert length(tree) <= length(colcount)
     snd = zero(V); n = last(tree)
 
     for v in tree
@@ -98,11 +98,11 @@ function stree_impl!(
         colcount::AbstractVector{V},
         snd::Fundamental,
     ) where {V}
-    @argcheck length(tree) <= length(new)
-    @argcheck length(tree) <= length(parent)
-    @argcheck length(tree) <= length(ancestor)
-    @argcheck length(tree) <= length(new_in_clique)
-    @argcheck length(tree) <= length(colcount)
+    @assert length(tree) <= length(new)
+    @assert length(tree) <= length(parent)
+    @assert length(tree) <= length(ancestor)
+    @assert length(tree) <= length(new_in_clique)
+    @assert length(tree) <= length(colcount)
     snd = zero(V); n = last(tree)
 
     for v in tree
@@ -139,9 +139,9 @@ function stree_impl!(
         colcount::AbstractVector{V},
         snd::Nodal,
     ) where {V}
-    @argcheck length(tree) <= length(new)
-    @argcheck length(tree) <= length(parent)
-    @argcheck length(tree) <= length(ancestor)
+    @assert length(tree) <= length(new)
+    @assert length(tree) <= length(parent)
+    @assert length(tree) <= length(ancestor)
     n = last(tree)
 
     for i in tree

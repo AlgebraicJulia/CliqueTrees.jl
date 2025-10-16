@@ -79,8 +79,8 @@ function cholesky(matrix::AbstractMatrix, symbfact::SymbFact)
 end
 
 function cholesky(matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {I}
-    @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    @assert size(matrix, 1) == size(matrix, 2)
+    @assert size(matrix, 1) == nov(separators(symbfact.tree))
     return cholesky!(cholinit(matrix, symbfact)..., matrix) 
 end
 

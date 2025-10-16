@@ -1,7 +1,6 @@
 module CliqueTrees
 
 using AbstractTrees
-using ArgCheck
 using Base: OneTo, oneto, @kwdef, @propagate_inbounds
 using Base.Iterators
 using Base.Order

@@ -59,8 +59,8 @@ function ldltinit(::Type{T}, matrix::AbstractMatrix, symbfact::SymbFact) where {
 end
 
 function ldltinit(::Type{T}, matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {T, I}
-    @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    @assert size(matrix, 1) == size(matrix, 2)
+    @assert size(matrix, 1) == nov(separators(symbfact.tree))
 
     tree = symbfact.tree
     separator = separators(tree)

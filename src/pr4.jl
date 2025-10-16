@@ -128,7 +128,7 @@ function sr(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) whe
 end
 
 function sr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V <: Integer}
-    @argcheck nv(graph) <= length(weights)
+    @assert nv(graph) <= length(weights)
 
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
@@ -179,18 +179,18 @@ function sr_impl!(
         graph::AbstractGraph{V},
         width::W,
     ) where {W, V, E}
-    @argcheck nv(graph) <= length(marker)
-    @argcheck nv(graph) <= length(stack0)
-    @argcheck nv(graph) <= length(stack1)
-    @argcheck nv(graph) < length(tmpptr)
-    @argcheck nv(graph) <= length(fillin)
-    @argcheck nv(graph) <= length(degree)
-    @argcheck nv(graph) <= length(number)
-    @argcheck de(graph) <= length(source)
-    @argcheck de(graph) <= length(target)
-    @argcheck nv(graph) < length(begptr)
-    @argcheck nv(graph) <= length(endptr)
-    @argcheck de(graph) <= length(invptr)
+    @assert nv(graph) <= length(marker)
+    @assert nv(graph) <= length(stack0)
+    @assert nv(graph) <= length(stack1)
+    @assert nv(graph) < length(tmpptr)
+    @assert nv(graph) <= length(fillin)
+    @assert nv(graph) <= length(degree)
+    @assert nv(graph) <= length(number)
+    @assert de(graph) <= length(source)
+    @assert de(graph) <= length(target)
+    @assert nv(graph) < length(begptr)
+    @assert nv(graph) <= length(endptr)
+    @assert de(graph) <= length(invptr)
 
     # `n` is the number of vertices in the input graph
     n = nv(graph)

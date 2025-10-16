@@ -80,8 +80,8 @@ function ldlt(matrix::AbstractMatrix, symbfact::SymbFact)
 end
 
 function ldlt(matrix::SparseMatrixCSC{<:Any, I}, symbfact::SymbFact{I}) where {I}
-    @argcheck size(matrix, 1) == size(matrix, 2)
-    @argcheck size(matrix, 1) == nov(separators(symbfact.tree))
+    @assert size(matrix, 1) == size(matrix, 2)
+    @assert size(matrix, 1) == nov(separators(symbfact.tree))
     return ldlt!(ldltinit(matrix, symbfact)..., matrix) 
 end
 

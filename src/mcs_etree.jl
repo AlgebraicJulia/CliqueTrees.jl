@@ -30,7 +30,7 @@ end
 
 # Fast Computation of Minimal Fill inside a Given Elimination Ordering
 # Heggernes and Peyton
-# MCS-ETree (enhanced implementation)
+# MCS-ETree (blocked implementation)
 #
 # The time complexity is
 #
@@ -56,21 +56,21 @@ function mcs_etree_impl!(
         order::AbstractVector{V},
         index::AbstractVector{V},
     ) where {V, E}
-    @argcheck nv(graph) <= length(work1)
-    @argcheck nv(graph) <= length(work2)
-    @argcheck nv(graph) <= length(work3)
-    @argcheck nv(graph) <= length(work4)
-    @argcheck nv(graph) < length(begptr)
-    @argcheck nv(graph) < length(endptr)
-    @argcheck de(graph) <= length(target)
-    @argcheck nv(graph) == length(tree)
-    @argcheck nv(graph) == length(sets)
-    @argcheck nv(graph) <= length(fdesc)
-    @argcheck nv(graph) <= length(fancs)
-    @argcheck nv(graph) <= length(stops)
-    @argcheck nv(graph) <= length(count)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
+    @assert nv(graph) <= length(work1)
+    @assert nv(graph) <= length(work2)
+    @assert nv(graph) <= length(work3)
+    @assert nv(graph) <= length(work4)
+    @assert nv(graph) < length(begptr)
+    @assert nv(graph) < length(endptr)
+    @assert de(graph) <= length(target)
+    @assert nv(graph) == length(tree)
+    @assert nv(graph) == length(sets)
+    @assert nv(graph) <= length(fdesc)
+    @assert nv(graph) <= length(fancs)
+    @assert nv(graph) <= length(stops)
+    @assert nv(graph) <= length(count)
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
 
     # `fancs`, `stops`, and `num` form a stack
     #  - `stops[num]` is the root of the current elimination tree
@@ -80,8 +80,7 @@ function mcs_etree_impl!(
 
     # initialize elimination forest (`tree`) and first
     # descendants (`fdesc`)
-    upper = sympermute!_impl!(endptr, target, graph, index, Forward)
-    etree_impl!(tree, work1, upper)
+    etree_impl!(tree, work1, graph, order, index)
     postorder!_impl!(work1, work2, work3, work4, tree)
     firstdescendants_impl!(fdesc, tree, vertices(graph))
 
@@ -139,8 +138,12 @@ function mcs_etree_impl!(
         mcs_etree_invpermute!(work1, tree, work3, strt, stop)
         mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
 
+        # find a block of vertices to number consecutively
+        blck = mcs_etree_findblock!(work1, work2, begptr, endptr, target,
+            order, index, graph, fdesc, tree, strt, stop, root)
+
         # reorder the subtree and change the root to `root`
-        fanc = mcs_etree_changeroot!(work1, work2, work3, order, index, graph, fdesc, tree, strt, stop, root)
+        fanc = mcs_etree_changeroot!(work1, work2, work3, order, index, graph, fdesc, tree, strt, stop, blck)
         mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
         mcs_etree_invpermute!(work1, tree, work3, strt, stop)    
 
@@ -151,19 +154,23 @@ function mcs_etree_impl!(
         mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
 
         # add `root` to the skeleton graph
-        for v in neighbors(graph, order[stop])
-            i = index[v]
+        for i in blck:stop
+            v = order[i]
 
-            if i < stop
-                target[endptr[v] += one(E)] = stop
+            for w in neighbors(graph, v)
+                j = index[w]
+
+                if j < stop
+                    p = endptr[w] += one(V); target[p] = i
+                end
             end
         end
-        
+
         # number `root` and store the unnumbered subtrees for future processing 
-        for i in strt:stop - one(V)
+        for i in strt:blck - one(V)
             j = parentindex(tree, i)::V
 
-            if j == stop
+            if j >= blck
                 num += one(V); stops[num] = i
 
                 if fdesc[i] <= fanc <= i
@@ -186,9 +193,9 @@ function mcs_etree_prescribed!(
         stop::V,
         root::V,
     ) where {V}
-    @argcheck length(tree) <= length(index)
-    @argcheck length(tree) <= length(fdesc)
-    @argcheck length(tree) >= stop >= root >= strt
+    @assert length(tree) <= length(index)
+    @assert length(tree) <= length(fdesc)
+    @assert length(tree) >= stop >= root >= strt
 
     @inbounds n = strt - one(V); curstrt = fdesc[root]; curstop = root
 
@@ -215,6 +222,196 @@ function mcs_etree_prescribed!(
     return root
 end
 
+function mcs_etree_findblock!(
+        marks::AbstractVector{V},
+        block::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        target::AbstractVector{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+        graph::AbstractGraph{V},
+        fdesc::AbstractVector{V},
+        tree::Parent{V},
+        strt::V,
+        stop::V,
+        node::V,
+    ) where {V, E}
+    @assert nv(graph) <= length(marks)
+    @assert nv(graph) <= length(block)
+    @assert nv(graph) < length(begptr)
+    @assert nv(graph) < length(endptr)
+    @assert de(graph) <= length(target)
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
+    @assert nv(graph) <= length(fdesc)
+    @assert nv(graph) == length(tree)
+    @assert nv(graph) >= stop >= node >= strt
+
+    ndeg = zero(V); blck = stop
+
+    @inbounds block[blck] = node
+
+    @inbounds for i in strt:stop
+        marks[i] = zero(V)
+    end
+
+    @inbounds for i in ancestorindices(tree, stop)
+        marks[i] = zero(V)
+    end
+
+    if fdesc[node] < node
+        nchd = zero(V)
+
+        @inbounds for i in fdesc[node]:node - one(V)
+            if parentindex(tree, i) == node
+                nchd += one(V); block[strt + nchd - one(V)] = i
+            end
+        end
+
+        @inbounds for p in begptr[order[node]]:endptr[order[node]]
+            i = target[p]
+            marks[i] = node; ndeg += one(V)
+        end
+
+        i = node
+
+        @inbounds while i < stop
+            i = parentindex(tree, i)::V
+            ideg = ichd = zero(V)
+
+            for v in neighbors(graph, order[i])
+                j = index[v]
+
+                if stop < j
+                    if zero(V) < marks[j] < i
+                        marks[j] = i; ideg += one(V)
+                    end
+                elseif j < node
+                    for k in view(block, strt:strt + nchd - one(V))
+                        if j <= k
+                            @assert fdesc[k] <= j
+
+                            if marks[k] < i
+                                marks[k] = i; ichd += one(V)
+                            end
+
+                            break
+                        end
+                    end
+                end
+            end
+
+            if ideg == ndeg && ichd == nchd
+                blck -= one(V); block[blck] = i
+            end
+        end
+    else
+        @inbounds for v in neighbors(graph, order[node])
+            i = index[v]
+            marks[i] = strt; ndeg += one(V)
+        end
+
+        i = node
+
+        @inbounds while i < stop
+            i = parentindex(tree, i)::V
+
+            if ispositive(marks[i])
+                ideg = one(V)
+
+                for v in neighbors(graph, order[i])
+                    j = index[v]
+
+                    if zero(V) < marks[j] < i
+                        marks[j] = i; ideg += one(V)
+                    end
+                end
+
+                if ideg == ndeg
+                    blck -= one(V); block[blck] = i
+                end
+            end
+        end
+    end
+
+    return blck
+end
+
+# Change_Root2
+function mcs_etree_changeroot!(
+        head::AbstractVector{V},
+        next::AbstractVector{V},
+        alpha::AbstractVector{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+        graph::AbstractGraph{V},
+        fdesc::AbstractVector{V},
+        tree::Parent{V},
+        strt::V,
+        stop::V,
+        blck::V,
+    ) where {V}
+    @assert nv(graph) <= length(head)
+    @assert nv(graph) <= length(next)
+    @assert nv(graph) <= length(alpha)
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
+    @assert nv(graph) <= length(fdesc)
+    @assert nv(graph) <= length(tree)
+    @assert nv(graph) >= stop >= blck >= strt >= one(V)
+
+    function set(i::V)
+        @inbounds h = view(head, i)
+        return SinglyLinkedList(h, next)
+    end
+
+    @inbounds node = next[stop]; n = strt
+
+    @inbounds for i in strt:stop
+        empty!(set(i))
+
+        if i < node || node < fdesc[i]
+            alpha[i] = n; n += one(V)
+        else
+            alpha[i] = zero(V)
+        end
+    end
+
+    fanc = n
+
+    @inbounds for n in blck:stop
+        i = next[n]; alpha[i] = n
+    end
+
+    i = node
+
+    @inbounds while i < stop
+        i = parentindex(tree, i)::V
+
+        if iszero(alpha[i])
+            v = order[i]; n = stop
+
+            for w in neighbors(graph, v)
+                if v != w
+                    n = min(n, index[w])
+                end
+            end
+
+            pushfirst!(set(n), i)
+        end
+    end
+
+    n = blck - one(V)
+
+    @inbounds for m in strt:stop, i in set(m)
+        alpha[i] = n; n -= one(V)
+    end
+
+    return fanc
+end
+
+#=
 # Change_Root2
 function mcs_etree_changeroot!(
         head::AbstractVector{V},
@@ -229,14 +426,14 @@ function mcs_etree_changeroot!(
         stop::V,
         node::V,
     ) where {V}
-    @argcheck nv(graph) <= length(head)
-    @argcheck nv(graph) <= length(next)
-    @argcheck nv(graph) <= length(alpha)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
-    @argcheck nv(graph) <= length(fdesc)
-    @argcheck nv(graph) <= length(tree)
-    @argcheck nv(graph) >= stop >= node >= strt >= one(V)
+    @assert nv(graph) <= length(head)
+    @assert nv(graph) <= length(next)
+    @assert nv(graph) <= length(alpha)
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
+    @assert nv(graph) <= length(fdesc)
+    @assert nv(graph) <= length(tree)
+    @assert nv(graph) >= stop >= node >= strt >= one(V)
 
     function set(i::V)
         @inbounds h = view(head, i)
@@ -278,6 +475,7 @@ function mcs_etree_changeroot!(
 
     return fanc
 end
+=#
 
 function mcs_etree_etree!(
         tree::Parent{V},
@@ -289,11 +487,11 @@ function mcs_etree_etree!(
         stop::V,
         fanc::V,
     ) where {V}
-    @argcheck nv(graph) == length(tree)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
-    @argcheck nv(graph) <= length(ancestor)
-    @argcheck nv(graph) >= stop >= fanc >= strt >= one(V)
+    @assert nv(graph) == length(tree)
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
+    @assert nv(graph) <= length(ancestor)
+    @assert nv(graph) >= stop >= fanc >= strt >= one(V)
     n = nv(graph); parent = tree.prnt
 
     @inbounds for i in reverse(strt:fanc - one(V))
@@ -339,9 +537,9 @@ function mcs_etree_lcrs!(
         strt::V,
         stop::V,
     ) where {V}
-    @argcheck length(tree) <= length(brother)
-    @argcheck length(tree) <= length(child)
-    @argcheck length(tree) >= stop >= strt >= one(V)
+    @assert length(tree) <= length(brother)
+    @assert length(tree) <= length(child)
+    @assert length(tree) >= stop >= strt >= one(V)
 
     @inbounds for i in strt:stop
         child[i] = zero(V)
@@ -366,11 +564,11 @@ function mcs_etree_postorder!(
         strt::V,
         stop::V,
     ) where {V}
-    @argcheck length(tree) <= length(brother)
-    @argcheck length(tree) <= length(child)
-    @argcheck length(tree) <= length(index)
-    @argcheck length(tree) <= length(stack)
-    @argcheck length(tree) >= stop >= strt >= one(V)
+    @assert length(tree) <= length(brother)
+    @assert length(tree) <= length(child)
+    @assert length(tree) <= length(index)
+    @assert length(tree) <= length(stack)
+    @assert length(tree) >= stop >= strt >= one(V)
 
     mcs_etree_lcrs!(brother, child, tree, strt, stop)
     
@@ -404,10 +602,10 @@ function mcs_etree_invpermute!(
         strt::V,
         stop::V,
     ) where {V}
-    @argcheck stop <= length(order)
-    @argcheck stop <= length(index)
-    @argcheck stop <= length(alpha)
-    @argcheck stop >= strt
+    @assert stop <= length(order)
+    @assert stop <= length(index)
+    @assert stop <= length(alpha)
+    @assert stop >= strt
 
     @inbounds for i in strt:stop
         work[alpha[i]] = order[i]
@@ -428,9 +626,9 @@ function mcs_etree_invpermute!(
         strt::V,
         stop::V,
     ) where {V}
-    @argcheck length(tree) <= length(parent)
-    @argcheck length(tree) <= length(index)
-    @argcheck length(tree) >= stop >= strt >= one(V)
+    @assert length(tree) <= length(parent)
+    @assert length(tree) <= length(index)
+    @assert length(tree) >= stop >= strt >= one(V)
 
     @inbounds for i in strt:stop - one(V)
         j = parentindex(tree, i)::V
@@ -450,8 +648,8 @@ function mcs_etree_firstdescendants!(
         strt::V,
         stop::V,
     ) where {V}
-    @argcheck length(tree) <= length(fdesc)
-    @argcheck length(tree) >= stop >= strt >= one(V)
+    @assert length(tree) <= length(fdesc)
+    @assert length(tree) >= stop >= strt >= one(V)
 
     @inbounds for i in strt:stop
         fdesc[i] = i
@@ -484,20 +682,20 @@ function mcs_etree_supcnt!(
         stop::V,
         fanc::V,
     ) where {V, E}
-    @argcheck nv(graph) <= length(wt)
-    @argcheck nv(graph) < length(begptr)
-    @argcheck nv(graph) < length(endptr)
-    @argcheck de(graph) <= length(target)
-    @argcheck nv(graph) <= length(map1)
-    @argcheck nv(graph) <= length(inv1)
-    @argcheck nv(graph) <= length(fdesc)
-    @argcheck nv(graph) <= length(prev_p)
-    @argcheck nv(graph) <= length(prev_nbr)
-    @argcheck nv(graph) <= length(order)
-    @argcheck nv(graph) <= length(index)
-    @argcheck nv(graph) <= length(tree)
-    @argcheck nv(graph) >= stop >= strt >= one(V)
-    @argcheck stop + one(V) >= fanc >= strt
+    @assert nv(graph) <= length(wt)
+    @assert nv(graph) < length(begptr)
+    @assert nv(graph) < length(endptr)
+    @assert de(graph) <= length(target)
+    @assert nv(graph) <= length(map1)
+    @assert nv(graph) <= length(inv1)
+    @assert nv(graph) <= length(fdesc)
+    @assert nv(graph) <= length(prev_p)
+    @assert nv(graph) <= length(prev_nbr)
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
+    @assert nv(graph) <= length(tree)
+    @assert nv(graph) >= stop >= strt >= one(V)
+    @assert stop + one(V) >= fanc >= strt
 
     @inbounds for p in fanc:stop
         v = order[p]

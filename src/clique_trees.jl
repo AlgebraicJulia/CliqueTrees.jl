@@ -24,8 +24,8 @@ struct CliqueTree{V, E} <: AbstractVector{Clique{V, E}}
     graph::BipartiteGraph{V, E, FVector{E}, FVector{V}}
 
     function CliqueTree{V, E}(tree::SupernodeTree{V}, graph::BipartiteGraph{V, E}) where {V, E}
-        @argcheck nv(residuals(tree)) == nv(graph)
-        @argcheck nov(residuals(tree)) == nov(graph)
+        @assert nv(residuals(tree)) == nv(graph)
+        @assert nov(residuals(tree)) == nov(graph)
         return new{V, E}(tree, graph)
     end
 end
@@ -434,8 +434,8 @@ function treewidth_impl!(
         graph::AbstractGraph{V},
         index::AbstractVector{V},
     ) where {W, V, E}
-    @argcheck nv(graph) <= length(weights)
-    @argcheck nv(graph) <= length(wwork1)
+    @assert nv(graph) <= length(weights)
+    @assert nv(graph) <= length(wwork1)
     
     @inbounds for v in vertices(graph)
         wwork1[index[v]] = weights[v]
@@ -623,8 +623,8 @@ function treefill_impl!(
         graph::AbstractGraph{V},
         index::AbstractVector{V},
     ) where {W, V, E}
-    @argcheck nv(graph) <= length(weights)
-    @argcheck nv(graph) <= length(wwork1)
+    @assert nv(graph) <= length(weights)
+    @assert nv(graph) <= length(wwork1)
     
     @inbounds for v in vertices(graph)
         wwork1[index[v]] = weights[v]

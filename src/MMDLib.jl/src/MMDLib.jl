@@ -10,7 +10,6 @@
 
 module MMDLib
 
-using ArgCheck
 using Base: oneto
 using FillArrays
 using ..Utilities
@@ -23,7 +22,7 @@ function mmd(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs..
 end
 
 function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
-    @argcheck neqns <= length(vwght)
+    @assert neqns <= length(vwght)
     newvwght = FVector{V}(undef, neqns)
 
     @inbounds for node in oneto(neqns)
@@ -34,8 +33,8 @@ function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abst
 end
 
 function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; delta::Integer = 0) where {V, E}
-    @argcheck neqns <= length(vwght)
-    @argcheck neqns < length(xadj)
+    @assert neqns <= length(vwght)
+    @assert neqns < length(xadj)
     @inbounds nnz = xadj[neqns + one(V)] - one(E)
     total = zero(V)
 
@@ -81,7 +80,7 @@ function mmd_impl!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
     ) where {I, V, E}
-    @argcheck neqns < length(xadj)
+    @assert neqns < length(xadj)
     @inbounds nnz = xadj[neqns + one(V)] - one(E)
 
     @inbounds for i in oneto(nnz)
@@ -151,18 +150,18 @@ function mmd!_impl!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
     ) where {I, V, E}
-    @argcheck neqns <= length(invp)
-    @argcheck neqns <= length(marker)
-    @argcheck neqns <= length(mergeparent)
-    @argcheck neqns <= length(needsupdate)
-    @argcheck neqns <= length(supersize)
-    @argcheck neqns <= length(superwght)
-    @argcheck neqns <= length(elimnext)
-    @argcheck total <= length(deghead)
-    @argcheck neqns <= length(degnext)
-    @argcheck neqns <= length(degprev)
-    @argcheck neqns <= length(vwght)
-    @argcheck neqns < length(xadj)
+    @assert neqns <= length(invp)
+    @assert neqns <= length(marker)
+    @assert neqns <= length(mergeparent)
+    @assert neqns <= length(needsupdate)
+    @assert neqns <= length(supersize)
+    @assert neqns <= length(superwght)
+    @assert neqns <= length(elimnext)
+    @assert total <= length(deghead)
+    @assert neqns <= length(degnext)
+    @assert neqns <= length(degprev)
+    @assert neqns <= length(vwght)
+    @assert neqns < length(xadj)
 
     # initialization for the minimum degree algorithm.
     @inbounds for node in oneto(neqns)

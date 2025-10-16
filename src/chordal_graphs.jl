@@ -26,20 +26,15 @@ end
 #
 # Determine whether a fill-reducing permutation is perfect.
 # The complexity is O(m + n), where m = |E| and n = |V|.
-function isperfect(
-        graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}
-    ) where {V}
+function isperfect(graph::AbstractGraph{V}, order::AbstractVector{V}, index::AbstractVector{V}) where {V}
+    @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(index)
+
     n = nv(graph)
+    f = FVector{V}(undef, n)
+    findex = FVector{V}(undef, n)
 
-    # validate arguments
-    @argcheck vertices(graph) == eachindex(index)
-    @argcheck vertices(graph) == eachindex(order)
-
-    # run algorithm
-    f = Vector{V}(undef, n)
-    findex = Vector{V}(undef, n)
-
-    for i in oneto(n)
+    @inbounds for i in oneto(n)
         w = order[i]; f[w] = w; findex[w] = i
 
         for v in neighbors(graph, w)

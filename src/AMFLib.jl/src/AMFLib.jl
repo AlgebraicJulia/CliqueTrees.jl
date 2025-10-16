@@ -41,7 +41,6 @@
 
 module AMFLib
 
-using ArgCheck
 using Base: oneto
 using FillArrays
 using ..Utilities
@@ -60,7 +59,7 @@ function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V,
 end
 
 function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
-    @argcheck n <= length(vwght)
+    @assert n <= length(vwght)
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
     norig = zero(V)
@@ -720,19 +719,19 @@ function hamf_impl!(
         w::AbstractVector{I},      # flag array
         head::AbstractVector{V},   # linked list structure
     ) where {I, V, E}
-    @argcheck nbelts <= n
-    @argcheck pfree <= iwlen <= length(iw)
-    @argcheck norig <= nbbuck
-    @argcheck n < length(pe)
-    @argcheck n <= length(len)
-    @argcheck n <= length(nv)
-    @argcheck n <= length(elen)
-    @argcheck n <= length(last)
-    @argcheck n <= length(degree)
-    @argcheck n <= length(wf)
-    @argcheck n <= length(next)
-    @argcheck n <= length(w)
-    @argcheck nbbuck + two(V) <= length(head)
+    @assert nbelts <= n
+    @assert pfree <= iwlen <= length(iw)
+    @assert norig <= nbbuck
+    @assert n < length(pe)
+    @assert n <= length(len)
+    @assert n <= length(nv)
+    @assert n <= length(elen)
+    @assert n <= length(last)
+    @assert n <= length(degree)
+    @assert n <= length(wf)
+    @assert n <= length(next)
+    @assert n <= length(w)
+    @assert nbbuck + two(V) <= length(head)
 
     @inbounds for i in oneto(n)
         elen[i] = zero(V)

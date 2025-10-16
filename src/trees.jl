@@ -24,9 +24,9 @@ struct Tree{I, Prnt, Ptr, Tgt} <: AbstractUnitRange{I}
     graph::BipartiteGraph{I, I, Ptr, Tgt}
 
     function Tree{I, Prnt, Ptr, Tgt}(tree::Parent{I, Prnt}, graph::BipartiteGraph{I, I, Ptr, Tgt}) where {I, Prnt, Ptr, Tgt}
-        @argcheck last(tree) == nov(graph)
-        @argcheck last(tree) == nv(graph) - one(I)
-        @argcheck last(tree) == ne(graph)
+        @assert last(tree) == nov(graph)
+        @assert last(tree) == nv(graph) - one(I)
+        @assert last(tree) == ne(graph)
         return new{I, Prnt, Ptr, Tgt}(tree, graph)
     end
 end

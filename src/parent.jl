@@ -23,8 +23,8 @@ struct Parent{V <: Integer, Prnt <: AbstractVector{V}} <: AbstractUnitRange{V}
     prnt::Prnt
 
     function Parent{V, Prnt}(nv::Integer, prnt::AbstractVector) where {V <: Integer, Prnt <: AbstractVector{V}}
-        @argcheck !isnegative(nv)
-        @argcheck nv <= length(prnt)
+        @assert !isnegative(nv)
+        @assert nv <= length(prnt)
         return new{V, Prnt}(nv, prnt)
     end
 end
@@ -53,27 +53,33 @@ function etree_impl!(
         tree::Parent{V},
         ancestor::AbstractVector{V},
         upper::AbstractGraph{V},
+        order::AbstractVector{V}=vertices(upper),
+        index::AbstractVector{V}=vertices(upper),
     ) where {V}
-    @argcheck nv(upper) == length(tree)
-    @argcheck nv(upper) <= length(ancestor)
+    @assert nv(upper) == length(tree)
+    @assert nv(upper) <= length(ancestor)
+    @assert nv(upper) <= length(order)
+    @assert nv(upper) <= length(index)
     n = nv(upper); parent = tree.prnt
 
     @inbounds for i in oneto(n)
         parent[i] = zero(V)
         ancestor[i] = zero(V)
 
-        for k in neighbors(upper, i)
-            r = k
+        for k in neighbors(upper, order[i])
+            r = index[k]
 
-            while !iszero(ancestor[r]) && ancestor[r] != i
-                t = ancestor[r]
-                ancestor[r] = i
-                r = t
-            end
+            if r < i
+                while !iszero(ancestor[r]) && ancestor[r] != i
+                    t = ancestor[r]
+                    ancestor[r] = i
+                    r = t
+                end
 
-            if iszero(ancestor[r])
-                ancestor[r] = i
-                parent[r] = i
+                if iszero(ancestor[r])
+                    ancestor[r] = i
+                    parent[r] = i
+                end
             end
         end
     end
@@ -87,8 +93,8 @@ function lcrs_impl!(
         child::AbstractVector{V},
         tree::Parent{V},
     ) where {V}
-    @argcheck length(tree) <= length(brother)
-    @argcheck length(tree) <= length(child)
+    @assert length(tree) <= length(brother)
+    @assert length(tree) <= length(child)
     root = zero(V)
 
     @inbounds for i in tree
@@ -112,9 +118,9 @@ function reverse!_impl!(
         graph::BipartiteGraph{V, V},
         tree::Parent{V},
     ) where {V}
-    @argcheck length(tree) == nv(graph) - one(V)
-    @argcheck length(tree) == nov(graph)
-    @argcheck length(tree) == ne(graph)
+    @assert length(tree) == nv(graph) - one(V)
+    @assert length(tree) == nov(graph)
+    @assert length(tree) == ne(graph)
 
     @inbounds for i in vertices(graph)
         ii = i + one(V)
@@ -171,15 +177,15 @@ function supcnt_impl!(
         lower::AbstractGraph{V},
         tree::Parent{V}
     ) where {W, V}
-    @argcheck nv(lower) <= length(wt)
-    @argcheck nv(lower) <= length(map0)
-    @argcheck nv(lower) <= length(inv0)
-    @argcheck nv(lower) <= length(inv1)
-    @argcheck nv(lower) <= length(fdesc)
-    @argcheck nv(lower) <= length(prev_p)
-    @argcheck nv(lower) <= length(prev_nbr)
-    @argcheck nv(lower) <= length(weights)
-    @argcheck nv(lower) <= length(tree)
+    @assert nv(lower) <= length(wt)
+    @assert nv(lower) <= length(map0)
+    @assert nv(lower) <= length(inv0)
+    @assert nv(lower) <= length(inv1)
+    @assert nv(lower) <= length(fdesc)
+    @assert nv(lower) <= length(prev_p)
+    @assert nv(lower) <= length(prev_nbr)
+    @assert nv(lower) <= length(weights)
+    @assert nv(lower) <= length(tree)
 
     n = nv(lower)
     postorder_impl!(map0, inv1, inv0, fdesc, tree)
@@ -298,11 +304,11 @@ function compositerotations_impl!(
         upper::AbstractGraph{V},
         clique::AbstractVector{V},
     ) where {V, E}
-    @argcheck nv(upper) <= length(alpha)
-    @argcheck nv(upper) <= length(order)
-    @argcheck nv(upper) <= length(index)
-    @argcheck nv(upper) <= length(fdesc)
-    @argcheck nv(upper) == nv(lower)
+    @assert nv(upper) <= length(alpha)
+    @assert nv(upper) <= length(order)
+    @assert nv(upper) <= length(index)
+    @assert nv(upper) <= length(fdesc)
+    @assert nv(upper) == nv(lower)
     n = nv(upper)
     etree_impl!(tree, fdesc, upper)
     reverse!_impl!(lower, upper)
@@ -384,10 +390,10 @@ function postorder_impl!(
         stack::AbstractVector{V},
         tree::Parent{V},
     ) where {V}
-    @argcheck length(tree) <= length(brother)
-    @argcheck length(tree) <= length(child)
-    @argcheck length(tree) <= length(index)
-    @argcheck length(tree) <= length(stack)
+    @assert length(tree) <= length(brother)
+    @assert length(tree) <= length(child)
+    @assert length(tree) <= length(index)
+    @assert length(tree) <= length(stack)
     num = zero(V)
 
     root = lcrs_impl!(brother, child, tree)
@@ -447,10 +453,10 @@ end
 function firstdescendants_impl!(
         fdesc::AbstractVector{V},
         tree::Parent{V},
-        index::AbstractVector{V},
+        index::AbstractVector{V}=tree,
     ) where {V}
-    @argcheck length(tree) <= length(fdesc)
-    @argcheck length(tree) <= length(index)
+    @assert length(tree) <= length(fdesc)
+    @assert length(tree) <= length(index)
 
     @inbounds for i in tree
         fdesc[i] = index[i]
@@ -472,8 +478,8 @@ function invpermute!_impl!(
         tree::Parent{V},
         index::AbstractVector{V},
     ) where {V}
-    @argcheck length(tree) <= length(parent)
-    @argcheck length(tree) <= length(index)
+    @assert length(tree) <= length(parent)
+    @assert length(tree) <= length(index)
 
     @inbounds for i in tree
         j = parentindex(tree, i)
@@ -511,7 +517,7 @@ function Base.copy(tree::Parent)
 end
 
 function Base.copy!(dst::Parent, src::Parent)
-    @argcheck length(dst) == length(src)
+    @assert length(dst) == length(src)
     copyto!(dst.prnt, 1, src.prnt, 1, length(dst))
     return dst
 end

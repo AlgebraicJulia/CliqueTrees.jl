@@ -44,7 +44,7 @@ LinWork{Float64}:
   - `cholfact`: factorized coefficient matrix
 """
 function lininit(nrhs::Integer, cholfact::CholFact{T, I}) where {T, I}
-    @argcheck !isnegative(nrhs)
+    @assert !isnegative(nrhs)
     symbfact = cholfact.symbfact
     tree = symbfact.tree
     separator = separators(tree)
@@ -96,7 +96,7 @@ LinWork{Float64}:
   - `ldltfact`: factorized coefficient matrix
 """
 function lininit(nrhs::Integer, ldltfact::LDLTFact{T, I}) where {T, I}
-    @argcheck !isnegative(nrhs)
+    @assert !isnegative(nrhs)
     symbfact = ldltfact.symbfact
     tree = symbfact.tree
     separator = separators(tree)
@@ -230,8 +230,8 @@ function linsolve!(rhs::AbstractVector, linwork::LinWork, cholfact::CholFact, si
 end
 
 function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, cholfact::CholFact{T, I}, side::Val{false}) where {T, I}
-    @argcheck nov(separators(cholfact.symbfact.tree)) == size(rhs, 1)
-    @argcheck length(linwork.vecval) >= length(rhs)
+    @assert nov(separators(cholfact.symbfact.tree)) == size(rhs, 1)
+    @assert length(linwork.vecval) >= length(rhs)
 
     tree = cholfact.symbfact.tree
     neqns = nov(separators(tree))
@@ -248,9 +248,9 @@ function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, cholfact::CholFa
 end
 
 function linsolve!(rhs::AbstractVector, linwork::LinWork{T, I}, cholfact::CholFact{T, I}, side::Val{true}) where {T, I}
-    @argcheck nov(separators(cholfact.symbfact.tree)) == length(rhs)
-    @argcheck length(linwork.frtval) >= cholfact.symbfact.njmax
-    @argcheck length(linwork.vecval) >= length(rhs)
+    @assert nov(separators(cholfact.symbfact.tree)) == length(rhs)
+    @assert length(linwork.frtval) >= cholfact.symbfact.njmax
+    @assert length(linwork.vecval) >= length(rhs)
 
     tree = cholfact.symbfact.tree
     perm = cholfact.symbfact.perm
@@ -295,9 +295,9 @@ function linsolve!(rhs::AbstractVector, linwork::LinWork{T, I}, cholfact::CholFa
 end
 
 function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, cholfact::CholFact{T, I}, side::Val{true}) where {T, I}
-    @argcheck nov(separators(cholfact.symbfact.tree)) == size(rhs, 2)
-    @argcheck length(linwork.frtval) >= cholfact.symbfact.njmax * size(rhs, 1)
-    @argcheck length(linwork.vecval) >= length(rhs)
+    @assert nov(separators(cholfact.symbfact.tree)) == size(rhs, 2)
+    @assert length(linwork.frtval) >= cholfact.symbfact.njmax * size(rhs, 1)
+    @assert length(linwork.vecval) >= length(rhs)
 
     tree = cholfact.symbfact.tree
     perm = cholfact.symbfact.perm
@@ -458,8 +458,8 @@ function linsolve!(rhs::AbstractVector, linwork::LinWork, ldltfact::LDLTFact, si
 end
 
 function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, ldltfact::LDLTFact{T, I}, side::Val{false}) where {T, I}
-    @argcheck nov(separators(ldltfact.symbfact.tree)) == size(rhs, 1)
-    @argcheck length(linwork.vecval) >= length(rhs)
+    @assert nov(separators(ldltfact.symbfact.tree)) == size(rhs, 1)
+    @assert length(linwork.vecval) >= length(rhs)
 
     tree = ldltfact.symbfact.tree
     neqns = nov(separators(tree))
@@ -476,9 +476,9 @@ function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, ldltfact::LDLTFa
 end
 
 function linsolve!(rhs::AbstractVector, linwork::LinWork{T, I}, ldltfact::LDLTFact{T, I}, side::Val{true}) where {T, I}
-    @argcheck nov(separators(ldltfact.symbfact.tree)) == length(rhs)
-    @argcheck length(linwork.frtval) >= ldltfact.symbfact.njmax
-    @argcheck length(linwork.vecval) >= length(rhs)
+    @assert nov(separators(ldltfact.symbfact.tree)) == length(rhs)
+    @assert length(linwork.frtval) >= ldltfact.symbfact.njmax
+    @assert length(linwork.vecval) >= length(rhs)
 
     tree = ldltfact.symbfact.tree
     perm = ldltfact.symbfact.perm
@@ -527,9 +527,9 @@ function linsolve!(rhs::AbstractVector, linwork::LinWork{T, I}, ldltfact::LDLTFa
 end
 
 function linsolve!(rhs::AbstractMatrix, linwork::LinWork{T, I}, ldltfact::LDLTFact{T, I}, side::Val{true}) where {T, I}
-    @argcheck nov(separators(ldltfact.symbfact.tree)) == size(rhs, 2)
-    @argcheck length(linwork.frtval) >= ldltfact.symbfact.njmax * size(rhs, 1)
-    @argcheck length(linwork.vecval) >= length(rhs)
+    @assert nov(separators(ldltfact.symbfact.tree)) == size(rhs, 2)
+    @assert length(linwork.frtval) >= ldltfact.symbfact.njmax * size(rhs, 1)
+    @assert length(linwork.vecval) >= length(rhs)
 
     tree = ldltfact.symbfact.tree
     perm = ldltfact.symbfact.perm

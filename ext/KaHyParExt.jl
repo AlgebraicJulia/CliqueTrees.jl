@@ -1,6 +1,5 @@
 module KaHyParExt
 
-using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
@@ -23,9 +22,9 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, 
 end
 
 function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, vwght::AbstractVector{WINT1}, ewght::AbstractVector{WINT2}, graph::BipartiteGraph{VINT2, EINT}, imbalance::PINT, alg::KaHyParND)
-    @argcheck nov(graph) <= length(part)
-    @argcheck nov(graph) <= length(vwght)
-    @argcheck nv(graph) <= length(ewght)
+    @assert nov(graph) <= length(part)
+    @assert nov(graph) <= length(vwght)
+    @assert nv(graph) <= length(ewght)
 
     m = ne(graph); n = nv(graph); nn = n + one(VINT2)
 

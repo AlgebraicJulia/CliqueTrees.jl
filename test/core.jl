@@ -641,6 +641,19 @@ end
     end
 end
 
+@testset "chordality" begin
+    @test  ischordal(smallgraph(:bull))
+    @test  ischordal(smallgraph(:diamond))
+    @test  ischordal(smallgraph(:housex))
+    @test  ischordal(barbell_graph(10, 10))
+    @test  ischordal(binary_tree(10))
+    @test !ischordal(smallgraph(:chvatal))
+    @test !ischordal(smallgraph(:cubical))
+    @test !ischordal(smallgraph(:desargues))
+    @test !ischordal(smallgraph(:dodecahedral) )
+    @test !ischordal(smallgraph(:frucht) )
+end
+
 # Chordal Graphs and Semidefinite Optimization
 # Vandenberghe and Andersen
 @testset "vandenberghe and andersen" begin

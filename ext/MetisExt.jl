@@ -1,6 +1,5 @@
 module MetisExt
 
-using ArgCheck
 using Base: oneto
 using Base.Order
 using CliqueTrees
@@ -36,7 +35,7 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, 
 end
 
 function metis(weights::AbstractVector, graph::BipartiteGraph{INT, INT}, alg::METIS)
-    @argcheck nv(graph) <= length(weights)
+    @assert nv(graph) <= length(weights)
     n = nv(graph); new = Vector{INT}(undef, n)
 
     @inbounds for v in oneto(n)
@@ -76,10 +75,10 @@ function metis(weights::Vector{INT}, graph::BipartiteGraph{INT, INT}, alg::METIS
 end
 
 function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, part::AbstractVector{INT}, weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, imbalance::INT, alg::METISND)
-    @argcheck NOPTIONS <= length(options)
-    @argcheck nv(graph) <= length(part)
-    @argcheck nv(graph) <= length(weights)
-    @argcheck ispositive(imbalance)
+    @assert NOPTIONS <= length(options)
+    @assert nv(graph) <= length(part)
+    @assert nv(graph) <= length(weights)
+    @assert ispositive(imbalance)
     n = nv(graph); m = ne(graph); nn = n + one(INT)
 
     # construct options

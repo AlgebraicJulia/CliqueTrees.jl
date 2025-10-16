@@ -30,7 +30,7 @@ Add a clause to a solver.
 """
 function clause!(solver::Solver, clause)
     for lit in clause
-        @argcheck one(Int32) <= abs(lit) <= length(solver)
+        @assert one(Int32) <= abs(lit) <= length(solver)
         add(solver.handle, solver.solver, Int32(lit))
     end
 
@@ -81,19 +81,19 @@ function Base.size(solver::Solver)
 end
 
 function Base.setindex!(solver::Solver, val::Integer, lit::Integer)
-    @argcheck one(Int32) <= lit <= length(solver)
-    @argcheck isone(val) || isone(-val)
+    @assert one(Int32) <= lit <= length(solver)
+    @assert isone(val) || isone(-val)
     assume(solver.handle, solver.solver, Int32(val * lit))
     return solver
 end
 
 function Base.getindex(solver::Solver, lit::Integer)
-    @argcheck one(Int32) <= lit <= length(solver)
+    @assert one(Int32) <= lit <= length(solver)
     return sign(val(solver.handle, solver.solver, Int32(lit)))
 end
 
 function Base.resize!(solver::Solver, num::Integer)
-    @argcheck !isnegative(num)
+    @assert !isnegative(num)
     solver.num = num
     return solver
 end

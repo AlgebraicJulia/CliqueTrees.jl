@@ -709,10 +709,10 @@ function ND{S}(
         imbalance::Integer = 130,
         scale::Integer = 1,
     ) where {S, A, D}
-    @argcheck ispositive(width)
-    @argcheck ispositive(level)
-    @argcheck ispositive(imbalance)
-    @argcheck ispositive(scale)
+    @assert ispositive(width)
+    @assert ispositive(level)
+    @assert ispositive(imbalance)
+    @assert ispositive(scale)
     return ND{S, A, D}(alg, dis, width, level, imbalance, scale)
 end
 
@@ -734,9 +734,9 @@ function NDS{S}(
         level::Integer = 6,
         imbalances::AbstractRange = 130:130,
     ) where {S, A, D}
-    @argcheck ispositive(width)
-    @argcheck ispositive(level)
-    @argcheck ispositive(first(imbalances))
+    @assert ispositive(width)
+    @assert ispositive(level)
+    @assert ispositive(first(imbalances))
     return NDS{S, A, D}(alg, dis, width, level, imbalances)
 end
 
@@ -1486,22 +1486,31 @@ end
 # The complexity is O(m + n), where m = |E| and n = |V|.
 function mcs(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V))) where {V}
     j = one(V); n = nv(graph)
-    size = ones(V, n)
+    size = FVector{V}(undef, n)
     alpha = Vector{V}(undef, n)
 
+    @inbounds for v in vertices(graph)
+        size[v] = one(V)
+    end
+
     # construct bucket queue data structure
-    head = zeros(V, n + one(V))
-    prev = Vector{V}(undef, n)
-    next = Vector{V}(undef, n)
+    head = FVector{V}(undef, n + one(V))
+    prev = FVector{V}(undef, n)
+    next = FVector{V}(undef, n)
 
     function set(i)
-        return @inbounds DoublyLinkedList(view(head, i), prev, next)
+        @inbounds h = view(head, i)
+        return DoublyLinkedList(h, prev, next)
+    end
+
+    @inbounds for i in oneto(n + one(V))
+        empty!(set(i))
     end
 
     @inbounds prepend!(set(j), vertices(graph))
 
     # run algorithm
-    @inbounds for v in reverse(clique)
+    @inbounds for v in Iterators.reverse(clique)
         delete!(set(j), v)
         alpha[v] = n
         size[v] = one(V) - j
@@ -1556,9 +1565,9 @@ function rootls_impl!(
         root::V,
         tag::V,
     ) where {V}
-    @argcheck nv(graph) < length(xls)
-    @argcheck nv(graph) <= length(ls)
-    @argcheck nv(graph) <= length(marker)
+    @assert nv(graph) < length(xls)
+    @assert nv(graph) <= length(ls)
+    @assert nv(graph) <= length(marker)
 
     # initialization...
     n = nv(graph)
@@ -1600,9 +1609,9 @@ function fnroot_impl!(
         marker::AbstractVector{V},
         root::V,
     ) where {V}
-    @argcheck nv(graph) < length(xls)
-    @argcheck nv(graph) <= length(ls)
-    @argcheck nv(graph) <= length(marker)
+    @assert nv(graph) < length(xls)
+    @assert nv(graph) <= length(ls)
+    @assert nv(graph) <= length(marker)
 
     # initialize `tag`
     tag = one(V)
@@ -2164,7 +2173,7 @@ end
 # Jdrasil: A Modular Library for Computing Tree Decompositions
 # Bannach, Berndt, and Ehlers
 function sat(weights::AbstractVector{W}, graph::AbstractGraph{V}, upperbound::W, ::Val{H}) where {W, V, H}
-    @argcheck !isnegative(upperbound)
+    @assert !isnegative(upperbound)
     n = Int32(nv(graph))
 
     # compute a maximal clique
@@ -2450,13 +2459,13 @@ function twins_impl!(
         graph::AbstractGraph{V},
         ::Val{S},
     ) where {V, S}
-    @argcheck nv(graph) < length(var)
-    @argcheck nv(graph) <= length(svar)
-    @argcheck nv(graph) <= length(flag)
-    @argcheck nv(graph) <= length(size)
-    @argcheck nv(graph) <= length(head)
-    @argcheck nv(graph) <= length(prev)
-    @argcheck nv(graph) <= length(next)
+    @assert nv(graph) < length(var)
+    @assert nv(graph) <= length(svar)
+    @assert nv(graph) <= length(flag)
+    @assert nv(graph) <= length(size)
+    @assert nv(graph) <= length(head)
+    @assert nv(graph) <= length(prev)
+    @assert nv(graph) <= length(next)
 
     n = nv(graph); m = zero(V)
 
@@ -2597,12 +2606,12 @@ function twins_impl!(
         ::Val{S},
         tao::T,
     ) where {V, S, T}
-    @argcheck nv(graph) < length(prev)
-    @argcheck nv(graph) <= length(next)
-    @argcheck nv(graph) <= length(adjmap)
-    @argcheck nv(graph) <= length(cosine)
-    @argcheck nv(graph) <= length(degree)
-    @argcheck zero(T) < tao <= one(T)
+    @assert nv(graph) < length(prev)
+    @assert nv(graph) <= length(next)
+    @assert nv(graph) <= length(adjmap)
+    @assert nv(graph) <= length(cosine)
+    @assert nv(graph) <= length(degree)
+    @assert zero(T) < tao <= one(T)
     n = nv(graph); nb = zero(V)
     list = DoublyLinkedList(head, prev, next)
 
@@ -2755,8 +2764,8 @@ function compress_impl!(
         graph::AbstractGraph{V},
         ::Val{S},
     ) where {V, E, S}
-    @argcheck nv(graph) < length(outptr)
-    @argcheck ne(graph) <= length(outtgt)
+    @assert nv(graph) < length(outptr)
+    @assert ne(graph) <= length(outtgt)
 
     partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
     project = svar; marker = size; tag = zero(V)
@@ -2817,8 +2826,8 @@ function compress_impl!(
         ::Val{S},
         tao::Number,
     ) where {V, E, S}
-    @argcheck nv(graph) < length(outptr)
-    @argcheck ne(graph) <= length(outtgt)
+    @assert nv(graph) < length(outptr)
+    @assert ne(graph) <= length(outtgt)
 
     partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tao)
     project = adjmap; marker = cosine; tag = zero(V)
@@ -2869,8 +2878,8 @@ function compressweights(weights::AbstractVector{W}, project::AbstractGraph) whe
 end
 
 function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVector{W}, project::AbstractGraph) where {W}
-    @argcheck nv(project) <= length(cmpweights)
-    @argcheck nov(project) <= length(weights)
+    @assert nv(project) <= length(cmpweights)
+    @assert nov(project) <= length(weights)
 
     @inbounds for vcmp in vertices(project)
         wgt = zero(W)

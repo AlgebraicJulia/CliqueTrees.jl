@@ -20,8 +20,8 @@ struct SupernodeTree{V} <: AbstractVector{UnitRange{V}}
     graph::BipartiteGraph{V, V, FVector{V}, OneTo{V}}
 
     function SupernodeTree{V}(tree::Tree, graph::BipartiteGraph) where {V}
-        @argcheck last(tree) == nv(graph)
-        @argcheck ne(graph) == nov(graph)
+        @assert last(tree) == nv(graph)
+        @assert ne(graph) == nov(graph)
         return new{V}(tree, graph)
     end
 end

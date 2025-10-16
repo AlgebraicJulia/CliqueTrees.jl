@@ -1,6 +1,5 @@
 module MLFLib
 
-using ArgCheck
 using Base: oneto
 using FillArrays
 using ..Utilities

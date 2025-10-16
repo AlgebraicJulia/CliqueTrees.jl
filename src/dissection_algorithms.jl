@@ -72,16 +72,16 @@ function partition!(
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
     ) where {W, V, E}
-    @argcheck nv(graph) <= length(label0)
-    @argcheck nv(graph) <= length(label1)
-    @argcheck nv(graph) < length(pointer0)
-    @argcheck nv(graph) < length(pointer1)
-    @argcheck de(graph) <= length(target0)
-    @argcheck de(graph) <= length(target1)
-    @argcheck nv(graph) <= length(part)
-    @argcheck nv(graph) <= length(project0)
-    @argcheck nv(graph) <= length(project1)
-    @argcheck nv(graph) <= length(weights)
+    @assert nv(graph) <= length(label0)
+    @assert nv(graph) <= length(label1)
+    @assert nv(graph) < length(pointer0)
+    @assert nv(graph) < length(pointer1)
+    @assert de(graph) <= length(target0)
+    @assert de(graph) <= length(target1)
+    @assert nv(graph) <= length(part)
+    @assert nv(graph) <= length(project0)
+    @assert nv(graph) <= length(project1)
+    @assert nv(graph) <= length(weights)
 
     n = nv(graph)
 
@@ -211,10 +211,10 @@ function hpartition!(
         hgraph::AbstractGraph{HV},
         graph::AbstractGraph{V},
     ) where {W, V, E, HV}
-    @argcheck nov(hgraph) <= length(hproject0)
-    @argcheck nov(hgraph) <= length(hproject1)
-    @argcheck nv(hgraph) <= length(part)
-    @argcheck nv(hgraph) == nv(graph)
+    @assert nov(hgraph) <= length(hproject0)
+    @assert nov(hgraph) <= length(hproject1)
+    @assert nv(hgraph) <= length(part)
+    @assert nv(hgraph) == nv(graph)
 
     h0 = one(V)
     h1 = one(V)
@@ -291,60 +291,49 @@ function compresspart(
         subgraph::AbstractGraph{V},
         sublabel::AbstractVector{V},
     ) where {W, V}
-    @argcheck nsup <= length(supweights)
-    @argcheck nv(subgraph) <= length(sublabel)
+    @assert nv(subgraph) <= nsup <= length(supweights)
+    @assert nv(subgraph) <= length(sublabel)
 
     E = etype(subgraph); nsub = nv(subgraph); msub = de(subgraph); nnsub = nsub + one(V)
-    #
-    #     + ------------------------- +
-    #     |          subgraph         |
-    #     |  project ↙     ↘ suplabel |
-    #     |    cmpgraph ⇷ supgraph    |
-    #     |          cmplabel         |
-    #     + ------------------------- +
-    #
-    prjpointer = FVector{V}(undef, nnsub)
-    prjtarget = FVector{V}(undef, nsub)
-    cmppointer = FVector{E}(undef, nnsub)
-    cmptarget = FVector{V}(undef, msub)
-    cmptype = Val(true) # true twins
-    
-    cmpgraph, project = compress_impl!(work0, prjpointer, work1, prjtarget,
-        work2, work3, work4, work5, cmppointer, cmptarget, subgraph, cmptype)
 
-    ncmp = nv(cmpgraph); kcmp = zero(V)
-    cmpweights = FVector{V}(undef, ncmp)
-    cmplabel = BipartiteGraph(nsup, ncmp, nsub, prjpointer, prjtarget)
+    prjptr = FVector{V}(undef, nnsub)
+    cmpptr = FVector{E}(undef, nnsub)
+    prjtgt = FVector{V}(undef, nsub)
+    cmptgt = FVector{V}(undef, msub)
+
+    cmpgraph, project = compress_impl!(work0, prjptr, work1, prjtgt,
+        work2, work3, work4, work5, cmpptr, cmptgt, subgraph, Val(true))
 
     @inbounds for v in vertices(subgraph)
-        prjtarget[v] = sublabel[prjtarget[v]]
+        w = sublabel[prjtgt[v]]
+        prjtgt[v] = w
     end
 
-    @inbounds for v in vertices(cmpgraph)
-        w = zero(W); f = false
+    kcmp = zero(V)
+    ncmp = nv(cmpgraph)
+
+    cmpweights = FVector{W}(undef, ncmp)
+    cmplabel = BipartiteGraph(nsup, ncmp, nsub, prjptr, prjtgt) 
+
+    @inbounds for u in vertices(cmpgraph)
+        wgt = zero(W); flg = false
         
-        for u in neighbors(cmplabel, v)
-            w += supweights[u]; f = f || istwo(part[u])
+        for w in neighbors(cmplabel, u)
+            wgt += supweights[w]
+
+            if !flg && istwo(part[w])
+                flg = true
+                kcmp += one(V); sublabel[kcmp] = u
+            end
         end
 
-        cmpweights[v] = w
-
-        if f
-            kcmp += one(V); sublabel[kcmp] = v
-        end
+        cmpweights[u] = wgt
     end
-    #
-    #     + -------------------------------- +
-    #     |              cmplabel    part    |
-    #     |        cmpgraph ⇷ supgraph → 3   |
-    #     | cmpclique ↑                  ↑ 3 |
-    #     |          kcmp        →       1   |
-    #     + -------------------------------- +
-    #
+
     cmpclique = FVector{V}(undef, kcmp)
 
-    @inbounds for i in oneto(kcmp)
-        cmpclique[i] = sublabel[i]
+    @inbounds for k in oneto(kcmp)
+        cmpclique[k] = sublabel[k]
     end
 
     return (cmpgraph, cmpweights, cmplabel, cmpclique)
@@ -359,8 +348,8 @@ function hcompresspart(
         label::AbstractGraph{V},
         clique::AbstractVector{V},
     ) where {HV, V}
-    @argcheck nov(hgraph) <= length(mark)
-    @argcheck nv(hgraph) == nov(label)
+    @assert nov(hgraph) <= length(mark)
+    @assert nv(hgraph) == nov(label)
 
     HE = etype(hgraph); hn = convert(HV, nv(label)); hm = convert(HE, length(clique))
 
@@ -416,7 +405,7 @@ end
 # Construct a β-quasi-clique cover.
 # The complexity is O( ∑ |N(v)|² ) ≤ O( Δ|E| ).
 function qcc!(graph::BipartiteGraph{V, E}, beta::W, order::Ordering) where {W, V, E}
-    @argcheck zero(W) < beta <= one(W)
+    @assert zero(W) < beta <= one(W)
     n = nv(graph); m = ne(graph); mm = m + one(E)
     marker = zeros(V, n)
 

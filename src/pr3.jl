@@ -3,7 +3,7 @@ function pr3(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) wh
 end
 
 function pr3(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where {W <: Number, V}
-    @argcheck nv(graph) <= length(weights)
+    @assert nv(graph) <= length(weights)
 
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
@@ -151,25 +151,25 @@ function pr3_impl!(
         graph::AbstractGraph{V},
         width::W,
     ) where {W, V, E}
-    @argcheck nv(graph) <= length(marker)
-    @argcheck nv(graph) <= length(stack0)
-    @argcheck nv(graph) <= length(stack1)
-    @argcheck nv(graph) <= length(stack2)
-    @argcheck nv(graph) <= length(stack3)
-    @argcheck nv(graph) <= length(stack4)
-    @argcheck nv(graph) <= length(stack5)
-    @argcheck nv(graph) <= length(index0)
-    @argcheck nv(graph) <= length(index1)
-    @argcheck nv(graph) <= length(index2)
-    @argcheck nv(graph) <= length(index3)
-    @argcheck nv(graph) < length(tmpptr)
-    @argcheck nv(graph) <= length(degree)
-    @argcheck nv(graph) <= length(number)
-    @argcheck de(graph) <= length(source)
-    @argcheck de(graph) <= length(target)
-    @argcheck nv(graph) < length(begptr)
-    @argcheck nv(graph) <= length(endptr)
-    @argcheck de(graph) <= length(invptr)
+    @assert nv(graph) <= length(marker)
+    @assert nv(graph) <= length(stack0)
+    @assert nv(graph) <= length(stack1)
+    @assert nv(graph) <= length(stack2)
+    @assert nv(graph) <= length(stack3)
+    @assert nv(graph) <= length(stack4)
+    @assert nv(graph) <= length(stack5)
+    @assert nv(graph) <= length(index0)
+    @assert nv(graph) <= length(index1)
+    @assert nv(graph) <= length(index2)
+    @assert nv(graph) <= length(index3)
+    @assert nv(graph) < length(tmpptr)
+    @assert nv(graph) <= length(degree)
+    @assert nv(graph) <= length(number)
+    @assert de(graph) <= length(source)
+    @assert de(graph) <= length(target)
+    @assert nv(graph) < length(begptr)
+    @assert nv(graph) <= length(endptr)
+    @assert de(graph) <= length(invptr)
 
     # `n` is the number of vertices in the input graph
     n = nv(graph)

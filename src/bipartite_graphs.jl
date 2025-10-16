@@ -51,11 +51,11 @@ struct BipartiteGraph{V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt 
             ptr::AbstractVector,
             tgt::AbstractVector,
         ) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt <: AbstractVector{V}}
-        @argcheck !isnegative(nov)
-        @argcheck !isnegative(nv)
-        @argcheck !isnegative(ne)
-        @argcheck nv < length(ptr)
-        @argcheck ne <= length(tgt)
+        @assert !isnegative(nov)
+        @assert !isnegative(nv)
+        @assert !isnegative(ne)
+        @assert nv < length(ptr)
+        @assert ne <= length(tgt)
         return new{V, E, Ptr, Tgt}(nov, nv, ne, ptr, tgt)
     end
 end
@@ -245,9 +245,9 @@ function sympermute!_impl!(
         index::AbstractVector,
         order::Ordering,
     ) where {V, E}
-    @argcheck nv(source) < length(pointer)
-    @argcheck nv(source) <= length(index)
-    @argcheck half(de(source)) <= length(target)
+    @assert nv(source) < length(pointer)
+    @assert nv(source) <= length(index)
+    @assert half(de(source)) <= length(target)
     n = nv(source)
 
     @inbounds for i in oneto(n)
@@ -316,9 +316,9 @@ function reverse!_impl!(
         target::BipartiteGraph{V, E},
         source::AbstractGraph{V},
     ) where {V, E}
-    @argcheck nov(target) == nv(source)
-    @argcheck nov(source) == nv(target)
-    @argcheck de(source) == de(target)
+    @assert nov(target) == nv(source)
+    @assert nov(source) == nv(target)
+    @assert de(source) == de(target)
     reverse!_impl!(pointers(target), targets(target), source)
     return target
 end
@@ -328,8 +328,8 @@ function reverse!_impl!(
         target::AbstractVector{V},
         graph::AbstractGraph{V},
     ) where {V, E}
-    @argcheck nov(graph) < length(pointer)
-    @argcheck de(graph) <= length(target)
+    @assert nov(graph) < length(pointer)
+    @assert de(graph) <= length(target)
     h = nov(graph); n = nv(graph); m = de(graph)
     
     @inbounds for i in outvertices(graph)
@@ -394,9 +394,9 @@ function simplegraph(graph::AbstractGraph{V}) where {V}
 end
 
 function linegraph(ve::AbstractGraph{V}, ev::AbstractGraph{V}) where {V}
-    @argcheck nv(ve) == nov(ev)
-    @argcheck nv(ev) == nov(ve)
-    @argcheck ne(ve) == ne(ev)
+    @assert nv(ve) == nov(ev)
+    @assert nv(ev) == nov(ve)
+    @assert ne(ve) == ne(ev)
 
     E = etype(ve); n = nv(ve); m = zero(E)
     marker = FVector{V}(undef, n)
@@ -505,19 +505,19 @@ function Base.copy(graph::BipartiteGraph)
 end
 
 function Base.copy!(dst::BipartiteGraph, src::BipartiteGraph)
-    @argcheck nov(dst) == nov(src)
-    @argcheck nv(dst) == nv(src)
-    @argcheck ne(dst) == ne(src)
+    @assert nov(dst) == nov(src)
+    @assert nv(dst) == nv(src)
+    @assert ne(dst) == ne(src)
     copyto!(pointers(dst), pointers(src))
     copyto!(targets(dst), targets(src))
     return dst
 end
 
 function Base.copy!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGraph) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}}
-    @argcheck nov(dst) == nov(src)
-    @argcheck nv(dst) == nv(src)
-    @argcheck ne(dst) == ne(src)
-    @argcheck targets(dst) == targets(src)
+    @assert nov(dst) == nov(src)
+    @assert nv(dst) == nv(src)
+    @assert ne(dst) == ne(src)
+    @assert targets(dst) == targets(src)
     copyto!(pointers(dst), pointers(src))
     return dst
 end

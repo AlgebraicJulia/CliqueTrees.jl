@@ -118,7 +118,7 @@ function lowerbound(weights::AbstractVector, graph::AbstractGraph, ::MMW{S}) whe
 end
 
 function mmw(weights::AbstractVector{W}, graph::AbstractGraph{V}, strategy::Val) where {W, V}
-    @argcheck nv(graph) <= length(weights)
+    @assert nv(graph) <= length(weights)
 
     n = nv(graph)
     intweights = FVector{V}(undef, n)
@@ -132,7 +132,7 @@ function mmw(weights::AbstractVector{W}, graph::AbstractGraph{V}, strategy::Val)
 end
 
 function mmw(weights::AbstractVector{V}, graph::AbstractGraph{V}, strategy::Val) where {V}
-    @argcheck nv(graph) <= length(weights)
+    @assert nv(graph) <= length(weights)
 
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
@@ -242,18 +242,18 @@ function mmw_impl!(
         strategy::Val,
     ) where {V <: Signed, E}
     
-    @argcheck nv(graph) <= length(marker)
-    @argcheck nv(graph) <= length(degree)
-    @argcheck nv(graph) <= length(vstack)
-    @argcheck ne(graph) <= length(source)
-    @argcheck ne(graph) <= length(target)
-    @argcheck nv(graph) <= length(tmpptr)
-    @argcheck nv(graph) <  length(begptr)
-    @argcheck nv(graph) <= length(endptr)
-    @argcheck ne(graph) <= length(invptr)
-    @argcheck totdeg    <= length(head)
-    @argcheck nv(graph) <= length(prev)
-    @argcheck nv(graph) <= length(next)
+    @assert nv(graph) <= length(marker)
+    @assert nv(graph) <= length(degree)
+    @assert nv(graph) <= length(vstack)
+    @assert ne(graph) <= length(source)
+    @assert ne(graph) <= length(target)
+    @assert nv(graph) <= length(tmpptr)
+    @assert nv(graph) <  length(begptr)
+    @assert nv(graph) <= length(endptr)
+    @assert ne(graph) <= length(invptr)
+    @assert totdeg    <= length(head)
+    @assert nv(graph) <= length(prev)
+    @assert nv(graph) <= length(next)
 
     # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)

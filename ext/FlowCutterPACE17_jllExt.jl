@@ -1,6 +1,5 @@
 module FlowCutterPACE17_jllExt
 
-using ArgCheck
 using CliqueTrees
 using CliqueTrees: postorder, nov, readeo, writegr
 using FlowCutterPACE17_jll
@@ -12,8 +11,8 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, 
 end
 
 function flowcutter(graph::AbstractGraph{V}, time::Int, seed::Int) where {V}
-    @argcheck time >= 0
-    @argcheck seed >= 0
+    @assert time >= 0
+    @assert seed >= 0
 
     index = mktempdir() do tmp
         input = tmp * "/input.gr"

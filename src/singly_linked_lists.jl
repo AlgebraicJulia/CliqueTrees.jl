@@ -46,8 +46,10 @@ struct SinglyLinkedList{I, Head <: AbstractScalar{I}, Next <: AbstractVector{I}}
 end
 
 function SinglyLinkedList{I}(n::Integer) where {I}
-    head = fill(zero(I))
-    next = Vector{I}(undef, n)
+    head = FScalar{I}(undef)
+    next = FVector{I}(undef, n)
+    
+    head[] = zero(I)
     return SinglyLinkedList(head, next)
 end
 
@@ -58,13 +60,13 @@ end
     return list
 end
 
-@propagate_inbounds function Base.prepend!(list::SinglyLinkedList{I}, vector::AbstractVector) where {I}
-    if !isempty(vector)
-        @inbounds i = vector[begin]
+@propagate_inbounds function Base.prepend!(list::SinglyLinkedList{I}, v::AbstractVector) where {I}
+    if !isempty(v)
+        @inbounds i = v[begin]
         @inbounds h = list.head[]
         @inbounds list.head[] = i
 
-        for j in @view vector[(begin + 1):end]
+        for j in @view v[begin + 1:end]
             @boundscheck checkbounds(list.next, j)
             @inbounds list.next[i] = j
             i = j
@@ -75,3 +77,5 @@ end
 
     return list
 end
+
+

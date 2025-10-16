@@ -1,6 +1,5 @@
 module IPASIR
 
-using ArgCheck
 using Base: oneto
 using ..Utilities
 
