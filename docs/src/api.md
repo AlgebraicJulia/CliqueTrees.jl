@@ -49,6 +49,7 @@ MinimalChordal
 CompositeRotations
 Compression
 SafeRules
+SafeSeparators
 ConnectedComponents
 permutation
 ```
@@ -61,11 +62,6 @@ DEFAULT_SUPERNODE_TYPE
 Nodal
 Maximal
 Fundamental
-```
-
-## Linked Lists
-```@docs
-SinglyLinkedList
 ```
 
 ## Trees

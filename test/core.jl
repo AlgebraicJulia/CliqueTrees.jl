@@ -30,14 +30,15 @@ end
 end
 
 import Catlab
-import libpicosat_jll
 import CryptoMiniSat_jll
 
 @static if Sys.iswindows()
-    import libpicosat_jll as PicoSAT_jll
-    import libpicosat_jll as Lingeling_jll
+    import CryptoMiniSat_jll as libpicosat_jll
+    import CryptoMiniSat_jll as PicoSAT_jll
+    import CryptoMiniSat_jll as Lingeling_jll
     const METIS_OR_KAHYPAR = METISND
 else
+    import libpicosat_jll
     import PicoSAT_jll
     import Lingeling_jll
     const METIS_OR_KAHYPAR = KaHyParND
