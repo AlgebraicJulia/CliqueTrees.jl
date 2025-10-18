@@ -1192,13 +1192,9 @@ function SimplicialRule(; kwargs...)
 end
 
 """
-    SafeSeparators{M, A} <: EliminationAlgorithm
+    SafeSeparators{A, M} <: EliminationAlgorithm
 
     SafeSeparators(alg::EliminationAlgorithm, min::PermutationOrAlgorithm)
-
-    SafeSeparators(alg::EliminationAlgorithm)
-
-    SafeSeparators()
 
 Apple an elimination algorithm to the atoms of an almost-clique separator decomposition. The algorithm
 `min` is used to compute the decomposition.
@@ -1220,17 +1216,13 @@ Apple an elimination algorithm to the atoms of an almost-clique separator decomp
   - Bodlaender, Hans L., and Arie MCA Koster. "Safe separators for treewidth." *Discrete Mathematics* 306.3 (2006): 337-350.
   - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." arXiv preprint arXiv:2108.07551 (2021).
 """
-struct SafeSeparators{A <: EliminationAlgorithm, M <: PermutationOrAlgorithm} <: EliminationAlgorithm
+struct SafeSeparators{A <: EliminationAlgorithm, M <: MinimalAlgorithm} <: EliminationAlgorithm
     alg::A
     min::M
 end
 
-function SafeSeparators(alg::EliminationAlgorithm)
-    return SafeSeparators(alg, MinimalChordal())
-end
-
-function SafeSeparators()
-    return SafeSeparators(DEFAULT_ELIMINATION_ALGORITHM)
+function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
+    return SafeSeparators(alg, DEFAULT_MINIMAL_ALGORITHM)
 end
 
 """
@@ -1427,7 +1419,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Simplic
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSeparators)
-    error()
+    return safeseparators(weights, graph, alg.alg, alg.min)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents)
@@ -3196,6 +3188,11 @@ end
 The default algorithm.
 """
 const DEFAULT_ELIMINATION_ALGORITHM = AMF()
+
+"""
+    DEFAULT_MINIMAL_ALGORITHM = MinimalChordal(AMF())
+"""
+const DEFAULT_MINIMAL_ALGORITHM = MinimalChordal(DEFAULT_ELIMINATION_ALGORITHM)
 
 """
     RCM = RCMGL

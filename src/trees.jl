@@ -49,6 +49,11 @@ function Tree(tree::Parent{I, Prnt}) where {I, Prnt}
     return Tree{I, Prnt, FVector{I}, FVector{I}}(tree)
 end
 
+function Tree(nv::Integer, prnt::AbstractVector)
+    tree = Parent(nv, prnt)
+    return Tree(tree)
+end
+
 """
     eliminationtree([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)

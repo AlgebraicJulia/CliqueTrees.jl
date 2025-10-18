@@ -174,10 +174,6 @@ function Base.Matrix(graph::BipartiteGraph)
     return Matrix(sparse(graph))
 end
 
-# Construct a sparse symmetric matrix with a given sparsity graph.
-# The row indices of the matrix are not necessarily sorted. You can sort them as follows
-#    julia> matrix = SparseMatrixCSC{T, I}(graph)
-#    julia> sorted = copy(transpose(copy(transpose(matrix))))
 function SparseArrays.SparseMatrixCSC{T, I}(graph::BipartiteGraph) where {T, I}
     colptr = convert(Vector{I}, pointers(graph))
     rowval = convert(Vector{I}, targets(graph))
@@ -185,18 +181,15 @@ function SparseArrays.SparseMatrixCSC{T, I}(graph::BipartiteGraph) where {T, I}
     return SparseMatrixCSC{T, I}(nov(graph), nv(graph), colptr, rowval, nzval)
 end
 
-# See above.
 function SparseArrays.SparseMatrixCSC{T}(graph::BipartiteGraph{V, E}) where {T, V, E}
     I = promote_type(V, E)
     return SparseMatrixCSC{T, I}(graph)
 end
 
-# See above.
 function SparseArrays.SparseMatrixCSC(graph::BipartiteGraph)
     return SparseMatrixCSC{Bool}(graph)
 end
 
-# Construct the adjacency matrix of a graph.
 function SparseArrays.sparse(::Type{T}, ::Type{I}, graph::BipartiteGraph) where {T, I}
     graph = reverse(reverse(graph))
     matrix = SparseMatrixCSC{T, I}(graph)
@@ -204,15 +197,46 @@ function SparseArrays.sparse(::Type{T}, ::Type{I}, graph::BipartiteGraph) where 
     return matrix
 end
 
-# See above.
 function SparseArrays.sparse(::Type{T}, graph::BipartiteGraph{V, E}) where {T, V, E}
     I = promote_type(V, E)
     return sparse(T, I, graph)
 end
 
-# See above.
 function SparseArrays.sparse(graph::BipartiteGraph)
     return sparse(Bool, graph)
+end
+
+function SparseArrays.permute(graph::BipartiteGraph{V, E}, order::AbstractVector, index::AbstractVector) where {V, E}
+    m = de(graph); n = nv(graph)
+    pointer = FVector{E}(undef, n + one(V))
+    target = FVector{V}(undef, m)
+    return permute_impl!(pointer, target, graph, order, index)
+end
+
+function permute_impl!(
+        pointer::AbstractVector{E},
+        target::AbstractVector{V},
+        graph::AbstractGraph{V},
+        order::AbstractVector,
+        index::AbstractVector,
+    ) where {V, E}
+    @assert nv(graph) < length(pointer)
+    @assert de(graph) <= length(target)
+    @assert nv(graph) <= length(order)
+    @assert nov(graph) <= length(index)
+
+    @inbounds pointer[one(V)] = p = one(E)
+
+    @inbounds for i in vertices(graph)
+        for w in neighbors(graph, order[i])
+            target[p] = index[w]; p += one(V)
+        end 
+
+        pointer[i + one(V)] = p 
+    end
+
+    h = nov(graph); n = nv(graph); m = p - one(E)
+    return BipartiteGraph(h, n, m, pointer, target)
 end
 
 # Direct Methods for Sparse Linear Systems §2.11

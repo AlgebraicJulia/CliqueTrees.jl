@@ -546,6 +546,7 @@ end
             SafeRules(; tao=0.9),
             SimplicialRule(; tao=1.0),
             SimplicialRule(; tao=0.9),
+            SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
         )
@@ -612,6 +613,7 @@ end
             SafeRules(; tao=0.9),
             SimplicialRule(; tao=1.0),
             SimplicialRule(; tao=0.9),
+            SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -909,6 +911,7 @@ end
                         SafeRules(; tao=0.9),
                         SimplicialRule(; tao=1.0),
                         SimplicialRule(; tao=0.9),
+                        SafeSeparators(),
                         ConnectedComponents(),
                         BestWidth(MCS(), MF()),
                         BestFill(MCS(), MF()),
@@ -1721,7 +1724,7 @@ end
                     @test wlb <= wwidth
                 end
 
-                for outer_alg in (SafeRules,)
+                for outer_alg in (SafeRules, SafeSeparators)
                     for inner_alg in tw_algs
                         alg = outer_alg(inner_alg)
                         @test treewidth(graph; alg) === uwidth

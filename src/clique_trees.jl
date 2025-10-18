@@ -94,16 +94,16 @@ function cliquetree(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
     return cliquetree(BipartiteGraph(graph), alg, snd)
 end
 
-function cliquetree(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {V}
+function cliquetree(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType = Maximal()) where {V}
     n = nv(graph); weights = Ones{V}(n)
     return cliquetree(weights, graph, alg, snd)
 end
 
-function cliquetree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, snd::SupernodeType)
+function cliquetree(weights::AbstractVector, graph, alg::PermutationOrAlgorithm, snd::SupernodeType = Maximal())
     return cliquetree(weights, BipartiteGraph(graph), alg, snd)
 end
 
-function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType) where {V}
+function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType = Maximal()) where {V}
     E = etype(graph); n = nv(graph); m = half(de(graph))
     nn = n + one(V); nnn = nn + one(V)
     
@@ -131,7 +131,9 @@ function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Permu
         elmorder, elmindex, sndptr, sepptr, new, parent, elmtree, graph,
         order, index, snd)
 
-    h = last(sndtree.tree); k = sepptr[h + one(V)] - one(E)
+    h = last(sndtree.tree)
+    k = sepptr[h + one(V)] - one(E)
+
     septgt = FVector{V}(undef, k)
     separator = BipartiteGraph(n, h, k, sepptr, septgt)
 
@@ -279,6 +281,157 @@ function cliquetree!(tree::CliqueTree, root::Integer)
     perm, source = cliquetree(tree, root)
     copy!(tree, source)
     return perm
+end
+
+function atomtree(graph::AbstractGraph; alg::MinimalAlgorithm=DEFAULT_MINIMAL_ALGORITHM)
+    return atomtree(graph, alg)
+end
+
+function atomtree(graph::AbstractGraph, alg::MinimalAlgorithm)
+    return atomtree!(cliquetree(graph, alg)..., graph)
+end
+
+function atomtree!(order::AbstractVector{V}, tree::CliqueTree{V, E}, graph::AbstractGraph{V}) where {V, E}
+    res = residuals(tree)
+    sep = separators(tree)
+    
+    h = nov(sep); m = ne(sep); n = nv(sep)
+
+    work1 = FVector{V}(undef, h)
+    work2 = FVector{V}(undef, n)
+    work3 = FVector{V}(undef, n)
+
+    mark = FVector{V}(undef, h)
+    prnt = FVector{V}(undef, n)
+    proj = FVector{V}(undef, n)
+
+    resptr = FVector{V}(undef, n + one(V))
+    sepptr = FVector{E}(undef, n + one(V))
+    septgt = FVector{V}(undef, m)
+
+    for v in vertices(graph)
+        mark[v] = n + one(V)
+    end
+
+    qode = zero(V)
+    
+    for node in reverse(oneto(n))
+        flag = true; maxcnt = zero(V)
+        
+        for i in neighbors(sep, node)
+            v = order[i]
+            mark[v] = node; maxcnt += one(V)
+        end
+
+        for i in neighbors(sep, node)
+            v = order[i]; cnt = maxcnt - one(V)
+
+            for w in neighbors(graph, v)
+                if w != v && mark[w] == node
+                    cnt -= one(V)
+                end
+            end
+
+            if ispositive(cnt)
+                flag = false
+                break
+            end
+        end
+
+        npnt = parentindex(tree, node)
+
+        if isnothing(npnt)
+            spnt = zero(V)
+        else
+            spnt = abs(proj[npnt])
+        end
+
+        if flag
+            proj[node] = qode += one(V)
+            prnt[qode] = spnt
+        else
+            proj[node] = -spnt
+        end
+    end
+
+    q = qode; qree = Parent(q, prnt)
+    postorder!_impl!(work1, work2, mark, work3, qree)
+
+    for node in oneto(n)
+        qode = proj[node]
+
+        if ispositive(qode)
+            qode = mark[qode]
+        else
+            qode = -mark[-qode]
+        end
+            
+        proj[node] = qode
+    end
+
+    for qode in oneto(q + one(V))
+        resptr[qode] = zero(V)
+    end
+
+    sepptr[q + one(V)] = zero(E)
+
+    for node in oneto(n)
+        qode = proj[node]
+        
+        if ispositive(qode)
+            sepptr[qode] = eltypedegree(sep, node)
+        else
+            qode = -qode
+        end
+        
+        resptr[qode] += eltypedegree(res, node)
+    end
+    
+    r = one(V)
+    s = one(E)
+
+    for qode in oneto(q + one(V))
+        resptr[qode] = r += resptr[qode]
+        sepptr[qode] = s += sepptr[qode]
+    end
+
+    for node in reverse(oneto(n))
+        qode = proj[node]
+
+        if ispositive(qode)
+            s = sepptr[qode]
+
+            for i in Iterators.reverse(neighbors(sep, node))
+                s -= one(E); septgt[s] = mark[i]
+            end
+
+            sepptr[qode] = s
+        else
+            qode = -qode
+        end
+
+        r = resptr[qode]
+
+        for i in reverse(neighbors(res, node))
+            mark[i] = r -= one(E)
+        end
+
+        resptr[qode] = r
+    end
+
+    for i in oneto(h)
+        work1[mark[i]] = order[i]
+    end
+
+    for i in oneto(h)
+        order[i] = work1[i]
+    end
+
+    m = sepptr[q + one(V)] - one(E)
+    qres = BipartiteGraph(h, q, h, resptr, oneto(h))
+    qsep = BipartiteGraph(h, q, m, sepptr, septgt)
+    atomtree = CliqueTree(SupernodeTree(Tree(qree), qres), qsep)
+    return order, atomtree
 end
 
 """
