@@ -2,7 +2,7 @@ using AbstractTrees
 using Base: @kwdef, oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!
+using CliqueTrees: SinglyLinkedList, DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!
 using CliqueTrees.Utilities
 using Graphs
 using Graphs: SimpleEdge

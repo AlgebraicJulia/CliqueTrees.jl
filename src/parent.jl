@@ -29,6 +29,8 @@ struct Parent{V <: Integer, Prnt <: AbstractVector{V}} <: AbstractUnitRange{V}
     end
 end
 
+const FParent{V} = Parent{V, FVector{V}}
+
 function Parent{V, Prnt}(nv::Integer) where {V, Prnt}
     prnt = Prnt(undef, nv)
     return Parent(convert(V, nv), prnt)
@@ -112,6 +114,38 @@ function lcrs_impl!(
     end
 
     return root
+end
+
+function lcrs_impl!(
+        brother::AbstractVector{V},
+        child::AbstractVector{V},
+        tree::Parent{V},
+        root::V,
+    ) where {V}
+    @assert length(tree) <= length(brother)
+    @assert length(tree) <= length(child)
+    @assert length(tree) >= root >= one(V)
+
+    @inbounds for i in tree
+        child[i] = zero(V)
+    end
+
+    skip = root; root = zero(V)
+
+    @inbounds for i in reverse(tree)
+        if i != skip
+            j = parentindex(tree, i)
+
+            if isnothing(j)
+                brother[i] = root; root = i
+            else
+                brother[i] = child[j]; child[j] = i
+            end
+        end
+    end
+
+    brother[skip] = root
+    return
 end
 
 function reverse!_impl!(
@@ -423,6 +457,48 @@ function postorder_impl!(
     return
 end
 
+function postorder_impl!(
+        brother::AbstractVector{V},
+        child::AbstractVector{V},
+        index::AbstractVector{V},
+        stack::AbstractVector{V},
+        tree::Parent{V},
+        root::V,
+    ) where {V}
+    @assert length(tree) <= length(brother)
+    @assert length(tree) <= length(child)
+    @assert length(tree) <= length(index)
+    @assert length(tree) <= length(stack)
+    @assert length(tree) >= root >= one(V)
+    num = zero(V)
+
+    lcrs_impl!(brother, child, tree, root)
+
+    function brothers(i::V)
+        @inbounds head = view(child, i)
+        return SinglyLinkedList(head, brother)
+    end
+
+    roots = SinglyLinkedList(Fill(root), brother)
+
+    @inbounds for i in roots
+        num += one(V); stack[num] = i
+    end
+
+    @inbounds for i in tree
+        j = stack[num]; num -= one(V)
+
+        while !isempty(brothers(j))
+            num += one(V); stack[num] = j
+            j = popfirst!(brothers(j))
+        end
+
+        index[j] = i
+    end
+
+    return
+end
+
 """
     postorder!(tree::Parent)
 
@@ -438,6 +514,16 @@ function postorder!(tree::Parent{V}) where {V}
     return index
 end
 
+function postorder!(tree::Parent{V}, root::V) where {V}
+    n = length(tree)
+    brother = Vector{V}(undef, n)
+    child = Vector{V}(undef, n)
+    index = Vector{V}(undef, n)
+    stack = Vector{V}(undef, n)
+    postorder!_impl!(brother, child, index, stack, tree, root::V)
+    return index
+end
+
 function postorder!_impl!(
         brother::AbstractVector{V},
         child::AbstractVector{V},
@@ -446,6 +532,19 @@ function postorder!_impl!(
         tree::Parent{V},
     ) where {V}
     postorder_impl!(brother, child, index, stack, tree)
+    invpermute!_impl!(stack, tree, index)
+    return
+end
+
+function postorder!_impl!(
+        brother::AbstractVector{V},
+        child::AbstractVector{V},
+        index::AbstractVector{V},
+        stack::AbstractVector{V},
+        tree::Parent{V},
+        root::V,
+    ) where {V}
+    postorder_impl!(brother, child, index, stack, tree, root)
     invpermute!_impl!(stack, tree, index)
     return
 end
@@ -498,15 +597,16 @@ function invpermute!_impl!(
     return
 end
 
-@propagate_inbounds function setrootindex!(tree::Parent{I}, root::Integer) where {I}
-    @boundscheck checkbounds(tree, root)
-    i = zero(I); j = convert(I, root)
+function setrootindex!(tree::Parent{I}, root::Integer) where {I <: Integer}
+    return setrootindex!(tree, convert(I, root))
+end
+
+function setrootindex!(tree::Parent{I}, root::I) where {I <: Integer}
+    @assert root in tree
+    parent = tree.prnt; i = zero(I); j = root
 
     @inbounds while ispositive(j)
-        k = tree.prnt[j]
-        tree.prnt[j] = i
-        i = j
-        j = k
+        k = parent[j]; parent[j] = i; i = j; j = k
     end
 
     return tree

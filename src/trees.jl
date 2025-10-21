@@ -31,6 +31,8 @@ struct Tree{I, Prnt, Ptr, Tgt} <: AbstractUnitRange{I}
     end
 end
 
+const FTree{I} = Tree{I, FVector{I}, FVector{I}, FVector{I}}
+
 function Tree{I, Prnt, Ptr, Tgt}(tree::Parent{I, Prnt}) where {I, Prnt, Ptr, Tgt}
     n = last(tree); nn = n + one(I)
     graph = BipartiteGraph{I, I, Ptr, Tgt}(n, nn, n)

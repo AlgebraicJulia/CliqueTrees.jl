@@ -60,6 +60,11 @@ struct BipartiteGraph{V <: Integer, E <: Integer, Ptr <: AbstractVector{E}, Tgt 
     end
 end
 
+"""
+    const FBipartiteGraph{V, E} = BipartiteGraph{V, E, FVector{E}, FVector{V}}
+"""
+const FBipartiteGraph{V, E} = BipartiteGraph{V, E, FVector{E}, FVector{V}}
+
 function BipartiteGraph{V, E, Ptr, Tgt}(graph::BipartiteGraph) where {V, E, Ptr, Tgt}
     return BipartiteGraph{V, E, Ptr, Tgt}(nov(graph), nv(graph), ne(graph), pointers(graph), targets(graph))
 end
@@ -211,6 +216,11 @@ function SparseArrays.permute(graph::BipartiteGraph{V, E}, order::AbstractVector
     pointer = FVector{E}(undef, n + one(V))
     target = FVector{V}(undef, m)
     return permute_impl!(pointer, target, graph, order, index)
+end
+
+function SparseArrays.permute!(graph::BipartiteGraph{V, E}, order::AbstractVector, index::AbstractVector) where {V, E}
+    copy!(graph, permute(graph, order, index))
+    return graph
 end
 
 function permute_impl!(
@@ -528,12 +538,12 @@ function Base.copy(graph::BipartiteGraph)
     )
 end
 
-function Base.copy!(dst::BipartiteGraph, src::BipartiteGraph)
+function Base.copy!(dst::BipartiteGraph{V, E}, src::BipartiteGraph) where {V, E}
     @assert nov(dst) == nov(src)
     @assert nv(dst) == nv(src)
     @assert ne(dst) == ne(src)
-    copyto!(pointers(dst), pointers(src))
-    copyto!(targets(dst), targets(src))
+    copyto!(pointers(dst), one(V), pointers(src), one(V), nv(src) + one(V))
+    copyto!(targets(dst), one(E), targets(src), one(E), ne(src))
     return dst
 end
 
@@ -542,7 +552,7 @@ function Base.copy!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGrap
     @assert nv(dst) == nv(src)
     @assert ne(dst) == ne(src)
     @assert targets(dst) == targets(src)
-    copyto!(pointers(dst), pointers(src))
+    copyto!(pointers(dst), one(V), pointers(src), one(V), nv(src) + one(V))
     return dst
 end
 
@@ -560,6 +570,10 @@ end
 
 function outvertices(graph::AbstractGraph)
     return oneto(nov(graph))
+end
+
+function arcs(graph::AbstractGraph)
+    return oneto(ne(graph))
 end
 
 function etype(::G) where {G}

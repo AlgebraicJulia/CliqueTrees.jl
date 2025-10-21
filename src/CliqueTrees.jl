@@ -28,11 +28,8 @@ using .MMDLib
 
 const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
 
-# Linked Lists
-export SinglyLinkedList
-
 # Graphs
-export BipartiteGraph, BipartiteEdgeIter, pointers, targets
+export BipartiteGraph, FBipartiteGraph, BipartiteEdgeIter, pointers, targets
 
 # Lower Bound Algorithms
 export MMW, lowerbound
@@ -73,7 +70,7 @@ export BFS,
     permutation
 
 # Trees
-export Tree, eliminationtree, setrootindex!
+export Tree, FTree, eliminationtree, setrootindex!
 
 # Supernode Types
 export Nodal, Maximal, Fundamental

@@ -245,7 +245,7 @@ function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V, E}
     q = h + one(V); pointers(residual)[n + one(V)] = q
 
     sndtree = copy(tree.tree.tree.tree)
-    sndinvp = postorder!(setrootindex!(sndtree, root))
+    sndinvp = postorder!(setrootindex!(sndtree, root), root)
     sndperm = invperm(sndinvp)
 
     for v in oneto(h)
@@ -277,9 +277,84 @@ function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V, E}
     return collect(perm), tree
 end
 
+function cliquetree(tree::CliqueTree{V, E}, clique::AbstractVector{V}) where {V, E}
+    sep = separators(tree)
+    res = residuals(tree)
+
+    h = nov(sep)
+    n = nv(sep)
+    m = ne(sep)
+    k = convert(V, length(clique))
+
+    mask = FVector{V}(undef, h)
+    invp = FVector{V}(undef, h)
+
+    for v in outvertices(sep)
+        mask[v] = zero(V)
+    end
+
+    for v in clique
+        mask[v] = one(V)
+    end
+
+    root = n
+
+    for i in vertices(res)
+        root < n && break
+
+        for v in neighbors(res, i)
+            root < n && break
+
+            if ispositive(mask[v])
+                root = i
+            end
+        end
+    end
+
+    perm, newtree = cliquetree(tree, root)
+    newsep = separators(newtree)
+    newres = residuals(newtree)
+    newbag = neighbors(newres, n)
+
+    i = h - k
+    j = h
+
+    for v in reverse(newbag)
+        if !ispositive(mask[perm[v]])
+            invp[v] = i; i -= one(V)
+        else
+            invp[v] = j; j -= one(V)
+        end
+    end
+
+    for v in newbag
+        mask[invp[v]] = perm[v]
+    end
+
+    for v in newbag
+        perm[v] = mask[v]
+    end
+    
+    for p in oneto(m)
+        v = targets(newsep)[p]
+
+        if v in newbag
+            targets(newsep)[p] = invp[v]
+        end
+    end
+
+    return perm, newtree
+end
+
 function cliquetree!(tree::CliqueTree, root::Integer)
-    perm, source = cliquetree(tree, root)
-    copy!(tree, source)
+    perm, newtree = cliquetree(tree, root)
+    copy!(tree, newtree)
+    return perm
+end
+
+function cliquetree!(tree::CliqueTree, clique::AbstractVector)
+    perm, newtree = cliquetree(tree, clique)
+    copy!(tree, newtree)
     return perm
 end
 
