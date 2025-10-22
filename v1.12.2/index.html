@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>CliqueTrees.jl · CliqueTrees.jl</title><meta name="title" content="CliqueTrees.jl · CliqueTrees.jl"/><meta property="og:title" content="CliqueTrees.jl · CliqueTrees.jl"/><meta property="twitter:title" content="CliqueTrees.jl · CliqueTrees.jl"/><meta name="description" content="Documentation for CliqueTrees.jl."/><meta property="og:description" content="Documentation for CliqueTrees.jl."/><meta property="twitter:description" content="Documentation for CliqueTrees.jl."/><script data-outdated-warner src="assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="assets/documenter.js"></script><script src="search_index.js"></script><script src="siteinfo.js"></script><script src="../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href><img src="assets/logo.png" alt="CliqueTrees.jl logo"/></a><div class="docs-package-name"><span class="docs-autofit"><a href>CliqueTrees.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li class="is-active"><a class="tocitem" href>CliqueTrees.jl</a><ul class="internal"><li><a class="tocitem" href="#Getting-Help"><span>Getting Help</span></a></li><li><a class="tocitem" href="#Projects-using-CliqueTrees"><span>Projects using CliqueTrees</span></a></li><li><a class="tocitem" href="#Installation"><span>Installation</span></a></li><li><a class="tocitem" href="#Basic-Usage"><span>Basic Usage</span></a></li><li><a class="tocitem" href="#Graphs"><span>Graphs</span></a></li><li><a class="tocitem" href="#Citation"><span>Citation</span></a></li></ul></li><li><a class="tocitem" href="api/">Library Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>CliqueTrees.jl</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>CliqueTrees.jl</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/AlgebraicJulia/CliqueTrees.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/AlgebraicJulia/CliqueTrees.jl/blob/main/docs/src/index.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="CliqueTrees.jl"><a class="docs-heading-anchor" href="#CliqueTrees.jl">CliqueTrees.jl</a><a id="CliqueTrees.jl-1"></a><a class="docs-heading-anchor-permalink" href="#CliqueTrees.jl" title="Permalink"></a></h1><p>CliqueTrees.jl implements <em>clique trees</em> in Julia. You can use it to construct <a href="https://en.wikipedia.org/wiki/Tree_decomposition">tree decompositions</a> and <a href="https://en.wikipedia.org/wiki/Chordal_completion">chordal completions</a> of graphs.</p><h2 id="Getting-Help"><a class="docs-heading-anchor" href="#Getting-Help">Getting Help</a><a id="Getting-Help-1"></a><a class="docs-heading-anchor-permalink" href="#Getting-Help" title="Permalink"></a></h2><p>If you have a question about the library, feel free to open an <a href="https://github.com/AlgebraicJulia/CliqueTrees.jl/issues">issue</a> or leave a message in the <a href="https://julialang.zulipchat.com/#narrow/channel/513749-cliquetrees.2Ejl">cliquetrees.jl</a> Zulip channel.</p><h2 id="Projects-using-CliqueTrees"><a class="docs-heading-anchor" href="#Projects-using-CliqueTrees">Projects using CliqueTrees</a><a id="Projects-using-CliqueTrees-1"></a><a class="docs-heading-anchor-permalink" href="#Projects-using-CliqueTrees" title="Permalink"></a></h2><ul><li><a href="https://github.com/JuliaLinearAlgebra/BandedMatrices.jl">BandedMatrices.jl</a></li><li><a href="https://github.com/sisl/BayesNets.jl">BayesNets.jl</a></li><li><a href="https://github.com/mschauer/CausalInference.jl">CausalInference.jl</a></li><li><a href="https://github.com/bsc-quantic/EinExprs.jl">EinExprs.jl</a></li><li><a href="https://github.com/JuliaRobotics/IncrementalInference.jl">IncrementalInference.jl</a></li><li><a href="https://github.com/TensorBFS/OMEinsumContractionOrders.jl">OMEinsumContractionOrders.jl</a></li><li><a href="https://github.com/charles-river-analytics/Scruff.jl">Scruff.jl</a></li><li><a href="https://github.com/gdalle/SparseMatrixColorings.jl">SparseMatrixColorings.jl</a></li><li><a href="https://github.com/jump-dev/SumOfSquares.jl">SumOfSquares.jl</a></li><li><a href="https://github.com/wangjie212/TSSOS">TSSOS.jl</a></li></ul><h2 id="Installation"><a class="docs-heading-anchor" href="#Installation">Installation</a><a id="Installation-1"></a><a class="docs-heading-anchor-permalink" href="#Installation" title="Permalink"></a></h2><p>To install CliqueTrees.jl, enter the Pkg REPL by typing <code>]</code> and run the following command.</p><pre><code class="language-julia-repl hljs">pkg&gt; add CliqueTrees</code></pre><h2 id="Basic-Usage"><a class="docs-heading-anchor" href="#Basic-Usage">Basic Usage</a><a id="Basic-Usage-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-Usage" title="Permalink"></a></h2><h3 id="Tree-Decompositions"><a class="docs-heading-anchor" href="#Tree-Decompositions">Tree Decompositions</a><a id="Tree-Decompositions-1"></a><a class="docs-heading-anchor-permalink" href="#Tree-Decompositions" title="Permalink"></a></h3><p>The function <code>cliquetree</code> computes tree decompositions.</p><pre><code class="language-julia-repl hljs">julia&gt; using CliqueTrees, LinearAlgebra, SparseArrays
+
+julia&gt; graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia&gt; label, tree = cliquetree(graph);
+
+julia&gt; tree
+6-element CliqueTree{Int64, Int64}:
+ [6, 7, 8]
+ └─ [5, 7, 8]
+    ├─ [1, 5]
+    ├─ [3, 5, 7]
+    │  └─ [2, 3]
+    └─ [4, 5, 8]</code></pre><p>The clique tree <code>tree</code> is a tree decomposition of the permuted graph <code>graph[label, label]</code>. A clique tree is a vector of cliques, so you can retrieve the clique at node 4 by typing <code>tree[4]</code>.</p><pre><code class="language-julia-repl hljs">julia&gt; tree[4]
+3-element Clique{Int64, Int64}:
+ 4
+ 5
+ 8</code></pre><div class="admonition is-warning" id="Warning-db0d925912964d8"><header class="admonition-header">Warning<a class="admonition-anchor" href="#Warning-db0d925912964d8" title="Permalink"></a></header><div class="admonition-body"><p>The numbers in each clique are vertices of the permuted graph <code>graph[label, label]</code>. You can see the vertices of the original graph by typing</p><pre><code class="language-julia-repl hljs">julia&gt; label[tree[4]]
+3-element Vector{Int64}:
+8
+3
+7</code></pre><p>Notice that the clique is no longer sorted.</p></div></div><p>The width of a clique tree is computed by the function <code>treewidth</code>.</p><pre><code class="language-julia-repl hljs">julia&gt; treewidth(tree)
+2</code></pre><h3 id="Chordal-Completions"><a class="docs-heading-anchor" href="#Chordal-Completions">Chordal Completions</a><a id="Chordal-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Chordal-Completions" title="Permalink"></a></h3><p>Clique trees can be used to construct chordal completions.</p><pre><code class="language-julia-repl hljs">julia&gt; filledgraph = FilledGraph(tree)
+{8, 11} FilledGraph{Int64, Int64}
+
+julia&gt; sparse(filledgraph)
+8×8 SparseMatrixCSC{Bool, Int64} with 11 stored entries:
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ 1  ⋅  1  1  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  ⋅  1  ⋅  1  1  ⋅  ⋅
+ ⋅  ⋅  ⋅  1  1  1  1  ⋅</code></pre><p>The graph <code>filledgraph</code> is ordered: its edges are directed from lower to higher vertices. The underlying undirected graph is a chordal completion of the permuted graph <code>graph[label, label]</code>.</p><pre><code class="language-julia-repl hljs">julia&gt; chordalgraph = Symmetric(sparse(filledgraph), :L)
+8×8 Symmetric{Bool, SparseMatrixCSC{Bool, Int64}}:
+ ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  ⋅
+ ⋅  ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅
+ ⋅  1  ⋅  ⋅  1  ⋅  1  ⋅
+ ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  1
+ 1  ⋅  1  1  ⋅  ⋅  1  1
+ ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  1  1
+ ⋅  ⋅  1  ⋅  1  1  ⋅  1
+ ⋅  ⋅  ⋅  1  1  1  1  ⋅
+
+julia&gt; ischordal(graph)
+false
+
+julia&gt; ischordal(chordalgraph)
+true
+
+julia&gt; all(graph[label, label] .&lt;= chordalgraph)
+true</code></pre><h3 id="Cholesky-Factorization"><a class="docs-heading-anchor" href="#Cholesky-Factorization">Cholesky Factorization</a><a id="Cholesky-Factorization-1"></a><a class="docs-heading-anchor-permalink" href="#Cholesky-Factorization" title="Permalink"></a></h3><p>The function <code>cholesky</code> computes Cholesky factorizations of sparse positive-definite matrices.</p><pre><code class="language-julia-repl hljs">julia&gt; import CliqueTrees
+
+julia&gt; matrix = [
+           3 1 0 0 0 0 0 0
+           1 3 1 0 0 2 0 0
+           0 1 3 1 0 1 2 1
+           0 0 1 3 0 0 0 0
+           0 0 0 0 3 1 1 0
+           0 2 1 0 1 3 0 0
+           0 0 2 0 1 0 3 1
+           0 0 1 0 0 0 1 3
+       ];
+
+julia&gt; cholfact = CliqueTrees.cholesky(matrix)
+CholFact{Float64, Int64}:
+    nnz: 19
+    success: true</code></pre><p>You can solve linear systems of equations with the operators <code>/</code> and <code>\</code>.</p><pre><code class="language-julia-repl hljs">julia&gt; rhs = rand(8, 2);
+
+julia&gt; sol = cholfact \ rhs # sol = inv(matrix) * rhs
+8×2 Matrix{Float64}:
+ -0.202009   -0.164852
+  0.661177    0.665989
+  0.173183   -0.126911
+  0.110932    0.0915613
+  0.375653    0.187998
+ -0.556495   -0.378656
+ -0.0751984   0.0536805
+  0.0793129   0.127395</code></pre><h2 id="Graphs"><a class="docs-heading-anchor" href="#Graphs">Graphs</a><a id="Graphs-1"></a><a class="docs-heading-anchor-permalink" href="#Graphs" title="Permalink"></a></h2><p>Users can input graphs as adjacency matrices. Additionally, CliqueTrees.jl supports the <code>HasGraph</code> type from <a href="https://github.com/AlgebraicJulia/Catlab.jl">Catlab.jl</a> and the <code>AbstractGraph</code> type from <a href="https://github.com/JuliaGraphs/Graphs.jl">Graphs.jl</a>. Instances of the latter should implement the following subset of the <a href="https://juliagraphs.org/Graphs.jl/stable/core_functions/interface/">abstract graph interface</a>.</p><ul><li><code>is_directed</code></li><li><code>ne</code></li><li><code>nv</code></li><li><code>outneighbors</code></li><li><code>vertices</code></li></ul><p>Self-edges are always ignored.</p><h2 id="Citation"><a class="docs-heading-anchor" href="#Citation">Citation</a><a id="Citation-1"></a><a class="docs-heading-anchor-permalink" href="#Citation" title="Permalink"></a></h2><p>If you use CliqueTrees.jl for a publication, please cite it as follows.</p><pre><code class="language-bibtex hljs">@misc{cliquetrees2025samuelson,
+  author = {Samuelson, Richard and Fairbanks, James},
+  url = {https://github.com/AlgebraicJulia/CliqueTrees.jl},
+  title = {CliqueTrees.jl: A Julia library for computing tree decompositions and chordal completions of graphs},
+  year = {2025}
+}</code></pre></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="api/">Library Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Wednesday 22 October 2025 00:05">Wednesday 22 October 2025</span>. Using Julia version 1.12.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
