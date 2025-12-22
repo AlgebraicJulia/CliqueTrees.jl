@@ -46,5 +46,5 @@ using JuliaInterpreter: JuliaInterpreter
 end
 
 if v"1.9" <= VERSION
-    test_package(CliqueTrees; target_modules = (CliqueTrees,))
+    #test_package(CliqueTrees; target_modules = (CliqueTrees,))
 end

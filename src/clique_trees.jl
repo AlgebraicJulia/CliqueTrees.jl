@@ -970,7 +970,7 @@ function separatorwidth(weights::Ones{W}, tree::CliqueTree) where {W}
 end
 
 function separatorwidth(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, snd::SupernodeType = DEFAULT_SUPERNODE_TYPE)
-    return separatorwidth(graph, alg)
+    return separatorwidth(graph, alg, snd)
 end
 
 function separatorwidth(graph, alg::PermutationOrAlgorithm, snd::SupernodeType)

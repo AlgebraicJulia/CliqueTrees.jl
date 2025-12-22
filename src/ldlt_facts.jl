@@ -1437,7 +1437,7 @@ end
 #
 # and store A ← L
 function qdtrf!(W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector{T}; blocksize::Int = 64) where {T}
-    n = size(A, 1); alpha = convert(T, -1/2); beta = one(T)
+    n = size(A, 1)
     
     for bstrt in 1:blocksize:n
         bsize = min(blocksize, n - bstrt + 1)

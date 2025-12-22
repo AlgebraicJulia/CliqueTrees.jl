@@ -2087,9 +2087,9 @@ function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V)
     return alpha
 end
 
-function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph)
     simple = simplegraph(graph)
-    return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
+    return amf(nv(simple), weights, pointers(simple), targets(simple))
 end
 
 function MLFLib.mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
