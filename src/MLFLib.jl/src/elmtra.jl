@@ -115,31 +115,30 @@
 #**********************************************************************
 #
 function elmtra(
-        enode::Int,
-        neqns::Int,
-        adjlen::Int,
-        maxint::Int,
-        nnodes::Int,
-        ecliq::AbstractVector{Int},
-        invp::AbstractVector{Int},
-        tag::Int,
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
-        nvtxs::AbstractVector{Int},
-        work::AbstractVector{Int},
+        enode::V,
+        neqns::V,
+        adjlen::E,
+        nnodes::V,
+        ecliq::AbstractVector{V},
+        invp::AbstractVector{V},
+        tag::I,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        nvtxs::AbstractVector{V},
+        work::AbstractVector{V},
         qsize::AbstractVector{W},
-        qnmbr::AbstractVector{Int},
-        marker::AbstractVector{Int},
-        echead::Int,
-        ectail::Int,
-        ecforw::AbstractVector{Int},
-        nxtloc::Int,
-        gbgcnt::Int,
+        qnmbr::AbstractVector{V},
+        marker::AbstractVector{I},
+        echead::V,
+        ectail::V,
+        ecforw::AbstractVector{V},
+        nxtloc::E,
+        gbgcnt::I,
         clqsiz::W,
-        umark::AbstractVector{Int},
-        hheads::AbstractVector{Int},
-        hlink::AbstractVector{Int},
-    ) where {W}
+        umark::AbstractVector{I},
+        hheads::AbstractVector{V},
+        hlink::AbstractVector{V},
+    ) where {V, E, I, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -149,38 +148,38 @@ function elmtra(
     #       BUMP TAG.
     #       NOTE: TAG <= MAXINT-1
     #       ---------------------
-    if tag <= maxint - 2
-        tag += 1
+    if tag <= maxint(I) - two(I)
+        tag += one(I)
     else
-        tag = 1
+        tag = one(I)
 
         for i in oneto(neqns)
-            if marker[i] < maxint
-                marker[i] = 0
+            if marker[i] < maxint(I)
+                marker[i] = zero(I)
             end
         end
     end
-    
+
     #       -----------------------------------------------------------
     #       MARK THE CLIQUES MERGED TO FORM ENODE'S ELIMINATION CLIQUE.
     #       THIS SERVES TO REMOVE THEM FROM THE QUOTIENT GRAPH.
     #       -----------------------------------------------------------
-    cstart = xadj[enode] + nvtxs[enode]
-    cstop = cstart + work[enode] - 1
+    cstart = xadj[enode] + convert(E, nvtxs[enode])
+    cstop = cstart + convert(E, work[enode]) - one(E)
 
     for c in cstart:cstop
         cnode = adjncy[c]
-        nvtxs[cnode] = -1
+        nvtxs[cnode] = -one(V)
         marker[cnode] = tag
     end
-    
+
     #       -------------------------------------------------
     #       IF ENODE'S ELIMINATION CLIQUE WILL NOT FIT IN THE
     #       REMAINING STORAGE ...
     #       -------------------------------------------------
-    remain = adjlen - nxtloc + 1
+    remain = adjlen - nxtloc + one(E)
 
-    if nnodes > remain
+    if convert(E, nnodes) > remain
         #           ---------------------------------------------------------------
         #           ... PERFORM GARBAGE COLLECTION ON
         #               THE QUOTIENT GRAPH STRUCTURE.
@@ -195,7 +194,7 @@ function elmtra(
             work, invp, xadj, adjncy, nxtloc
         )
 
-        gbgcnt += 1
+        gbgcnt += one(I)
     end
     
     #       ------------------------------------
@@ -206,7 +205,7 @@ function elmtra(
 
     for i in oneto(nnodes)
         adjncy[nxtloc] = ecliq[i]
-        nxtloc += 1
+        nxtloc += one(E)
     end
     #       ------------------------------------
     #       RECORD POINTER AND LENGTH FOR ENODE.
@@ -223,8 +222,8 @@ function elmtra(
     end
 
     ectail = enode
-    ecforw[enode] = 0
-    
+    ecforw[enode] = zero(V)
+
     #       **************************************************************
     #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE,
     #           (1) UPDATE (I.E. REDUCE) ITS SET OF VERTEX NEIGHBORS.
@@ -237,7 +236,7 @@ function elmtra(
     #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE ...
     #       --------------------------------------------------------
     jstart = xadj[enode]
-    jstop = jstart + nvtxs[enode] - 1
+    jstop = jstart + convert(E, nvtxs[enode]) - one(E)
 
     for j in jstart:jstop
         jnode = adjncy[j]
@@ -248,13 +247,13 @@ function elmtra(
         #           FOR EVERY VERTEX NEIGHBOR INODE OF JNODE ...
         #           --------------------------------------------
         istart = xadj[jnode]
-        istop = xadj[jnode] + nvtxs[jnode] - 1
+        istop = xadj[jnode] + convert(E, nvtxs[jnode]) - one(E)
         nxtlc2 = istart
 
         for i in istart:istop
             inode = adjncy[i]
             #               -----------------------------------------
-            #               IF INODE IS NOT IN ENODE'S ELIMINATION 
+            #               IF INODE IS NOT IN ENODE'S ELIMINATION
             #               CLIQUE AND HAS NOT BEEN ABSORBED THEN ...
             #               -----------------------------------------
             if ispositive(qsize[inode])
@@ -262,7 +261,7 @@ function elmtra(
                 #                   RETAIN INODE IN JNODE'S VERTEX LIST.
                 #                   ------------------------------------
                 adjncy[nxtlc2] = inode
-                nxtlc2 += 1
+                nxtlc2 += one(E)
             end
         end
         cst = nxtlc2
@@ -272,13 +271,13 @@ function elmtra(
         #           ----------------------------------------------
         #           FOR EACH ELIMINATION CLIQUE NEIGHBOR CNODE ...
         #           ----------------------------------------------
-        cstart = istop + 1
-        cstop = istop + work[jnode]
+        cstart = istop + one(E)
+        cstop = istop + convert(E, work[jnode])
 
         for c in cstart:cstop
             cnode = adjncy[c]
             #               ---------------------------------------
-            #               IF CNODE WAS NOT MERGED TO FORM ENODE'S 
+            #               IF CNODE WAS NOT MERGED TO FORM ENODE'S
             #               ELIMINATION CLIQUE ...
             #               ---------------------------------------
             if marker[cnode] < tag
@@ -286,7 +285,7 @@ function elmtra(
                 #                   ADD CNODE TO JNODE'S LIST.
                 #                   --------------------------
                 adjncy[nxtlc2] = cnode
-                nxtlc2 += 1
+                nxtlc2 += one(E)
             end
         end
         #           ----------------------------------------------------
@@ -297,29 +296,29 @@ function elmtra(
         #           COMPUTE THE NUMBER OF VERTEX AND ELIMINATION CLIQUE
         #           NEIGHBORS OF JNODE.
         #           ---------------------------------------------------
-        nvtxs[jnode] = cst - istart
-        work[jnode] = nxtlc2 - cst + 1
+        nvtxs[jnode] = convert(V, cst - istart)
+        work[jnode] = convert(V, nxtlc2 - cst) + one(V)
         #           ------------------------------------------------
         #           IF ENODE IS THE ONLY NEIGHBOR OF JNODE, THEN ...
         #           ------------------------------------------------
         if isone(work[jnode]) && iszero(nvtxs[jnode])
             #               -------------------------------------------
-            #               ... PERFORM MASS ELIMINATION OF JNODE ALONG 
+            #               ... PERFORM MASS ELIMINATION OF JNODE ALONG
             #               WITH ENODE.
             #               NOTE: QSIZE'S ARE NEGATIVE.
             #               -------------------------------------------
             work[jnode] = -enode
             qsize[enode] += qsize[jnode]
             qnmbr[enode] += qnmbr[jnode]
-            nvtxs[jnode] = -1
-            marker[jnode] = maxint
-            umark[jnode] = maxint
+            nvtxs[jnode] = -one(V)
+            marker[jnode] = maxint(I)
+            umark[jnode] = maxint(I)
             clqsiz += qsize[jnode]
             qsize[jnode] = zero(W)
-            qnmbr[jnode] = 0
+            qnmbr[jnode] = zero(V)
         end
     end
-    
+
     #       *********************************
     #       SUPERNODE ABSORPTION VIA HASHING.
     #       *********************************
@@ -328,13 +327,13 @@ function elmtra(
     #       HHEADS(I) IS THE HEAD OF HASH LIST I.
     #       -------------------------------------
     for i in oneto(nnodes)
-        hheads[i] = 0
+        hheads[i] = zero(V)
     end
     #       --------------------------------------------------------
     #       FOR EVERY VERTEX INODE IN ENODE'S ELIMINATION CLIQUE ...
     #       --------------------------------------------------------
     istart = xadj[enode]
-    istop = istart + nvtxs[enode] - 1
+    istop = istart + convert(E, nvtxs[enode]) - one(E)
 
     for i in istart:istop
         inode = adjncy[i]
@@ -345,14 +344,14 @@ function elmtra(
             #               ---------
             #               BUMP TAG.
             #               ---------
-            if tag <= maxint - 2
-                tag += 1
+            if tag <= maxint(I) - two(I)
+                tag += one(I)
             else
-                tag = 1
+                tag = one(I)
 
                 for k in oneto(neqns)
-                    if marker[k] < maxint
-                        marker[k] = 0
+                    if marker[k] < maxint(I)
+                        marker[k] = zero(I)
                     end
                 end
             end
@@ -360,18 +359,19 @@ function elmtra(
             #               MARK THE QUOTIENT NEIGHBORS OF INODE.
             #               (AND COMPUTE ITS HASH VALUE.)
             #               -------------------------------------
-            hash = 0
+            hash = zero(I)
             nvtxi = nvtxs[inode]
             nclqi = work[inode]
             kstart = xadj[inode]
-            kstop = kstart + nvtxi + nclqi - 2
+            kstop = kstart + convert(E, nvtxi + nclqi) - two(E)
 
             for k in kstart:kstop
                 knode = adjncy[k]
-                hash += knode
+                hash += convert(I, knode)
                 marker[knode] = tag
             end
-            hash2 = mod(hash, convert(Int, nnodes)) + 1
+
+            hash2 = convert(V, mod(hash, convert(I, nnodes))) + one(V)
             #               ------------------------------------------------
             #               SCAN THE NODES JNODE ALREADY IN INODE'S HASH BIN
             #               FOR IDENTICAL QUOTIENT ADJACENCY SETS.
@@ -394,7 +394,7 @@ function elmtra(
                     #                       ------------------
                     match = true
                     kstart = xadj[jnode]
-                    kstop = kstart + nvtxs[jnode] + work[jnode] - 2
+                    kstop = kstart + convert(E, nvtxs[jnode] + work[jnode]) - two(E)
 
                     for k in kstart:kstop
                         knode = adjncy[k]
@@ -415,11 +415,11 @@ function elmtra(
                     work[inode] = -jnode
                     qsize[jnode] += qsize[inode]
                     qnmbr[jnode] += qnmbr[inode]
-                    nvtxs[inode] = -1
-                    marker[inode] = maxint
-                    umark[inode] = maxint
+                    nvtxs[inode] = -one(V)
+                    marker[inode] = maxint(I)
+                    umark[inode] = maxint(I)
                     qsize[inode] = zero(W)
-                    qnmbr[inode] = 0
+                    qnmbr[inode] = zero(V)
                     #                       -------------------
                     #                       INODE IS ABSORBED.
                     #                       SKIP TO NEXT INODE.
@@ -454,7 +454,7 @@ function elmtra(
     #       REVERSE SIGNS ON QSIZE'S.
     #       ------------------------------------------------------
     istart = xadj[enode]
-    istop = istart + nvtxs[enode] - 1
+    istop = istart + convert(E, nvtxs[enode]) - one(E)
     nxtlc2 = istart
 
     for i in istart:istop
@@ -465,14 +465,14 @@ function elmtra(
         if !iszero(qsize[inode])
             qsize[inode] = -qsize[inode]
             adjncy[nxtlc2] = inode
-            nxtlc2 += 1
+            nxtlc2 += one(E)
         end
     end
     #       ----------------------------------------------------------
     #       RECORD INFO ABOUT ENODE AND RECORD NEXT AVAILABLE LOCATION
     #       IN QUOTIENT GRAPH.
     #       ----------------------------------------------------------
-    nvtxs[enode] = nxtlc2 - istart
+    nvtxs[enode] = convert(V, nxtlc2 - istart)
     qsize[enode] = -qsize[enode]
     nxtloc = nxtlc2
     

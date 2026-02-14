@@ -28,7 +28,7 @@
     </p>
 </h2>
 
-CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [tree decompositions](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs.
+CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [clique trees](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs. Additionally, you can use the submodule `CliqueTrees.Multifrontal` to compute Cholesky and LDLt factorizations of sparse matrices.
 
 ## Getting Help
 
@@ -51,18 +51,42 @@ If you have a question about the library, feel free to open an [issue](https://g
 
 To install CliqueTrees.jl, enter the Pkg REPL by typing `]` and run the following command.
 
-```julia-repl
+```
 pkg> add CliqueTrees
 ```
 
-## Basic Usage
+## Clique Trees
 
-### Tree Decompositions
+A clique tree (also tree decomposition, junction tree, or join tree) partitions a graph into a tree of overlapping subgraphs.
+The key invariant of a clique tree is the *running intersection property*: if two subgraphs in the tree contain the same
+vertex, then so do all the subgraphs on the unique path between them.
 
-The function `cliquetree` computes tree decompositions.
+<div align="center">
+    <img src="tree.svg" alt="clique tree" width="400">
+</div>
+
+Clique trees play an important role in algorithms for
+
+- graph coloring
+- probabilistic inference
+- tensor network contraction
+- matrix factorization
+- semidefinite programming
+- polynomial optimization
+
+and more. In all of these applications, it is important that the subgraphs in a clique tree be as small as possible.
+Consider, for example graph coloring. 3-coloring is NP-Hard, and the fastest known algorithm for deciding if a graph is
+3-colorable runs in `O(1.3289^n)` time. However, if we are given tree decomposition of a graph with `m` subgraphs,
+and whose largest subgraph contains `k` vertices, then we can decide if it is 3-colorable in `O(m3^k)` time. This
+approach can be very powerful, but only if `k` is very small.
+
+## Constructing Clique Trees
+
+Clique trees can be constructed using the function `cliquetree`. The function returns two objects: a vertex permutation
+and a clique tree.
 
 ```julia-repl
-julia> using CliqueTrees, LinearAlgebra, SparseArrays
+julia> using CliqueTrees
 
 julia> graph = [
            0 1 0 0 0 0 0 0
@@ -75,7 +99,7 @@ julia> graph = [
            0 0 1 0 0 0 1 0
        ];
 
-julia> label, tree = cliquetree(graph);
+julia> perm, tree = cliquetree(graph; alg=MF());
 
 julia> tree
 6-element CliqueTree{Int64, Int64}:
@@ -87,120 +111,108 @@ julia> tree
     └─ [4, 5, 8]
 ```
 
-The clique tree `tree` is a tree decomposition of the permuted graph `graph[label, label]`.
-A clique tree is a vector of cliques, so you can retrieve the clique at node 4 by typing `tree[4]`.
+The clique tree object behaves like a vector of vectors, with `perm[tree[i]]` containing the vertices in the i-th
+subgraph. The tree also implements the [indexed tree interface](http://juliacollections.github.io/AbstractTrees.jl/stable/#The-Indexed-Tree-Interface)
+from AbstractTrees.jl.
+
+## Algorithms
+
+The `alg` keyword argument specifies which algorithm is used to construct the clique tree. CliqueTrees.jl implements
+a large number of algorithms for solving problems. It also interfaces with libraries like TreeWidthSolver.jl, Metis.jl,
+and AMD.jl, so that users can use the algorithms implemented there as well. Algorithms for computing clique trees
+can be divided into two categories: exact and approximate.
+
+### Exact Algorithms
+
+Exact algorithms construct optimal clique trees. CliqueTrees.jl exports two exact algorithms.
+
+- `BT`: Bouchite-Toudinca
+- `PIDBT`: positive-instance driven Bouchitte-Toudinca
+
+Beware! These algorithms are solving an NP-Hard problem. Users are advised to wrap them in the
+pre-processing algorithms `SafeSeparators` and `SafeRules`.
 
 ```julia-repl
-julia> tree[4]
-3-element Clique{Int64, Int64}:
- 4
- 5
- 8
+julia> alg = SafeRules(SafeSeparators(PIDBT()));
 ```
 
-> [!WARNING]
-> The numbers in each clique are vertices of the permuted graph `graph[label, label]`.
-> You can see the vertices of the original graph by typing
-> ```julia-repl
-> julia> label[tree[4]]
-> 3-element Vector{Int64}:
->  8
->  3
->  7
-> ```
-> Notice that the clique is no longer sorted.
+If a graph is [chordal](https://en.wikipedia.org/wiki/Chordal_graph), then an optimal clique tree can be computed in
+linear time using either of the following algorithms.
 
-The width of a clique tree is computed by the function `treewidth`.
+- `MCS`: maximum cardinality search
+- `LexBFS`: lexicographic breadth-first search
 
-```julia-repl
-julia> treewidth(tree)
-2
-```
+Users can detect whether a graph is chordal using the function `ischordal`.
 
-### Chordal Completions
+### Heuristic Algorithms
 
-Clique trees can be used to construct chordal completions.
+Because computing optimal clique trees is NP-Hard, a large number of approximate algorithms have been developed for
+quickly computing non-optimal ones. These include the following.
 
-```julia-repl
-julia> filledgraph = FilledGraph(tree)
-{8, 11} FilledGraph{Int64, Int64}
+- `RCM`: reverse Cuthill-McKee
+- `MMD`: multiple minimum degree
+- `MF`: minimum fill
+- `AMD`: approximate minimum degree
+- `AMF`: approximate minimum fill
+- `METIS`: nested dissection
+- `ND`: nested dissection
 
-julia> sparse(filledgraph)
-8×8 SparseMatrixCSC{Bool, Int64} with 11 stored entries:
- ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- 1  ⋅  1  1  ⋅  ⋅  ⋅  ⋅
- ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  ⋅
- ⋅  ⋅  1  ⋅  1  1  ⋅  ⋅
- ⋅  ⋅  ⋅  1  1  1  1  ⋅
-```
+For large graphs, the algorithms `AMD` and `METIS` are the state-of-the practice. They are implemented in the C libraries
+SuiteSparse and METIS. The current default algorithm is `MF`: a slower but more reliable alternative to `AMD`.
 
-The graph `filledgraph` is ordered: its edges are directed from lower to higher vertices. The underlying undirected graph is a chordal completion of the permuted graph `graph[label, label]`.
+### Pre-Processing Algorithms
 
-```julia-repl
-julia> chordalgraph = Symmetric(sparse(filledgraph), :L)
-8×8 Symmetric{Bool, SparseMatrixCSC{Bool, Int64}}:
- ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  ⋅
- ⋅  ⋅  1  ⋅  ⋅  ⋅  ⋅  ⋅
- ⋅  1  ⋅  ⋅  1  ⋅  1  ⋅
- ⋅  ⋅  ⋅  ⋅  1  ⋅  ⋅  1
- 1  ⋅  1  1  ⋅  ⋅  1  1
- ⋅  ⋅  ⋅  ⋅  ⋅  ⋅  1  1
- ⋅  ⋅  1  ⋅  1  1  ⋅  1
- ⋅  ⋅  ⋅  1  1  1  1  ⋅
+The performance of clique tree algorithms can be improved by wrapping them one or more of the following pre-processing
+algorithms.
 
-julia> ischordal(graph)
-false
+- `ConnectedComponents`
+- `Compression`
+- `SimplicialRule`
+- `SafeRules`
+- `SafeSeparators`
 
-julia> ischordal(chordalgraph)
-true
+## Matrix Factorization
 
-julia> all(graph[label, label] .<= chordalgraph)
-true
-```
-
-### Cholesky Factorization
-
-The function `cholesky` computes Cholesky factorizations of sparse positive-definite matrices.
+An important application of clique trees is sparse matrix factorization. The multifrontal Cholesky factorization algorithm
+uses a clique tree to schedule computations, performing a dense matrix factorization at each subgraph. This algorithm is
+implemented in the submodule `CliqueTrees.Multifrontal`.
 
 ```julia-repl
-julia> import CliqueTrees
+julia> using CliqueTrees.Multifrontal, LinearAlgebra
 
-julia> matrix = [
-           3 1 0 0 0 0 0 0
-           1 3 1 0 0 2 0 0
-           0 1 3 1 0 1 2 1
-           0 0 1 3 0 0 0 0
-           0 0 0 0 3 1 1 0
-           0 2 1 0 1 3 0 0
-           0 0 2 0 1 0 3 1
-           0 0 1 0 0 0 1 3
+julia> A = [
+           4  2  0  0  2
+           2  5  0  0  3
+           0  0  4  2  0
+           0  0  2  5  2
+           2  3  0  2  7
        ];
 
-julia> cholfact = CliqueTrees.cholesky(matrix)
-CholFact{Float64, Int64}:
-    nnz: 19
-    success: true
+julia> F = cholesky!(ChordalCholesky(A))
+5×5 FChordalCholesky{:L, Float64, Int64} with 10 stored entries:
+ 2.0   ⋅    ⋅    ⋅    ⋅
+ 0.0  2.0   ⋅    ⋅    ⋅
+ 0.0  1.0  2.0   ⋅    ⋅
+ 1.0  0.0  0.0  2.0   ⋅
+ 0.0  1.0  1.0  1.0  2.0
 ```
 
-You can solve linear systems of equations with the operators
-`/` and `\`.
+The multifrontal LDLt factorization algorithm is implemented as well. It can be used to factorize quasi-definite matrices.
 
 ```julia-repl
-julia> rhs = rand(8, 2);
+julia> F = ldlt!(ChordalLDLt(A))
+5×5 FChordalLDLt{:L, Float64, Int64} with 10 stored entries:
+ 1.0   ⋅    ⋅    ⋅    ⋅
+ 0.0  1.0   ⋅    ⋅    ⋅
+ 0.0  0.5  1.0   ⋅    ⋅
+ 0.5  0.0  0.0  1.0   ⋅
+ 0.0  0.5  0.5  0.5  1.0
 
-julia> sol = cholfact \ rhs # sol = inv(matrix) * rhs
-8×2 Matrix{Float64}:
- -0.202009   -0.164852
-  0.661177    0.665989
-  0.173183   -0.126911
-  0.110932    0.0915613
-  0.375653    0.187998
- -0.556495   -0.378656
- -0.0751984   0.0536805
-  0.0793129   0.127395
+ 4.0   ⋅    ⋅    ⋅    ⋅
+  ⋅   4.0   ⋅    ⋅    ⋅
+  ⋅    ⋅   4.0   ⋅    ⋅
+  ⋅    ⋅    ⋅   4.0   ⋅
+  ⋅    ⋅    ⋅    ⋅   4.0
 ```
 
 ## Graphs

@@ -39,7 +39,7 @@
 #
 #**********************************************************************
 #
-function del_heap(heap::AbstractVector{W}, heapsize::Int, v2heap::AbstractVector{Int}, vtx::Int) where {W}
+function del_heap(heap::AbstractVector{W}, heapsize::V, v2heap::AbstractVector{V}, vtx::V) where {V, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -65,8 +65,8 @@ function del_heap(heap::AbstractVector{W}, heapsize::Int, v2heap::AbstractVector
         #           INDICATE THAT THE ELEMENT WITH VERTEX = V
         #           IS NO LONGER IN THE HEAP.
         #           -----------------------------------------
-        v2heap[v] = 0
-        
+        v2heap[v] = zero(V)
+
         #           ----------------------------------------------------
         #           THE ELEMENT BEING REMOVED OCCUPIES HEAP(2*I)-1 AND
         #           HEAP(2*I).  MOVE THE LAST ELEMENT IN THE HEAP TO THE
@@ -74,28 +74,28 @@ function del_heap(heap::AbstractVector{W}, heapsize::Int, v2heap::AbstractVector
         #           ----------------------------------------------------
         lp = twice(heapsize)
         ip = twice(i)
-        
-        v = convert(Int, heap[lp])
-        heap[ip] = v
+
+        v = convert(V, heap[lp])
+        heap[ip] = convert(W, v)
         v2heap[v] = i
-        heapsize -= 1
-        
-        wt = heap[lp - 1]
-        
+        heapsize -= one(V)
+
+        wt = heap[lp - one(V)]
+
         #           -------------------------------------------------
         #           CALLING MOD_HEAP TO PUT THE WEIGHT IN THE CORRECT
         #           PLACE AND REBUILD THE HEAP.
         #           -------------------------------------------------
         mod_heap(heap, heapsize, v2heap, v, wt)
-        
+
     else
-        
+
         #           ---------------------------------------------
         #           THE ELEMENT BEING REMOVED IS THE LAST ELEMENT
         #           IN THE HEAP, SO THERE IS NOT MUCH TO DO.
         #           ---------------------------------------------
-        v2heap[v] = 0
-        heapsize -= 1
+        v2heap[v] = zero(V)
+        heapsize -= one(V)
     end
     
     return heapsize

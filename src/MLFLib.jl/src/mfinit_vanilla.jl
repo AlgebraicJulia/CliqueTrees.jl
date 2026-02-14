@@ -48,15 +48,15 @@
 #**********************************************************************
 #
 function mfinit_vanilla(
-        neqns::Int,
-        adjlen::Int,
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
+        neqns::V,
+        adjlen::E,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
         degree::AbstractVector{W},
         qsize::AbstractVector{W},
         defcy2::AbstractVector{W},
-        umark::AbstractVector{Int},
-    ) where {W}
+        umark::AbstractVector{I},
+    ) where {V, E, I, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -67,7 +67,7 @@ function mfinit_vanilla(
     #       ----------------
     for unode in oneto(neqns)
         if !iszero(qsize[unode])
-            umark[unode] = 0
+            umark[unode] = zero(I)
         end
     end
     
@@ -92,14 +92,14 @@ function mfinit_vanilla(
             #               ----------------------------
             #               MARK THE NEIGHBORS OF UNODE.
             #               ----------------------------
-            for w in xadj[unode]:xadj[unode + 1] - 1
+            for w in xadj[unode]:xadj[unode + one(V)] - one(E)
                 wnode = adjncy[w]
-                umark[wnode] = 1
+                umark[wnode] = one(I)
             end
             #               ------------------------------------
             #               FOR EACH NEIGHBOR WNODE OF UNODE ...
             #               ------------------------------------
-            for w = xadj[unode]:xadj[unode + 1] - 1
+            for w = xadj[unode]:xadj[unode + one(V)] - one(E)
                 wnode = adjncy[w]
                 qw = qsize[wnode]
                 ucount -= qw
@@ -109,7 +109,7 @@ function mfinit_vanilla(
                 #                   COMPUTE WNODE'S CONTRIBUTION TO
                 #                   UNODE'S DEFICIENCY.
                 #                   -------------------------------
-                for x in xadj[wnode]:xadj[wnode + 1] - 1
+                for x in xadj[wnode]:xadj[wnode + one(V)] - one(E)
                     xnode = adjncy[x]
 
                     if isone(umark[xnode])
@@ -123,7 +123,7 @@ function mfinit_vanilla(
                 #                   ------------------------------------
                 def += cnt * qw
                 #                   PRINT *,'   WNODE,CNT:',WNODE,CNT
-                umark[wnode] = 0
+                umark[wnode] = zero(I)
             end
             #               -------------------------------------
             #               RECORD THE DEFICIENCY SCORE OF UNODE.

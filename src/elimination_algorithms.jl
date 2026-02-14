@@ -59,7 +59,6 @@ These are slower than the local algorithms, but have better results.
 | type          | name              | time  | space | package                                                                 |
 |:--------------|:------------------|:------|:------| :---------------------------------------------------------------------- |
 | [`BT`](@ref)  | Bouchitte-Todinca |       |       | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl) |
-| [`SAT`](@ref) | SAT encoding      |       |       |                                                                         |
 
 The orderings computed by these algorithms induce minimum-width tree decompositions.
 
@@ -94,27 +93,6 @@ const PermutationOrAlgorithm = Union{
     BFS()
 
 The [breadth-first search algorithm](https://en.wikipedia.org/wiki/Breadth-first_search).
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = BFS()
-BFS
-
-julia> treewidth(graph; alg)
-2
-```
 """
 struct BFS <: EliminationAlgorithm end
 
@@ -124,27 +102,6 @@ struct BFS <: EliminationAlgorithm end
     MCS()
 
 The maximum cardinality search algorithm.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = MCS()
-MCS
-
-julia> treewidth(graph; alg)
-3
-```
 
 ### References
 
@@ -158,27 +115,6 @@ struct MCS <: EliminationAlgorithm end
     LexBFS()
 
 The [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = LexBFS()
-LexBFS
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### References
 
@@ -195,28 +131,6 @@ struct LexBFS <: EliminationAlgorithm end
 
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using the minimum degree heuristic.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = RCMMD(QuickSort)
-RCMMD:
-    Base.Sort.QuickSortAlg()
-
-julia> treewidth(graph; alg)
-3
-```
 
 ### Parameters
 
@@ -244,28 +158,6 @@ end
 The [reverse Cuthill-McKee algorithm](https://en.wikipedia.org/wiki/Cuthill%E2%80%93McKee_algorithm).
 An initial vertex is selected using George and Liu's variant of the GPS algorithm.
 
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = RCMGL(QuickSort)
-RCMGL:
-    Base.Sort.QuickSortAlg()
-
-julia> treewidth(graph; alg)
-3
-```
-
 ### Parameters
 
   - `alg`: sorting algorithm
@@ -290,27 +182,6 @@ end
 
 A minimal variant of the [lexicographic breadth-first-search algorithm](https://en.wikipedia.org/wiki/Lexicographic_breadth-first_search).
 
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = LexM()
-LexM
-
-julia> treewidth(graph; alg)
-2
-```
-
 ### References
 
   - Rose, Donald J., R. Endre Tarjan, and George S. Lueker. "Algorithmic aspects of vertex elimination on graphs." *SIAM Journal on Computing* 5.2 (1976): 266-283.
@@ -323,27 +194,6 @@ struct LexM <: MinimalAlgorithm end
     MCSM()
 
 A minimal variant of the maximal cardinality search algorithm.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = MCSM()
-MCSM
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### References
 
@@ -358,27 +208,6 @@ struct MCSM <: MinimalAlgorithm end
 
 The approximate minimum fill algorithm.
 
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = AMF(; speed=2)
-AMF
-
-julia> treewidth(graph; alg)
-2
-```
-
 ### References
 
   - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
@@ -392,27 +221,6 @@ struct AMF <: EliminationAlgorithm end
 
 The greedy minimum fill algorithm.
 
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = MF
-MF
-
-julia> treewidth(graph; alg)
-2
-```
-
 ### References
 
   - Ng, Esmond G., and Barry W. Peyton. "Fast implementation of the minimum local fill ordering heuristic." *CSC14: The Sixth SIAM Workshop on Combinatorial Scientific Computing.* 2014.
@@ -425,28 +233,6 @@ struct MF <: EliminationAlgorithm end
     MMD(; delta=0)
 
 The [multiple minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = MMD(; delta=1)
-MMD:
-    delta: 1
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### Parameters
 
@@ -466,31 +252,6 @@ end
     AMD(; dense=10.0, aggressive=1.0)
 
 The approximate minimum degree algorithm.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> import AMD as AMDLib
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = AMD(; dense=5.0, aggressive=2.0)
-AMD:
-    dense: 5.0
-    aggressive: 2.0
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### Parameters
 
@@ -512,33 +273,6 @@ end
     SymAMD(; dense_row=10.0, dense_col=10.0, aggressive=1.0)
 
 The column approximate minimum degree algorithm.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> import AMD as AMDLib
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = SymAMD(; dense_row=5.0, dense_col=5.0, aggressive=2.0)
-SymAMD:
-    dense_row: 5.0
-    dense_col: 5.0
-    aggressive: 2.0
-
-
-julia> treewidth(graph, alg)
-2
-```
 
 ### Parameters
 
@@ -563,37 +297,6 @@ end
             compress=-1, ccorder=-1, pfactor=-1, ufactor=-1)
 
 The multilevel [nested dissection](https://en.wikipedia.org/wiki/Nested_dissection) algorithm implemented in METIS.
-
-```julia-repl
-julia> using CliqueTrees, Metis
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = METIS(ctype=Metis.METIS_CTYPE_RM)
-METIS:
-    ctype: 0
-    rtype: -1
-    nseps: -1
-    niter: -1
-    seed: -1
-    compress: -1
-    ccorder: -1
-    pfactor: -1
-    ufactor: -1
-
-
-julia> treewidth(graph; alg)
-3
-```
 
 ### Parameters
 
@@ -652,34 +355,6 @@ CliqueTrees currently has two vertex separator algorithms, both of which require
 The algorithm `KaHyParND` computes a vertex separator indirectly, by partitioning a quasi-clique-cover of the original graph.
 The parameters `width` and `level` control the recursion depth of the algorithm, and the parameter `imbalance` controls the
 maximum imbalance of the vertex separator.
-
-```julia-repl
-julia> using CliqueTrees, Metis
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = ND{1}(MF(), METISND())
-ND{1, MF, METISND}:
-    MF
-    METISND:
-        nseps: -1
-        seed: -1
-    width: 120
-    level: 6
-    imbalance: 130
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### Parameters
 
@@ -752,28 +427,6 @@ end
 The spectral ordering algorithm only works on connected graphs.
 In order to use it, import the package [Laplacians](https://github.com/danspielman/Laplacians.jl).
 
-```julia-repl
-julia> using CliqueTrees, Laplacians
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = Spectral(; tol=0.001)
-Spectral:
-    tol: 0.001
-
-julia> treewidth(graph; alg)
-4
-```
-
 ### Parameters
 
   - `tol`: tolerance for convergence
@@ -792,29 +445,6 @@ end
     FlowCutter(; time=5, seed=0)
 
 The FlowCutter algorithm.
-
-```julia-repl
-julia> using CliqueTrees, FlowCutterPACE17_jll
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = FlowCutter(; time=2, seed=1)
-FlowCutter:
-    time: 2
-    seed: 1
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### Parameters
 
@@ -837,96 +467,18 @@ end
 
 The Bouchitte-Todinca algorithm.
 
-```julia-repl
-julia> using CliqueTrees, TreeWidthSolver
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = BT()
-BT
-
-julia> treewidth(graph; alg)
-2
-```
-
 ### References
 
   - Korhonen, Tuukka, Jeremias Berg, and Matti Järvisalo. "Solving Graph Problems via Potential Maximal Cliques: An Experimental Evaluation of the Bouchitté-Todinca Algorithm." *Journal of Experimental Algorithmics (JEA)* 24 (2019): 1-19.
 """
 struct BT <: EliminationAlgorithm end
 
-"""
-    SAT{H, A} <: EliminationAlgorithm
-
-    SAT{H}(alg::PermutationOrAlgorithm)
-
-    SAT{H}()
-
-Compute a minimum-treewidth permutation using a SAT solver.
-
-```julia-repl
-julia> using CliqueTrees, libpicosat_jll, PicoSAT_jll, CryptoMiniSat_jll, Lingeling_jll
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = SAT{libpicosat_jll}(MF()) # picosat
-SAT{libpicosat_jll, MF}:
-    MF
-
-julia> alg = SAT{PicoSAT_jll}(MF()) # picosat
-SAT{PicoSAT_jll, MF}:
-    MF
-
-julia> alg = SAT{CryptoMiniSat_jll}(MF()) # cryptominisat
-SAT{CryptoMiniSat_jll, MF}:
-    MF
-
-julia> alg = SAT{Lingeling_jll}(MMW(), MF()) # lingeling
-SAT{Lingeling_jll, MF}:
-    MF
-
-julia> treewidth(graph; alg)
-2
-```
-
-### Parameters
-
-  - `alg`: elimination algorithm
-
-## References
-
-  - Samer, Marko, and Helmut Veith. "Encoding treewidth into SAT." *Theory and Applications of Satisfiability Testing-SAT 2009: 12th International Conference, SAT 2009*, Swansea, UK, June 30-July 3, 2009. Proceedings 12. Springer Berlin Heidelberg, 2009.
-  - Berg, Jeremias, and Matti Järvisalo. "SAT-based approaches to treewidth computation: An evaluation." *2014 IEEE 26th international conference on tools with artificial intelligence.* IEEE, 2014.
-  - Bannach, Max, Sebastian Berndt, and Thorsten Ehlers. "Jdrasil: A modular library for computing tree decompositions." *16th International Symposium on Experimental Algorithms (SEA 2017)*. Schloss Dagstuhl–Leibniz-Zentrum fuer Informatik, 2017.
-"""
-struct SAT{H, A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+struct PIDBT{A <: WidthOrAlgorithm} <: EliminationAlgorithm
     alg::A
 end
 
-function SAT{H}(alg::A) where {H, A <: PermutationOrAlgorithm}
-    return SAT{H, A}(alg)
-end
-
-function SAT{H}() where {H}
-    return SAT{H}(DEFAULT_ELIMINATION_ALGORITHM)
+function PIDBT()
+    return PIDBT(DEFAULT_LOWER_BOUND_ALGORITHM)
 end
 
 """
@@ -937,38 +489,6 @@ end
     MinimalChordal()
 
 Evaluate an elimination algorithm, and them improve its output using the MinimalChordal algorithm. The result is guaranteed to be minimal.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg1 = MCS()
-MCS
-
-julia> alg2 = MinimalChordal(MCS())
-MinimalChordal{MCS}:
-    MCS
-
-julia> label1, tree1 = cliquetree(graph; alg=alg1);
-
-julia> label2, tree2 = cliquetree(graph; alg=alg2);
-
-julia> FilledGraph(tree1) # more edges
-{8, 12} FilledGraph{Int64, Int64}
-
-julia> FilledGraph(tree2) # fewer edges
-{8, 11} FilledGraph{Int64, Int64}
-```
 
 ### Parameters
 
@@ -994,39 +514,6 @@ end
     CompositeRotations(clique::AbstractVector)
 
 Evaluate an eliminaton algorithm, ensuring that the given clique is at the end of the ordering.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = CompositeRotations([2], MCS())
-CompositeRotations{Vector{Int64}, MCS}:
-    clique: [2]
-    MCS
-
-julia> order, index = permutation(graph; alg);
-
-julia> order # 2 is the last vertex in the ordering
-8-element Vector{Int64}:
- 4
- 5
- 7
- 8
- 3
- 6
- 1
- 2
-```
 
 ### Parameters
 
@@ -1054,26 +541,6 @@ end
 
 Preprocess a graph by identifying indistinguishable vertices.
 The algorithm `alg` is run on the compressed graph.
-
-```julia-repl
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = Compression(; tao=0.9)
-
-julia> treewidth(graph; alg)
-2
-```
 
 ### Parameters
 
@@ -1108,39 +575,6 @@ end
 
 Preprocess a graph using safe reduction rules. The algorithm `lb` is used to compute a lower bound
 to the treewidth; better lower bounds allow the algorithm to perform more reductions.
-
-```julia-repl
-julia> using CliqueTrees, TreeWidthSolver
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg1 = BT()
-BT
-
-julia> alg2 = SafeRules(BT(), MMW(), MF())
-SafeRules{BT, MMW{3}, MF}:
-    BT
-    MMW{3}
-    MF
-    tao: 1.0
-
-julia> @time treewidth(graph; alg=alg1) # slow
-  0.000163 seconds (1.37 k allocations: 88.094 KiB)
-2
-
-julia> @time treewidth(graph; alg=alg2) # fast
-  0.000043 seconds (100 allocations: 7.250 KiB)
-2
-```
 
 ### Parameters
 
@@ -1262,6 +696,19 @@ function Best{S}(algs::PermutationOrAlgorithm...) where {S}
     return Best{S}(algs)
 end
 
+struct Log{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+    alg::A
+    num::Scalar{Int}
+end
+
+function Log{A}(alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM) where {A <: PermutationOrAlgorithm}
+    return Log{A}(alg, zeros(Int))
+end
+
+function Log(alg::A=DEFAULT_ELIMINATION_ALGORITHM) where {A <: PermutationOrAlgorithm}
+    return Log{A}(alg)
+end
+
 """
     permutation([weights, ]graph;
         alg::PermutationOrAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
@@ -1377,8 +824,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF)
-    order, index = mlf(weights, graph)
-    return order, index
+    return convert.(Vector, mlf(weights, graph))
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD)
@@ -1390,8 +836,12 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S})
     return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SAT{H}) where {H}
-    order, width = sat(weights, graph, treewidth(weights, graph, alg.alg), Val(H))
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::PIDBT)
+    return permutation(trunc.(Int, weights), graph, alg)
+end
+
+function permutation(weights::AbstractVector{Int}, graph::AbstractGraph, alg::PIDBT)
+    order = pidbt(weights, graph, lowerbound(weights, graph, alg.alg))
     return order, invperm(order)
 end
 
@@ -1432,6 +882,22 @@ end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFill)
     return bestfill(weights, graph, alg.algs)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Log)
+    num = alg.num[] += 1
+
+    if isone(num)
+        print(  "|   #   |       |V|       |       |E|       |")
+        print("\n| ----- | --------------- | --------------- |")
+    end
+
+    i = rpad(num,       5)
+    n = rpad(nv(graph), 15)
+    m = rpad(de(graph), 15)
+    print("\n| $i | $n | $m |")
+
+    return permutation(weights, graph, alg.alg)
 end
 
 # Algorithmic Aspects of Vertex Elimination on Graphs
@@ -2092,9 +1558,8 @@ function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph)
     return amf(nv(simple), weights, pointers(simple), targets(simple))
 end
 
-function MLFLib.mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
-    n = nv(graph)
-    intweights = FVector{Int}(undef, n)
+function mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
+    intweights = FVector{Int}(undef, nv(graph))
 
     @inbounds for v in vertices(graph)
         intweights[v] = convert(Int, weights[v])
@@ -2103,31 +1568,14 @@ function MLFLib.mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...)
     return mlf(intweights, graph; kwargs...)
 end
 
-function MLFLib.mlf(weights::AbstractVector, graph::AbstractGraph{V}; kwargs...) where {V}
-    n = convert(Int, nv(graph))
-    m = convert(Int, de(graph))
-
-    xadj = FVector{Int}(undef, n + 1)
-    adjncy = FVector{Int}(undef, m + 2n)
-
-    xadj[1] = p = 1
-
-    @inbounds for j in vertices(graph)
-        jint = convert(Int, j)
-
-        for i in neighbors(graph, j)
-            iint = convert(Int, i)
-
-            if iint != jint
-                adjncy[p] = iint; p += 1
-            end
-        end
-
-        xadj[jint + 1] = p
-    end
-
-    order::Vector{V}, index::Vector{V} = mlf(n, weights, xadj, adjncy)
-    return order, index
+function mlf(weights::AbstractVector, graph::AbstractGraph{V}; kwargs...) where {V}
+    E = etype(graph)
+    n = nv(graph)
+    m = de(graph)
+    ptr = FVector{E}(undef, n + 1)
+    tgt = FVector{V}(undef, m + 2n)
+    simple = simplegraph!(ptr, tgt, graph)
+    return mlf!(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
 function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
@@ -2154,271 +1602,6 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
     end
 
     return minpair
-end
-
-# Encoding Treewidth into SAT
-# Samer and Veith
-#
-# SAT-Based Approaches to Treewidth Computation: An Evaluation
-# Berg and Järvisalo
-#
-# Jdrasil: A Modular Library for Computing Tree Decompositions
-# Bannach, Berndt, and Ehlers
-function sat(weights::AbstractVector{W}, graph::AbstractGraph{V}, upperbound::W, ::Val{H}) where {W, V, H}
-    @assert !isnegative(upperbound)
-    n = Int32(nv(graph))
-
-    # compute a maximal clique
-    clique = maximalclique(weights, graph, Val(H))
-
-    # compute false twins
-    _, partition = twins(graph, Val(false))
-
-    # run solver
-    matrix, width = open(Solver{H}) do solver
-        # compute total weight
-        m = zero(Int32)
-
-        for i in oneto(n)
-            m += trunc(Int32, weights[i])
-        end
-
-        ord = Matrix{Int32}(undef, n, n)
-        arc = Matrix{Int32}(undef, n, m)
-
-        # define ord and arc variables
-        for i in oneto(n)
-            jj = n
-
-            for j in oneto(n)
-                # ord variables
-                if i < j
-                    resize!(solver, length(solver) + one(Int32))
-                    ord[i, j] = length(solver)
-                elseif i > j
-                    ord[i, j] = -ord[j, i]
-                else
-                    ord[i, j] = zero(Int32)
-                end
-
-                # arc variables
-                resize!(solver, length(solver) + one(Int32))
-                arc[i, j] = length(solver)
-
-                # duplicate arc variables
-                weight = trunc(Int32, weights[j])
-
-                for _ in oneto(weight - one(Int32))
-                    jj += one(Int32)
-                    arc[i, jj] = length(solver)
-                end
-            end
-        end
-
-        # base encoding
-        for i in oneto(n), j in oneto(n), k in oneto(n)
-            if i != j && j != k && k != i
-                # ord(i, j) ∧ ord(j, k) → ord(i, k)
-                clause!(solver, -ord[i, j], -ord[j, k], ord[i, k])
-
-                # arc(i, j) ∧ arc(i, k) → arc(j, k) ∨ arc(k, j)
-                clause!(solver, -arc[i, j], -arc[i, k], arc[j, k], arc[k, j])
-            end
-        end
-
-        for i in oneto(n), j in neighbors(graph, i)
-            if i < j
-                # arc(i, j) ∨ arc(j, i)
-                clause!(solver, arc[i, j], arc[j, i])
-            end
-        end
-
-        for i in oneto(n)
-            # arc(i, i)
-            clause!(solver, arc[i, i])
-
-            for j in oneto(n)
-                if i != j
-                    # ord(i, j) → -arc(j, i)
-                    clause!(solver, -ord[i, j], -arc[j, i])
-
-                    if i < j
-                        # ord(i, j) → ¬ord(j, i)
-                        clause!(solver, -ord[i, j], -ord[j, i])
-                    end
-                end
-            end
-        end
-
-        # encode maximal clique
-        label = zeros(Bool, n)
-        label[clique] .= true
-
-        for j in clique, i in oneto(n)
-            if !label[i]
-                # ord(i, j)
-                clause!(solver, ord[i, j])
-            elseif i < j
-                # arc(i, j)
-                clause!(solver, arc[i, j])
-            end
-        end
-
-        # encode false twins
-        for p in vertices(partition)
-            for k in neighbors(partition, p), j in neighbors(partition, p)
-                if j < k && !label[j] && !label[k]
-                    # ord(j, k)
-                    clause!(solver, ord[j, k])
-                end
-            end
-        end
-
-        # encode sorting network
-        for i in oneto(n)
-            row = @view arc[i, :]
-            sortingnetwork!(solver, row)
-        end
-
-        # initialize cache
-        cache = Matrix{Bool}(undef, n, n)
-
-        # initialize assumption
-        count = min(ceil(Int32, upperbound), m - one(Int32))
-
-        for i in oneto(n)
-            # Σ { arc(i, j) : j } <= count
-            solver[arc[i, m - count]] = -one(Int32)
-        end
-
-        state = solve!(solver)
-
-        # decrement count until unsatisfiable
-        while state == :sat && !isnegative(count)
-            # update cache
-            for i in oneto(n), j in oneto(n)
-                if i < j
-                    cache[i, j] = ispositive(solver[ord[i, j]])
-                elseif i > j
-                    cache[i, j] = !cache[j, i]
-                else
-                    cache[i, j] = false
-                end
-            end
-
-            # update assumption
-            count -= one(Int32)
-
-            for i in oneto(n)
-                # Σ { arc(i, j) : j } <= count
-                solver[arc[i, m - count]] = -one(Int32)
-            end
-
-            state = solve!(solver)
-        end
-
-        if state != :sat
-            count += one(Int32)
-        end
-
-        return cache, count
-    end
-
-    order = Vector{V}(undef, n)
-    sortperm!(order, oneto(n); lt = (i, j) -> matrix[i, j])
-    return order, convert(V, width)
-end
-
-# compute a maximal clique
-function maximalclique(weights::AbstractVector, graph::AbstractGraph, ::Val{H}) where {H}
-    clique = open(Solver{H}, nv(graph)) do solver
-        n = length(solver)
-        label = zeros(Int32, n); tag = zero(Int32)
-
-        # compute total weight
-        m = zero(Int32)
-
-        for i in oneto(n)
-            m += trunc(Int32, weights[i])
-        end
-
-        # define variables
-        var = Vector{Int32}(undef, m)
-        ii = n
-
-        for i in oneto(n)
-            var[i] = i
-
-            # duplicate variables
-            weight = trunc(Int32, weights[i])
-
-            for _ in oneto(weight - one(Int32))
-                ii += one(Int32)
-                var[ii] = i
-            end
-        end
-
-        # base encoding
-        for j in oneto(n)
-            label[j] = tag += one(Int32)
-
-            for i in neighbors(graph, j)
-                label[i] = tag
-            end
-
-            for i in oneto(j)
-                if label[i] < tag
-                    # ¬i ∨ ¬j
-                    clause!(solver, -i, -j)
-                end
-            end
-        end
-
-        # encode sorting network
-        sortingnetwork!(solver, var)
-
-        # initialize stack
-        num = zero(Int32)
-        stack = Vector{Int32}(undef, n)
-
-        # initialize assumption
-        count = zero(Int32)
-        state = :sat
-
-        if ispositive(m)
-            # Σ { var(i) : i } > count
-            solver[var[m - count]] = one(Int32)
-            state = solve!(solver)
-        end
-
-        if state != :sat
-            error("no solutions found")
-        end
-
-        # increment count until unsatisfiable
-        while state == :sat && count < n - one(Int32)
-            # update stack
-            num = zero(Int32)
-
-            for i in oneto(n)
-                if !isnegative(solver[i])
-                    num += one(Int32)
-                    stack[num] = i
-                end
-            end
-
-            # update assumption
-            count += one(Int32)
-
-            # Σ { var(i) : i } > count
-            solver[var[m - count]] = one(Int32)
-            state = solve!(solver)
-        end
-
-        return resize!(stack, num)
-    end
-
-    return clique
 end
 
 function twins(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
@@ -3109,9 +2292,9 @@ function Base.show(io::IO, ::MIME"text/plain", alg::FlowCutter)
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::SAT{H, A}) where {H, A}
+function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: PIDBT}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "SAT{$H, $A}:")
+    println(io, " "^indent * string(A))
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
 end
@@ -3181,6 +2364,13 @@ function Base.show(io::IO, ::MIME"text/plain", alg::BestWidth{A}) where {A}
 
     return
 end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: Log}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "$A:")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    return
++end
 
 """
     DEFAULT_ELIMINATION_ALGORITHM = AMF()

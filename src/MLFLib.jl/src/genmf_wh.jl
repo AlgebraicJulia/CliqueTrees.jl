@@ -187,35 +187,34 @@
 #**********************************************************************
 #
 function genmf_wh(
-        neqns::Int,
-        maxint::Int,
-        adjlen::Int,
-        adjlen2::Int,
+        neqns::V,
+        adjlen::E,
+        adjlen2::E,
         vwght::AbstractVector{W},
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
         defflag::Bool,
-        perm::AbstractVector{Int},
-        invp::AbstractVector{Int},
-        marker::AbstractVector{Int},
-        nvtxs::AbstractVector{Int},
-        work::AbstractVector{Int},
+        perm::AbstractVector{V},
+        invp::AbstractVector{V},
+        marker::AbstractVector{I},
+        nvtxs::AbstractVector{V},
+        work::AbstractVector{V},
         qsize::AbstractVector{W},
-        qnmbr::AbstractVector{Int},
-        ecforw::AbstractVector{Int},
+        qnmbr::AbstractVector{V},
+        ecforw::AbstractVector{V},
         defncy::AbstractVector{W},
-        adj2::AbstractVector{Int},
+        adj2::AbstractVector{V},
         changed::AbstractVector{Bool},
         degree::AbstractVector{W},
-        umark::AbstractVector{Int},
+        umark::AbstractVector{I},
         heap::AbstractVector{W},
-        heapinv::AbstractVector{Int},
-        ecliq::AbstractVector{Int},
-        xadj2::AbstractVector{Int},
-        len2::AbstractVector{Int},
-        work1::AbstractVector{Int},
+        heapinv::AbstractVector{V},
+        ecliq::AbstractVector{V},
+        xadj2::AbstractVector{E},
+        len2::AbstractVector{V},
+        work1::AbstractVector{I},
         work2::AbstractVector{W},
-    ) where {W}
+    ) where {V, E, I, W}
     
     #       ****************
     #       INITIALIZATIONS.
@@ -229,7 +228,7 @@ function genmf_wh(
     #         WORK:     DEFNCY, UMARK, XADJ2
     #       -------------------------------------
     compress(
-        neqns, maxint, adjlen, vwght, xadj, adjncy,
+        neqns, adjlen, vwght, xadj, adjncy,
         degree, marker, work, qsize, qnmbr, work1,
         umark, xadj2
     )
@@ -294,30 +293,30 @@ function genmf_wh(
     #       IFLAG:  TEST FOR SUFFICIENT WORK STORAGE IN ADJNCY(*).
     #       ------------------------------------------------------
     nofnz  = zero(W)
-    echead = 0
-    ectail = 0
-    gbgcnt = 0
-    tag    = 0
-    utag   = 0
-    nxtloc = xadj[neqns + 1]
-    remain = adjlen - nxtloc + 1
+    echead = zero(V)
+    ectail = zero(V)
+    gbgcnt = zero(I)
+    tag    = zero(I)
+    utag   = zero(I)
+    nxtloc = xadj[neqns + one(V)]
+    remain = adjlen - nxtloc + one(E)
 
-    if remain >= neqns
+    if remain >= convert(E, neqns)
         #           --------------------------------
         #           SUFFICIENT STORAGE (NO WARNING).
         #           --------------------------------
-        iflag = 0
-    elseif !isnegative(remain) && remain <= neqns - 1
+        iflag = zero(I)
+    elseif !isnegative(remain) && remain <= convert(E, neqns) - one(E)
         #           ------------------------------------------------------
         #           SUFFICIENT STORAGE, BUT COULD BE TIGHT ENOUGH TO CAUSE
         #           MANY GARBAGE COLLECTIONS. (WARNING)
         #           ------------------------------------------------------
-        iflag = 1
+        iflag = one(I)
     else
         #           -----------------------------
         #           INSUFFICIENT STORAGE (ERROR).
         #           -----------------------------
-        iflag = -1
+        iflag = -one(I)
         return nofnz, gbgcnt, iflag
     end
     
@@ -327,17 +326,15 @@ function genmf_wh(
     #
     #       NUM: NEXT NUMBER TO BE ASSIGNED BY THE ORDERING.
     #       ------------------------------------------------
-    num = 1
+    num = one(V)
 
     while num <= neqns
-        
+
         #           --------------------------------------------
         #           DELETE THE MINIMUM-SCORE NODE FROM THE HEAP.
         #             ENODE:  MINIMUM-SCORE NODE
-        #             MINSCR: MINIMUM SCORE
         #           --------------------------------------------
-        enode = convert(Int, heap[2])
-        minscr = heap[1]
+        enode = convert(V, heap[two(V)])
         heapsize = del_heap(heap, heapsize, heapinv, enode)
         
         #           --------------------------------------------------------
@@ -369,11 +366,11 @@ function genmf_wh(
         #             WORK:     XADJ2, LEN2
         #           ---------------------------------------------------------
         tag, utag, nnodes2 = mfupd_def(
-            enode, neqns, maxint, adjlen, xadj,
+            enode, neqns, adjlen, xadj,
             adjncy, nvtxs, work, qsize, nnodes,
             fnode, ecliq, degree, defncy,
             tag, marker, utag, umark, changed,
-            xadj2, work2
+            len2, work2
         )
         
         #           -------------------------------------------------------
@@ -387,11 +384,11 @@ function genmf_wh(
         #             WORK:     WORK1, XADJ2
         #           -------------------------------------------------------
         tag, echead, ectail, nxtloc, gbgcnt, clqsiz = elmtra(
-            enode, neqns, adjlen, maxint, nnodes,
+            enode, neqns, adjlen, nnodes,
             ecliq, invp, tag, xadj, adjncy,
             nvtxs, work, qsize, qnmbr, marker, echead,
             ectail, ecforw, nxtloc, gbgcnt, clqsiz,
-            umark, work1, xadj2
+            umark, perm, len2
         )
         
         #           -------------------------------------------------------
@@ -403,21 +400,21 @@ function genmf_wh(
         qe = qsize[enode]
         de = degree[enode]
         jstart = xadj[enode]
-        jstop = jstart + nvtxs[enode] - 1
+        jstop = jstart + convert(E, nvtxs[enode]) - one(E)
 
         for j in jstart:jstop
             unode = adjncy[j]
             du = degree[unode]
             defncy[unode] = defncy[unode] - (du - de) * qe
         end
-        
+
         #           -----------------------------------------------
-        #           UPDATE THE DEGREE OF EACH NODE UNODE IN ENODE'S 
-        #           ELIMINATION CLIQUE TO REFLECT THE REMOVAL OF 
+        #           UPDATE THE DEGREE OF EACH NODE UNODE IN ENODE'S
+        #           ELIMINATION CLIQUE TO REFLECT THE REMOVAL OF
         #           ENODE.
         #           -----------------------------------------------
         jstart = xadj[enode]
-        jstop = jstart + nvtxs[enode] - 1
+        jstop = jstart + convert(E, nvtxs[enode]) - one(E)
 
         for j in jstart:jstop
             unode = adjncy[j]
@@ -476,7 +473,7 @@ function genmf_wh(
                     #                       SO DSCORE HAS DECREASED.
                     #                       ------------------------------------------
                     hindex = heapinv[jnode]
-                    heap[twice(hindex) - 1] = def
+                    heap[twice(hindex) - one(V)] = def
                     move_up(heap, heapsize, hindex, heapinv)
                 end
             end

@@ -70,9 +70,7 @@ function color(graph, order::AbstractVector, index::AbstractVector = invperm(ord
     return color(BipartiteGraph(graph), order, index)
 end
 
-function color(
-        graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector
-    ) where {V}
+function color(graph::AbstractGraph{V}, order::AbstractVector, index::AbstractVector) where {V}
     k = zero(V)
     label = fill(nv(graph) + one(V), nv(graph))
     color = Vector{V}(undef, nv(graph))
@@ -96,4 +94,31 @@ function color(
     end
 
     return Coloring(k, color)
+end
+
+function color(tree::CliqueTree{V}) where {V}
+    n = nov(residuals(tree))
+    color = Vector{V}(undef, n)
+    label = Vector{V}(undef, n)
+    label .= n + one(V)
+
+    for bag in Iterators.reverse(tree)
+        for v in separator(bag)
+            label[color[v]] = n
+        end
+
+        c = one(V)
+
+        for v in residual(bag)
+            while label[c] <= n
+                c += one(V)
+            end
+
+            color[v] = c; c += one(V)
+        end
+
+        n -= one(V)
+    end
+
+    return Coloring(treewidth(tree) + one(V), color)
 end

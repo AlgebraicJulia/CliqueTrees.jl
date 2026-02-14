@@ -43,7 +43,7 @@
 #
 #**********************************************************************
 #
-function mod_heap(heap::AbstractVector{W}, heapsize::Int, v2heap::AbstractVector{Int}, vtx::Int, wt::W) where {W}
+function mod_heap(heap::AbstractVector{W}, heapsize::V, v2heap::AbstractVector{V}, vtx::V, wt::W) where {V, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -57,7 +57,7 @@ function mod_heap(heap::AbstractVector{W}, heapsize::Int, v2heap::AbstractVector
     #       -----------------------------------------------------
     #       MODIFY THE WEIGHT FIELD OF ELEMENT WITH VERTEX = VTX.
     #       -----------------------------------------------------
-    heap[twice(i) - 1] = wt
+    heap[twice(i) - one(V)] = wt
     
     #       ------------------------------------------------------
     #       HEAP MAY NO LONGER BE A HEAP AFTER THE WEIGHT FIELD OF
@@ -65,14 +65,14 @@ function mod_heap(heap::AbstractVector{W}, heapsize::Int, v2heap::AbstractVector
     #       HEAP.
     #       ------------------------------------------------------
     
-    if ispositive(i - 1)
+    if ispositive(i - one(V))
         #           ----------------------------------------------------
         #           THE MODIFIED ELEMENT IS NOT AT THE TOP OF THE BIANRY
         #           TREE, SO IT HAS A PARENT, GIVEN BY I/2.
         #           ----------------------------------------------------
         p = half(i)
 
-        if heap[twice(p) - 1] > wt
+        if heap[twice(p) - one(V)] > wt
             #               ------------------------------------------------
             #               THE WEIGHT FIELD OF THE PARENT IS LARGER THAN THE
             #               WEIGHT OF THE MODIFIED ELEMENT, SO THE MODIFIED

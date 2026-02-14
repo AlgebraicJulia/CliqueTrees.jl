@@ -40,12 +40,12 @@
 #
 #**********************************************************************
 #
-function build_heap(heap::AbstractVector{W}, v2heap::AbstractVector{Int}, n::Int) where {W}
-    
+function build_heap(heap::AbstractVector{W}, v2heap::AbstractVector{V}, n::V) where {V, W}
+
     #       -------------------
     #       LOCAL VARIABLES ...
     #       -------------------
-    
+
     heapsize = n
 
     for node in reverse(oneto(half(n)))

@@ -4,7 +4,11 @@ using Base: oneto
 using FillArrays
 using ..Utilities
 
-export mlf
+export mlf!
+
+function maxint(::Type{I}) where {I}
+    return typemax(I) - convert(I, 100000)
+end
 
 include("mlfwh.jl")
 include("genmf_wh.jl")

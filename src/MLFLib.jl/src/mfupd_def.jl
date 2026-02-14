@@ -91,28 +91,27 @@
 #**********************************************************************
 #
 function mfupd_def(
-        enode::Int,
-        neqns::Int,
-        maxint::Int,
-        adjlen::Int,
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
-        nvtxs::AbstractVector{Int},
-        work::AbstractVector{Int},
+        enode::V,
+        neqns::V,
+        adjlen::E,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        nvtxs::AbstractVector{V},
+        work::AbstractVector{V},
         qsize::AbstractVector{W},
-        nnodes::Int,
-        fnode::Int,
-        ecliq::AbstractVector{Int},
+        nnodes::V,
+        fnode::V,
+        ecliq::AbstractVector{V},
         degree::AbstractVector{W},
         defncy::AbstractVector{W},
-        tag::Int,
-        marker::AbstractVector{Int},
-        utag::Int,
-        umark::AbstractVector{Int},
+        tag::I,
+        marker::AbstractVector{I},
+        utag::I,
+        umark::AbstractVector{I},
         changed::AbstractVector{Bool},
-        dset::AbstractVector{Int},
+        dset::AbstractVector{V},
         deginc::AbstractVector{W},
-    ) where {W}
+    ) where {V, E, I, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -144,35 +143,35 @@ function mfupd_def(
         #           ---------
         #           BUMP TAG.
         #           ---------
-        if tag <= maxint - j - 1
+        if tag <= maxint(I) - convert(I, j) - one(I)
             tag0 = tag
-            tag += j
+            tag += convert(I, j)
         else
-            tag0 = 0
-            tag = j
+            tag0 = zero(I)
+            tag = convert(I, j)
 
             for i in oneto(neqns)
-                if marker[i] < maxint
-                    marker[i] = 0
+                if marker[i] < maxint(I)
+                    marker[i] = zero(I)
                 end
             end
         end
-        
+
         #           ----------
         #           BUMP UTAG.
         #           ----------
-        if utag <= maxint - 2
-            utag += 1
+        if utag <= maxint(I) - two(I)
+            utag += one(I)
         else
-            utag = 1
+            utag = one(I)
 
             for i in oneto(neqns)
-                if marker[i] < maxint
-                    umark[i] = 0
+                if marker[i] < maxint(I)
+                    umark[i] = zero(I)
                 end
             end
         end
-        
+
         #           ------------------------------------------------
         #           INITIALIZE NUMBER OF EXTERNAL NEIGHBORS OF UNODE
         #           TO ZERO.
@@ -183,7 +182,7 @@ function mfupd_def(
         #           OF UNODE ...
         #           ------------------------------------------
         istart = xadj[unode]
-        istop = istart + nvtxs[unode] - 1
+        istop = istart + convert(E, nvtxs[unode]) - one(E)
 
         for i in istart:istop
             wnode = adjncy[i]
@@ -211,8 +210,8 @@ function mfupd_def(
         #           --------------------------------------------
         #           FOR EVERY CLIQUE NEIGHBOR CNODE OF UNODE ...
         #           --------------------------------------------
-        cstart = xadj[unode] + nvtxs[unode]
-        cstop = cstart + work[unode] - 1
+        cstart = xadj[unode] + convert(E, nvtxs[unode])
+        cstop = cstart + convert(E, work[unode]) - one(E)
 
         for c in cstart:cstop
             cnode = adjncy[c]
@@ -220,7 +219,7 @@ function mfupd_def(
             #               FOR EVERY NODE WNODE IN CLIQUE CNODE ...
             #               ----------------------------------------
             istart = xadj[cnode]
-            istop = istart + nvtxs[cnode] - 1
+            istop = istart + convert(E, nvtxs[cnode]) - one(E)
 
             for i in istart:istop
                 wnode = adjncy[i]
@@ -252,46 +251,46 @@ function mfupd_def(
         #           ELIMINATION CLIQUE ...
         #           (NOTE THAT UNODE = ECLIQ(J))
         #           ----------------------------------
-        dvtxs = 0
+        dvtxs = zero(V)
 
-        for i in oneto(j - 1)
+        for i in oneto(j - one(V))
             wnode = ecliq[i]
             #               ---------------------------------------
             #               IF WNODE IS NOT A NEIGHBOR OF UNODE ...
             #               ---------------------------------------
             if umark[wnode] < utag
                 #                   ---------------------------------------------
-                #                   ... THEN THERE IS A NEW FILL EDGE JOINING 
+                #                   ... THEN THERE IS A NEW FILL EDGE JOINING
                 #                   UNODE AND WNODE.
                 #                   ACCUMULATE THE CONTRIBUTION OF THE FILL
                 #                   EDGE TO UNODE'S AND WNODE'S DEGREE INCREMENT.
                 #                   ---------------------------------------------
                 deginc[unode] -= qsize[wnode]
                 deginc[wnode] += qu
-                dvtxs += 1
+                dvtxs += one(V)
                 dset[dvtxs] = wnode
             end
         end
-        
+
         #           ---------------------------------------------
         #           FOR EACH NEW FILL NEIGHBOR WNODE OF UNODE ...
         #           ---------------------------------------------
         for w in oneto(dvtxs)
-            
+
             #               --------------------------------------
             #               INITIALIZE COUNTS FOR UNODE AND WNODE.
             #               --------------------------------------
             wnode = dset[w]
             cntu = ucount
             cntw = zero(W)
-            tag0 += 1
+            tag0 += one(I)
             uwfill = qsize[unode] * qsize[wnode]
-            
+
             #               -------------------------------------------------------
             #               FOR EVERY UNABSORBED VERTEX NEIGHBOR XNODE OF WNODE ...
             #               -------------------------------------------------------
             istart = xadj[wnode]
-            istop = istart + nvtxs[wnode] - 1
+            istop = istart + convert(E, nvtxs[wnode]) - one(E)
 
             for i in istart:istop
                 xnode = adjncy[i]
@@ -323,7 +322,7 @@ function mfupd_def(
                             #                               AND MARK IT AS CHANGED.
                             #                               ---------------------------------
                             if !changed[xnode]
-                                k += 1
+                                k += one(V)
                                 ecliq[k] = xnode
                                 changed[xnode] = true
                             end
@@ -354,12 +353,12 @@ function mfupd_def(
                     marker[xnode] = tag0
                 end
             end
-            
+
             #               --------------------------------------------
             #               FOR EVERY CLIQUE NEIGHBOR CNODE OF WNODE ...
             #               --------------------------------------------
-            cstart = xadj[wnode] + nvtxs[wnode]
-            cstop = cstart + work[wnode] - 1
+            cstart = xadj[wnode] + convert(E, nvtxs[wnode])
+            cstop = cstart + convert(E, work[wnode]) - one(E)
 
             for c in cstart:cstop
                 cnode = adjncy[c]
@@ -368,7 +367,7 @@ function mfupd_def(
                 #                   CLIQUE CNODE ...
                 #                   ----------------------------------
                 istart = xadj[cnode]
-                istop = istart + nvtxs[cnode] - 1
+                istop = istart + convert(E, nvtxs[cnode]) - one(E)
 
                 for i in istart:istop
                     xnode = adjncy[i]
@@ -401,7 +400,7 @@ function mfupd_def(
                                 #                                   DEFICIENCIES.
                                 #                                   ---------------------------------
                                 if !changed[xnode]
-                                    k += 1
+                                    k += one(V)
                                     ecliq[k] = xnode
                                     changed[xnode] = true
                                 end

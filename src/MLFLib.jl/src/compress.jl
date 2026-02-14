@@ -65,21 +65,20 @@
 #**********************************************************************
 #
 function compress(
-        neqns::Int,
-        maxint::Int,
-        adjlen::Int,
+        neqns::V,
+        adjlen::E,
         vwght::AbstractVector{W},
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
         degree::AbstractVector{W},
-        marker::AbstractVector{Int},
-        work::AbstractVector{Int},
+        marker::AbstractVector{I},
+        work::AbstractVector{V},
         qsize::AbstractVector{W},
-        qnmbr::AbstractVector{Int},
-        hash::AbstractVector{Int},
-        umark::AbstractVector{Int},
-        xadj2::AbstractVector{Int}
-    ) where {W}
+        qnmbr::AbstractVector{V},
+        hash::AbstractVector{I},
+        umark::AbstractVector{I},
+        xadj2::AbstractVector{E}
+    ) where {V, E, I, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -89,18 +88,18 @@ function compress(
     #       INITIALIZE VARIOUS VECTORS.
     #       NOTE THAT DEGREE COUNTS THE VERTEX AS A NEIGHBOR OF ITSELF.
     #       -----------------------------------------------------------
-    tag = 0
+    tag = zero(I)
 
     for jnode in oneto(neqns)
         qsize[jnode] = vwght[jnode]
-        qnmbr[jnode] = 1
-        marker[jnode] = 0
-        work[jnode] = 0
-        umark[jnode] = 0
-        hash[jnode] = jnode
+        qnmbr[jnode] = one(V)
+        marker[jnode] = zero(V)
+        work[jnode] = zero(V)
+        umark[jnode] = zero(V)
+        hash[jnode] = convert(I, jnode)
 
         kstart = xadj[jnode]
-        kstop = xadj[jnode + 1] - 1
+        kstop = xadj[jnode + one(V)] - one(E)
         dj = vwght[jnode]
 
         for k in kstart:kstop
@@ -110,21 +109,21 @@ function compress(
 
         degree[jnode] = dj
     end
-    
+
     #       ----------------------------------
     #       COMPUTE HASH SCORES FOR EACH NODE.
     #       ----------------------------------
     kstart = xadj[1]
 
     for jnode in oneto(neqns)
-        kstop = xadj[jnode + 1] - 1
+        kstop = xadj[jnode + one(V)] - one(E)
 
         for k in kstart:kstop
             knode = adjncy[k]
-            hash[jnode] += knode
+            hash[jnode] += convert(I, knode)
         end
 
-        kstart = kstop + 1
+        kstart = kstop + one(E)
     end
     
     #       -----------------------
@@ -140,21 +139,21 @@ function compress(
             #               ----------------------------------------------
             #               MARK JNODE AND ITS NEIGHBORS WITH THE NEW TAG.
             #               ----------------------------------------------
-            tag += 1
+            tag += one(I)
             umark[jnode] = tag
             kstart = xadj[jnode]
-            kstop = xadj[jnode + 1] - 1
+            kstop = xadj[jnode + one(V)] - one(E)
 
             for k in kstart:kstop
                 knode = adjncy[k]
                 umark[knode] = tag
             end
-            
+
             #               ------------------------------------
             #               FOR EACH NEIGHBOR KNODE OF JNODE ...
             #               ------------------------------------
             kstart = xadj[jnode]
-            kstop = xadj[jnode + 1] - 1
+            kstop = xadj[jnode + one(V)] - one(E)
 
             for k in kstart:kstop
                 knode = adjncy[k]
@@ -163,13 +162,13 @@ function compress(
                 #                   JNODE AND KNODE IS GREATER THAN JNODE
                 #                   ----------------------------------------------
                 if degree[knode] == degree[jnode] && hash[knode] == hash[jnode] && knode > jnode
-                    
+
                     #                       ----------------------------------------------
                     #                       CHECK IF KNODE AND JNODE ARE INDISINGUISHABLE.
                     #                       ----------------------------------------------
                     indist = true
                     istart = xadj[knode]
-                    istop = xadj[knode + 1] - 1
+                    istop = xadj[knode + one(V)] - one(E)
 
                     for i in istart:istop
                         inode = adjncy[i]
@@ -189,9 +188,9 @@ function compress(
                         work[knode] = -jnode
                         qsize[jnode] += qsize[knode]
                         qnmbr[jnode] += qnmbr[knode]
-                        marker[knode] = maxint
+                        marker[knode] = maxint(I)
                         qsize[knode] = zero(W)
-                        qnmbr[knode] = 0
+                        qnmbr[knode] = zero(V)
                     end
                 end
                 #                   ----------------------------
@@ -208,7 +207,7 @@ function compress(
     #       ---------------------------------
     #       COMPRESS THE ADJACENCY STRUCTURE.
     #       ---------------------------------
-    nxtloc = 1
+    nxtloc = one(E)
     #       -----------------------
     #       FOR EACH NODE JNODE ...
     #       -----------------------
@@ -227,28 +226,28 @@ function compress(
             #               COMPRESS JNODE'S NEIGHBOR LIST.
             #               -------------------------------
             kstart = xadj[jnode]
-            kstop = xadj[jnode + 1] - 1
+            kstop = xadj[jnode + one(V)] - one(E)
 
             for k in kstart:kstop
                 knode = adjncy[k]
 
                 if !iszero(qsize[knode])
                     adjncy[nxtloc] = knode
-                    nxtloc += 1
+                    nxtloc += one(E)
                 end
             end
 
             xadj2[jnode] = nxtloc
         end
     end
-    
+
     #       ------------------
     #       COPY NEW POINTERS.
     #       ------------------
-    xadj[1] = 1
+    xadj[1] = one(E)
 
     for k in oneto(neqns)
-        xadj[k + 1] = xadj2[k]
+        xadj[k + one(V)] = xadj2[k]
     end
     
     return

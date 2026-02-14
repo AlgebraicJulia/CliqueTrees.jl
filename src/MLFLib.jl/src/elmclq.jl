@@ -86,17 +86,17 @@
 #**********************************************************************
 #
 function elmclq(
-        enode::Int,
-        neqns::Int,
-        adjlen::Int,
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
-        nvtxs::AbstractVector{Int},
-        work::AbstractVector{Int},
+        enode::V,
+        neqns::V,
+        adjlen::E,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        nvtxs::AbstractVector{V},
+        work::AbstractVector{V},
         qsize::AbstractVector{W},
         changed::AbstractVector{Bool},
-        ecliq::AbstractVector{Int},
-    ) where {W}
+        ecliq::AbstractVector{V},
+    ) where {V, E, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -123,15 +123,15 @@ function elmclq(
     #       FOR EACH ELIMINATION CLIQUE CNODE TO WHICH ENODE BELONGS ...
     #       ------------------------------------------------------------
     
-    cstart = xadj[enode] + nvtxs[enode]
-    cstop = cstart + work[enode] - 1
-    ipnt = 0
-    fnode = 1
-    
+    cstart = xadj[enode] + convert(E, nvtxs[enode])
+    cstop = cstart + convert(E, work[enode]) - one(E)
+    ipnt = zero(V)
+    fnode = one(V)
+
     for c in reverse(cstart:cstop)
         cnode = adjncy[c]
         jstart = xadj[cnode]
-        jstop = jstart + nvtxs[cnode] - 1
+        jstop = jstart + convert(E, nvtxs[cnode]) - one(E)
         #           ---------------------------------------------
         #           ... FOR EACH VERTEX JNODE IN CLIQUE CNODE ...
         #           ---------------------------------------------
@@ -145,7 +145,7 @@ function elmclq(
                 #                   ----------------------------------------
                 #                   ADD JNODE TO ENODE'S ELIMINATION CLIQUE.
                 #                   ----------------------------------------
-                ipnt += 1
+                ipnt += one(V)
                 ecliq[ipnt] = jnode
                 clqsiz += qsize[jnode]
                 qsize[jnode] = -qsize[jnode]
@@ -161,10 +161,10 @@ function elmclq(
         #           NODES OF CLIQUE CSTOP HAVE BEEN INTRODUCED.
         #           --------------------------------------------------
         if c == cstop
-            fnode = max(fnode, ipnt + 1)
+            fnode = max(fnode, ipnt + one(V))
         end
     end
-    
+
     #       ******************************************************
     #       PUT VERTEX NEIGHBORS OF ENODE INTO ENODE'S ELIMINATION
     #       CLIQUE.
@@ -173,7 +173,7 @@ function elmclq(
     #       COPY ENODE'S VERTICES INTO ENODE'S NEW CLIQUE.
     #       ----------------------------------------------
     jstart = xadj[enode]
-    jstop = jstart + nvtxs[enode] - 1
+    jstop = jstart + convert(E, nvtxs[enode]) - one(E)
     #       ------------------------------------------------
     #       ... FOR EACH VERTEX JNODE IN THE VERTEX LIST ...
     #       ------------------------------------------------
@@ -186,7 +186,7 @@ function elmclq(
             #               ----------------------------------------
             #               ADD JNODE TO ENODE'S ELIMINATION CLIQUE.
             #               ----------------------------------------
-            ipnt += 1
+            ipnt += one(V)
             ecliq[ipnt] = jnode
             clqsiz += qsize[jnode]
             qsize[jnode] = -qsize[jnode]

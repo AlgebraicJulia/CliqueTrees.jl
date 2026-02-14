@@ -63,22 +63,22 @@
 #**********************************************************************
 #
 function mfinit_def(
-        neqns::Int,
-        adjlen::Int,
-        adjlen2::Int,
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
+        neqns::V,
+        adjlen::E,
+        adjlen2::E,
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
         degree::AbstractVector{W},
         qsize::AbstractVector{W},
         defncy::AbstractVector{W},
-        marker::AbstractVector{Int},
-        dhead::AbstractVector{Int},
-        dforw::AbstractVector{Int},
+        marker::AbstractVector{I},
+        dhead::AbstractVector{V},
+        dforw::AbstractVector{V},
         degtmp::AbstractVector{W},
-        xadj2::AbstractVector{Int},
-        len2::AbstractVector{Int},
-        adj2::AbstractVector{Int}
-    ) where {W}
+        xadj2::AbstractVector{E},
+        len2::AbstractVector{V},
+        adj2::AbstractVector{V}
+    ) where {V, E, I, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -88,31 +88,31 @@ function mfinit_def(
     #       INITIALIZE MARKER VECTOR AND EMPTY LISTS.
     #       -----------------------------------------
     for jnode in oneto(neqns)
-        dhead[jnode] = 0
+        dhead[jnode] = zero(V)
 
         if !iszero(qsize[jnode])
-            marker[jnode] = 0
+            marker[jnode] = zero(I)
         end
     end
-    
+
     #       --------------------------------------------------
     #       INITIALIZE ZERO DEFICIENCY SCORES AND EMPTY GRAPH.
     #       --------------------------------------------------
-    tag = 0
+    tag = zero(I)
 
     for jnode in oneto(neqns)
         if !iszero(qsize[jnode])
             xadj2[jnode] = xadj[jnode]
-            len2[jnode] = 0
+            len2[jnode] = zero(V)
             defncy[jnode] = zero(W)
             degtmp[jnode] = zero(W)
         end
     end
-    
+
     #       -------------------------
     #       FOR EACH VERTEX JNODE ...
     #       -------------------------
-    maxdeg = 0
+    maxdeg = zero(V)
 
     for jnode = oneto(neqns)
         #           ---------------------------------------
@@ -123,35 +123,35 @@ function mfinit_def(
             #               COMPUTE JNODE'S NUMBER OF NEIGHBORS IN THE
             #               COMPRESSED GRAPH AND PLACE IT IN DEGREE LIST.
             #               ---------------------------------------------
-            degre = xadj[jnode + 1] - xadj[jnode]
+            degre = convert(V, xadj[jnode + one(V)] - xadj[jnode])
             maxdeg = max(maxdeg, degre)
-            degp1 = degre + 1
+            degp1 = degre + one(V)
             nxtnod = dhead[degp1]
             dforw[jnode] = nxtnod
             dhead[degp1] = jnode
         end
     end
-    
+
     #       *********************************************************
     #       BUILD THE GRAPH FROM SCRATCH WHILE COMPUTING DEFICIENCIES
     #       USING WING-HUANG UPDATING.
     #       *********************************************************
-    
+
     #       -------------------------------------------------------
     #       DO WHILE THERE ARE VERTICES WHOSE EDGES ARE YET TO BE
     #       ADDED TO THE ADJACENCY STRUCTURE UNDER CONSTRUCTION ...
     #       -------------------------------------------------------
     while ispositive(maxdeg)
-        
+
         #           ----------------------------------------------
         #           GET VERTEX UNODE OF MAXIMUM DEGREE WHOSE EDGES
         #           HAVE NOT YET BEEN ADDED TO THE NEW GRAPH.
         #           ----------------------------------------------
-        degp1 = maxdeg + 1
+        degp1 = maxdeg + one(V)
         unode = dhead[degp1]
 
         if iszero(unode)
-            maxdeg -= 1
+            maxdeg -= one(V)
         else
             
             #               ----------------------------------
@@ -164,22 +164,22 @@ function mfinit_def(
             #               MARK THE NEIGHBORS OF UNODE IN THE CURRENT
             #               TRANSIENT GRAPH.
             #               ------------------------------------------
-            tag += 1
+            tag += one(I)
 
-            for w in xadj2[unode]:xadj2[unode] + len2[unode] - 1
+            for w in xadj2[unode]:xadj2[unode] + convert(E, len2[unode]) - one(E)
                 wnode = adj2[w]
                 marker[wnode] = tag
             end
-            
+
             #               ----------------------------------------------------
             #               FOR EACH NEIGHBOR OF UNODE TO BE ADDED AS A NEIGHBOR
             #               IN THE NEW GRAPH ...
             #               ----------------------------------------------------
-            for w in xadj[unode]:xadj[unode + 1] - 1
+            for w in xadj[unode]:xadj[unode + one(V)] - one(E)
                 wnode = adjncy[w]
 
                 if marker[wnode] < tag
-                    
+
                     #                       ----------------------------------------
                     #                       INITIALIZE COUNTS USED FOR W-H UPDATING.
                     #                       ----------------------------------------
@@ -187,11 +187,11 @@ function mfinit_def(
                     cntu = ucount
                     cntw = zero(W)
                     uwfill = qsize[unode] * qsize[wnode]
-                    
+
                     #                       --------------------------------------------
                     #                       PERFORM WING-HUANG UPDATES FOR THE NEW EDGE.
                     #                       --------------------------------------------
-                    for x in xadj2[wnode]:xadj2[wnode] + len2[wnode] - 1
+                    for x in xadj2[wnode]:xadj2[wnode] + convert(E, len2[wnode]) - one(E)
                         xnode = adj2[x]
 
                         if marker[xnode] == tag
@@ -204,17 +204,17 @@ function mfinit_def(
 
                     defncy[unode] += cntu * qsize[wnode]
                     defncy[wnode] += cntw * qsize[unode]
-                    
+
                     #                       ---------------------------------------
                     #                       ADD THE EDGE JOINING UNODE AND WNODE TO
                     #                       THE GRAPH (AND UPDATE DEGREES IN THE
                     #                       TRANSIENT GRAPH).
                     #                       ---------------------------------------
-                    adj2[xadj2[unode] + len2[unode]] = wnode
-                    len2[unode] += 1
-                    
-                    adj2[xadj2[wnode] + len2[wnode]] = unode
-                    len2[wnode] += 1
+                    adj2[xadj2[unode] + convert(E, len2[unode])] = wnode
+                    len2[unode] += one(V)
+
+                    adj2[xadj2[wnode] + convert(E, len2[wnode])] = unode
+                    len2[wnode] += one(V)
                     
                     degtmp[wnode] += qsize[unode]
                     degtmp[unode] += qsize[wnode]

@@ -15,16 +15,16 @@ using SparseArrays
 using SparseArrays: getcolptr
 
 include("./Utilities.jl/src/Utilities.jl")
-include("./IPASIR.jl/src/IPASIR.jl")
 include("./AMFLib.jl/src/AMFLib.jl")
 include("./MLFLib.jl/src/MLFLib.jl")
 include("./MMDLib.jl/src/MMDLib.jl")
+include("./PIDBTLib.jl/src/PIDBTLib.jl")
 
 using .Utilities
-using .IPASIR
 using .AMFLib
 using .MLFLib
 using .MMDLib
+using .PIDBTLib
 
 const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
 
@@ -57,7 +57,7 @@ export BFS,
     Spectral,
     FlowCutter,
     BT,
-    SAT,
+    PIDBT,
     MinimalChordal,
     CompositeRotations,
     Compression,
@@ -115,12 +115,15 @@ include("mcs_etree.jl")
 include("acsd.jl")
 include("pr3.jl")
 include("pr4.jl")
-include("symb_facts.jl")
-include("chol_works.jl")
-include("ldlt_works.jl")
-include("chol_facts.jl")
-include("ldlt_facts.jl")
-include("lin_works.jl")
+include("deprecated/symb_facts.jl")
+include("deprecated/chol_works.jl")
+include("deprecated/ldlt_works.jl")
+include("deprecated/chol_facts.jl")
+include("deprecated/ldlt_facts.jl")
+include("deprecated/lin_works.jl")
 include("io.jl")
+
+# Multifrontal submodule
+include("Multifrontal.jl/src/Multifrontal.jl")
 
 end

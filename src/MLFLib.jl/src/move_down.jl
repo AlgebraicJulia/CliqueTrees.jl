@@ -39,7 +39,7 @@
 #
 #**********************************************************************
 #
-function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap::AbstractVector{Int}) where {W}
+function move_down(heap::AbstractVector{W}, heapsize::V, vtx_ptr::V, v2heap::AbstractVector{V}) where {V, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -64,7 +64,7 @@ function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap:
         #           ------------------------
         #           V_WT IS THE WEIGHT OF V.
         #           ------------------------
-        v_wt = heap[twice(v) - 1]
+        v_wt = heap[twice(v) - one(V)]
         #           PRINT *, 'FLD_NOW, VAL = ', V, V_WT
         
         #           ----------------------------------------
@@ -72,7 +72,7 @@ function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap:
         #           IN THE BINARY TREE.
         #           ----------------------------------------
         c_left = twice(v)
-        c_right = c_left + 1
+        c_right = c_left + one(V)
         #           PRINT *, 'FLD_NEXT1, FLD_NEXT2 = ',
         #    &                C_LEFT, C_RIGHT
         
@@ -80,13 +80,13 @@ function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap:
         #           GET THE WEIGHT'S OF THE CHILDREN.
         #           ---------------------------------
         if c_left <= heapsize
-            wt_left = heap[twice(c_left) - 1]
+            wt_left = heap[twice(c_left) - one(V)]
         else
             wt_left = infty
         end
         
         if c_right <= heapsize
-            wt_right = heap[twice(c_right) - 1]
+            wt_right = heap[twice(c_right) - one(V)]
         else
             wt_right = infty
         end
@@ -97,12 +97,12 @@ function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap:
         #           DECIDE WHICH PATH TO FOLLOW.
         #           ----------------------------
         if v_wt <= wt_left && v_wt <= wt_right
-            
+
             #               ------------------------------------------
             #               THE WEIGHT OF V IS LESS THAN OR EQUAL TO
             #               THOSE OF THE TWO CHILDREN, SO WE ARE DONE.
             #               ------------------------------------------
-            v = heapsize + 1
+            v = heapsize + one(V)
             #               PRINT *, 'DONE ...'
             
         else
@@ -129,12 +129,12 @@ function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap:
             #               PRINT *, 'FLD_NEXT1, FLD_NEXT2 = ',
             #    &                    V_PTR, C_PTR
             
-            v_vtx = convert(Int, heap[v_ptr])
+            v_vtx = convert(V, heap[v_ptr])
             #               PRINT *, 'VTX = ', V_VTX
             v2heap[v_vtx] = c
             #               PRINT *, 'FLD_NEXT = ', P
-            
-            c_vtx = convert(Int, heap[c_ptr])
+
+            c_vtx = convert(V, heap[c_ptr])
             v2heap[c_vtx] = v
             #               PRINT *, 'IPOINT, FLD_NOW = ', C_VTX, V
             
@@ -143,8 +143,8 @@ function move_down(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap:
             #               PRINT *, 'HEAP(FLD_NEXT1), HEAP(FLD_NEXT2) = ',
             #    &                    HEAP(V_PTR), HEAP(C_PTR)
             
-            v_ptr -= 1
-            c_ptr -= 1
+            v_ptr -= one(V)
+            c_ptr -= one(V)
             heap[v_ptr] = heap[c_ptr]
             heap[c_ptr] = v_wt
             #               PRINT *, 'HEAP(FLD_NEXT1), HEAP(FLD_NEXT2) = ',

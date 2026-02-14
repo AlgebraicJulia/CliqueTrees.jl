@@ -44,7 +44,7 @@
 #
 #**********************************************************************
 #
-function mfnumn(neqns::Int, work::AbstractVector{Int}, invp::AbstractVector{Int}, perm::AbstractVector{Int})
+function mfnumn(neqns::V, work::AbstractVector{V}, invp::AbstractVector{V}, perm::AbstractVector{V}) where {V}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -54,7 +54,7 @@ function mfnumn(neqns::Int, work::AbstractVector{Int}, invp::AbstractVector{Int}
     #       INITIALIZATION AND TAKE CARE OF REPRESENTATIVE COLUMNS.
     #       -------------------------------------------------------
     for jcol in oneto(neqns)
-        perm[jcol] = 0
+        perm[jcol] = zero(V)
     end
 
     for jcol in oneto(neqns)
@@ -87,7 +87,7 @@ function mfnumn(neqns::Int, work::AbstractVector{Int}, invp::AbstractVector{Int}
             #               NUMBER JCOL AFTER ROOT.
             #               -----------------------
             root = parent
-            invp[root] -= 1
+            invp[root] -= one(V)
             perm[-invp[root]] = jcol
             
             #               --------------------

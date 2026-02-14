@@ -21,27 +21,6 @@ const WidthOrAlgorithm = Union{Number, LowerBoundAlgorithm}
 
 The minor-min-width heuristic.
 
-```jldoctest
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> alg = MMW{1}()
-MMW{1}
-
-julia> lowerbound(graph; alg)
-2
-```
-
 ### Parameters
 
   - `S`: strategy

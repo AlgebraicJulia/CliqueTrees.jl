@@ -39,7 +39,7 @@
 #
 #**********************************************************************
 #
-function move_up(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap::AbstractVector{Int}) where {W}
+function move_up(heap::AbstractVector{W}, heapsize::V, vtx_ptr::V, v2heap::AbstractVector{V}) where {V, W}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -52,7 +52,7 @@ function move_up(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap::A
     v = vtx_ptr
     #       PRINT *, 'FLD_INDEX = ', VTX_PTR
     
-    while ispositive(v - 1)
+    while ispositive(v - one(V))
         #           PRINT *, 'NODE = ', V
         
         #           ------------------------------------------------
@@ -76,8 +76,8 @@ function move_up(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap::A
         #           V_WT AND P_WT ARE THE WEIGHT FIELDS OF V AND
         #           ITS PARENT.
         #           --------------------------------------------
-        v_wt = heap[v_ptr - 1]
-        p_wt = heap[p_ptr - 1]
+        v_wt = heap[v_ptr - one(V)]
+        p_wt = heap[p_ptr - one(V)]
         
         #           PRINT *, 'VAL, VAL1 = ', V_WT, P_WT
         if v_wt >= p_wt
@@ -85,29 +85,29 @@ function move_up(heap::AbstractVector{W}, heapsize::Int, vtx_ptr::Int, v2heap::A
             #               ----------------------------------------------
             #               WE ARE DONE MOVING ELEMENT UP THE BINARY TREE.
             #               ----------------------------------------------
-            v = 0
+            v = zero(V)
             
         else
-            
+
             #               ----------------------------------------------
             #               HERE V_WT < P_WT, SO THE WEIGHT FIELD OF THE
             #               THE NODE IS LESS THAN THAT OF THE PARENT.  THE
             #               TWO SHOULD BE SWAPPED.
             #               ----------------------------------------------
-            
-            c_vtx = convert(Int, heap[v_ptr])
+
+            c_vtx = convert(V, heap[v_ptr])
             v2heap[c_vtx] = p
-            
-            p_vtx = convert(Int, heap[p_ptr])
+
+            p_vtx = convert(V, heap[p_ptr])
             v2heap[p_vtx] = v
             #               PRINT *, 'VTX, FLD_NEXT, IPOINT, FLD_NOW = ',
             #    &                    C_VTX, P, P_VTX, V
-            
+
             heap[v_ptr] = heap[p_ptr]
             heap[p_ptr] = convert(W, c_vtx)
             
-            heap[v_ptr - 1] = p_wt
-            heap[p_ptr - 1] = v_wt
+            heap[v_ptr - one(V)] = p_wt
+            heap[p_ptr - one(V)] = v_wt
             
             v = p
             

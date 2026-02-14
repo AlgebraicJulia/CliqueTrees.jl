@@ -42,9 +42,7 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
         total += vwght[node]
     end
 
-    invp = FVector{V}(undef, neqns)
     marker = FVector{Int}(undef, neqns)
-    mergeparent = FVector{V}(undef, neqns)
     needsupdate = FVector{V}(undef, neqns)
     supersize = FVector{V}(undef, neqns)
     superwght = FVector{V}(undef, neqns)
@@ -54,17 +52,15 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
     degprev = FVector{V}(undef, neqns)
     newadjncy = FVector{V}(undef, nnz)
 
-    mmd_impl!(invp, marker, mergeparent, needsupdate, supersize,
+    mmd_impl!(marker, needsupdate, supersize,
         superwght, elimnext, deghead, degnext, degprev, newadjncy,
         total, neqns, convert(V, delta), vwght, xadj, adjncy)
 
-    return convert(Vector{V}, invp)
+    return convert(Vector{V}, degnext)
 end
 
 function mmd_impl!(
-        invp::AbstractVector{V},
         marker::AbstractVector{I},
-        mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
         supersize::AbstractVector{V},
         superwght::AbstractVector{V},
@@ -88,11 +84,11 @@ function mmd_impl!(
     end
 
     mmd!_impl!(
-        invp, marker, mergeparent, needsupdate, supersize,
+        marker, needsupdate, supersize,
         superwght, elimnext, deghead, degnext, degprev, total,
         neqns, convert(V, delta), vwght, xadj, newadjncy)
 
-    return invp
+    return degnext
 end
 
 """
@@ -111,31 +107,28 @@ input parameters:
 
 output parameters:
 
-  - `invp`: the minimum degree ordering
+  - `degnext`: the minimum degree ordering (repurposed from degree list links)
 
 working arrays:
 
   - `deghead`: points to first node with degree deg, or 0 if there
     are no such nodes
-  - `degnext`: points to the next node in the degree list
-    associated with node, or 0 if node was the last in the
-    degree list
+  - `degnext`: during algorithm, points to the next node in the degree list
+    or stores negative values for eliminated/merged nodes.
+    After algorithm, stores the final ordering.
   - `degprev`: points to the previous node in a degree list
     associated with node, or the negative of the degree of
     node (if node was the last in the degree list), or 0
     if the node is not in the degree lists
-  - `supersize`: the size of the supernodes
+  - `supersize`: the size of the supernodes (0 means merged into another)
   - `elimhead`: points to the first node eliminated in the current pass
   - `elimnext`: points to the next node in a eliminated supernode
     or 0 if there are no more after node
   - `marker`: a temporary marker vector
-  - `mergeparent`: the parent map for the merged forest
   - `needsupdate`: positive iff node needs a degree update (0 otherwise)
 """
 function mmd!_impl!(
-        invp::AbstractVector{V},
         marker::AbstractVector{I},
-        mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
         supersize::AbstractVector{V},
         superwght::AbstractVector{V},
@@ -150,9 +143,7 @@ function mmd!_impl!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
     ) where {I, V, E}
-    @assert neqns <= length(invp)
     @assert neqns <= length(marker)
-    @assert neqns <= length(mergeparent)
     @assert neqns <= length(needsupdate)
     @assert neqns <= length(supersize)
     @assert neqns <= length(superwght)
@@ -165,9 +156,8 @@ function mmd!_impl!(
 
     # initialization for the minimum degree algorithm.
     @inbounds for node in oneto(neqns)
-        invp[node] = zero(V)
+        degnext[node] = zero(V)
         marker[node] = zero(I)
-        mergeparent[node] = zero(V)
         needsupdate[node] = zero(V)
         supersize[node] = one(V)
         superwght[node] = vwght[node]
@@ -187,7 +177,7 @@ function mmd!_impl!(
         istart = xadj[node]; istop = xadj[node + one(V)] - one(E)
 
         if istart <= istop
-            ndeg = vwght[node]
+            ndeg = one(V)
 
             for i in istart:istop
                 ndeg += vwght[adjncy[i]]
@@ -206,7 +196,7 @@ function mmd!_impl!(
         else
             # eliminate isolated node
             marker[node] = maxint(I)
-            invp[node] = num; num += one(V)
+            degnext[node] = -num; num += one(V)
         end
     end
 
@@ -241,7 +231,7 @@ function mmd!_impl!(
                 degprev[mdnextnode] = -mindeg
             end
 
-            invp[mdnode] = num
+            degnext[mdnode] = -num
 
             if num + supersize[mdnode] > neqns
                 @goto main
@@ -262,8 +252,8 @@ function mmd!_impl!(
             end
 
             mmdelim!(mdnode, xadj, adjncy, deghead, degnext, degprev,
-                supersize, superwght, elimnext, marker, tag, mergeparent,
-                needsupdate, invp)
+                supersize, superwght, elimnext, marker, tag,
+                needsupdate)
 
             num += supersize[mdnode]
             elimnext[mdnode] = elimhead
@@ -280,19 +270,18 @@ function mmd!_impl!(
 
         mindeg, tag = mmdupdate!(neqns, elimhead, vwght, xadj, adjncy,
             delta, mindeg, deghead, degnext, degprev, supersize, superwght,
-            elimnext, marker, tag, mergeparent, needsupdate, invp)
+            elimnext, marker, tag, needsupdate)
     end
 
     @label main
 
-    mergelastnum = degnext
-    mmdnumber!(neqns, invp, mergeparent, mergelastnum)
+    mmdnumber!(neqns, supersize, degnext)
 
-    return invp
+    return degnext
 end
 
 """
-    mmdelim!(mdnode, xadj, adjncy, deghead, degnext, degprev, supersize, elimnext, marker, tag, mergeparent, needsupdate, invp)
+    mmdelim!(mdnode, xadj, adjncy, deghead, degnext, degprev, supersize, elimnext, marker, tag, needsupdate)
 
 This routine eliminates the node mdnode of
 minimum degree from the adjacency structure, which
@@ -304,8 +293,6 @@ input parameters:
 
   - `mdnode`: node of minimum degree
   - `tag`: tag value
-  - `invp`: the inverse of an incomplete minimum degree ordering
-    (it is zero at positions where the ordering is unknown)
 
 updated parameters:
 
@@ -313,17 +300,15 @@ updated parameters:
   - `deghead`: points to first node with degree deg, or 0 if there
     are no such nodes
   - `degnext`: points to the next node in the degree list
-    associated with node, or 0 if node was the last in the
-    degree list
+    associated with node, or negative if eliminated/merged
   - `degprev`: points to the previous node in a degree list
     associated with node, or the negative of the degree of
     node (if node was the last in the degree list), or 0
     if the node is not in the degree lists
-  - `supersize`: the size of the supernodes
+  - `supersize`: the size of the supernodes (0 means merged)
   - `elimnext`: points to the next node in a eliminated supernode
     or 0 if there are no more after node
   - `marker`: a temporary marker vector
-  - `mergeparent`: the parent map for the merged forest
   - `needsupdate`: positive iff the node needs a degree update (0 otherwise)
 """
 function mmdelim!(
@@ -338,9 +323,7 @@ function mmdelim!(
         elimnext::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
-        invp::AbstractVector{V},
     ) where {I, V, E}
     # find reachable set and place in data structure
     @inbounds marker[mdnode] = tag
@@ -362,7 +345,7 @@ function mmdelim!(
         if marker[neighbor] < tag
             marker[neighbor] = tag
 
-            if iszero(invp[neighbor])
+            if !isnegative(degnext[neighbor])
                 adjncy[rloc] = neighbor
                 rloc += one(E)
             else
@@ -424,7 +407,6 @@ function mmdelim!(
             pvnode = degprev[rnode]
 
             if !iszero(pvnode)
-
                 # then remove `rnode` from the structure
                 nxnode = degnext[rnode]
 
@@ -461,7 +443,7 @@ function mmdelim!(
                 # then merge `rnode` with `mdnode`
                 supersize[mdnode] += supersize[rnode]; supersize[rnode] = zero(V)
                 superwght[mdnode] += superwght[rnode]; superwght[rnode] = zero(V)
-                mergeparent[rnode] = mdnode
+                degnext[rnode] = -mdnode
                 marker[rnode] = maxint(I)
             else
                 # else flag `rnode` for degree update, and
@@ -489,7 +471,7 @@ function mmdelim!(
 end
 
 """
-    mmdupdate!(neqns, elimhead, vwght, xadj, adjncy, delta, mindeg, deghead, degnext, degprev, supersize, elimnext, marker, tag, mergeparent, needsupdate, invp)
+    mmdupdate!(neqns, elimhead, vwght, xadj, adjncy, delta, mindeg, deghead, degnext, degprev, supersize, elimnext, marker, tag, needsupdate)
 
 This routine updates the degrees of nodes
 after a multiple elimination step.
@@ -501,8 +483,6 @@ input parameters:
   - `neqns`: number of equations
   - `(xadj, adjncy)`: adjacency structure
   - `delta`: tolerance value for multiple elimination
-  - `invp`: the inverse of an incomplete minimum degree ordering.
-    (it is zero at positions where the ordering is unknown)
 
 updated parameters:
 
@@ -510,18 +490,16 @@ updated parameters:
   - `deghead`: points to first node with degree deg, or 0 if there
     are no such nodes
   - `degnext`: points to the next node in the degree list
-    associated with node, or 0 if node was the last in the
-    degree list
+    associated with node, or negative if eliminated/merged
   - `degprev`: points to the previous node in a degree list
     associated with node, or the negative of the degree of
     node (if node was the last in the degree list), or 0
     if the node is not in the degree lists
-  - `supersize`: the size of the supernodes
+  - `supersize`: the size of the supernodes (0 means merged)
   - `elimnext`: points to the next node in a eliminated supernode
     or 0 if there are no more after node
   - `marker`: marker vector for degree update
   - `tag`: tag value
-  - `mergeparent`: the parent map for the merged forest
   - `needsupdate`: positive iff node needs update (0 otherwise)
 """
 function mmdupdate!(
@@ -540,9 +518,7 @@ function mmdupdate!(
         elimnext::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        mergeparent::AbstractVector{V},
         needsupdate::AbstractVector{V},
-        invp::AbstractVector{V},
     ) where {I, V, E}
     mindeglimit = mindeg + delta
     elimnode = elimhead
@@ -569,7 +545,7 @@ function mmdupdate!(
         # than two neighbors (`qxhead`)
         #
         # also compute `elimwght`, weight of the nodes in this element
-        q2head = qxhead = zero(V); elimwght = vwght[elimnode]
+        q2head = qxhead = zero(V); elimwght = zero(V)
         i = xadj[elimnode]; istop = xadj[elimnode + one(V)]
         enode = adjncy[i]
 
@@ -609,7 +585,7 @@ function mmdupdate!(
         while ispositive(enode)
             if ispositive(needsupdate[enode])
                 tag += one(I)
-                deg = elimwght
+                deg = elimwght + one(V)
 
                 # identify the other adjacent element neighbor
                 istart = xadj[enode]
@@ -620,7 +596,7 @@ function mmdupdate!(
                 end
 
                 # if neighbor is uneliminated, increase degree count
-                if iszero(invp[neighbor])
+                if !isnegative(degnext[neighbor])
                     deg += superwght[neighbor]
                 else
                     # otherwise, for each node in the 2nd element,
@@ -648,7 +624,7 @@ function mmdupdate!(
                                         supersize[enode] += supersize[node]; supersize[node] = zero(V)
                                         superwght[enode] += superwght[node]; superwght[node] = zero(V)
                                         marker[node] = maxint(I)
-                                        mergeparent[node] = enode
+                                        degnext[node] = -enode
                                     end
 
                                     needsupdate[node] = zero(V)
@@ -680,7 +656,7 @@ function mmdupdate!(
         while ispositive(enode)
             if ispositive(needsupdate[enode])
                 tag += one(I)
-                deg = elimwght
+                deg = elimwght + one(V)
 
                 # for each unmarked neighbor of `enode`,
                 # do the following.
@@ -696,7 +672,7 @@ function mmdupdate!(
 
                         # if uneliminated, include it in
                         # degree count
-                        if iszero(invp[neighbor])
+                        if !isnegative(degnext[neighbor])
                             deg += superwght[neighbor]
                         else
                             # if eliminated, include unmarked
@@ -770,7 +746,7 @@ function updateexternaldegree!(
 end
 
 """
-    mmnumber!(neqns, invp, mergeparent)
+    mmdnumber!(neqns, supersize, degnext)
 
 This routine performs the final step in
 producing the permutation and inverse permutation
@@ -780,49 +756,45 @@ minimum degree ordering algorithm.
 input parameters:
 
   - `neqns`: number of equations
+  - `supersize`: size of supernodes (>0 for principals, 0 for merged)
 
-updated paremeters
+updated parameters:
 
-  - `invp`: on input, new number for roots in merged forest
-    on output, this plus remaining inverse of perm
-  - `mergeparent`: the parent map for the merged forest (compressed)
-
-working arrays:
-
-  - `mergelastnum`: last number used for a merged tree rooted at r
+  - `degnext`: on input, stores -ordering for principals, -parent for merged.
+    on output, stores the final positive ordering for all nodes.
 """
-function mmdnumber!(neqns::V, invp::AbstractVector{V}, mergeparent::AbstractVector{V}, mergelastnum::AbstractVector{V}) where {V}
-    @inbounds for i in oneto(neqns)
-        if iszero(mergeparent[i])
-            mergelastnum[i] = invp[i]
+function mmdnumber!(neqns::V, supersize::AbstractVector{V}, degnext::AbstractVector{V}) where {V}
+    # first pass: convert principals to positive ordering
+    # and do path compression for merged nodes.
+    # we repurpose `supersize` as `mergelastnum` for principals.
+    @inbounds for node in oneto(neqns)
+        if ispositive(supersize[node])
+            # principal: negate to get positive ordering
+            # and use `supersize` as `mergelastnum`
+            supersize[node] = degnext[node] = -degnext[node]
         else
-            mergelastnum[i] = zero(V)
+            # merged node: trace to `root` and compress path
+            root = -degnext[node]
+
+            while iszero(supersize[root])
+                root = -degnext[root]
+            end
+
+            # path compression: point all nodes on path to `root`
+            while node != root
+                next = -degnext[node]
+                degnext[node] = -root
+                node = next
+            end
         end
     end
 
-    # for each node which has been merged, do the following.
+    # second pass: assign orderings
+    # all merged nodes now point directly to `root`
     @inbounds for node in oneto(neqns)
-        parent = mergeparent[node]
-
-        if ispositive(parent)
-            # trace the merged tree until one which has
-            # not been merged, call it `root`
-            root = zero(V)
-
-            while ispositive(parent)
-                root = parent
-                parent = mergeparent[parent]
-            end
-
-            # number `node` after `root`
-            invp[node] = mergelastnum[root] += one(V)
-
-            # shorten the merged tree.
-            while node != root
-                parent = mergeparent[node]
-                mergeparent[node] = root
-                node = parent
-            end
+        if iszero(supersize[node])
+            root = -degnext[node]
+            degnext[node] = supersize[root] += one(V)
         end
     end
 

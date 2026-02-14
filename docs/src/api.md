@@ -44,7 +44,6 @@ ND
 Spectral
 FlowCutter
 BT
-SAT
 MinimalChordal
 CompositeRotations
 Compression
@@ -107,18 +106,15 @@ isperfect
 
 ## Matrix Factorization
 ```@docs
-SymbFact
-CholFact
-LDLTFact
-CholWork
-LDLTWork
-LinWork
-CliqueTrees.symbolic
-CliqueTrees.cholesky
-CliqueTrees.cholesky!
-CliqueTrees.ldlt
-CliqueTrees.ldlt!
-CliqueTrees.linsolve!
-CliqueTrees.cholinit
-CliqueTrees.lininit
+Multifrontal.ChordalSymbolic
+Multifrontal.ChordalCholesky
+Multifrontal.ChordalLDLt
+Multifrontal.ChordalTriangular
+Multifrontal.DynamicRegularization
+Multifrontal.Permutation
+Multifrontal.symbolic
+Multifrontal.cholesky!
+Multifrontal.ldlt!
+Multifrontal.selinv!
+Multifrontal.complete!
 ```

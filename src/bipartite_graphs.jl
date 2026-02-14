@@ -390,32 +390,37 @@ function reverse!_impl!(
     return BipartiteGraph(n, h, m, pointer, target)
 end
 
+function simplegraph!(ptr::AbstractVector{E}, tgt::AbstractVector{V}, graph::AbstractGraph) where {V, E}
+    @assert length(ptr) > nv(graph)
+    @assert length(tgt) ≥ de(graph)
+
+    n = convert(V, nv(graph))
+    m = convert(E, de(graph))
+
+    p = zero(E)
+
+    @inbounds for j in vertices(graph)
+        ptr[j] = p + one(E)
+
+        for i in neighbors(graph, j)
+            if i != j
+                p += one(E); tgt[p] = i
+            end
+        end
+    end
+
+    ptr[n + one(V)] = p + one(E)
+    return BipartiteGraph{V, E}(n, n, p, ptr, tgt)
+end
+
 function simplegraph(::Type{V}, ::Type{E}, graph) where {V, E}
     return simplegraph(V, E, BipartiteGraph(graph))
 end
 
-function simplegraph(::Type{V}, ::Type{E}, graph::AbstractGraph) where {V, E}
-    n = convert(V, nv(graph)); nn = n + one(V)
-    m = convert(E, de(graph))
-    ptr = FVector{E}(undef, nn)
-    tgt = FVector{V}(undef, m)
-    ptr[begin] = p = one(E)
-
-    @inbounds for j in vertices(graph)
-        jj = convert(V, j)
-
-        for i in neighbors(graph, jj)
-            ii = convert(V, i)
-
-            if ii != jj
-                tgt[p] = ii; p += one(E)
-            end
-        end
-
-        jj += one(V); ptr[jj] = p
-    end
-
-    return BipartiteGraph{V, E}(n, n, p - one(E), ptr, tgt)
+function simplegraph(::Type{V}, ::Type{E}, graph::AbstractGraph{W}) where {W, V, E}
+    ptr = FVector{E}(undef, nv(graph) + one(W))
+    tgt = FVector{V}(undef, de(graph))
+    return simplegraph!(ptr, tgt, graph)
 end
 
 function simplegraph(graph)
@@ -468,6 +473,51 @@ function linegraph(ve::AbstractGraph{V}, ev::AbstractGraph{V}) where {V}
     end
 
     return BipartiteGraph{V, E}(n, n, m, pointer, target)   
+end
+
+function symmetric(graph)
+    return symmetric(BipartiteGraph(graph))
+end
+
+function symmetric(graph::AbstractGraph{V}) where {V}
+    E = etype(graph)
+
+    fwd = graph; bwd = reverse(fwd)
+
+    n = nv(fwd)
+    m = ne(fwd) + ne(bwd)
+
+    mrk = FVector{V}(undef, n)
+    ptr = FVector{E}(undef, n + one(V))
+    tgt = FVector{V}(undef, m)
+
+    for v in vertices(fwd)
+        mrk[v] = zero(V)
+    end
+
+    p = zero(E)
+
+    for v in vertices(fwd)
+        mrk[v] = v
+        ptr[v] = p + one(E)
+
+        for w in neighbors(fwd, v)
+            if mrk[w] < v
+                mrk[w] = v
+                p += one(E); tgt[p] = w
+            end
+        end
+
+        for w in neighbors(bwd, v)
+            if mrk[w] < v
+                mrk[w] = v
+                p += one(E); tgt[p] = w
+            end
+        end
+    end
+
+    ptr[n + one(V)] = p + one(E)
+    return BipartiteGraph{V, E}(n, n, m, ptr, tgt)
 end
 
 function pointers(graph::BipartiteGraph)

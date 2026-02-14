@@ -73,17 +73,17 @@
 #**********************************************************************
 #
 function garbg2(
-        neqns::Int,
-        adjlen::Int,
-        echead::Int,
-        ecforw::AbstractVector{Int},
-        nvtxs::AbstractVector{Int},
-        work::AbstractVector{Int},
-        invp::AbstractVector{Int},
-        xadj::AbstractVector{Int},
-        adjncy::AbstractVector{Int},
-        nxtloc::Int
-    )
+        neqns::V,
+        adjlen::E,
+        echead::V,
+        ecforw::AbstractVector{V},
+        nvtxs::AbstractVector{V},
+        work::AbstractVector{V},
+        invp::AbstractVector{V},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        nxtloc::E
+    ) where {V, E}
     
     #       -------------------
     #       LOCAL VARIABLES ...
@@ -94,9 +94,9 @@ function garbg2(
     #       ---------------
     #       PRINT *,' '
     #       PRINT *,'ENTER GARBAGE COLLECTION'
-    fstloc = 1
+    fstloc = one(E)
     nxtlc2 = fstloc
-    
+
     #       -----------------------------------------
     #       FOR THE NEXT VERTEX NXTNOD (IN ORDER) ...
     #       -----------------------------------------
@@ -117,14 +117,14 @@ function garbg2(
                 #                   PRINT *,'NXTNOD,NVTXS,WORK:',NXTNOD,NVTXS(NXTNOD),
                 #    &                      WORK(NXTNOD)
                 jstart = xadj[nxtnod]
-                jstop = jstart + nvtxs[nxtnod] + work[nxtnod] - 1
+                jstop = jstart + convert(E, nvtxs[nxtnod] + work[nxtnod]) - one(E)
                 nxtlc2 = fstloc
 
                 for j in jstart:jstop
                     #                       PRINT *,'JNODE, NXTLC2, J:',ADJNCY(NXTLC2),
                     #    &                          NXTLC2, J
                     adjncy[nxtlc2] = adjncy[j]
-                    nxtlc2 += 1
+                    nxtlc2 += one(E)
                 end
                 #                   ----------------------------
                 #                   ... AND RECORD NEW LOCATION.
@@ -153,13 +153,13 @@ function garbg2(
             #               ... THEN COPY NXTNOD'S LIST INTO ITS NEW LOCATION.
             #               --------------------------------------------------
             jstart = xadj[nxtnod]
-            jstop = jstart + nvtxs[nxtnod] - 1
+            jstop = jstart + convert(E, nvtxs[nxtnod]) - one(E)
             nxtlc2 = fstloc
 
             for j in jstart:jstop
                 #                   PRINT *,'JNODE, NXTLC2, J:',ADJNCY(NXTLC2),NXTLC2, J
                 adjncy[nxtlc2] = adjncy[j]
-                nxtlc2 += 1
+                nxtlc2 += one(E)
             end
             #               ----------------------------
             #               ... AND RECORD NEW LOCATION.

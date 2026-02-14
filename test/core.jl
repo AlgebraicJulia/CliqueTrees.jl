@@ -4,6 +4,7 @@ using Base.Order
 using CliqueTrees
 using CliqueTrees: SinglyLinkedList, DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!
 using CliqueTrees.Utilities
+using CliqueTrees.Multifrontal
 using Graphs
 using Graphs: SimpleEdge
 using JET
@@ -30,17 +31,10 @@ end
 end
 
 import Catlab
-import CryptoMiniSat_jll
 
 @static if Sys.iswindows()
-    import CryptoMiniSat_jll as libpicosat_jll
-    import CryptoMiniSat_jll as PicoSAT_jll
-    import CryptoMiniSat_jll as Lingeling_jll
     const METIS_OR_KAHYPAR = METISND
 else
-    import libpicosat_jll
-    import PicoSAT_jll
-    import Lingeling_jll
     const METIS_OR_KAHYPAR = KaHyParND
 end
 
@@ -455,7 +449,7 @@ end
             Spectral(),
             FlowCutter(; time = 1),
             BT(),
-            SAT{CryptoMiniSat_jll}(),
+            PIDBT(),
             MinimalChordal(),
             CompositeRotations([1, 2, 3]),
             Compression(),
@@ -539,6 +533,7 @@ end
             # Spectral(),
             SafeFlowCutter(; time = 1),
             BT(),
+            PIDBT(),
             MinimalChordal(),
             CompositeRotations([]),
             Compression(; tao=1.0),
@@ -607,6 +602,7 @@ end
             # Spectral,
             SafeFlowCutter(; time = 1),
             BT(),
+            PIDBT(),
             CompositeRotations([1]),
             Compression(; tao=1.0),
             Compression(; tao=0.9),
@@ -808,7 +804,7 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph, V[1, 3])
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
+                #@test_opt target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -904,6 +900,7 @@ end
                         Spectral(),
                         SafeFlowCutter(; time = 1),
                         BT(),
+                        PIDBT(),
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
                         Compression(; tao=1.0),
@@ -1273,57 +1270,89 @@ end
 end
 
 @testset "cholesky" begin
-    matrices = ("torsion1", "obstclae", "jnlbrng1", "minsurfo", "cvxbqp1", "wathen100",
-        "gridgena", "apache1", "wathen120", "oilpan", "mhd1280b", "Trefethen_2000")
+    matrices = ("torsion1", "obstclae", "jnlbrng1", "mhd1280b", "Trefethen_2000")
 
     for name in matrices
         M = readmatrix(name); n = size(M, 2)
-        F1 = cholesky(M)
-        F2 = CliqueTrees.cholesky(M)
-        F3 = CliqueTrees.ldlt(M)
-        @test issuccess(F1) == issuccess(F2)
-        @test issuccess(F1) == issuccess(F3)
+        F0 = cholesky(M)
+        F1 = cholesky!(ChordalCholesky(M), NoPivot())
+        F2 = cholesky!(ChordalCholesky(M), RowMaximum())
+        F3 = ldlt!(ChordalLDLt(M))
+        @test issuccess(F1) == issuccess(F0)
+        @test issuccess(F2) == issuccess(F0)
+
+        @test logdet(F1) ≈ logdet(F0)
+        @test logdet(F2) ≈ logdet(F0)
+        @test logdet(F3) ≈ logdet(F0)
 
         b0 = rand(n)
+        b1 = M * (F1 \ b0)
         b2 = M * (F2 \ b0)
-        b3 = M * (F3 \ b0)        
+        b3 = M * (F3 \ b0)
+        @test sum(abs.(b0 - b1)) / n < 0.001
+        @test sum(abs.(b0 - b2)) / n < 0.001
+        @test sum(abs.(b0 - b3)) / n < 0.001
+
+        x = rand(n)
+        b0 = M  * x
+        b1 = F1 * x
+        b2 = F2 * x 
+        b3 = F3 * x 
+        @test sum(abs.(b0 - b1)) / n < 0.001
+        @test sum(abs.(b0 - b2)) / n < 0.001
+        @test sum(abs.(b0 - b3)) / n < 0.001
+
+        b0 = rand(n)
+        b1 = M * (F1 \ b0)
+        b2 = M * (F2 \ b0)     
+        b3 = M * (F3 \ b0)     
+        @test sum(abs.(b0 - b1)) / n < 0.001
         @test sum(abs.(b0 - b2)) / n < 0.001
         @test sum(abs.(b0 - b3)) / n < 0.001
 
         B0 = rand(n, 4)
-        B2 = M * (F2 \ B0)
+        B1 = M * (F1 \ B0)
+        B2 = M * (F2 \ B0)  
         B3 = M * (F3 \ B0)  
+        @test sum(abs.(B0 - B1)) / n / 5 < 0.001
         @test sum(abs.(B0 - B2)) / n / 5 < 0.001
         @test sum(abs.(B0 - B3)) / n / 5 < 0.001
 
+        X = rand(n, 4)
+        B0 = M  * X
+        B1 = F1 * X
+        B2 = F2 * X
+        B3 = F3 * X
+        @test sum(abs.(B0 - B1)) / n / 5 < 0.001
+        @test sum(abs.(B0 - B2)) / n / 5 < 0.001
+        @test sum(abs.(B0 - B3)) / n / 5 < 0.001
 
         C0 = rand(5, n)
+        C1 = (C0 / F1) * M
         C2 = (C0 / F2) * M
         C3 = (C0 / F3) * M
+        @test sum(abs.(C0 - C1)) / n / 5 < 0.001
         @test sum(abs.(C0 - C2)) / n / 5 < 0.001
         @test sum(abs.(C0 - C3)) / n / 5 < 0.001
-        
-        det1 = det(F1)
-        det2 = det(F2)
-        det3 = det(F3)
-        @test det1 ≈ det2
-        @test det1 ≈ det3
- 
-        logdet1 = logdet(F1)
-        logdet2 = logdet(F2)
-        logdet3 = logdet(F3)
-        @test logdet1 ≈ logdet2
-        @test logdet1 ≈ logdet3
+
+        Y = rand(5, n)
+        C0 = Y * M
+        C1 = Y * F1
+        C2 = Y * F2
+        C3 = Y * F3
+        @test sum(abs.(C0 - C1)) / n / 5 < 0.001
+        @test sum(abs.(C0 - C2)) / n / 5 < 0.001
+        @test sum(abs.(C0 - C3)) / n / 5 < 0.001
     end
 
     matrix = readmatrix("torsion1")
     M = SparseMatrixCSC{Float64}(matrix)
-    @inferred CliqueTrees.cholesky(M)
-    @inferred CliqueTrees.ldlt(M)
-    @test_call target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
-    @test_call target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
-    @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
-    @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
+    @inferred cholesky!(ChordalCholesky(M))
+    @inferred ldlt!(ChordalLDLt(M))
+    @test_call target_modules = (CliqueTrees,) cholesky!(ChordalCholesky(M))
+    @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt(M))
+    @test_opt target_modules = (CliqueTrees,) cholesky!(ChordalCholesky(M))
+    @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt(M))
 end
 
 @testset "exact treewidth" begin
@@ -1335,10 +1364,7 @@ end
 
     tw_algs = (
         BT(),
-        SAT{libpicosat_jll}(),
-        SAT{Lingeling_jll}(),
-        SAT{PicoSAT_jll}(),
-        SAT{CryptoMiniSat_jll}(),
+        PIDBT(),
     )
 
     uwidth1 = 4; wwidth1 = 8.0

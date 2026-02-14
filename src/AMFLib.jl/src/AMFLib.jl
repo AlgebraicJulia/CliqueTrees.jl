@@ -737,7 +737,7 @@ function hamf_impl!(
         elen[i] = zero(V)
         last[i] = zero(V)
         degree[i] = zero(V)
-        wf[i] = zero(V)
+        wf[i] = zero(E)
         next[i] = zero(V)
         w[i] = zero(I)
     end
@@ -1247,7 +1247,7 @@ function hamf_impl!(
                 end
             end                               # L160:
 
-            elen[i] = pn - p1 + one(E)        # count the number of elements in `i` (including `me`)
+            elen[i] = convert(V, pn - p1) + one(V) # count the number of elements in `i` (including `me`)
             p3 = pn
 
             for p in (p2 + one(E)):(p1 + convert(E, len[i]) - one(E)) # scan the supervariables in the list associated with `i`
@@ -1288,7 +1288,7 @@ function hamf_impl!(
                 iw[pn] = iw[p3]               # add `me` to the list for `i`
                 iw[p3] = iw[p1]
                 iw[p1] = me                   # add new element to front of list
-                len[i] = pn - p1 + one(E)     # store the new length of the list in `len[i]`
+                len[i] = convert(V, pn - p1) + one(V) # store the new length of the list in `len[i]`
 
                 if deg != n2                  # place in hash bucket; save hash key of `i` in `last[i]`
                     hash = (hash % hmod) + one(E)
@@ -1455,7 +1455,7 @@ function hamf_impl!(
         end # L260:
 
         nv[me] = nvpiv + degme               # finalize the new element
-        len[me] = p - pme1
+        len[me] = convert(V, p - pme1)
 
         if iszero(len[me])                   # there is nothing left of the current pivot element
             pe[me] = zero(E)

@@ -72,21 +72,21 @@
 #**********************************************************************
 #
 function mfinit_heap(
-        neqns::Int,
-        xadj::AbstractVector{Int},
+        neqns::V,
+        xadj::AbstractVector{E},
         degree::AbstractVector{W},
         qsize::AbstractVector{W},
         defncy::AbstractVector{W},
         heap::AbstractVector{W},
-        heapinv::AbstractVector{Int},
-        marker::AbstractVector{Int},
-        nvtxs::AbstractVector{Int},
-        work::AbstractVector{Int},
-        ecforw::AbstractVector{Int},
+        heapinv::AbstractVector{V},
+        marker::AbstractVector{I},
+        nvtxs::AbstractVector{V},
+        work::AbstractVector{V},
+        ecforw::AbstractVector{V},
         changed::AbstractVector{Bool},
-        umark::AbstractVector{Int},
-        invp::AbstractVector{Int},
-    ) where {W}
+        umark::AbstractVector{I},
+        invp::AbstractVector{V},
+    ) where {V, E, I, W}
     
     #       ---------------------------------------------------------
     #       MORE INITIALIZATIONS AND ALSO PLACE EACH NODE AND ITS
@@ -94,33 +94,33 @@ function mfinit_heap(
     #       ORDER.
     #       ---------------------------------------------------------
     
-    heapcnt = 0
-    
+    heapcnt = zero(V)
+
     #       -------------------------
     #       FOR EACH VERTEX JNODE ...
     #       -------------------------
     for jnode in oneto(neqns)
-        
+
         #           ----------------------------------------------
         #           NVTXS(JNODE) WILL BE -1 FOR ABSORBED VERTICES.
         #           ----------------------------------------------
-        nvtxs[jnode] = -1
-        
+        nvtxs[jnode] = -one(V)
+
         #           -------------------------------------
         #           IF JNODE IS A REPRESENTATIVE NODE ...
         #           -------------------------------------
         if !iszero(qsize[jnode])
-            
+
             #               ---------------------------
             #               INITIALIZE VARIOUS VECTORS.
             #               ---------------------------
-            ecforw[jnode] = -1
+            ecforw[jnode] = -one(V)
             changed[jnode] = false
-            umark[jnode] = 0
-            work[jnode] = 0
-            invp[jnode] = 0
-            marker[jnode] = 0
-            nvtxs[jnode] = xadj[jnode + 1] - xadj[jnode]
+            umark[jnode] = zero(I)
+            work[jnode] = zero(V)
+            invp[jnode] = zero(V)
+            marker[jnode] = zero(I)
+            nvtxs[jnode] = convert(V, xadj[jnode + one(V)] - xadj[jnode])
             
             #               ------------------------------------------
             #               DJ WILL BE THE DEGREE OF JNODE (PLUS ONE).
@@ -135,10 +135,10 @@ function mfinit_heap(
             #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE
             #               INTO THE HEAP IN THE NEXT AVAILABLE LOCATION.
             #               ---------------------------------------------
-            heapcnt += 1
+            heapcnt += one(V)
             heapinv[jnode] = heapcnt
-            heap[twice(heapcnt) - 1] = def
-            heap[twice(heapcnt)] = jnode
+            heap[twice(heapcnt) - one(V)] = def
+            heap[twice(heapcnt)] = convert(W, jnode)
             
         end
         

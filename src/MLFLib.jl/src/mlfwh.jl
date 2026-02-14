@@ -62,50 +62,48 @@
 #
 #**********************************************************************
 #
-function mlf(n::Int, vwght::AbstractVector{W}, xadj::AbstractVector{Int}, adjncy::AbstractVector{Int}) where {W}
-    nnz = xadj[n + 1] - 1
-    adjlen = length(adjncy)
-    
+function mlf!(n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E, W}
+    nnz = xadj[n + one(V)] - one(E)
+    adjlen = convert(E, length(adjncy))
+
     #       -------------------
     #       LOCAL VARIABLES ...
     #       -------------------
-    perm = FVector{Int}(undef, n)
-    invp = FVector{Int}(undef, n)
-    
+    perm = FVector{V}(undef, n)
+    invp = FVector{V}(undef, n)
+
     for i in oneto(n)
         perm[i] = i
         invp[i] = i
     end
-    
+
     #       -----------------------------
     #       SET POINTERS FOR WORK ARRAYS.
     #       -----------------------------
     adjlen2 = nnz
-    
+
     #       --------------------
     #       ALLOCATE WORK SPACE.
     #       --------------------
-    changed = FVector{Bool}(undef, n) 
+    changed = FVector{Bool}(undef, n)
     degree  = FVector{W}(undef, n)
-    ecforw  = FVector{Int}(undef, n)
-    ecliq   = FVector{Int}(undef, n)
-    heapinv = FVector{Int}(undef, n)
-    len2    = FVector{Int}(undef, n)
+    ecforw  = FVector{V}(undef, n)
+    ecliq   = FVector{V}(undef, n)
+    heapinv = FVector{V}(undef, n)
+    len2    = FVector{V}(undef, n)
     marker  = FVector{Int}(undef, n)
-    nvtxs   = FVector{Int}(undef, n)
+    nvtxs   = FVector{V}(undef, n)
     qsize   = FVector{W}(undef, n)
-    qnmbr   = FVector{Int}(undef, n)
+    qnmbr   = FVector{V}(undef, n)
     umark   = FVector{Int}(undef, n)
-    work    = FVector{Int}(undef, n)
+    work    = FVector{V}(undef, n)
     work1   = FVector{Int}(undef, n)
     work2   = FVector{W}(undef, n)
-    xadj2   = FVector{Int}(undef, n)
-    adj2    = FVector{Int}(undef, adjlen2)
-   
+    xadj2   = FVector{E}(undef, n)
+    adj2    = FVector{V}(undef, adjlen2)
+
     defncy  = FVector{W}(undef, n)
     heap    = FVector{W}(undef, twice(n))
-    
-    maxint  = 2_000_000_000
     
     #       ------------------------------------------------------------
     #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
@@ -123,7 +121,7 @@ function mlf(n::Int, vwght::AbstractVector{W}, xadj::AbstractVector{Int}, adjncy
     #       USING WING-HUANG UPDATES.
     #       ----------------------------------------------
     nofnz, gbgcnt, iflag = genmf_wh(
-        n, maxint, adjlen, adjlen2, vwght, xadj,
+        n, adjlen, adjlen2, vwght, xadj,
         adjncy, defflag, perm, invp,
         marker, nvtxs, work,
         qsize, qnmbr, ecforw, defncy, adj2, changed,
@@ -131,5 +129,5 @@ function mlf(n::Int, vwght::AbstractVector{W}, xadj::AbstractVector{Int}, adjncy
         xadj2, len2, work1, work2,
     )
     
-    return perm, invp, nofnz, iflag
+    return perm, invp
 end
