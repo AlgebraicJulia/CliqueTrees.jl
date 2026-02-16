@@ -23,11 +23,11 @@ julia> A = [
 
 julia> F = selinv!(cholesky!(ChordalCholesky(A)))
 5×5 FChordalCholesky{:L, Float64, Int64} with 10 stored entries:
-  0.328125    ⋅          ⋅       ⋅       ⋅ 
-  0.0        0.578125    ⋅       ⋅       ⋅ 
-  0.0        1.40625    5.3125   ⋅       ⋅ 
- -0.15625    0.0        0.0     0.3125   ⋅ 
-  0.0       -1.0625    -2.125   0.875   4.25
+  0.328125    ⋅         ⋅        ⋅       ⋅
+  0.0        0.328125   ⋅        ⋅       ⋅
+  0.0       -0.09375   0.3125    ⋅       ⋅
+ -0.15625    0.0       0.0      0.3125   ⋅
+  0.0       -0.0625   -0.125   -0.125   0.25
 ```
 
 ### Parameters
@@ -134,7 +134,8 @@ function selinv_loop!(
     #
     #     F₁₁ ← D₁₁
     #
-    copyrec!(F₁₁, D₁₁)
+    zerorec!(F₁₁)
+    copytri!(F₁₁, D₁₁, uplo)
     #
     #     F₁₁ ← F₁₁⁻¹
     #
@@ -150,8 +151,11 @@ function selinv_loop!(
         #
         strt = Mptr[ns]
         M₂₂ = reshape(view(Mval, strt:strt + na * na - one(I)), na, na)
-        copyrec!(F₂₂, M₂₂)
         ns -= one(I)
+        #
+        #     F₂₂ ← M₂₂
+        #
+        copytri!(F₂₂, M₂₂, uplo)
         #
         #     F₂₁ ← F₂₁ F₁₁
         #
@@ -173,10 +177,10 @@ function selinv_loop!(
         #
         if UPLO === :L
             syrk!(Val(:L), Val(:C), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-            gemm!(Val(:T), Val(:N), -one(T), F₂₁, L₂₁, one(T), D₁₁)
+            trrk!(Val(:L), Val(:C), F₂₁, L₂₁, D₁₁)
         else
             syrk!(Val(:U), Val(:N), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-            gemm!(Val(:N), Val(:T), -one(T), L₂₁, F₂₁, one(T), D₁₁)
+            trrk!(Val(:U), Val(:N), L₂₁, F₂₁, D₁₁)
         end
     else
         #
@@ -204,13 +208,13 @@ function selinv_loop!(
         #     Mᵢ ← Rᵢᵀ F Rᵢ
         #
         ns += one(I)
-        selinv_update!(F, Mptr, Mval, rel, ns, i, uplo)
+        selinv_send!(F, Mptr, Mval, rel, ns, i, uplo)
     end
 
     return ns
 end
 
-function selinv_update!(
+function selinv_send!(
         F::AbstractMatrix{T},
         ptr::AbstractVector{I},
         val::AbstractVector{T},

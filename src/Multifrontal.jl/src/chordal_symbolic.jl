@@ -297,3 +297,67 @@ end
 function Base.size(S::ChordalSymbolic, i::Integer)
     return size(S)[i]
 end
+
+function Base.isstored(S::ChordalSymbolic, v::Integer, w::Integer, uplo::Val{UPLO}) where {UPLO}
+    return !isnothing(loc(S, v, w, uplo))
+end
+
+function loc(S::ChordalSymbolic{I}, v::Integer, w::Integer, uplo::Val) where {I <: Integer}
+    return loc(S, convert(I, v), convert(I, w), uplo)
+end
+
+function loc(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Integer}
+    if v ≥ w
+        j = S.idx[w]
+
+        nn = eltypedegree(S.res, j)
+        na = eltypedegree(S.sep, j)
+
+        res = neighbors(S.res, j)
+        sep = neighbors(S.sep, j)
+
+        w = w - first(res)
+
+        if v in res
+            v = v - first(res)
+            return (true, S.Dptr[j] + v + w * nn, j)
+        else
+            i = searchsortedfirst(sep, v)
+
+            if i ≤ na && sep[i] == v
+                v = convert(I, i) - one(I)
+                return (false, S.Lptr[j] + v + w * na, j)
+            end
+        end
+    end
+
+    return
+end
+
+function loc(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Integer}
+    if v ≤ w
+        i = S.idx[v]
+
+        nn = eltypedegree(S.res, i)
+        na = eltypedegree(S.sep, i)
+
+        res = neighbors(S.res, i)
+        sep = neighbors(S.sep, i)
+
+        v = v - first(res)
+
+        if w in res
+            w = w - first(res)
+            return (true, S.Dptr[i] + v + w * nn, i)
+        else
+            j = searchsortedfirst(sep, w)
+
+            if j ≤ na && sep[j] == w
+                w = convert(I, j) - one(I)
+                return (false, S.Lptr[i] + v + w * nn, i)
+            end
+        end
+    end
+
+    return
+end

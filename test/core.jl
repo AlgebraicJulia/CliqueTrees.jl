@@ -1270,89 +1270,138 @@ end
 end
 
 @testset "cholesky" begin
-    matrices = ("torsion1", "obstclae", "jnlbrng1", "mhd1280b", "Trefethen_2000")
+    matrices = ("685_bus", "Trefethen_500", "bcsstk26", "bcsstk13", "mhd1280b")
 
     for name in matrices
         M = readmatrix(name); n = size(M, 2)
         F0 = cholesky(M)
-        F1 = cholesky!(ChordalCholesky(M), NoPivot())
-        F2 = cholesky!(ChordalCholesky(M), RowMaximum())
-        F3 = ldlt!(ChordalLDLt(M))
-        @test issuccess(F1) == issuccess(F0)
-        @test issuccess(F2) == issuccess(F0)
 
-        @test logdet(F1) ≈ logdet(F0)
-        @test logdet(F2) ≈ logdet(F0)
-        @test logdet(F3) ≈ logdet(F0)
+        F1 = cholesky!(ChordalCholesky{:L}(M), NoPivot())
+        F2 = cholesky!(ChordalCholesky{:U}(M), NoPivot())
+        F3 = cholesky!(ChordalCholesky{:L}(M), RowMaximum())
+        F4 = cholesky!(ChordalCholesky{:U}(M), RowMaximum())
+        F5 = ldlt!(ChordalLDLt{:L}(M))
+        F6 = ldlt!(ChordalLDLt{:U}(M))
+        F7 = CliqueTrees.cholesky(M)
+        F8 = CliqueTrees.ldlt(M)
 
-        b0 = rand(n)
-        b1 = M * (F1 \ b0)
-        b2 = M * (F2 \ b0)
-        b3 = M * (F3 \ b0)
-        @test sum(abs.(b0 - b1)) / n < 0.001
-        @test sum(abs.(b0 - b2)) / n < 0.001
-        @test sum(abs.(b0 - b3)) / n < 0.001
-
+        b = rand(n)
         x = rand(n)
-        b0 = M  * x
-        b1 = F1 * x
-        b2 = F2 * x 
-        b3 = F3 * x 
-        @test sum(abs.(b0 - b1)) / n < 0.001
-        @test sum(abs.(b0 - b2)) / n < 0.001
-        @test sum(abs.(b0 - b3)) / n < 0.001
-
-        b0 = rand(n)
-        b1 = M * (F1 \ b0)
-        b2 = M * (F2 \ b0)     
-        b3 = M * (F3 \ b0)     
-        @test sum(abs.(b0 - b1)) / n < 0.001
-        @test sum(abs.(b0 - b2)) / n < 0.001
-        @test sum(abs.(b0 - b3)) / n < 0.001
-
-        B0 = rand(n, 4)
-        B1 = M * (F1 \ B0)
-        B2 = M * (F2 \ B0)  
-        B3 = M * (F3 \ B0)  
-        @test sum(abs.(B0 - B1)) / n / 5 < 0.001
-        @test sum(abs.(B0 - B2)) / n / 5 < 0.001
-        @test sum(abs.(B0 - B3)) / n / 5 < 0.001
-
+        B = rand(n, 4)
         X = rand(n, 4)
-        B0 = M  * X
-        B1 = F1 * X
-        B2 = F2 * X
-        B3 = F3 * X
-        @test sum(abs.(B0 - B1)) / n / 5 < 0.001
-        @test sum(abs.(B0 - B2)) / n / 5 < 0.001
-        @test sum(abs.(B0 - B3)) / n / 5 < 0.001
-
-        C0 = rand(5, n)
-        C1 = (C0 / F1) * M
-        C2 = (C0 / F2) * M
-        C3 = (C0 / F3) * M
-        @test sum(abs.(C0 - C1)) / n / 5 < 0.001
-        @test sum(abs.(C0 - C2)) / n / 5 < 0.001
-        @test sum(abs.(C0 - C3)) / n / 5 < 0.001
-
+        C = rand(5, n)
         Y = rand(5, n)
-        C0 = Y * M
-        C1 = Y * F1
-        C2 = Y * F2
-        C3 = Y * F3
-        @test sum(abs.(C0 - C1)) / n / 5 < 0.001
-        @test sum(abs.(C0 - C2)) / n / 5 < 0.001
-        @test sum(abs.(C0 - C3)) / n / 5 < 0.001
+
+        for Fi in (F1, F2, F3, F4, F5, F6, F7, F8)
+            @test issuccess(Fi) == issuccess(F0)
+            @test logdet(Fi) ≈ logdet(F0)
+
+            @test isapprox(b, M * (Fi \ b); rtol=1e-6, atol=1e-14)
+            @test isapprox(B, M * (Fi \ B); rtol=1e-6, atol=1e-14)
+            @test isapprox(C, (C / Fi) * M; rtol=1e-6, atol=1e-14)
+
+            Fi isa CliqueTrees.CholFact && continue
+            Fi isa CliqueTrees.LDLTFact && continue
+
+            @test isapprox(M * x, Fi * x; rtol=1e-6, atol=1e-14)
+            @test isapprox(M * X, Fi * X; rtol=1e-6, atol=1e-14)
+            @test isapprox(Y * M, Y * Fi; rtol=1e-6, atol=1e-14)
+        end
     end
 
-    matrix = readmatrix("torsion1")
+    matrix = readmatrix("685_bus")
     M = SparseMatrixCSC{Float64}(matrix)
-    @inferred cholesky!(ChordalCholesky(M))
-    @inferred ldlt!(ChordalLDLt(M))
-    @test_call target_modules = (CliqueTrees,) cholesky!(ChordalCholesky(M))
-    @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt(M))
-    @test_opt target_modules = (CliqueTrees,) cholesky!(ChordalCholesky(M))
-    @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt(M))
+    @inferred cholesky!(ChordalCholesky{:L}(M))
+    @inferred cholesky!(ChordalCholesky{:U}(M))
+    @inferred ldlt!(ChordalLDLt{:L}(M))
+    @inferred ldlt!(ChordalLDLt{:U}(M))
+    @inferred CliqueTrees.cholesky(M)
+    @inferred CliqueTrees.ldlt(M)
+    @test_call target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:L}(M))
+    @test_call target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:U}(M))
+    @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:L}(M))
+    @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M))
+    @test_call target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
+    @test_call target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
+    @test_opt target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:L}(M))
+    @test_opt target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:U}(M))
+    @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:L}(M))
+    @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M))
+    @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
+    @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
+end
+
+@testset "selinv" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
+
+    for name in matrices
+        M = readmatrix(name); n = size(M, 2)
+        FL = selinv!(cholesky!(ChordalCholesky{:L}(M)))
+        FU = selinv!(cholesky!(ChordalCholesky{:U}(M)))
+        IL = FL.P * inv(Matrix(M)) * FL.P'
+        IU = FU.P * inv(Matrix(M)) * FU.P'
+
+        @test all(
+            isapprox(FL.L[i, j], IL[i, j]; rtol=1e-6, atol=1e-14)
+            for j in axes(FL.L, 2)
+            for i in j:n
+            if Base.isstored(FL.L, i, j)
+        )
+
+        @test all(
+            isapprox(FU.U[i, j], IU[i, j]; rtol=1e-6, atol=1e-14)
+            for j in axes(FU.U, 2)
+            for i in 1:j
+            if Base.isstored(FU.U, i, j)
+        )
+    end
+
+    matrix = readmatrix("nos4")
+    M = SparseMatrixCSC{Float64}(matrix)
+    @inferred selinv!(cholesky!(ChordalCholesky{:L}(M)))
+    @inferred selinv!(cholesky!(ChordalCholesky{:U}(M)))
+    @test_call target_modules = (CliqueTrees,) selinv!(cholesky!(ChordalCholesky{:L}(M)))
+    @test_call target_modules = (CliqueTrees,) selinv!(cholesky!(ChordalCholesky{:U}(M)))
+    @test_opt target_modules = (CliqueTrees,) selinv!(cholesky!(ChordalCholesky{:L}(M)))
+    @test_opt target_modules = (CliqueTrees,) selinv!(cholesky!(ChordalCholesky{:U}(M)))
+end
+
+@testset "complete" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
+
+    for name in matrices
+        M = readmatrix(name); n = size(M, 2)
+        FL = complete!(ChordalCholesky{:L}(M))
+        FU = complete!(ChordalCholesky{:U}(M))
+        CL = inv(Matrix(sparse(FL.L) * sparse(FL.L)'))
+        CU = inv(Matrix(sparse(FU.U)' * sparse(FU.U)))
+
+        PML = FL.P * M * FL.P'
+        PMU = FU.P * M * FU.P'
+
+        @test all(
+            isapprox(CL[i, j], PML[i, j]; rtol=1e-6, atol=1e-14)
+            for j in axes(FL.L, 2)
+            for i in j:n
+            if Base.isstored(PML, i, j)
+        )
+
+        @test all(
+            isapprox(CU[i, j], PMU[i, j]; rtol=1e-6, atol=1e-14)
+            for j in axes(FU.U, 2)
+            for i in 1:j
+            if Base.isstored(PMU, i, j)
+        )
+    end
+
+    matrix = readmatrix("nos4")
+    M = SparseMatrixCSC{Float64}(matrix)
+    @inferred complete!(ChordalCholesky{:L}(M))
+    @inferred complete!(ChordalCholesky{:U}(M))
+    @test_call target_modules = (CliqueTrees,) complete!(ChordalCholesky{:L}(M))
+    @test_call target_modules = (CliqueTrees,) complete!(ChordalCholesky{:U}(M))
+    @test_opt target_modules = (CliqueTrees,) complete!(ChordalCholesky{:L}(M))
+    @test_opt target_modules = (CliqueTrees,) complete!(ChordalCholesky{:U}(M))
 end
 
 @testset "exact treewidth" begin
@@ -1761,6 +1810,52 @@ end
                     @test round(treewidth(weights, graph; alg); digits=1) === wwidth
                 end
             end
+        end
+    end
+end
+
+@testset "lowrank" begin
+    using LinearAlgebra: lowrankupdate!, lowrankdowndate!
+
+    matrices = ("nos4", "mesh3e1", "494_bus")
+
+    for name in matrices
+        M = readmatrix(name); n = size(M, 2)
+        b = rand(n)
+
+        # Pick indices and force them to form a clique
+        nz = [1, 5, 10, 100]
+        M[nz, nz] .+= 1
+        M[nz, nz] .-= 1
+
+        # Create update vector (nonzero only at clique indices)
+        v = zeros(n); v[nz] .= randn(length(nz))
+
+        # Updated matrix
+        M_updated = copy(M); M_updated[nz, nz] .+= v[nz] * v[nz]'
+
+        # Factorizations of M
+        F1 = cholesky!(ChordalCholesky{:L}(copy(M)), NoPivot())
+        F2 = cholesky!(ChordalCholesky{:U}(copy(M)), NoPivot())
+        F3 = ldlt!(ChordalLDLt{:L}(copy(M)))
+        F4 = ldlt!(ChordalLDLt{:U}(copy(M)))
+
+        # Test lowrankupdate!: after update, should solve (M + v*v') x = b
+        for Fi in (F1, F2, F3, F4)
+            lowrankupdate!(Fi, v)
+            @test isapprox(M_updated * (Fi \ b), b; rtol=1e-6, atol=1e-14)
+        end
+
+        # Factorizations of M_updated for downdate test
+        G1 = cholesky!(ChordalCholesky{:L}(copy(M_updated)), NoPivot())
+        G2 = cholesky!(ChordalCholesky{:U}(copy(M_updated)), NoPivot())
+        G3 = ldlt!(ChordalLDLt{:L}(copy(M_updated)))
+        G4 = ldlt!(ChordalLDLt{:U}(copy(M_updated)))
+
+        # Test lowrankdowndate!: after downdate, should solve M x = b
+        for Gi in (G1, G2, G3, G4)
+            lowrankdowndate!(Gi, v)
+            @test isapprox(M * (Gi \ b), b; rtol=1e-6, atol=1e-14)
         end
     end
 end

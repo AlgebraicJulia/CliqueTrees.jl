@@ -1,20 +1,20 @@
 function LinearAlgebra.lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, one(T))
+    return _lowrankupdate!(F, v, Val{:P}())
 end
 
 function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, one(T))
+    return _lowrankupdate!(F, v, Val{:P}())
 end
 
 function LinearAlgebra.lowrankdowndate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, -one(T))
+    return _lowrankupdate!(F, v, Val{:N}())
 end
 
 function LinearAlgebra.lowrankdowndate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, -one(T))
+    return _lowrankupdate!(F, v, Val{:N}())
 end
 
-function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, σ::T) where {UPLO, T, I}
+function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, sign::Val{SIGN}) where {UPLO, T, I, SIGN}
     @assert length(v) == nov(F.S.res)
 
     Pval = FVector{I}(undef, nv(F.S.rel))
@@ -36,12 +36,12 @@ function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, σ::T
     path = view(Pval, oneto(n))
 
     lowrank_copy!(Kval, path, Cval, F.S.res, F.S.rel)
-    ldlt_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.d, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, σ, Val{UPLO}())
+    ldlt_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.d, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, Val{UPLO}())
 
     return F
 end
 
-function _lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}, σ::T) where {UPLO, T, I}
+function _lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}, sign::Val{SIGN}) where {UPLO, T, I, SIGN}
     @assert length(v) == nov(F.S.res)
 
     Pval = FVector{I}(undef, nv(F.S.rel))
@@ -63,7 +63,7 @@ function _lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}, �
     path = view(Pval, oneto(n))
 
     lowrank_copy!(Kval, path, Cval, F.S.res, F.S.rel)
-    chol_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, σ, Val{UPLO}())
+    chol_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, Val{UPLO}())
 
     return F
 end
@@ -118,15 +118,15 @@ function ldlt_lowrank_impl!(
         Lval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+    ) where {T, I <: Integer, SIGN, UPLO}
 
     path_len = length(path)
     α = one(T)
 
     for k in oneto(I(path_len))
-        α = ldlt_lowrank_loop!(Kval, Fval, Mval, path, k, Cval, d, Dptr, Dval, Lptr, Lval, res, rel, α, σ, uplo)
+        α = ldlt_lowrank_loop!(Kval, Fval, Mval, path, k, Cval, d, Dptr, Dval, Lptr, Lval, res, rel, α, sign, uplo)
     end
 
     return
@@ -144,15 +144,14 @@ function chol_lowrank_impl!(
         Lval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+    ) where {T, I <: Integer, SIGN, UPLO}
 
     path_len = length(path)
-    α = one(T)
 
     for k in oneto(I(path_len))
-        α = chol_lowrank_loop!(Kval, Fval, Mval, path, k, Cval, Dptr, Dval, Lptr, Lval, res, rel, α, σ, uplo)
+        chol_lowrank_loop!(Kval, Fval, Mval, path, k, Cval, Dptr, Dval, Lptr, Lval, res, rel, sign, uplo)
     end
 
     return
@@ -173,9 +172,9 @@ function ldlt_lowrank_loop!(
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         α::T,
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+    ) where {T, I <: Integer, SIGN, UPLO}
 
     j = path[k]
     #
@@ -268,7 +267,7 @@ function ldlt_lowrank_loop!(
     #
     # update D₁₁, L₂₁, d₁, and m₂
     #
-    return ldlt_davis_hager!(D₁₁, L₂₁, d₁, c₁, k₂, m₂, α, σ, uplo)
+    return ldlt_lowrank_kernel!(D₁₁, L₂₁, d₁, c₁, k₂, m₂, α, sign, uplo)
 end
 
 function chol_lowrank_loop!(
@@ -284,10 +283,9 @@ function chol_lowrank_loop!(
         Lval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
-        α::T,
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+    ) where {T, I <: Integer, SIGN, UPLO}
 
     j = path[k]
     nn = eltypedegree(res, j)
@@ -325,19 +323,38 @@ function chol_lowrank_loop!(
     copyrec!(c₁, f₁)
     copyrec!(m₂, f₂)
 
-    return chol_davis_hager!(D₁₁, L₂₁, c₁, k₂, m₂, α, σ, uplo)
+    return chol_lowrank_kernel!(D₁₁, L₂₁, c₁, k₂, m₂, sign, uplo)
+end
+
+function lowrank_rotate(a::T, b::T, ::Val{:P}) where {T}
+    return givensAlgorithm(a, b)
+end
+
+function lowrank_rotate(a::T, b::T, ::Val{:N}) where {T}
+    s = b / a
+    s² = s * s
+
+    if s² < one(T)
+        c = sqrt(one(T) - s²)
+        r = c * a
+        cosθ = one(T) / c
+        sinθ = s / c
+        return cosθ, sinθ, r
+    else
+        error()
+    end
 end
 
 #
 # Given a unit-lower-triangular matrix D, a matrix L, and
 # vectors d, c, k, and m, compute E, F, and e such that
 #
-#     [ D ] diag(d) [ Dᵀ Lᵀ ] + σ [  c  ] [ cᵀ kᵀ+mᵀ ] = [ E ] diag(e) [ Eᵀ Fᵀ ]
-#     [ L ]                       [ k+m ]                [ F ]
+#     [ D ] diag(d) [ Dᵀ Lᵀ ] ± [  c  ] [ cᵀ kᵀ+mᵀ ] = [ E ] diag(e) [ Eᵀ Fᵀ ]
+#     [ L ]                     [ k+m ]                [ F ]
 #
 # over-writing D with E, L with F, and d with e. Additionally, the
 # vector m is over-written with the difference m ← m - L D⁻¹ c.
-function ldlt_davis_hager!(
+function ldlt_lowrank_kernel!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         d::AbstractVector{T},
@@ -345,28 +362,39 @@ function ldlt_davis_hager!(
         k::AbstractVector{T},
         m::AbstractVector{T},
         α::T,
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{:L},
-    ) where {T}
+    ) where {T, SIGN}
+    @assert size(D, 1) == size(D, 2) == size(L, 2) == length(d) == length(c)
+    @assert size(L, 1) == length(k) == length(m)
 
-    @inbounds for j in eachindex(d)
+    @inbounds for j in axes(L, 2)
         cj = c[j]
         dj = d[j]
 
-        β = α * dj + σ * cj^2
+        if SIGN === :P
+            β = α * dj + cj^2
+        else
+            β = α * dj - cj^2
+        end
 
         if ispositive(β)
             d[j] = β / α
 
             α = β / dj
-            δ = σ * cj / β
 
-            for i in j + 1:length(d)
+            if SIGN === :P
+                δ = cj / β
+            else
+                δ = -cj / β
+            end
+
+            for i in j + 1:size(L, 2)
                 ci = c[i] -= cj * D[i, j]
                 D[i, j] += δ * ci
             end
 
-            for i in eachindex(k)
+            for i in axes(L, 1)
                 mi = m[i] -= cj * L[i, j]
                 L[i, j] += δ * (k[i] + mi)
             end
@@ -379,7 +407,7 @@ function ldlt_davis_hager!(
 end
 
 # TODO: bad memory access pattern
-function ldlt_davis_hager!(
+function ldlt_lowrank_kernel!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         d::AbstractVector{T},
@@ -387,28 +415,39 @@ function ldlt_davis_hager!(
         k::AbstractVector{T},
         m::AbstractVector{T},
         α::T,
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{:U},
-    ) where {T}
+    ) where {T, SIGN}
+    @assert size(D, 1) == size(D, 2) == size(L, 1) == length(d) == length(c)
+    @assert size(L, 2) == length(k) == length(m)
 
-    @inbounds for j in eachindex(d)
+    @inbounds for j in axes(L, 1)
         cj = c[j]
         dj = d[j]
 
-        β = α * dj + σ * cj^2
+        if SIGN === :P
+            β = α * dj + cj^2
+        else
+            β = α * dj - cj^2
+        end
 
         if ispositive(β)
             d[j] = β / α
 
             α = β / dj
-            δ = σ * cj / β
 
-            for i in j + 1:length(d)
+            if SIGN === :P
+                δ = cj / β
+            else
+                δ = -cj / β
+            end
+
+            for i in j + 1:size(L, 1)
                 ci = c[i] -= cj * D[j, i]
                 D[j, i] += δ * ci
             end
 
-            for i in eachindex(k)
+            for i in axes(L, 2)
                 mi = m[i] -= cj * L[j, i]
                 L[j, i] += δ * (k[i] + mi)
             end
@@ -420,87 +459,105 @@ function ldlt_davis_hager!(
     return α
 end
 
-function chol_davis_hager!(
+function chol_lowrank_kernel!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         c::AbstractVector{T},
         k::AbstractVector{T},
         m::AbstractVector{T},
-        α::T,
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{:L},
-    ) where {T}
+    ) where {T, SIGN}
+    @assert size(D, 1) == size(D, 2) == size(L, 2) == length(c)
+    @assert size(L, 1) == length(k) == length(m)
 
-    n = size(D, 1)
-
-    @inbounds for j in 1:n
+    @inbounds for j in axes(L, 2)
         Djj = D[j, j]
-        p = c[j] / Djj
-        β = α + σ * p^2
+        cj = c[j]
+        cosθ, sinθ, r = lowrank_rotate(Djj, cj, sign)
 
-        if ispositive(β)
-            D[j, j] = Djj * sqrt(β / α)
-            γ = σ * p / β
+        D[j, j] = r
 
-            for i in j + 1:n
-                ci = c[i] -= D[i, j] * p
-                D[i, j] += γ * ci
+        for i in j + 1:size(L, 2)
+            Dij = D[i, j]
+            ci = c[i]
+
+            if SIGN === :P
+                D[i, j] = cosθ * Dij + sinθ * ci
+            else
+                D[i, j] = cosθ * Dij - sinθ * ci
             end
 
-            for i in eachindex(k)
-                mi = m[i] -= L[i, j] * p
-                L[i, j] += γ * (k[i] + mi)
+            c[i] = cosθ * ci - sinθ * Dij
+        end
+
+        for i in axes(L, 1)
+            Lij = L[i, j]
+            ki = k[i]
+            mi = m[i]
+
+            if SIGN === :P
+                L[i, j] = cosθ * Lij + sinθ * (ki + mi)
+            else
+                L[i, j] = cosθ * Lij - sinθ * (ki + mi)
             end
 
-            α = β
-        else
-            error()
+            m[i] = (cosθ - one(T)) * ki + cosθ * mi - sinθ * Lij
         end
     end
 
-    return α
+    return
 end
 
 # TODO: bad memory access pattern
-function chol_davis_hager!(
+function chol_lowrank_kernel!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         c::AbstractVector{T},
         k::AbstractVector{T},
         m::AbstractVector{T},
-        α::T,
-        σ::T,
+        sign::Val{SIGN},
         uplo::Val{:U},
-    ) where {T}
+    ) where {T, SIGN}
+    @assert size(D, 1) == size(D, 2) == size(L, 1) == length(c)
+    @assert size(L, 2) == length(k) == length(m)
 
-    n = size(D, 1)
-
-    @inbounds for j in 1:n
+    @inbounds for j in axes(L, 1)
         Djj = D[j, j]
-        p = c[j] / Djj
-        β = α + σ * p^2
+        cj = c[j]
+        cosθ, sinθ, r = lowrank_rotate(Djj, cj, sign)
 
-        if ispositive(β)
-            D[j, j] = Djj * sqrt(β / α)
-            γ = σ * p / β
+        D[j, j] = r
 
-            for i in j + 1:n
-                ci = c[i] -= D[j, i] * p
-                D[j, i] += γ * ci
+        for i in j + 1:size(L, 1)
+            Dji = D[j, i]
+            ci = c[i]
+
+            if SIGN === :P
+                D[j, i] = cosθ * Dji + sinθ * ci
+            else
+                D[j, i] = cosθ * Dji - sinθ * ci
             end
 
-            for i in eachindex(k)
-                mi = m[i] -= L[j, i] * p
-                L[j, i] += γ * (k[i] + mi)
+            c[i] = cosθ * ci - sinθ * Dji
+        end
+
+        for i in axes(L, 2)
+            Lji = L[j, i]
+            ki = k[i]
+            mi = m[i]
+
+            if SIGN === :P
+                L[j, i] = cosθ * Lji + sinθ * (ki + mi)
+            else
+                L[j, i] = cosθ * Lji - sinθ * (ki + mi)
             end
 
-            α = β
-        else
-            error()
+            m[i] = (cosθ - one(T)) * ki + cosθ * mi - sinθ * Lji
         end
     end
 
-    return α
+    return
 end
 
 function findbag(S::ChordalSymbolic{I}, w::AbstractVector{T}) where {T, I}

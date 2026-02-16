@@ -1,11 +1,11 @@
 module Multifrontal
 
 using AbstractTrees
-using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, permutecols!, permuterows!
+using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, permutecols!, permuterows!, isstored
 using FillArrays: Ones
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: AbstractTriangular, Adjoint, Transpose, AdjointFactorization, TransposeFactorization, BlasFloat, Factorization, LAPACK, BLAS, inv!, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing
+using LinearAlgebra: AbstractTriangular, Adjoint, Transpose, AdjointFactorization, TransposeFactorization, BlasFloat, Factorization, LAPACK, BLAS, inv!, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
 using SparseArrays
 
 # Import from parent CliqueTrees module

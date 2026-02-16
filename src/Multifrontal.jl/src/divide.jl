@@ -10,6 +10,14 @@ function Base.:\(A::AdjOrTransPerm, b::AbstractVector)
     return ldiv!(Array(b), A, b)
 end
 
+function Base.:\(A::Permutation, B::SparseMatrixCSC)
+    return permute(B, invperm(A.perm), axes(B, 2))
+end
+
+function Base.:\(A::AdjOrTransPerm, B::SparseMatrixCSC)
+    return parent(A) * B
+end
+
 # --- ChordalTriangular ---
 
 function Base.:\(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractVecOrMat) where {UPLO, DIAG, T}
@@ -38,6 +46,14 @@ end
 
 function Base.:/(A::Adjoint{<:Any, <:AbstractVector}, B::Transpose{Bool, <:Permutation})
     return adjoint(adjoint(B) \ parent(A))
+end
+
+function Base.:/(A::SparseMatrixCSC, B::Permutation)
+    return permute(A, axes(A, 1), B.perm)
+end
+
+function Base.:/(A::SparseMatrixCSC, B::AdjOrTransPerm)
+    return A * parent(B)
 end
 
 # --- ChordalTriangular ---

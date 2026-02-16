@@ -187,11 +187,11 @@ function chol_loop!(
         S₂₂ = reshape(view(Mval, oneto(zero(I))), zero(I), zero(I))
     end
 
-    if nj <= THRESHOLD
-        info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:N)))
-    else
+    #if nj <= THRESHOLD
+        #info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:N)))
+    #else
         info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:S)))
-    end
+    #end
 
     if ispositive(na) && ispositive(info)
         ns -= one(I)

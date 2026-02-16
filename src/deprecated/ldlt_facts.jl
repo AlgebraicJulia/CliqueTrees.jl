@@ -1407,23 +1407,23 @@ function qdtrf2!(A::AbstractMatrix{T}, D::AbstractVector{T}) where {T}
     n = size(A, 1)
     
     @inbounds @fastmath for j in axes(A, 1)
-        Ajj = A[j, j]
-        
+        Ajj = real(A[j, j])
+
         for k in 1:j - 1
-            Ajj -= A[j, k]^2 * D[k]
+            Ajj -= abs2(A[j, k]) * D[k]
         end
-        
+
         if iszero(Ajj)
             return false
         end
-        
+
         Djj = D[j] = Ajj; iDjj = inv(Djj)
-        
+
         for i in j + 1:n
             for k in 1:j - 1
-                A[i, j] -= A[i, k] * D[k] * A[j, k]
+                A[i, j] -= A[i, k] * D[k] * conj(A[j, k])
             end
-            
+
             A[i, j] *= iDjj
         end
     end

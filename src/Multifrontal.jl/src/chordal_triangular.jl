@@ -316,6 +316,10 @@ function Base.getindex(A::ChordalTriangular{UPLO, DIAG, T}, v::Integer, w::Integ
     end
 end
 
+function Base.isstored(A::ChordalTriangular{UPLO}, v::Integer, w::Integer) where {UPLO}
+    return isstored(A.S, v, w, Val(UPLO))
+end
+
 function Base.setindex!(A::ChordalTriangular{UPLO, DIAG}, x, v::Integer, w::Integer) where {UPLO, DIAG}
     if DIAG !== :U || v != w
         triple = loc(A, v, w)
@@ -338,66 +342,7 @@ function Base.setindex!(A::ChordalTriangular{UPLO, DIAG}, x, v::Integer, w::Inte
     end
 end
 
-function loc(A::ChordalTriangular{UPLO, DIAG, T, I}, v::Integer, w::Integer) where {UPLO, DIAG, T, I <: Integer}
-    return loc(A, convert(I, v), convert(I, w))
-end
-
-function loc(L::ChordalTriangular{:L, DIAG, T, I}, v::I, w::I) where {DIAG, T, I <: Integer}
-    @boundscheck checkbounds(L, v, w)
-
-    if v ≥ w
-        j = L.S.idx[w]
-
-        nn = eltypedegree(L.S.res, j)
-        na = eltypedegree(L.S.sep, j)
-
-        res = neighbors(L.S.res, j)
-        sep = neighbors(L.S.sep, j)
-
-        w = w - first(res)
-
-        if v in res
-            v = v - first(res)
-            return (true, L.S.Dptr[j] + v + w * nn, j)
-        else
-            i = searchsortedfirst(sep, v)
-
-            if i ≤ na && sep[i] == v
-                v = convert(I, i) - one(I)
-                return (false, L.S.Lptr[j] + v + w * na, j)
-            end
-        end
-    end
-
-    return
-end
-
-function loc(U::ChordalTriangular{:U, DIAG, T, I}, v::I, w::I) where {DIAG, T, I <: Integer}
-    @boundscheck checkbounds(U, v, w)
-
-    if v ≤ w
-        i = U.S.idx[v]
-
-        nn = eltypedegree(U.S.res, i)
-        na = eltypedegree(U.S.sep, i)
-
-        res = neighbors(U.S.res, i)
-        sep = neighbors(U.S.sep, i)
-
-        v = v - first(res)
-
-        if w in res
-            w = w - first(res)
-            return (true, U.S.Dptr[i] + v + w * nn, i)
-        else
-            j = searchsortedfirst(sep, w)
-
-            if j ≤ na && sep[j] == w
-                w = convert(I, j) - one(I)
-                return (false, U.S.Lptr[i] + v + w * nn, i)
-            end
-        end
-    end
-
-    return
+function loc(A::ChordalTriangular{UPLO}, v::Integer, w::Integer) where {UPLO}
+    @boundscheck checkbounds(A, v, w)
+    return loc(A.S, v, w, Val(UPLO))
 end

@@ -408,7 +408,7 @@ function ldlt_kernel!(
             Dji = D[j, i]
 
             for k in 1:j - 1
-                Dji -= conj(D[k, i]) * d[k] * D[k, j]
+                Dji -= conj(D[k, j]) * d[k] * D[k, i]
             end
 
             D[j, i] = Dji * iDjj
@@ -418,19 +418,19 @@ function ldlt_kernel!(
             Uji = U[j, i]
 
             for k in 1:j - 1
-                Uji -= conj(U[k, i]) * d[k] * D[k, j]
+                Uji -= conj(D[k, j]) * d[k] * U[k, i]
             end
 
             U[j, i] = Uji
         end
 
         for k in axes(S, 1)
-            Ujk = U[j, k]; cUjk = conj(Ujk)
+            Ujk = U[j, k]
 
             S[k, k] -= iDjj * abs2(Ujk)
 
             for i in 1:k - 1
-                S[i, k] -= iDjj * U[j, i] * cUjk
+                S[i, k] -= iDjj * conj(U[j, i]) * Ujk
             end
         end
 

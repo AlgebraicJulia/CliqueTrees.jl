@@ -8,6 +8,22 @@ function Base.:*(A::MaybeAdjOrTransPerm{I}, B::MaybeAdjOrTransPerm{I}) where {I}
     return mul!(C, A, B)
 end
 
+function Base.:*(A::Permutation, B::SparseMatrixCSC)
+    return permute(B, A.perm, axes(B, 2))
+end
+
+function Base.:*(A::SparseMatrixCSC, B::Permutation)
+    return permute(A, axes(A, 1), invperm(B.perm))
+end
+
+function Base.:*(A::AdjOrTransPerm, B::SparseMatrixCSC)
+    return parent(A) \ B
+end
+
+function Base.:*(A::SparseMatrixCSC, B::AdjOrTransPerm)
+    return A / parent(B)
+end
+
 # --- ChordalCholesky ---
 
 function Base.:*(F::ChordalCholesky{UPLO, T}, B::AbstractVecOrMat) where {UPLO, T}

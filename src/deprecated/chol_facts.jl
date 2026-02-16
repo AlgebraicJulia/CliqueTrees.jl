@@ -204,6 +204,7 @@ function cholesky_permute!(
 
             if k2 < i2
                 i2, k2 = k2, i2
+                x1 = conj(x1)
             end
 
             p2 = pointers(pattern2)[k2 + one(I)]

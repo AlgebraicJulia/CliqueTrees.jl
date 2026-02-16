@@ -1,37 +1,5 @@
 # ===== Pivoted Cholesky Factorization =====
 
-"""
-    cholesky!(F::ChordalCholesky, RowMaximum(); tol=-1.0)
-
-Perform a pivoted Cholesky factorization of a sparse
-positive semi-definite matrix.
-
-### Basic Usage
-
-Use [`ChordalCholesky`](@ref) to construct a factorization object,
-and use [`cholesky!`](@ref) with `RowMaximum()` to perform the
-pivoted factorization.
-
-```julia-repl
-julia> using CliqueTrees.Multifrontal, LinearAlgebra
-
-julia> A = [
-           4  2  0  0  2
-           2  5  0  0  3
-           0  0  4  2  0
-           0  0  2  5  2
-           2  3  0  2  7
-       ];
-
-julia> F = cholesky!(ChordalCholesky(A), RowMaximum())
-```
-
-## Parameters
-
-  - `F`: positive semi-definite matrix
-  - `tol`: pivot tolerance (default: -1.0, uses LAPACK default)
-
-"""
 function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
     R = real(T)
 
@@ -182,7 +150,7 @@ function cholpiv_fwd_loop!(
         #
         #   F ← F + Rᵢ Sᵢ Rᵢᵀ
         #
-        chol_update!(F, Mptr, Mval, rel, ns, i, uplo)
+        chol_send!(F, Mptr, Mval, rel, ns, i, uplo)
         ns -= one(I)
     end
     #
