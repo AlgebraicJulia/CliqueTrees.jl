@@ -76,9 +76,9 @@ Clique trees play an important role in algorithms for
 
 and more. In all of these applications, it is important that the subgraphs in a clique tree be as small as possible.
 Consider, for example graph coloring. 3-coloring is NP-Hard, and the fastest known algorithm for deciding if a graph is
-3-colorable runs in `O(1.3289^n)` time. However, if we are given tree decomposition of a graph with `m` subgraphs,
-and whose largest subgraph contains `k` vertices, then we can decide if it is 3-colorable in `O(m3^k)` time. This
-approach can be very powerful, but only if `k` is very small.
+3-colorable runs in $O(1.3289^n)$ time. However, if we are given tree decomposition of a graph with $m$ subgraphs,
+and whose largest subgraph contains $k$ vertices, then we can decide if it is 3-colorable in $O(m3^k)$ time. This
+is very powerful, but only if $k$ is very small.
 
 ## Constructing Clique Trees
 

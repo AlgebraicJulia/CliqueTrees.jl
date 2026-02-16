@@ -411,18 +411,8 @@ function trtri!(uplo::Val, diag::Val, A::AbstractMatrix{T}) where {T <: BlasFloa
 end
 
 function trtri!(uplo::Val, diag::Val, A::AbstractMatrix{T}) where {T}
-    inv!(tri(uplo, diag, A))
+    copyto!(A, inv(tri(uplo, diag, A)))
     return
-end
-
-function getrf!(A::AbstractMatrix{T}, ipiv::AbstractVector{<:Integer}) where {T <: BlasFloat}
-    _, _, info = LAPACK.getrf!(A, ipiv)
-    return info
-end
-
-function getrf!(A::AbstractMatrix{T}, ipiv::AbstractVector{<:Integer}) where {T}
-    F = LinearAlgebra.generic_lufact!(A, RowMaximum(), ipiv; check=false, allowsingular=true)
-    return F.info
 end
 
 function laswp!(A::AbstractMatrix{T}, ipiv::AbstractVector{<:Integer}) where {T}

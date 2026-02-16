@@ -1311,16 +1311,20 @@ end
         end
     end
 
-    # BigFloat test
-    M = SparseMatrixCSC{BigFloat}(readmatrix("685_bus")); n = size(M, 2)
-
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4")); n = size(M, 2)
     F1 = cholesky!(ChordalCholesky{:L}(M), NoPivot())
     F2 = cholesky!(ChordalCholesky{:U}(M), NoPivot())
-    F3 = cholesky!(ChordalCholesky{:L}(M), RowMaximum())
-    F4 = cholesky!(ChordalCholesky{:U}(M), RowMaximum())
     F5 = ldlt!(ChordalLDLt{:L}(M))
     F6 = ldlt!(ChordalLDLt{:U}(M))
     F7 = CliqueTrees.cholesky(M)
+
+    Fs = @static if VERSION >= v"1.12"
+        F3 = cholesky!(ChordalCholesky{:L}(M), RowMaximum())
+        F4 = cholesky!(ChordalCholesky{:U}(M), RowMaximum())
+        (F1, F2, F3, F4, F5, F6, F7)
+    else
+        (F1, F2, F5, F6, F7)
+    end
 
     b = rand(BigFloat, n)
     x = rand(BigFloat, n)
@@ -1329,7 +1333,7 @@ end
     C = rand(BigFloat, 5, n)
     Y = rand(BigFloat, 5, n)
 
-    for Fi in (F1, F2, F3, F4, F5, F6, F7)
+    for Fi in Fs
         @test isapprox(b, M * (Fi \ b); rtol=1e-6, atol=1e-14)
         @test isapprox(B, M * (Fi \ B); rtol=1e-6, atol=1e-14)
         @test isapprox(C, (C / Fi) * M; rtol=1e-6, atol=1e-14)
@@ -1342,8 +1346,7 @@ end
         @test isapprox(Y * M, Y * Fi; rtol=1e-6, atol=1e-14)
     end
 
-    matrix = readmatrix("685_bus")
-    M = SparseMatrixCSC{Float64}(matrix)
+    M = SparseMatrixCSC{Float64}(readmatrix("685_bus"))
     @inferred cholesky!(ChordalCholesky{:L}(M))
     @inferred cholesky!(ChordalCholesky{:U}(M))
     @inferred ldlt!(ChordalLDLt{:L}(M))
@@ -1389,8 +1392,27 @@ end
         )
     end
 
-    matrix = readmatrix("nos4")
-    M = SparseMatrixCSC{Float64}(matrix)
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4")); n = size(M, 2)
+    FL = selinv!(cholesky!(ChordalCholesky{:L}(M)))
+    FU = selinv!(cholesky!(ChordalCholesky{:U}(M)))
+    IL = FL.P * inv(Matrix(M)) * FL.P'
+    IU = FU.P * inv(Matrix(M)) * FU.P'
+
+    @test all(
+        isapprox(FL.L[i, j], IL[i, j]; rtol=1e-6, atol=1e-14)
+        for j in axes(FL.L, 2)
+        for i in j:n
+        if Base.isstored(FL.L, i, j)
+    )
+
+    @test all(
+        isapprox(FU.U[i, j], IU[i, j]; rtol=1e-6, atol=1e-14)
+        for j in axes(FU.U, 2)
+        for i in 1:j
+        if Base.isstored(FU.U, i, j)
+    )
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
     @inferred selinv!(cholesky!(ChordalCholesky{:L}(M)))
     @inferred selinv!(cholesky!(ChordalCholesky{:U}(M)))
     @test_call target_modules = (CliqueTrees,) selinv!(cholesky!(ChordalCholesky{:L}(M)))
@@ -1427,8 +1449,30 @@ end
         )
     end
 
-    matrix = readmatrix("nos4")
-    M = SparseMatrixCSC{Float64}(matrix)
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4")); n = size(M, 2)
+    FL = complete!(ChordalCholesky{:L}(M))
+    FU = complete!(ChordalCholesky{:U}(M))
+    CL = inv(Matrix(sparse(FL.L) * sparse(FL.L)'))
+    CU = inv(Matrix(sparse(FU.U)' * sparse(FU.U)))
+
+    PML = FL.P * M * FL.P'
+    PMU = FU.P * M * FU.P'
+
+    @test all(
+        isapprox(CL[i, j], PML[i, j]; rtol=1e-6, atol=1e-14)
+        for j in axes(FL.L, 2)
+        for i in j:n
+        if Base.isstored(PML, i, j)
+    )
+
+    @test all(
+        isapprox(CU[i, j], PMU[i, j]; rtol=1e-6, atol=1e-14)
+        for j in axes(FU.U, 2)
+        for i in 1:j
+        if Base.isstored(PMU, i, j)
+    )
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
     @inferred complete!(ChordalCholesky{:L}(M))
     @inferred complete!(ChordalCholesky{:U}(M))
     @test_call target_modules = (CliqueTrees,) complete!(ChordalCholesky{:L}(M))
@@ -1856,39 +1900,58 @@ end
         M = readmatrix(name); n = size(M, 2)
         b = rand(n)
 
-        # Pick indices and force them to form a clique
         nz = [1, 5, 10, 100]
         M[nz, nz] .+= 1
         M[nz, nz] .-= 1
-
-        # Create update vector (nonzero only at clique indices)
         v = zeros(n); v[nz] .= randn(length(nz))
-
-        # Updated matrix
         M_updated = copy(M); M_updated[nz, nz] .+= v[nz] * v[nz]'
 
-        # Factorizations of M
         F1 = cholesky!(ChordalCholesky{:L}(copy(M)), NoPivot())
         F2 = cholesky!(ChordalCholesky{:U}(copy(M)), NoPivot())
         F3 = ldlt!(ChordalLDLt{:L}(copy(M)))
         F4 = ldlt!(ChordalLDLt{:U}(copy(M)))
 
-        # Test lowrankupdate!: after update, should solve (M + v*v') x = b
         for Fi in (F1, F2, F3, F4)
             lowrankupdate!(Fi, v)
             @test isapprox(M_updated * (Fi \ b), b; rtol=1e-6, atol=1e-14)
         end
 
-        # Factorizations of M_updated for downdate test
         G1 = cholesky!(ChordalCholesky{:L}(copy(M_updated)), NoPivot())
         G2 = cholesky!(ChordalCholesky{:U}(copy(M_updated)), NoPivot())
         G3 = ldlt!(ChordalLDLt{:L}(copy(M_updated)))
         G4 = ldlt!(ChordalLDLt{:U}(copy(M_updated)))
 
-        # Test lowrankdowndate!: after downdate, should solve M x = b
         for Gi in (G1, G2, G3, G4)
             lowrankdowndate!(Gi, v)
             @test isapprox(M * (Gi \ b), b; rtol=1e-6, atol=1e-14)
         end
+    end
+
+    M = SparseMatrixCSC{BigFloat}(readmatrix("685_bus")); n = size(M, 2)
+    b = rand(BigFloat, n)
+    nz = [1, 5, 10, 100]
+    M[nz, nz] .+= 1
+    M[nz, nz] .-= 1
+    v = zeros(BigFloat, n); v[nz] .= randn(length(nz))
+    M_updated = copy(M); M_updated[nz, nz] .+= v[nz] * v[nz]'
+
+    F1 = cholesky!(ChordalCholesky{:L}(copy(M)), NoPivot())
+    F2 = cholesky!(ChordalCholesky{:U}(copy(M)), NoPivot())
+    F3 = ldlt!(ChordalLDLt{:L}(copy(M)))
+    F4 = ldlt!(ChordalLDLt{:U}(copy(M)))
+
+    for Fi in (F1, F2, F3, F4)
+        lowrankupdate!(Fi, v)
+        @test isapprox(M_updated * (Fi \ b), b; rtol=1e-6, atol=1e-14)
+    end
+
+    G1 = cholesky!(ChordalCholesky{:L}(copy(M_updated)), NoPivot())
+    G2 = cholesky!(ChordalCholesky{:U}(copy(M_updated)), NoPivot())
+    G3 = ldlt!(ChordalLDLt{:L}(copy(M_updated)))
+    G4 = ldlt!(ChordalLDLt{:U}(copy(M_updated)))
+
+    for Gi in (G1, G2, G3, G4)
+        lowrankdowndate!(Gi, v)
+        @test isapprox(M * (Gi \ b), b; rtol=1e-6, atol=1e-14)
     end
 end
