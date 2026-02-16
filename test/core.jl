@@ -1293,8 +1293,10 @@ end
         Y = rand(5, n)
 
         for Fi in (F1, F2, F3, F4, F5, F6, F7, F8)
+            @test isa(repr("text/plain", Fi), String)
             @test issuccess(Fi) == issuccess(F0)
             @test logdet(Fi) ≈ logdet(F0)
+            @test det(Fi) ≈ det(F0)
 
             @test isapprox(b, M * (Fi \ b); rtol=1e-6, atol=1e-14)
             @test isapprox(B, M * (Fi \ B); rtol=1e-6, atol=1e-14)

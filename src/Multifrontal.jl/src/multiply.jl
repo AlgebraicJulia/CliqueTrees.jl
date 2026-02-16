@@ -44,6 +44,56 @@ function Base.:*(B::AbstractMatrix, F::ChordalLDLt{UPLO, T}) where {UPLO, T}
     return rmul!(Matrix{T}(B), F)
 end
 
+# --- ChordalTriangular ---
+
+function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractVector) where {UPLO, DIAG, T}
+    return lmul!(A, Vector{T}(B))
+end
+
+function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractZerosVector) where {UPLO, DIAG, T}
+    return Zeros{T}(size(A, 1))
+end
+
+function Base.:*(A::Transpose{T, ChordalTriangular{UPLO, DIAG, T, I, Val}}, B::AbstractZerosVector{T}) where {UPLO, DIAG, T <: Real, I, Val}
+    return Zeros{T}(size(A, 1))
+end
+
+function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractMatrix) where {UPLO, DIAG, T}
+    return lmul!(A, Matrix{T}(B))
+end
+
+function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractZerosMatrix) where {UPLO, DIAG, T}
+    return Zeros{T}(size(A, 1), size(B, 2))
+end
+
+function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AdjOrTrans{<:Any, <:AbstractZerosVector}) where {UPLO, DIAG, T}
+    return Zeros{T}(size(A, 1), size(B, 2))
+end
+
+function Base.:*(B::AbstractMatrix, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+    return rmul!(Matrix{T}(B), A)
+end
+
+function Base.:*(B::AbstractZerosMatrix, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+    return Zeros{T}(size(B, 1), size(A, 2))
+end
+
+function Base.:*(B::Adjoint{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+    return rmul!(Matrix{T}(B), A)
+end
+
+function Base.:*(B::Adjoint{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+    return Zeros{T}(1, size(A, 2))
+end
+
+function Base.:*(B::Transpose{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+    return rmul!(Matrix{T}(B), A)
+end
+
+function Base.:*(B::Transpose{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+    return Zeros{T}(1, size(A, 2))
+end
+
 # ================================ lmul! ================================
 
 # --- ChordalCholesky ---

@@ -2,10 +2,10 @@ module Multifrontal
 
 using AbstractTrees
 using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, isstored
-using FillArrays: Ones
+using FillArrays: Ones, Zeros, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: AbstractTriangular, Adjoint, Transpose, BlasFloat, Factorization, LAPACK, BLAS, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
+using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, BlasFloat, Factorization, LAPACK, BLAS, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
 using SparseArrays
 
 # Import from parent CliqueTrees module

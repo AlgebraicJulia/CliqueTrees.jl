@@ -1,5 +1,5 @@
 """
-    ChordalTriangular{UPLO, DIAG, T, I, Val} <: AbstractTriangular{T}
+    ChordalTriangular{UPLO, DIAG, T, I, Val} <: AbstractMatrix{T}
 
 A triangular matrix with chordal sparsity pattern. The type parameters
 `UPLO` and `DIAG` specify its precise structure:
@@ -18,7 +18,7 @@ A triangular matrix with chordal sparsity pattern. The type parameters
    - `A.S`: symbolic factorization
 
 """
-struct ChordalTriangular{UPLO, DIAG, T, I, Val <: AbstractVector{T}} <: AbstractTriangular{T}
+struct ChordalTriangular{UPLO, DIAG, T, I, Val <: AbstractVector{T}} <: AbstractMatrix{T}
     S::ChordalSymbolic{I}
     Dval::Val
     Lval::Val
