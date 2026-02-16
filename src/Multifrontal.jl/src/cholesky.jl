@@ -187,11 +187,11 @@ function chol_loop!(
         S₂₂ = reshape(view(Mval, oneto(zero(I))), zero(I), zero(I))
     end
 
-    #if nj <= THRESHOLD
-        #info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:N)))
-    #else
+    if nj <= THRESHOLD
+        info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:N)))
+    else
         info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:S)))
-    #end
+    end
 
     if ispositive(na) && ispositive(info)
         ns -= one(I)
@@ -332,7 +332,7 @@ function chol_kernel!(
             Dji = D[j, i]
 
             for k in 1:j - 1
-                Dji -= conj(D[k, i]) * D[k, j]
+                Dji -= conj(D[k, j]) * D[k, i]
             end
 
             D[j, i] = Dji * iDjj
@@ -342,19 +342,19 @@ function chol_kernel!(
             Uji = U[j, i]
 
             for k in 1:j - 1
-                Uji -= conj(U[k, i]) * D[k, j]
+                Uji -= conj(D[k, j]) * U[k, i]
             end
 
             U[j, i] = Uji * ciDjj
         end
 
         for k in axes(S, 1)
-            Ujk = U[j, k]; cUjk = conj(Ujk)
+            Ujk = U[j, k]
 
             S[k, k] -= abs2(Ujk)
 
             for i in 1:k - 1
-                S[i, k] -= U[j, i] * cUjk
+                S[i, k] -= conj(U[j, i]) * Ujk
             end
         end
     end

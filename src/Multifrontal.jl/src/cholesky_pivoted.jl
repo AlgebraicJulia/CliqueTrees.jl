@@ -192,10 +192,12 @@ function cholpiv_fwd_loop!(
         #
         # permute L₂₁ by pivot
         #
+        copyto!(F₂₁, L₂₁)
+
         if UPLO === :L
-            permutecols!(L₂₁, view(piv, oneto(nn)))
+            copyrec!(L₂₁, F₂₁, oneto(na), view(piv, oneto(nn)))
         else
-            permuterows!(L₂₁, view(piv, oneto(nn)))
+            copyrec!(L₂₁, F₂₁, view(piv, oneto(nn)), oneto(na))
         end
         #
         # Use only the first `localrank` columns/rows for the solve

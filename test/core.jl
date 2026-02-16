@@ -1309,6 +1309,37 @@ end
         end
     end
 
+    # BigFloat test
+    M = SparseMatrixCSC{BigFloat}(readmatrix("685_bus")); n = size(M, 2)
+
+    F1 = cholesky!(ChordalCholesky{:L}(M), NoPivot())
+    F2 = cholesky!(ChordalCholesky{:U}(M), NoPivot())
+    F3 = cholesky!(ChordalCholesky{:L}(M), RowMaximum())
+    F4 = cholesky!(ChordalCholesky{:U}(M), RowMaximum())
+    F5 = ldlt!(ChordalLDLt{:L}(M))
+    F6 = ldlt!(ChordalLDLt{:U}(M))
+    F7 = CliqueTrees.cholesky(M)
+
+    b = rand(BigFloat, n)
+    x = rand(BigFloat, n)
+    B = rand(BigFloat, n, 4)
+    X = rand(BigFloat, n, 4)
+    C = rand(BigFloat, 5, n)
+    Y = rand(BigFloat, 5, n)
+
+    for Fi in (F1, F2, F3, F4, F5, F6, F7)
+        @test isapprox(b, M * (Fi \ b); rtol=1e-6, atol=1e-14)
+        @test isapprox(B, M * (Fi \ B); rtol=1e-6, atol=1e-14)
+        @test isapprox(C, (C / Fi) * M; rtol=1e-6, atol=1e-14)
+
+        Fi isa CliqueTrees.CholFact && continue
+        Fi isa CliqueTrees.LDLTFact && continue
+
+        @test isapprox(M * x, Fi * x; rtol=1e-6, atol=1e-14)
+        @test isapprox(M * X, Fi * X; rtol=1e-6, atol=1e-14)
+        @test isapprox(Y * M, Y * Fi; rtol=1e-6, atol=1e-14)
+    end
+
     matrix = readmatrix("685_bus")
     M = SparseMatrixCSC{Float64}(matrix)
     @inferred cholesky!(ChordalCholesky{:L}(M))

@@ -1,20 +1,18 @@
 module Multifrontal
 
 using AbstractTrees
-using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, permutecols!, permuterows!, isstored
+using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, isstored
 using FillArrays: Ones
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: AbstractTriangular, Adjoint, Transpose, AdjointFactorization, TransposeFactorization, BlasFloat, Factorization, LAPACK, BLAS, inv!, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
+using LinearAlgebra: AbstractTriangular, Adjoint, Transpose, BlasFloat, Factorization, LAPACK, BLAS, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
 using SparseArrays
 
 # Import from parent CliqueTrees module
-import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..PermutationOrAlgorithm, ..SupernodeType,
-    ..DEFAULT_ELIMINATION_ALGORITHM, ..DEFAULT_SUPERNODE_TYPE,
+import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
-    ..eltypedegree, ..residual, ..half, ..ispositive, ..isnegative, ..twice, ..two,
-    ..cliquetree, ..cliquetree!, ..permute!, ..residuals, ..separators, ..childindices, ..parentindex,
-    ..symmetric
+    ..eltypedegree, ..residual, ..half, ..ispositive, ..isnegative, ..twice,
+    ..cliquetree, ..residuals, ..separators, ..childindices
 
 export ChordalSymbolic
 export ChordalCholesky, FChordalCholesky

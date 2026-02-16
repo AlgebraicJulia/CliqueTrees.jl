@@ -399,6 +399,12 @@ function pstrf!(uplo::Val, A::AbstractMatrix{T}, piv::AbstractVector{BlasInt}, w
     return pstrf!(char(uplo), A, piv, work, tol)
 end
 
+function pstrf!(uplo::Val, A::AbstractMatrix{T}, piv::AbstractVector{BlasInt}, work::AbstractVector{<:Real}, tol::Real) where {T}
+    F = cholesky!(sym(uplo, A), RowMaximum(); tol=tol, check=false)
+    copyto!(piv, F.piv)
+    return F.info, F.rank
+end
+
 function trtri!(uplo::Val, diag::Val, A::AbstractMatrix{T}) where {T <: BlasFloat}
     LAPACK.trtri!(char(uplo), char(diag), A)
     return
