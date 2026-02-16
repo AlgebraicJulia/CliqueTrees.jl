@@ -74,9 +74,19 @@ function symbolic(A::SparseMatrixCSC{<:Any, I}; kw...) where {I <: Integer}
 end
 
 function symbolic(graph::AbstractGraph{I}; kw...) where {I <: Integer}
-    # compute elimination tree / clique tree
     perm, tree = cliquetree(graph; kw...)
+    return FVector{I}(perm), ChordalSymbolic(tree)
+end
 
+function symbolic(A::AbstractMatrix, clique::AbstractVector; kw...)
+    return symbolic(sparse(A), clique; kw...)
+end
+
+function symbolic(A::SparseMatrixCSC, clique::AbstractVector; kw...)
+    return symbolic(BipartiteGraph(A), clique; kw...)
+end
+
+function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
     res = residuals(tree)
     sep = separators(tree)
 
@@ -153,12 +163,10 @@ function symbolic(graph::AbstractGraph{I}; kw...) where {I <: Integer}
     Dptr[nv(res) + one(I)] = Dp + one(I)
     Lptr[nv(res) + one(I)] = Lp + one(I)
 
-    perm = FVector{I}(perm)
     chd = tree.tree.tree.graph
     pnt = tree.tree.tree.tree.prnt
 
-    S = ChordalSymbolic(res, sep, rel, chd, pnt, idx, Dptr, Lptr, nMptr, nMval, nNval, nFval)
-    return perm, S
+    return ChordalSymbolic(res, sep, rel, chd, pnt, idx, Dptr, Lptr, nMptr, nMval, nNval, nFval)
 end
 
 function Base.getproperty(S::ChordalSymbolic, d::Symbol)

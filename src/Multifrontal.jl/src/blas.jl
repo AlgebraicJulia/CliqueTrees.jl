@@ -44,9 +44,9 @@ function qdtrf2!(::Val{UPLO}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{
     return 0
 end
 
-function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}; threshold::Int = 64) where {T, UPLO}
+function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T, UPLO}
     n = size(A, 1)
-    n <= threshold && return qdtrf2!(uplo, A, D, R)
+    n <= THRESHOLD && return qdtrf2!(uplo, A, D, R)
 
     n₁  = 2^floor(Int, log2(n)) ÷ 2
     A₁₁ = view(A, 1:n₁, 1:n₁)
@@ -64,7 +64,7 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
     #
     # factorize A₁₁
     #
-    info = qdtrf!(uplo, W, A₁₁, D₁₁, R₁; threshold)
+    info = qdtrf!(uplo, W, A₁₁, D₁₁, R₁)
     !iszero(info) && return info
 
     if UPLO === :L
@@ -120,7 +120,7 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
     #
     # factorize A₂₂
     #
-    info = qdtrf!(uplo, W, A₂₂, D₂₂, R₂; threshold)
+    info = qdtrf!(uplo, W, A₂₂, D₂₂, R₂)
     !iszero(info) && return n₁ + info
     return 0
 end

@@ -187,7 +187,7 @@ function ldlt_loop!(
         #
         #   F ← F + Rᵢ Sᵢ Rᵢᵀ
         #
-        chol_update!(F, Mptr, Mval, rel, ns, i, uplo)
+        chol_send!(F, Mptr, Mval, rel, ns, i, uplo)
         ns -= one(I)
     end
     #
@@ -198,23 +198,10 @@ function ldlt_loop!(
     addtri!(D₁₁, F₁₁, uplo)
     addrec!(L₂₁, F₂₁)
     #
-    # factorize D₁₁ (reuse Fval as workspace since F₁₁, F₂₁ are no longer needed)
+    # M₂₂ is the update matrix for node j
     #
-    #     D₁₁, d₁₁ ← ldlt(D₁₁)
-    #
-    W₁₁ = reshape(view(Fval, oneto(nn * nn)), nn, nn)
-
-    if !isnothing(reg)
-        info = convert(I, qdtrf!(uplo, W₁₁, D₁₁, d₁₁, view(reg, neighbors(res, j))))
-    else
-        info = convert(I, qdtrf!(uplo, W₁₁, D₁₁, d₁₁, nothing))
-    end
-
-    if iszero(info) && ispositive(na)
+    if ispositive(na)
         ns += one(I)
-        #
-        # M₂₂ is the update matrix for node j
-        #
         strt = Mptr[ns]
         stop = Mptr[ns + one(I)] = strt + na * na
         M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
@@ -222,52 +209,235 @@ function ldlt_loop!(
         #     M₂₂ ← F₂₂
         #
         copytri!(M₂₂, F₂₂, uplo)
-        #
-        #     L₂₁ ← L₂₁ L₁₁⁻ᴴ  (unit triangular solve)
-        #
-        if UPLO === :L
-            trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), D₁₁, L₂₁)
-        else
-            trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), D₁₁, L₂₁)
-        end
-        #
-        #     W₂₁ ← L₂₁  (reuse Fval since F is no longer needed)
-        #
-        if UPLO === :L
-            W₂₁ = reshape(view(Fval, oneto(nn * na)), na, nn)
-        else
-            W₂₁ = reshape(view(Fval, oneto(nn * na)), nn, na)
-        end
+    else
+        M₂₂ = reshape(view(Mval, oneto(zero(I))), zero(I), zero(I))
+    end
+    if !isnothing(reg)
+        regview = view(reg, neighbors(res, j))
+    else
+        regview = nothing
+    end
 
-        copyrec!(W₂₁, L₂₁)
-        #
-        #     L₂₁ ← L₂₁ d₁₁⁻¹
-        #
-        if UPLO === :L
-            @inbounds for k in axes(L₂₁, 2)
-                invD = inv(d₁₁[k])
+    if nj <= THRESHOLD
+        info = convert(I, ldlt_kernel!(D₁₁, L₂₁, M₂₂, d₁₁, uplo, Val(:N), regview))
+    else
+        info = convert(I, ldlt_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, uplo, Val(:S), regview))
+    end
 
-                for i in axes(L₂₁, 1)
-                    L₂₁[i, k] *= invD
-                end
-            end
-        else
-            @inbounds for i in axes(L₂₁, 2)
-                for k in axes(L₂₁, 1)
-                    L₂₁[k, i] *= inv(d₁₁[k])
-                end
-            end
-        end
-        #
-        #     M₂₂ ← M₂₂ - W₂₁ L₂₁ᴴ  (lower)
-        #     M₂₂ ← M₂₂ - W₂₁ᴴ L₂₁  (upper)
-        #
-        if UPLO === :L
-            trrk!(uplo, Val(:N), W₂₁, L₂₁, M₂₂)
-        else
-            trrk!(uplo, Val(:C), W₂₁, L₂₁, M₂₂)
-        end
+    if ispositive(na) && ispositive(info)
+        ns -= one(I)
     end
 
     return ns, info
+end
+
+function ldlt_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        S::AbstractMatrix{T},
+        Wval::AbstractVector{T},
+        d::AbstractVector{T},
+        uplo::Val{UPLO},
+        node::Val{:S},
+        reg::Union{DynamicRegularization, Nothing},
+    ) where {T, UPLO}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(S, 1) == size(S, 2)
+
+    if UPLO === :L
+        @assert size(L) == (size(S, 1), size(D, 1))
+    else
+        @assert size(L) == (size(D, 1), size(S, 1))
+    end
+    #
+    # factorize D
+    #
+    #     D, d ← ldlt(D)
+    #
+    W₁₁ = reshape(view(Wval, eachindex(D)), size(D))
+    info = qdtrf!(uplo, W₁₁, D, d, reg)
+
+    if iszero(info) && !isempty(S)
+        #
+        #     L ← L D⁻ᴴ
+        #
+        if UPLO === :L
+            trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), D, L)
+        else
+            trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), D, L)
+        end
+        #
+        #     W ← L
+        #
+        W₂₁ = reshape(view(Wval, eachindex(L)), size(L))
+        copyrec!(W₂₁, L)
+        #
+        #     L ← L d⁻¹
+        #
+        if UPLO === :L
+            @inbounds for k in axes(L, 2)
+                idk = inv(d[k])
+
+                for i in axes(L, 1)
+                    L[i, k] *= idk
+                end
+            end
+        else
+            @inbounds for i in axes(L, 2)
+                for k in axes(L, 1)
+                    L[k, i] *= inv(d[k])
+                end
+            end
+        end
+        #
+        #     S ← S - W Lᴴ
+        #
+        if UPLO === :L
+            trrk!(uplo, Val(:N), W₂₁, L, S)
+        else
+            trrk!(uplo, Val(:C), W₂₁, L, S)
+        end
+    end
+
+    return info
+end
+
+function ldlt_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        S::AbstractMatrix{T},
+        d::AbstractVector{T},
+        uplo::Val{:L},
+        node::Val{:N},
+        reg::Union{DynamicRegularization, Nothing},
+    ) where {T}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(S, 1) == size(S, 2)
+    @assert size(L, 1) == size(S, 1)
+    @assert size(L, 2) == size(D, 1)
+
+    @inbounds for j in axes(D, 1)
+        Djj = real(D[j, j])
+
+        for k in 1:j - 1
+            Djj -= abs2(D[j, k]) * d[k]
+        end
+
+        if !isnothing(reg)
+            if reg.signs[j] * Djj < reg.epsilon
+                Djj = reg.delta * reg.signs[j]
+            end
+        end
+
+        d[j] = Djj
+        iszero(Djj) && return j
+
+        iDjj = inv(Djj)
+
+        for i in j + 1:size(D, 1)
+            Dij = D[i, j]
+
+            for k in 1:j - 1
+                Dij -= D[i, k] * d[k] * conj(D[j, k])
+            end
+
+            D[i, j] = Dij * iDjj
+        end
+
+        for i in axes(S, 1)
+            Lij = L[i, j]
+
+            for k in 1:j - 1
+                Lij -= L[i, k] * d[k] * conj(D[j, k])
+            end
+
+            L[i, j] = Lij
+        end
+
+        for k in axes(S, 1)
+            Ljk = L[k, j]; cLjk = conj(Ljk)
+
+            S[k, k] -= iDjj * abs2(Ljk)
+
+            for i in k + 1:size(S, 1)
+                S[i, k] -= iDjj * L[i, j] * cLjk
+            end
+        end
+
+        for i in axes(S, 1)
+            L[i, j] *= iDjj
+        end
+    end
+
+    return 0
+end
+
+function ldlt_kernel!(
+        D::AbstractMatrix{T},
+        U::AbstractMatrix{T},
+        S::AbstractMatrix{T},
+        d::AbstractVector{T},
+        uplo::Val{:U},
+        node::Val{:N},
+        reg::Union{DynamicRegularization, Nothing},
+    ) where {T}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(S, 1) == size(S, 2)
+    @assert size(U, 1) == size(D, 1)
+    @assert size(U, 2) == size(S, 1)
+
+    @inbounds for j in axes(D, 1)
+        Djj = real(D[j, j])
+
+        for k in 1:j - 1
+            Djj -= abs2(D[k, j]) * d[k]
+        end
+
+        if !isnothing(reg)
+            if reg.signs[j] * Djj < reg.epsilon
+                Djj = reg.delta * reg.signs[j]
+            end
+        end
+
+        d[j] = Djj
+        iszero(Djj) && return j
+
+        iDjj = inv(Djj)
+
+        for i in j + 1:size(D, 1)
+            Dji = D[j, i]
+
+            for k in 1:j - 1
+                Dji -= conj(D[k, i]) * d[k] * D[k, j]
+            end
+
+            D[j, i] = Dji * iDjj
+        end
+
+        for i in axes(S, 1)
+            Uji = U[j, i]
+
+            for k in 1:j - 1
+                Uji -= conj(U[k, i]) * d[k] * D[k, j]
+            end
+
+            U[j, i] = Uji
+        end
+
+        for k in axes(S, 1)
+            Ujk = U[j, k]; cUjk = conj(Ujk)
+
+            S[k, k] -= iDjj * abs2(Ujk)
+
+            for i in 1:k - 1
+                S[i, k] -= iDjj * U[j, i] * cUjk
+            end
+        end
+
+        for i in axes(S, 1)
+            U[j, i] *= iDjj
+        end
+    end
+
+    return 0
 end

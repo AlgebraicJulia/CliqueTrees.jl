@@ -161,7 +161,7 @@ function chol_loop!(
         #
         #   F ← F + Rᵢ Sᵢ Rᵢᵀ
         #
-        chol_update!(F, Mptr, Mval, rel, ns, i, uplo)
+        chol_send!(F, Mptr, Mval, rel, ns, i, uplo)
         ns -= one(I)
     end
     #
@@ -172,17 +172,10 @@ function chol_loop!(
     addtri!(D₁₁, F₁₁, uplo)
     addrec!(L₂₁, F₂₁)
     #
-    # factorize D₁₁
+    # S₂₂ is the update matrix for node j
     #
-    #     D₁₁ ← chol(D₁₁)
-    #
-    info = convert(I, potrf!(uplo, D₁₁))
-
-    if iszero(info) && ispositive(na)
+    if ispositive(na)
         ns += one(I)
-        #
-        # S₂₂ is the update matrix for node j
-        #
         strt = Mptr[ns]
         stop = Mptr[ns + one(I)] = strt + na * na
         S₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
@@ -190,28 +183,186 @@ function chol_loop!(
         #     S₂₂ ← F₂₂
         #
         copytri!(S₂₂, F₂₂, uplo)
-        #
-        #     L₂₁ ← L₂₁ D₁₁⁻ᴴ
-        #
-        if UPLO === :L
-            trsm!(Val(:R), Val(:L), Val(:C), Val(:N), one(T), D₁₁, L₂₁)
-        else
-            trsm!(Val(:L), Val(:U), Val(:C), Val(:N), one(T), D₁₁, L₂₁)
-        end
-        #
-        #     S₂₂ ← S₂₂ - L₂₁ L₂₁ᴴ
-        #
-        if UPLO === :L
-            syrk!(Val(:L), Val(:N), -one(real(T)), L₂₁, one(real(T)), S₂₂)
-        else
-            syrk!(Val(:U), Val(:C), -one(real(T)), L₂₁, one(real(T)), S₂₂)
-        end
+    else
+        S₂₂ = reshape(view(Mval, oneto(zero(I))), zero(I), zero(I))
+    end
+
+    if nj <= THRESHOLD
+        info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:N)))
+    else
+        info = convert(I, chol_kernel!(D₁₁, L₂₁, S₂₂, uplo, Val(:S)))
+    end
+
+    if ispositive(na) && ispositive(info)
+        ns -= one(I)
     end
 
     return ns, info
 end
 
-function chol_update!(
+function chol_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        S::AbstractMatrix{T},
+        uplo::Val{UPLO},
+        node::Val{NODE},
+    ) where {T, UPLO, NODE}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(S, 1) == size(S, 2)
+
+    if UPLO === :L
+        @assert size(L, 1) == size(S, 1)
+        @assert size(L, 2) == size(D, 1)
+    else
+        @assert size(L, 1) == size(D, 1)
+        @assert size(L, 2) == size(S, 1)
+    end
+    #
+    # factorize D
+    #
+    #     D ← chol(D)
+    #
+    info = potrf!(uplo, D)
+
+    if iszero(info) && !isempty(S)
+        #
+        #     L ← L D⁻ᴴ
+        #
+        if UPLO === :L
+            trsm!(Val(:R), Val(:L), Val(:C), Val(:N), one(T), D, L)
+        else
+            trsm!(Val(:L), Val(:U), Val(:C), Val(:N), one(T), D, L)
+        end
+        #
+        #     S ← S - L Lᴴ
+        #
+        if UPLO === :L
+            syrk!(Val(:L), Val(:N), -one(real(T)), L, one(real(T)), S)
+        else
+            syrk!(Val(:U), Val(:C), -one(real(T)), L, one(real(T)), S)
+        end
+    end
+
+    return info
+end
+
+function chol_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        S::AbstractMatrix{T},
+        uplo::Val{:L},
+        node::Val{:N},
+    ) where {T}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(S, 1) == size(S, 2)
+    @assert size(L, 1) == size(S, 1)
+    @assert size(L, 2) == size(D, 1)
+
+    @inbounds for j in axes(D, 1)
+        Djj = real(D[j, j])
+
+        Djj > zero(real(T)) || return j
+
+        D[j, j] = Djj = sqrt(Djj); iDjj = inv(Djj); ciDjj = conj(iDjj)
+
+        for i in j + 1:size(D, 1)
+            D[i, j] *= iDjj
+        end
+
+        for k in j + 1:size(D, 1)
+            Dkj = D[k, j]; cDkj = conj(Dkj)
+
+            D[k, k] -= abs2(Dkj)
+
+            for i in k + 1:size(D, 1)
+                D[i, k] -= D[i, j] * cDkj
+            end
+        end
+
+        for i in axes(S, 1)
+            L[i, j] *= ciDjj
+        end
+
+        for k in j + 1:size(D, 1)
+            cDkj = conj(D[k, j])
+
+            for i in axes(S, 1)
+                L[i, k] -= L[i, j] * cDkj
+            end
+        end
+
+        for k in axes(S, 1)
+            Ljk = L[k, j]; cLjk = conj(Ljk)
+
+            S[k, k] -= abs2(Ljk)
+
+            for i in k + 1:size(S, 1)
+                S[i, k] -= L[i, j] * cLjk
+            end
+        end
+    end
+
+    return 0
+end
+
+function chol_kernel!(
+        D::AbstractMatrix{T},
+        U::AbstractMatrix{T},
+        S::AbstractMatrix{T},
+        uplo::Val{:U},
+        node::Val{:N},
+    ) where {T}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(S, 1) == size(S, 2)
+    @assert size(U, 1) == size(D, 1)
+    @assert size(U, 2) == size(S, 1)
+
+    @inbounds for j in axes(D, 1)
+        Djj = real(D[j, j])
+
+        for k in 1:j - 1
+            Djj -= abs2(D[k, j])
+        end
+
+        Djj > zero(real(T)) || return j
+
+        D[j, j] = Djj = sqrt(Djj); iDjj = inv(Djj); ciDjj = conj(iDjj)
+
+        for i in j + 1:size(D, 1)
+            Dji = D[j, i]
+
+            for k in 1:j - 1
+                Dji -= conj(D[k, i]) * D[k, j]
+            end
+
+            D[j, i] = Dji * iDjj
+        end
+
+        for i in axes(S, 1)
+            Uji = U[j, i]
+
+            for k in 1:j - 1
+                Uji -= conj(U[k, i]) * D[k, j]
+            end
+
+            U[j, i] = Uji * ciDjj
+        end
+
+        for k in axes(S, 1)
+            Ujk = U[j, k]; cUjk = conj(Ujk)
+
+            S[k, k] -= abs2(Ujk)
+
+            for i in 1:k - 1
+                S[i, k] -= U[j, i] * cUjk
+            end
+        end
+    end
+
+    return 0
+end
+
+function chol_send!(
         F::AbstractMatrix{T},
         ptr::AbstractVector{I},
         val::AbstractVector{T},

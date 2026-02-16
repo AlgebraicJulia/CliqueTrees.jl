@@ -9,11 +9,11 @@ using LinearAlgebra: AbstractTriangular, Adjoint, Transpose, AdjointFactorizatio
 using SparseArrays
 
 # Import from parent CliqueTrees module
-import ..BipartiteGraph, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..PermutationOrAlgorithm, ..SupernodeType,
+import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..PermutationOrAlgorithm, ..SupernodeType,
     ..DEFAULT_ELIMINATION_ALGORITHM, ..DEFAULT_SUPERNODE_TYPE,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
     ..eltypedegree, ..residual, ..half, ..ispositive, ..isnegative, ..twice, ..two,
-    ..cliquetree, ..residuals, ..separators, ..childindices, ..parentindex,
+    ..cliquetree, ..cliquetree!, ..permute!, ..residuals, ..separators, ..childindices, ..parentindex,
     ..symmetric
 
 export ChordalSymbolic
@@ -25,6 +25,8 @@ export Permutation, FPermutation
 export symbolic
 export complete!
 export selinv!
+
+const THRESHOLD = 64
 
 include("utils.jl")
 include("dynamic_regularization.jl")
