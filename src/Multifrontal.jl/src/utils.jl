@@ -222,7 +222,7 @@ function copy_D!(
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         res::AbstractGraph{I},
-        A::AbstractMatrix{T},
+        A::SparseMatrixCSC,
     ) where {T, I <: Integer}
 
     nwr = one(I)
@@ -262,7 +262,7 @@ function copy_L!(
         Lval::AbstractVector{T},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
-        A::AbstractMatrix{T},
+        A::SparseMatrixCSC,
         ::Val{:L},
     ) where {T, I <: Integer}
 
@@ -308,7 +308,7 @@ function copy_L!(
         Lval::AbstractVector{T},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
-        A::AbstractMatrix{T},
+        A::SparseMatrixCSC,
         ::Val{:U},
     ) where {T, I <: Integer}
 

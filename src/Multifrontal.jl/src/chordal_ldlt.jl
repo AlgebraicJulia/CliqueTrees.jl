@@ -115,7 +115,7 @@ function Base.copy(F::ChordalLDLt{UPLO, T, I, Val, Prm}) where {UPLO, T, I, Val,
     return ChordalLDLt{UPLO, T, I, Val, Prm}(F.S, copy(F.d), copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.info))
 end
 
-function Base.copy!(F::ChordalLDLt{UPLO, T, I}, A::SparseMatrixCSC{T, I}) where {UPLO, T, I <: Integer}
+function Base.copy!(F::ChordalLDLt{UPLO, T, I}, A::SparseMatrixCSC) where {UPLO, T, I <: Integer}
     A = permute(A, F.perm, F.perm)
     copy_D!(F.S.Dptr, F.Dval, F.S.res, A)
     copy_L!(F.S.Lptr, F.Lval, F.S.res, F.S.sep, A, Val{UPLO}())

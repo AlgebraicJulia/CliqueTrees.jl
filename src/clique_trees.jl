@@ -234,15 +234,15 @@ function cliquetree_impl!(
 end
 
 function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V, E}
-    graph = separators(tree); h = nov(graph); n = nv(graph); m = ne(graph)
+    sep = separators(tree); h = nov(sep); n = nv(sep); m = ne(sep)
     perm = FVector{V}(undef, h)
     invp = FVector{V}(undef, h)
 
-    separator = BipartiteGraph{V, E, FVector{E}, FVector{V}}(h, n, m)
-    p = m + one(E); pointers(separator)[n + one(V)] = p
+    newsep = BipartiteGraph{V, E, FVector{E}, FVector{V}}(h, n, m)
+    p = m + one(E); pointers(newsep)[n + one(V)] = p
 
-    residual = BipartiteGraph{V, E, FVector{E}, OneTo{V}}(h, n, h)
-    q = h + one(V); pointers(residual)[n + one(V)] = q
+    newres = BipartiteGraph{V, E, FVector{E}, OneTo{V}}(h, n, h)
+    q = h + one(V); pointers(newres)[n + one(V)] = q
 
     sndtree = copy(tree.tree.tree.tree)
     sndinvp = postorder!(setrootindex!(sndtree, root), root)
@@ -253,28 +253,28 @@ function cliquetree(tree::CliqueTree{V, E}, root::Integer) where {V, E}
     end
 
     for i in reverse(sndtree)
-        ii = sndperm[i]; clique = tree[ii]
+        ii = sndperm[i]; bag = tree[ii]
 
-        for vv in Iterators.reverse(clique)
+        for vv in Iterators.reverse(bag)
             v = invp[vv]
 
             if ispositive(v)
-                p -= one(E); targets(separator)[p] = v
+                p -= one(E); targets(newsep)[p] = v
             else
                 q -= one(V); perm[q] = vv; invp[vv] = q
             end
         end
 
-        pointers(separator)[i] = p
-        pointers(residual)[i] = q
+        pointers(newsep)[i] = p
+        pointers(newres)[i] = q
     end
 
-    converse = BipartiteGraph{V, E, FVector{E}, FVector{V}}(n, h, m)
-    reverse!(converse, separator)    
-    reverse!(separator, converse)
+    revsep = BipartiteGraph{V, E, FVector{E}, FVector{V}}(n, h, m)
+    reverse!(revsep, newsep)
+    reverse!(newsep, revsep)
 
-    tree = CliqueTree(SupernodeTree(Tree(sndtree), residual), separator)
-    return collect(perm), tree
+    newtree = CliqueTree(SupernodeTree(Tree(sndtree), newres), newsep)
+    return collect(perm), newtree
 end
 
 function cliquetree(tree::CliqueTree{V, E}, clique::AbstractVector{V}) where {V, E}
@@ -284,17 +284,22 @@ function cliquetree(tree::CliqueTree{V, E}, clique::AbstractVector{V}) where {V,
     h = nov(sep)
     n = nv(sep)
     m = ne(sep)
-    k = convert(V, length(clique))
 
-    mask = FVector{V}(undef, h)
+    perm = FVector{V}(undef, h)
     invp = FVector{V}(undef, h)
 
+    newsep = BipartiteGraph{V, E, FVector{E}, FVector{V}}(h, n, m)
+    p = m + one(E); pointers(newsep)[n + one(V)] = p
+
+    newres = BipartiteGraph{V, E, FVector{E}, OneTo{V}}(h, n, h)
+    q = h + one(V); pointers(newres)[n + one(V)] = q
+
     for v in outvertices(sep)
-        mask[v] = zero(V)
+        invp[v] = zero(V)
     end
 
-    for v in clique
-        mask[v] = one(V)
+    for v in Iterators.reverse(clique)
+        q -= one(V); perm[q] = v; invp[v] = q
     end
 
     root = n
@@ -305,45 +310,50 @@ function cliquetree(tree::CliqueTree{V, E}, clique::AbstractVector{V}) where {V,
         for v in neighbors(res, i)
             root < n && break
 
-            if ispositive(mask[v])
+            if ispositive(invp[v])
                 root = i
             end
         end
     end
 
-    perm, newtree = cliquetree(tree, root)
-    newsep = separators(newtree)
-    newres = residuals(newtree)
-    newbag = neighbors(newres, n)
+    sndtree = copy(tree.tree.tree.tree)
+    sndinvp = postorder!(setrootindex!(sndtree, root), root)
+    sndperm = invperm(sndinvp)
 
-    i = h - k
-    j = h
+    rootbag = tree[sndperm[n]]
 
-    for v in reverse(newbag)
-        if !ispositive(mask[perm[v]])
-            invp[v] = i; i -= one(V)
-        else
-            invp[v] = j; j -= one(V)
+    for vv in Iterators.reverse(rootbag)
+        if !ispositive(invp[vv])
+            q -= one(V); perm[q] = vv; invp[vv] = q
         end
     end
 
-    for v in newbag
-        mask[invp[v]] = perm[v]
-    end
+    pointers(newsep)[n] = p
+    pointers(newres)[n] = q
 
-    for v in newbag
-        perm[v] = mask[v]
-    end
-    
-    for p in oneto(m)
-        v = targets(newsep)[p]
+    for i in reverse(oneto(n - one(V)))
+        ii = sndperm[i]; bag = tree[ii]
 
-        if v in newbag
-            targets(newsep)[p] = invp[v]
+        for vv in Iterators.reverse(bag)
+            v = invp[vv]
+
+            if ispositive(v)
+                p -= one(E); targets(newsep)[p] = v
+            else
+                q -= one(V); perm[q] = vv; invp[vv] = q
+            end
         end
+
+        pointers(newsep)[i] = p
+        pointers(newres)[i] = q
     end
 
-    return perm, newtree
+    revsep = BipartiteGraph{V, E, FVector{E}, FVector{V}}(n, h, m)
+    reverse!(revsep, newsep)
+    reverse!(newsep, revsep)
+
+    newtree = CliqueTree(SupernodeTree(Tree(sndtree), newres), newsep)
+    return collect(perm), newtree
 end
 
 function cliquetree!(tree::CliqueTree, root::Integer)

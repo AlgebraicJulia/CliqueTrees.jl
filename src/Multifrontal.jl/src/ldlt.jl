@@ -218,7 +218,7 @@ function ldlt_loop!(
         regview = nothing
     end
 
-    if nj <= THRESHOLD
+    if nn <= THRESHOLD
         info = convert(I, ldlt_kernel!(D₁₁, L₂₁, M₂₂, d₁₁, uplo, Val(:N), regview))
     else
         info = convert(I, ldlt_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, uplo, Val(:S), regview))
@@ -319,10 +319,6 @@ function ldlt_kernel!(
     @inbounds for j in axes(D, 1)
         Djj = real(D[j, j])
 
-        for k in 1:j - 1
-            Djj -= abs2(D[j, k]) * d[k]
-        end
-
         if !isnothing(reg)
             if reg.signs[j] * Djj < reg.epsilon
                 Djj = reg.delta * reg.signs[j]
@@ -335,38 +331,27 @@ function ldlt_kernel!(
         iDjj = inv(Djj)
 
         for i in j + 1:size(D, 1)
-            Dij = D[i, j]
-
-            for k in 1:j - 1
-                Dij -= D[i, k] * d[k] * conj(D[j, k])
-            end
-
-            D[i, j] = Dij * iDjj
+            D[i, j] *= iDjj
         end
 
-        for i in axes(S, 1)
-            Lij = L[i, j]
+        for k in j + 1:size(D, 1)
+            Dkj = D[k, j]
+            cDkj = Djj * conj(Dkj)
 
-            for k in 1:j - 1
-                Lij -= L[i, k] * d[k] * conj(D[j, k])
-            end
+            D[k, k] -= Djj * abs2(Dkj)
 
-            L[i, j] = Lij
-        end
-
-        for k in axes(S, 1)
-            Ljk = L[k, j]; cLjk = conj(Ljk)
-
-            S[k, k] -= iDjj * abs2(Ljk)
-
-            for i in k + 1:size(S, 1)
-                S[i, k] -= iDjj * L[i, j] * cLjk
+            for i in k + 1:size(D, 1)
+                D[i, k] -= D[i, j] * cDkj
             end
         end
+
+        syr!(uplo, -iDjj, view(L, :, j), S)
 
         for i in axes(S, 1)
             L[i, j] *= iDjj
         end
+
+        ger!(-Djj, view(L, :, j), view(D, j + 1:size(D, 1), j), view(L, :, j + 1:size(D, 1)))
     end
 
     return 0
@@ -426,7 +411,6 @@ function ldlt_kernel!(
 
         for k in axes(S, 1)
             Ujk = U[j, k]
-
             S[k, k] -= iDjj * abs2(Ujk)
 
             for i in 1:k - 1

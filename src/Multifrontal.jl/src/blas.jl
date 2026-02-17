@@ -1,15 +1,43 @@
-function qdtrf2!(::Val{UPLO}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T, UPLO}
-    n = size(A, 1)
+function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T}
+    @inbounds @fastmath for j in axes(A, 1)
+        Ajj = real(A[j, j])
 
-    @inbounds @fastmath for j in 1:n
+        if !isnothing(R)
+            if R.signs[j] * Ajj < R.epsilon
+                Ajj = R.delta * R.signs[j]
+            end
+        end
+
+        if iszero(Ajj)
+            return j
+        else
+            D[j] = Ajj; iDjj = inv(Ajj)
+
+            for i in j + 1:size(A, 1)
+                A[i, j] *= iDjj
+            end
+
+            for k in j + 1:size(A, 1)
+                Akj = A[k, j]; cAkj = Ajj * conj(Akj)
+
+                A[k, k] -= Ajj * abs2(Akj)
+
+                for i in k + 1:size(A, 1)
+                    A[i, k] -= A[i, j] * cAkj
+                end
+            end
+        end
+    end
+
+    return 0
+end
+
+function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T}
+    @inbounds @fastmath for j in axes(A, 1)
         Ajj = real(A[j, j])
 
         for k in 1:j - 1
-            if UPLO === :L
-                Ajj -= abs2(A[j, k]) * D[k]
-            else
-                Ajj -= abs2(A[k, j]) * D[k]
-            end
+            Ajj -= abs2(A[k, j]) * D[k]
         end
 
         if !isnothing(R)
@@ -23,20 +51,12 @@ function qdtrf2!(::Val{UPLO}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{
         else
             D[j] = Ajj; iDjj = inv(Ajj)
 
-            for i in j + 1:n
+            for i in j + 1:size(A, 1)
                 for k in 1:j - 1
-                    if UPLO === :L
-                        A[i, j] -= A[i, k] * D[k] * conj(A[j, k])
-                    else
-                        A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
-                    end
+                    A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
                 end
 
-                if UPLO === :L
-                    A[i, j] *= iDjj
-                else
-                    A[j, i] *= iDjj
-                end
+                A[j, i] *= iDjj
             end
         end
     end
@@ -415,18 +435,54 @@ function trtri!(uplo::Val, diag::Val, A::AbstractMatrix{T}) where {T}
     return
 end
 
-function laswp!(A::AbstractMatrix{T}, ipiv::AbstractVector{<:Integer}) where {T}
-    @inbounds for j in axes(A, 2)
-        for k in eachindex(ipiv)
-            p = ipiv[k]
+function ger!(α, x::AbstractVector{T}, y::AbstractVector{T}, A::AbstractMatrix{T}) where {T <: BlasFloat}
+    BLAS.ger!(convert(T, α), x, y, A)
+    return
+end
 
-            if p != k
-                A[k, j], A[p, j] = A[p, j], A[k, j]
-            end
+function ger!(α, x::AbstractVector{T}, y::AbstractVector{T}, A::AbstractMatrix{T}) where {T}
+    @inbounds for j in axes(A, 2)
+        αyj = α * conj(y[j])
+
+        for i in axes(A, 1)
+            A[i, j] += x[i] * αyj
         end
     end
 
     return
 end
 
+function syr!(uplo::Val, α, x::AbstractVector{T}, A::AbstractMatrix{T}) where {T <: BlasFloat}
+    if T <: Complex
+        BLAS.her!(char(uplo), real(α), x, A)
+    else
+        BLAS.syr!(char(uplo), α, x, A)
+    end
+
+    return
+end
+
+function syr!(::Val{UPLO}, α, x::AbstractVector{T}, A::AbstractMatrix{T}) where {UPLO, T}
+    @inbounds if UPLO === :L
+        for k in axes(A, 1)
+            αxk = α * conj(x[k])
+
+            A[k, k] += x[k] * αxk
+
+            for i in k + 1:size(A, 1)
+                A[i, k] += x[i] * αxk
+            end
+        end
+    else
+        for j in axes(A, 2)
+            αxj = α * conj(x[j])
+
+            for i in 1:j
+                A[i, j] += x[i] * αxj
+            end
+        end
+    end
+
+    return
+end
 
