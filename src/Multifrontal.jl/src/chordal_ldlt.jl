@@ -165,3 +165,7 @@ function LinearAlgebra.logdet(F::ChordalLDLt)
     ispositive(real(sgn)) || error()
     return out
 end
+
+function LinearAlgebra.rank(F::ChordalLDLt; kw...)
+    return rank(F.D; kw...)
+end

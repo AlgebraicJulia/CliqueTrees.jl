@@ -24,21 +24,24 @@ end
 #######################
 
 function Base.iterate(iter::BipartiteEdgeIter{V, E}, (i, p)::Tuple{V, E} = (one(V), one(E))) where {V, E}
-    graph = iter.graph; ii = i + one(V); pp = p + one(E)
+    graph = iter.graph; ip1 = i + one(V); pp1 = p + one(E)
     result = nothing
 
     if p <= ne(graph)
         @inbounds j = targets(graph)[p]
-        @inbounds qq = pointers(graph)[ii]
-        edge = SimpleEdge{V}(i, j)
+        @inbounds pnext = pointers(graph)[ip1]
 
-        if pp < qq
-            state = (i, pp)
-        else
-            state = (ii, pp)
+        @inbounds while p ≥ pnext
+            i = ip1; ip1 = i + one(V); pnext = pointers(graph)[ip1]
         end
 
-        result = (edge, state)
+        edge = SimpleEdge{V}(i, j)
+
+        if pp1 ≥ pnext
+            i = ip1
+        end
+
+        result = (edge, (i, pp1))
     end
 
     return result

@@ -27,13 +27,12 @@ struct ChordalCholesky{UPLO, T, I, Val <: AbstractVector{T}, Prm <: AbstractVect
     Lval::Val
     perm::Prm
     info::FScalar{I}
-    rank::FScalar{I}
 end
 
 const FChordalCholesky{UPLO, T, I} = ChordalCholesky{UPLO, T, I, FVector{T}, FVector{I}}
 
-function ChordalCholesky{UPLO}(S::ChordalSymbolic{I}, Dval::Val, Lval::Val, perm::Prm, info::FScalar{I}, rank::FScalar{I}) where {UPLO, I <: Integer, T, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
-    return ChordalCholesky{UPLO, T, I, Val, Prm}(S, Dval, Lval, perm, info, rank)
+function ChordalCholesky{UPLO}(S::ChordalSymbolic{I}, Dval::Val, Lval::Val, perm::Prm, info::FScalar{I}) where {UPLO, I <: Integer, T, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
+    return ChordalCholesky{UPLO, T, I, Val, Prm}(S, Dval, Lval, perm, info)
 end
 
 function ChordalCholesky{UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
@@ -41,8 +40,7 @@ function ChordalCholesky{UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {UPLO,
     Dval = FVector{T}(undef, S.Dptr[n + one(I)] - one(I))
     Lval = FVector{T}(undef, S.Lptr[n + one(I)] - one(I))
     info = FScalar{I}(undef); info[] = zero(I)
-    rank = FScalar{I}(undef); rank[] = nov(S.res)
-    return ChordalCholesky{UPLO}(S, Dval, Lval, perm, info, rank)
+    return ChordalCholesky{UPLO}(S, Dval, Lval, perm, info)
 end
 
 function ChordalCholesky(A::AbstractMatrix; kw...)
@@ -75,7 +73,7 @@ function ChordalCholesky{UPLO}(A::SparseMatrixCSC{T}, perm::Prm, S::ChordalSymbo
 end
 
 function Base.propertynames(::ChordalCholesky)
-    return (:L, :U, :P, :S, :Dval, :Lval, :perm, :info, :rank)
+    return (:L, :U, :P, :S, :Dval, :Lval, :perm, :info)
 end
 
 function Base.getproperty(F::ChordalCholesky{UPLO}, d::Symbol) where {UPLO}
@@ -114,7 +112,7 @@ function Base.show(io::IO, ::MIME"text/plain", F::T) where {UPLO, T <: ChordalCh
 end
 
 function Base.copy(F::ChordalCholesky{UPLO, T, I, Val, Prm}) where {UPLO, T, I, Val, Prm}
-    return ChordalCholesky{UPLO, T, I, Val, Prm}(F.S, copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.info), copy(F.rank))
+    return ChordalCholesky{UPLO, T, I, Val, Prm}(F.S, copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.info))
 end
 
 function Base.copy!(F::ChordalCholesky{UPLO, T, I}, A::SparseMatrixCSC) where {UPLO, T, I <: Integer}
@@ -150,8 +148,8 @@ function LinearAlgebra.issuccess(F::ChordalCholesky)
     return iszero(F.info[])
 end
 
-function LinearAlgebra.rank(F::ChordalCholesky)
-    return convert(Int, F.rank[])
+function LinearAlgebra.rank(F::ChordalCholesky; kw...)
+    return rank(F.L; kw...)
 end
 
 function Base.adjoint(F::ChordalCholesky)

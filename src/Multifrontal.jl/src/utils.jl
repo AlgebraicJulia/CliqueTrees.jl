@@ -54,17 +54,19 @@ function adj(tA::Val{:C}, A::AbstractMatrix)
     return adjoint(A)
 end
 
-function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}) where {Q, T}
+function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}, col::AbstractVector{I}=axes(A, 1)) where {Q, T, I <: Integer}
     @assert size(A, 1) == size(A, 2)
 
-    @inbounds for w in axes(A, 1)
+    @inbounds for j in eachindex(col)
+        cj = col[j]
+
         if Q === :L
-            for v in w:size(A, 1)
-                A[v, w] = zero(T)
+            for i in j:length(col)
+                A[col[i], cj] = zero(T)
             end
         else
-            for v in oneto(w)
-                A[v, w] = zero(T)
+            for i in oneto(j)
+                A[col[i], cj] = zero(T)
             end
         end
     end
@@ -72,8 +74,23 @@ function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}) where {Q, T}
     return A
 end
 
-function zerorec!(A::AbstractArray{T}) where {T}
-    fill!(A, zero(T))
+function zerorec!(A::AbstractVector{T}, row::AbstractVector{I}=axes(A, 1)) where {T, I <: Integer}
+    @inbounds for i in eachindex(row)
+        A[row[i]] = zero(T)
+    end
+
+    return A
+end
+
+function zerorec!(A::AbstractMatrix{T}, row::AbstractVector{I}=axes(A, 1), col::AbstractVector{J}=axes(A, 2)) where {T, I <: Integer, J <: Integer}
+    @inbounds for j in eachindex(col)
+        cj = col[j]
+
+        for i in eachindex(row)
+            A[row[i], cj] = zero(T)
+        end
+    end
+
     return A
 end
 
@@ -81,19 +98,21 @@ function copytri!(
         A::AbstractMatrix{T},
         B::AbstractMatrix{T},
         uplo::Val{Q},
-        ind::AbstractVector{I}=axes(A, 1),
+        col::AbstractVector{I}=axes(A, 1),
     ) where {Q, T, I <: Integer}
-    @assert size(A, 1) == size(A, 2) == length(ind)
+    @assert size(A, 1) == size(A, 2) == length(col)
     @assert size(B, 1) == size(B, 2)
 
-    @inbounds for j in eachindex(ind)
+    @inbounds for j in eachindex(col)
+        cj = col[j]
+
         if Q === :L
-            for i in j:length(ind)
-                A[i, j] = B[ind[i], ind[j]]
+            for i in j:length(col)
+                A[i, j] = B[col[i], cj]
             end
         else
             for i in oneto(j)
-                A[i, j] = B[ind[i], ind[j]]
+                A[i, j] = B[col[i], cj]
             end
         end
     end
@@ -105,19 +124,21 @@ function addtri!(
         A::AbstractMatrix{T},
         B::AbstractMatrix{T},
         uplo::Val{Q},
-        ind::AbstractVector{I}=axes(B, 1),
+        col::AbstractVector{I}=axes(B, 1),
     ) where {Q, T, I <: Integer}
     @assert size(A, 1) == size(A, 2)
-    @assert size(B, 1) == size(B, 2) == length(ind)
+    @assert size(B, 1) == size(B, 2) == length(col)
 
-    @inbounds for j in eachindex(ind)
+    @inbounds for j in eachindex(col)
+        cj = col[j]
+
         if Q === :L
-            for i in j:length(ind)
-                A[ind[i], ind[j]] += B[i, j]
+            for i in j:length(col)
+                A[col[i], cj] += B[i, j]
             end
         else
             for i in oneto(j)
-                A[ind[i], ind[j]] += B[i, j]
+                A[col[i], cj] += B[i, j]
             end
         end
     end
@@ -339,6 +360,61 @@ function copy_L!(
                 pj += one(I); Lval[pj] = zero(T); wr += one(I)
             end
         end
+    end
+
+    return
+end
+
+function swaprec!(v::AbstractVector, j::Integer, k::Integer)
+    @inbounds v[j], v[k] = v[k], v[j]
+    return
+end
+
+# Hermitian swap: exchange rows/cols j and k for Hermitian matrix stored in lower triangle
+function swaptri!(A::AbstractMatrix, j::Integer, k::Integer, ::Val{:L})
+    n = size(A, 1)
+
+    @inbounds begin
+        A[j, j], A[k, k] = A[k, k], A[j, j]
+
+        for i in k+1:n
+            A[i, j], A[i, k] = A[i, k], A[i, j]
+        end
+
+        for i in j+1:k-1
+            A[i, j], A[k, i] = conj(A[k, i]), conj(A[i, j])
+        end
+
+        for i in 1:j-1
+            A[j, i], A[k, i] = A[k, i], A[j, i]
+        end
+
+        A[k, j] = conj(A[k, j])
+    end
+
+    return
+end
+
+# Hermitian swap: exchange rows/cols j and k for Hermitian matrix stored in upper triangle
+function swaptri!(A::AbstractMatrix, j::Integer, k::Integer, ::Val{:U})
+    n = size(A, 1)
+
+    @inbounds begin
+        A[j, j], A[k, k] = A[k, k], A[j, j]
+
+        for i in 1:j-1
+            A[i, j], A[i, k] = A[i, k], A[i, j]
+        end
+
+        for i in j+1:k-1
+            A[j, i], A[i, k] = conj(A[i, k]), conj(A[j, i])
+        end
+
+        for i in k+1:n
+            A[j, i], A[k, i] = A[k, i], A[j, i]
+        end
+
+        A[j, k] = conj(A[j, k])
     end
 
     return

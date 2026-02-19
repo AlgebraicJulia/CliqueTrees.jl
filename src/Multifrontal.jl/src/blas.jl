@@ -145,6 +145,159 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
     return 0
 end
 
+function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector{BlasInt}, bstrt::Int, bstop::Int, tol::Real) where {T}
+    @inbounds for j in bstrt:bstop
+        maxval = abs(real(A[j, j]) - D[j])
+        maxind = j
+
+        for i in j + 1:size(A, 1)
+            absAii = abs(real(A[i, i]) - D[i])
+
+            if absAii > maxval
+                maxval = absAii
+                maxind = i
+            end
+        end
+
+        if maxval < tol
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        if maxind != j
+            swaptri!(A, j, maxind, Val(:L))
+            swaprec!(P, j, maxind)
+            swaprec!(D, j, maxind)
+        end
+
+        for k in bstrt:j - 1
+            cLjk = D[k] * conj(A[j, k])
+
+            for i in j + 1:size(A, 1)
+                A[i, j] -= A[i, k] * cLjk
+            end
+        end
+
+        Djj = D[j] = real(A[j, j]) - D[j]; iDjj = inv(Djj)
+
+        for i in j + 1:size(A, 1)
+            A[i, j] *= iDjj
+        end
+
+        for i in j + 1:size(A, 1)
+            D[i] += Djj * abs2(A[i, j])
+        end
+    end
+
+    return 0, bstop
+end
+
+function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector{BlasInt}, bstrt::Int, bstop::Int, tol::Real) where {T}
+    @inbounds for j in bstrt:bstop
+        maxval = abs(D[j])
+        maxind = j
+
+        for i in j + 1:size(A, 1)
+            if abs(D[i]) > maxval
+                maxval = abs(D[i])
+                maxind = i
+            end
+        end
+
+        if maxval < tol
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        if maxind != j
+            swaptri!(A, j, maxind, Val(:U))
+            swaprec!(P, j, maxind)
+            swaprec!(D, j, maxind)
+        end
+
+        Djj = D[j]; iDjj = inv(Djj)
+
+        for i in j + 1:size(A, 1)
+            for k in bstrt:j - 1
+                A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
+            end
+
+            A[j, i] *= iDjj
+            D[i] -= Djj * abs2(A[j, i])
+        end
+    end
+
+    return 0, bstop
+end
+
+function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector{BlasInt}, tol::Real) where {T, UPLO}
+    @inbounds for j in axes(A, 1)
+        P[j] = j
+
+        if UPLO === :L
+            D[j] = zero(real(T))
+        else
+            D[j] = real(A[j, j])
+        end
+    end
+
+    rank = size(A, 1)
+
+    @inbounds for bstrt in 1:THRESHOLD:size(A, 1)
+        bstop = min(bstrt + THRESHOLD - 1, size(A, 1))
+        bsize = bstop - bstrt + 1
+        info, rank = qstrf2!(uplo, A, D, P, bstrt, bstop, tol)
+
+        if rank < bstop
+            return info, rank
+        end
+
+        if bstop < size(A, 1)
+            brest = size(A, 1) - bstop
+
+            if UPLO === :L
+                Arb = view(A, bstop + 1:size(A, 1), bstrt:bstop)
+                Wbb = view(W, 1:brest, 1:bsize)
+            else
+                Arb = view(A, bstrt:bstop, bstop + 1:size(A, 1))
+                Wbb = view(W, 1:bsize, 1:brest)
+            end
+
+            Arr = view(A, bstop + 1:size(A, 1), bstop + 1:size(A, 1))
+
+            @inbounds for j in 1:bsize
+                Djj = D[bstrt + j - 1]
+
+                for i in 1:brest
+                    if UPLO === :L
+                        Wbb[i, j] = Arb[i, j] * Djj
+                    else
+                        Wbb[j, i] = Arb[j, i] * Djj
+                    end
+                end
+            end
+
+            if UPLO === :L
+                trrk!(Val(:L), Val(:N), Wbb, Arb, Arr)
+
+                @inbounds for j in bstop + 1:size(A, 1)
+                    D[j] = zero(real(T))
+                end
+            else
+                trrk!(Val(:U), Val(:C), Wbb, Arb, Arr)
+            end
+        end
+    end
+
+    return 0, rank
+end
+
 function trrk!(uplo::Val, ::Val{:N}, A::AbstractMatrix{T}, B::AbstractMatrix{T}, C::AbstractMatrix{T}) where {T <: BlasFloat}
     if T <: Complex
         BLAS.her2k!(char(uplo), 'N', convert(T, -1/2), A, B, one(real(T)), C)

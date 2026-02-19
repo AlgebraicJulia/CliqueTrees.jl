@@ -1,6 +1,6 @@
-# ===== Pivoted Cholesky Factorization =====
+# ===== Pivoted LDLt Factorization =====
 
-function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
+function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum; check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
     R = real(T)
 
     Mptr = FVector{I}(undef, F.S.nMptr)
@@ -12,8 +12,8 @@ function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; c
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)
 
-    info = cholpiv_fwd!(
-        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval,
+    info = ldltpiv_fwd!(
+        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
         F.S.res, F.S.rel, F.S.chd, piv, work, invp, convert(R, tol), Val{UPLO}()
     )
 
@@ -23,21 +23,22 @@ function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; c
         F.info[] = zero(I)
     end
 
-    cholpiv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
+    ldltpiv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
     cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
     invpermute!(F.perm, invp)
     return F
 end
 
-# ============================= cholpiv_fwd! =============================
+# ============================= ldltpiv_fwd! =============================
 
-function cholpiv_fwd!(
+function ldltpiv_fwd!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
+        d::AbstractVector{T},
         Fval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
@@ -52,8 +53,8 @@ function cholpiv_fwd!(
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns, info = cholpiv_fwd_loop!(
-            Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval,
+        ns, info = ldltpiv_fwd_loop!(
+            Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
             res, rel, chd, ns, j, piv, work, invp, tol, uplo
         )
 
@@ -65,13 +66,14 @@ function cholpiv_fwd!(
     return zero(I)
 end
 
-function cholpiv_fwd_loop!(
+function ldltpiv_fwd_loop!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
+        d::AbstractVector{T},
         Fval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
@@ -120,7 +122,7 @@ function cholpiv_fwd_loop!(
         F₂₁ = view(F, oneto(nn), nn + one(I):nj)
     end
     #
-    # L is part of the Cholesky factor
+    # L is part of the LDLt factor
     #
     #          res(j)
     #     L = [ D₁₁  ] res(j)
@@ -135,6 +137,10 @@ function cholpiv_fwd_loop!(
     else
         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
     end
+    #
+    # d₁₁ is the diagonal for the vertices in res(j)
+    #
+    d₁₁ = view(d, neighbors(res, j))
     #
     #     F ← 0
     #
@@ -159,9 +165,10 @@ function cholpiv_fwd_loop!(
     #
     # pivoted factorization of D₁₁
     #
-    #     invp₁₁' D₁₁ invp₁₁ = L₁₁ L₁₁'
+    #     invp₁₁' D₁₁ invp₁₁ = L₁₁ d₁₁ L₁₁'
     #
-    info, rank = pstrf!(uplo, D₁₁, piv, work, tol)
+    W₁₁ = reshape(view(Fval, oneto(nn * nn)), nn, nn)
+    info, rank = qstrf!(uplo, W₁₁, D₁₁, d₁₁, piv, tol)
     #
     # zero out the rank-deficient part of D₁₁ and L₂₁
     #
@@ -209,6 +216,7 @@ function cholpiv_fwd_loop!(
         # Use only the first `rank` columns/rows for the solve
         #
         rD₁₁ = view(D₁₁, oneto(rank), oneto(rank))
+        rd₁₁ = view(d₁₁, oneto(rank))
 
         if UPLO === :L
             rL₂₁ = view(L₂₁, oneto(na), oneto(rank))
@@ -219,17 +227,39 @@ function cholpiv_fwd_loop!(
         #     rL₂₁ ← rL₂₁ rD₁₁⁻ᴴ
         #
         if UPLO === :L
-            trsm!(Val(:R), Val(:L), Val(:C), Val(:N), one(T), rD₁₁, rL₂₁)
+            trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), rD₁₁, rL₂₁)
         else
-            trsm!(Val(:L), Val(:U), Val(:C), Val(:N), one(T), rD₁₁, rL₂₁)
+            trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), rD₁₁, rL₂₁)
         end
         #
-        #     S₂₂ ← S₂₂ - rL₂₁ rL₂₁ᴴ
+        # W₂₁ ← rL₂₁ (save before scaling by d⁻¹)
+        #
+        W₂₁ = view(F, oneto(size(rL₂₁, 1)), oneto(size(rL₂₁, 2)))
+        copyrec!(W₂₁, rL₂₁)
+        #
+        #     rL₂₁ ← rL₂₁ rd₁₁⁻¹
         #
         if UPLO === :L
-            syrk!(Val(:L), Val(:N), -one(real(T)), rL₂₁, one(real(T)), S₂₂)
+            @inbounds for k in axes(rL₂₁, 2)
+                idk = inv(rd₁₁[k])
+                for i in axes(rL₂₁, 1)
+                    rL₂₁[i, k] *= idk
+                end
+            end
         else
-            syrk!(Val(:U), Val(:C), -one(real(T)), rL₂₁, one(real(T)), S₂₂)
+            @inbounds for i in axes(rL₂₁, 2)
+                for k in axes(rL₂₁, 1)
+                    rL₂₁[k, i] *= inv(rd₁₁[k])
+                end
+            end
+        end
+        #
+        #     S₂₂ ← S₂₂ - W₂₁ rL₂₁ᴴ
+        #
+        if UPLO === :L
+            trrk!(uplo, Val(:N), W₂₁, rL₂₁, S₂₂)
+        else
+            trrk!(uplo, Val(:C), W₂₁, rL₂₁, S₂₂)
         end
     elseif ispositive(na) && iszero(rank)
         # Rank-deficient: just copy F₂₂ to update matrix
@@ -243,9 +273,9 @@ function cholpiv_fwd_loop!(
     return ns, info
 end
 
-# ============================= cholpiv_bwd! =============================
+# ============================= ldltpiv_bwd! =============================
 
-function cholpiv_bwd!(
+function ldltpiv_bwd!(
         mptr::AbstractVector{I},
         mval::AbstractVector{I},
         fval::AbstractVector{I},
@@ -264,7 +294,7 @@ function cholpiv_bwd!(
     ns = zero(I); mptr[one(I)] = one(I)
 
     for j in reverse(vertices(res))
-        ns = cholpiv_bwd_loop!(
+        ns = ldltpiv_bwd_loop!(
             mptr, mval, fval, Dptr, Lptr, Lval,
             res, rel, sep, chd, ns, j, invp, Fval, uplo
         )
@@ -273,7 +303,7 @@ function cholpiv_bwd!(
     return
 end
 
-function cholpiv_bwd_loop!(
+function ldltpiv_bwd_loop!(
         mptr::AbstractVector{I},
         mval::AbstractVector{I},
         fval::AbstractVector{I},
@@ -348,7 +378,7 @@ function cholpiv_bwd_loop!(
     s₂ = neighbors(sep, j)
     sortperm!(s₂, f₂; alg=QuickSort, initialized=false)
     #
-    # L₂₁ is the off-diagonal block of the Cholesky factor
+    # L₂₁ is the off-diagonal block of the LDLt factor
     #
     #        nn
     #   L = [ L₂₁ ] na
@@ -390,112 +420,4 @@ function cholpiv_bwd_loop!(
     end
 
     return ns
-end
-
-function cholpiv_bwd_update!(
-        f::AbstractVector{I},
-        ptr::AbstractVector{I},
-        val::AbstractVector{I},
-        rel::AbstractGraph{I},
-        ns::I,
-        i::I,
-    ) where {I <: Integer}
-    #
-    # na is the size of the separator at node i
-    #
-    #     na = |sep(i)|
-    #
-    na = eltypedegree(rel, i)
-    #
-    # inj: sep(i) → bag(parent(i))
-    #
-    inj = neighbors(rel, i)
-    #
-    # mᵢ ← Rᵢᵀ f
-    #
-    strt = ptr[ns]
-    stop = ptr[ns + one(I)] = strt + na
-    m = view(val, strt:stop - one(I))
-
-    copyrec!(m, f, inj)
-
-    return
-end
-
-# ============================= cholpiv_rel! =============================
-
-function cholpiv_rel!(
-        res::AbstractGraph{I},
-        sep::AbstractGraph{I},
-        rel::AbstractGraph{I},
-        chd::AbstractGraph{I},
-    ) where {I <: Integer}
-
-    for j in vertices(res)
-        cholpiv_rel_loop!(res, sep, rel, chd, j)
-    end
-
-    return
-end
-
-function cholpiv_rel_loop!(
-        res::AbstractGraph{I},
-        sep::AbstractGraph{I},
-        rel::AbstractGraph{I},
-        chd::AbstractGraph{I},
-        j::I,
-    ) where {I <: Integer}
-    #
-    # nn is the size of the residual at node j
-    #
-    #     nn = |res(j)|
-    #
-    nn = eltypedegree(res, j)
-    #
-    # na is the size of the separator at node j
-    #
-    #     na = |sep(j)|
-    #
-    na = eltypedegree(sep, j)
-    #
-    # bag(j) = res(j) ∪ sep(j), both sorted by Q-index
-    #
-    res_j = neighbors(res, j)
-    sep_j = neighbors(sep, j)
-    #
-    # for each child i, recompute rel(i)
-    #
-    #     rel(i) : sep(i) → bag(j)
-    #
-    for i in neighbors(chd, j)
-        #
-        # sep(i) ⊆ bag(j), both sorted by Q-index
-        # use merge-style traversal to find positions
-        #
-        q = one(I)
-
-        for p in incident(sep, i)
-            v = targets(sep)[p]
-            #
-            # find v in bag(j)
-            # bag(j)[q] = res_j[q] if q ≤ nn, else sep_j[q - nn]
-            #
-            while true
-                if q <= nn
-                    w = res_j[q]
-                else
-                    w = sep_j[q - nn]
-                end
-
-                if w >= v
-                    break
-                end
-                q += one(I)
-            end
-
-            targets(rel)[p] = q
-        end
-    end
-
-    return
 end

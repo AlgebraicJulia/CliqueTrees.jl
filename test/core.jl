@@ -2,7 +2,7 @@ using AbstractTrees
 using Base: @kwdef, oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: SinglyLinkedList, DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!
+using CliqueTrees: SinglyLinkedList, DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!, simplegraph, connectedcomponents
 using CliqueTrees.Utilities
 using CliqueTrees.Multifrontal
 using Graphs
@@ -1282,8 +1282,10 @@ end
         F4 = cholesky!(ChordalCholesky{:U}(M), RowMaximum())
         F5 = ldlt!(ChordalLDLt{:L}(M))
         F6 = ldlt!(ChordalLDLt{:U}(M))
-        F7 = CliqueTrees.cholesky(M)
-        F8 = CliqueTrees.ldlt(M)
+        F7 = ldlt!(ChordalLDLt{:L}(M), RowMaximum())
+        F8 = ldlt!(ChordalLDLt{:U}(M), RowMaximum())
+        F9 = CliqueTrees.cholesky(M)
+        F10 = CliqueTrees.ldlt(M)
 
         b = rand(n)
         x = rand(n)
@@ -1292,7 +1294,7 @@ end
         C = rand(5, n)
         Y = rand(5, n)
 
-        for Fi in (F1, F2, F3, F4, F5, F6, F7, F8)
+        for Fi in (F1, F2, F3, F4, F5, F6, F7, F8, F9, F10)
             @test isa(repr("text/plain", Fi), String)
             @test issuccess(Fi) == issuccess(F0)
             @test logdet(Fi) ≈ logdet(F0)
@@ -1316,14 +1318,16 @@ end
     F2 = cholesky!(ChordalCholesky{:U}(M), NoPivot())
     F5 = ldlt!(ChordalLDLt{:L}(M))
     F6 = ldlt!(ChordalLDLt{:U}(M))
-    F7 = CliqueTrees.cholesky(M)
+    F7 = ldlt!(ChordalLDLt{:L}(M), RowMaximum())
+    F8 = ldlt!(ChordalLDLt{:U}(M), RowMaximum())
+    F9 = CliqueTrees.cholesky(M)
 
     Fs = @static if VERSION >= v"1.12"
         F3 = cholesky!(ChordalCholesky{:L}(M), RowMaximum())
         F4 = cholesky!(ChordalCholesky{:U}(M), RowMaximum())
-        (F1, F2, F3, F4, F5, F6, F7)
+        (F1, F2, F3, F4, F5, F6, F7, F8, F9)
     else
-        (F1, F2, F5, F6, F7)
+        (F1, F2, F5, F6, F7, F8, F9)
     end
 
     b = rand(BigFloat, n)
@@ -1351,18 +1355,24 @@ end
     @inferred cholesky!(ChordalCholesky{:U}(M))
     @inferred ldlt!(ChordalLDLt{:L}(M))
     @inferred ldlt!(ChordalLDLt{:U}(M))
+    @inferred ldlt!(ChordalLDLt{:L}(M), RowMaximum())
+    @inferred ldlt!(ChordalLDLt{:U}(M), RowMaximum())
     @inferred CliqueTrees.cholesky(M)
     @inferred CliqueTrees.ldlt(M)
     @test_call target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:L}(M))
     @test_call target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:U}(M))
     @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:L}(M))
     @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M))
+    @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:L}(M), RowMaximum())
+    @test_call target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M), RowMaximum())
     @test_call target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
     @test_call target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
     @test_opt target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:L}(M))
     @test_opt target_modules = (CliqueTrees,) cholesky!(ChordalCholesky{:U}(M))
     @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:L}(M))
     @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M))
+    @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:L}(M), RowMaximum())
+    @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M), RowMaximum())
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
 end

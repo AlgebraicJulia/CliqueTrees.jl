@@ -190,6 +190,23 @@ function LinearAlgebra.logabsdet(A::ChordalTriangular{UPLO, :U, T, I}) where {UP
     return (zero(real(T)), one(T))
 end
 
+function LinearAlgebra.rank(A::ChordalTriangular{UPLO, :N, T, I}; kw...) where {UPLO, T, I <: Integer}
+    out = 0
+
+    for j in vertices(A.S.res)
+        nn = eltypedegree(A.S.res, j)
+        Dp = A.S.Dptr[j]
+        D = reshape(view(A.Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
+        out += rank(D; kw...)
+    end
+
+    return out
+end
+
+function LinearAlgebra.rank(A::ChordalTriangular{UPLO, :U, T, I}; kw...) where {UPLO, T, I <: Integer}
+    return size(A, 1)
+end
+
 function LinearAlgebra.diag(A::ChordalTriangular{UPLO, :N, T, I}) where {UPLO, T, I <: Integer}
     out = Vector{T}(undef, size(A, 1))
 
