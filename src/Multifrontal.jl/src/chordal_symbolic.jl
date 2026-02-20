@@ -69,21 +69,25 @@ function symbolic(A::AbstractMatrix; kw...)
     return symbolic(sparse(A); kw...)
 end
 
-function symbolic(A::SparseMatrixCSC{<:Any, I}; kw...) where {I <: Integer}
-    return symbolic(BipartiteGraph(A); kw...)
+function symbolic(A::SparseMatrixCSC; check::Bool=true, kw...)
+    if !check || ishermitian(A)
+        return symbolic(BipartiteGraph(A); kw...)
+    elseif istril(A)
+        return symbolic(Hermitian(A, :L); kw...)
+    elseif istriu(A)
+        return symbolic(Hermitian(A, :U); kw...)
+    end
+
+    error()
+end
+
+function symbolic(A::HermOrSym; check::Bool=true, kw...)
+    return symbolic(symmetric(BipartiteGraph(parent(A)), A.uplo); kw...)
 end
 
 function symbolic(graph::AbstractGraph{I}; kw...) where {I <: Integer}
     perm, tree = cliquetree(graph; kw...)
     return FVector{I}(perm), ChordalSymbolic(tree)
-end
-
-function symbolic(A::AbstractMatrix, clique::AbstractVector; kw...)
-    return symbolic(sparse(A), clique; kw...)
-end
-
-function symbolic(A::SparseMatrixCSC, clique::AbstractVector; kw...)
-    return symbolic(BipartiteGraph(A), clique; kw...)
 end
 
 function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
@@ -299,14 +303,14 @@ function Base.size(S::ChordalSymbolic, i::Integer)
 end
 
 function Base.isstored(S::ChordalSymbolic, v::Integer, w::Integer, uplo::Val{UPLO}) where {UPLO}
-    return !isnothing(loc(S, v, w, uplo))
+    return !iszero(flatindex(S, v, w, uplo))
 end
 
-function loc(S::ChordalSymbolic{I}, v::Integer, w::Integer, uplo::Val) where {I <: Integer}
-    return loc(S, convert(I, v), convert(I, w), uplo)
+function flatindex(S::ChordalSymbolic{I}, v::Integer, w::Integer, uplo::Val) where {I <: Integer}
+    return flatindex(S, convert(I, v), convert(I, w), uplo)
 end
 
-function loc(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Integer}
+function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Integer}
     if v ≥ w
         j = S.idx[w]
 
@@ -320,44 +324,51 @@ function loc(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Integer}
 
         if v in res
             v = v - first(res)
-            return (true, S.Dptr[j] + v + w * nn, j)
+            return S.Dptr[j] + v + w * nn
         else
             i = searchsortedfirst(sep, v)
 
             if i ≤ na && sep[i] == v
                 v = convert(I, i) - one(I)
-                return (false, S.Lptr[j] + v + w * na, j)
+                return -(S.Lptr[j] + v + w * na)
             end
         end
     end
 
-    return
+    return zero(I)
 end
 
-function loc(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Integer}
+function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Integer}
     if v ≤ w
-        i = S.idx[v]
+        j = S.idx[v]
 
-        nn = eltypedegree(S.res, i)
-        na = eltypedegree(S.sep, i)
+        nn = eltypedegree(S.res, j)
+        na = eltypedegree(S.sep, j)
 
-        res = neighbors(S.res, i)
-        sep = neighbors(S.sep, i)
+        res = neighbors(S.res, j)
+        sep = neighbors(S.sep, j)
 
         v = v - first(res)
 
         if w in res
             w = w - first(res)
-            return (true, S.Dptr[i] + v + w * nn, i)
+            return S.Dptr[j] + v + w * nn
         else
-            j = searchsortedfirst(sep, w)
+            i = searchsortedfirst(sep, w)
 
-            if j ≤ na && sep[j] == w
-                w = convert(I, j) - one(I)
-                return (false, S.Lptr[i] + v + w * nn, i)
+            if i ≤ na && sep[i] == w
+                w = convert(I, i) - one(I)
+                return -(S.Lptr[j] + v + w * nn)
             end
         end
     end
 
-    return
+    return zero(I)
+end
+
+function flatindices(S::ChordalSymbolic, B::SparseMatrixCSC, uplo::Val{UPLO}) where {UPLO}
+    P = zeros(Int, nnz(B))
+    flat_D!(S.Dptr, P, S.res, B)
+    flat_L!(S.Lptr, P, S.res, S.sep, B, uplo)
+    return P
 end

@@ -313,21 +313,7 @@ end
 
 function Base.getindex(A::ChordalTriangular{UPLO, DIAG, T}, v::Integer, w::Integer) where {UPLO, DIAG, T}
     if DIAG !== :U || v != w
-        triple = loc(A, v, w)
-
-        if !isnothing(triple)
-            flag, i, j = triple
-
-            if flag
-                x = A.Dval[i]
-            else
-                x = A.Lval[i]
-            end
-
-            return x
-        else
-            return zero(T)
-        end
+        return getflatindex(A, flatindex(A, v, w))
     else
         return one(T)
     end
@@ -339,27 +325,51 @@ end
 
 function Base.setindex!(A::ChordalTriangular{UPLO, DIAG}, x, v::Integer, w::Integer) where {UPLO, DIAG}
     if DIAG !== :U || v != w
-        triple = loc(A, v, w)
-
-        if !isnothing(triple)
-            flag, i, j = triple
-
-            if flag
-                A.Dval[i] = x
-            else
-                A.Lval[i] = x
-            end
-
-            return A
-        else
-            error()
-        end
+        return setflatindex!(A, x, flatindex(A, v, w))
     else
         error()
     end
 end
 
-function loc(A::ChordalTriangular{UPLO}, v::Integer, w::Integer) where {UPLO}
+function flatindex(A::ChordalTriangular{UPLO}, v::Integer, w::Integer) where {UPLO}
     @boundscheck checkbounds(A, v, w)
-    return loc(A.S, v, w, Val(UPLO))
+    return flatindex(A.S, v, w, Val(UPLO))
+end
+
+function flatindices(A::ChordalTriangular{UPLO}, B::SparseMatrixCSC) where {UPLO}
+    return flatindices(A.S, B, Val(UPLO))
+end
+
+function getflatindex(A::ChordalTriangular{UPLO, DIAG, T}, p::Integer) where {UPLO, DIAG, T}
+    if ispositive(p)
+        return A.Dval[p]
+    elseif isnegative(p)
+        return A.Lval[-p]
+    else
+        return zero(T)
+    end
+end
+
+function setflatindex!(A::ChordalTriangular, x, p::Integer)
+    if ispositive(p)
+        A.Dval[p] = x
+    elseif isnegative(p)
+        A.Lval[-p] = x
+    else
+        error()
+    end
+
+    return A
+end
+
+function Base.copy!(A::ChordalTriangular{UPLO, DIAG, T}, B::SparseMatrixCSC) where {UPLO, DIAG, T}
+    copy_D!(A.S.Dptr, A.Dval, A.S.res, B)
+    copy_L!(A.S.Lptr, A.Lval, A.S.res, A.S.sep, B, Val{UPLO}())
+    return A
+end
+
+function Base.fill!(A::ChordalTriangular, x)
+    fill!(A.Dval, x)
+    fill!(A.Lval, x)
+    return A
 end

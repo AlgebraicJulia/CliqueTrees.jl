@@ -22,6 +22,127 @@ function char(::Val{:R})
     return 'R'
 end
 
+function symmetric(graph, uplo::Char)
+    return symmetric(BipartiteGraph(graph), uplo)
+end
+
+function symmetric(graph::AbstractGraph{V}, uplo::Char) where {V}
+    E = etype(graph)
+
+    fwd = graph; bwd = reverse(fwd)
+
+    n = nv(fwd)
+    m = ne(fwd) + ne(bwd)
+
+    mrk = FVector{V}(undef, n)
+    ptr = FVector{E}(undef, n + one(V))
+    tgt = FVector{V}(undef, m)
+
+    for v in vertices(fwd)
+        mrk[v] = zero(V)
+    end
+
+    p = zero(E)
+
+    for v in vertices(fwd)
+        mrk[v] = v
+        ptr[v] = p + one(E)
+
+        for w in neighbors(fwd, v)
+            uplo === 'L' && w < v && continue
+            uplo === 'U' && w > v && continue
+
+            if mrk[w] < v
+                mrk[w] = v
+                p += one(E); tgt[p] = w
+            end
+        end
+
+        for w in neighbors(bwd, v)
+            if mrk[w] < v
+                mrk[w] = v
+                p += one(E); tgt[p] = w
+            end
+        end
+    end
+
+    ptr[n + one(V)] = p + one(E)
+    return BipartiteGraph{V, E}(n, n, m, ptr, tgt)
+end
+
+function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, tgt::Char) where {T, I}
+    n = size(A, 1)
+    m = zero(I)
+    colptr = zeros(I, n + 1)
+
+    @inbounds for j in axes(A, 2)
+        pj = invp[j]
+
+        for p in nzrange(A, j)
+            i = rowvals(A)[p]
+
+            src === 'L' && i < j && continue
+            src === 'U' && i > j && continue
+
+            pi = invp[i]
+
+            if tgt === 'L'
+                hi = min(pi, pj)
+            else
+                hi = max(pi, pj)
+            end
+
+            if hi < n
+                colptr[hi + two(I)] += one(I)
+            end
+
+            m += one(I)
+        end
+    end
+
+    @inbounds colptr[1] = p = one(I)
+
+    @inbounds for i in axes(A, 1)
+        colptr[i + 1] = p += colptr[i + 1]
+    end
+
+    rowval = Vector{I}(undef, m)
+    nzval = Vector{T}(undef, m)
+
+    @inbounds for j in axes(A, 2)
+        pj = invp[j]
+
+        for p in nzrange(A, j)
+            i = rowvals(A)[p]
+
+            src === 'L' && i < j && continue
+            src === 'U' && i > j && continue
+
+            pi = invp[i]
+
+            if tgt === 'L'
+                hi, lo = minmax(pi, pj)
+            else
+                lo, hi = minmax(pi, pj)
+            end
+
+            q = colptr[hi + one(I)]
+            rowval[q] = lo
+            v = nonzeros(A)[p]
+
+            if (i > j) == (pi > pj)
+                nzval[q] = conj(v)
+            else
+                nzval[q] = v
+            end
+
+            colptr[hi + one(I)] += one(I)
+        end
+    end
+
+    return SparseMatrixCSC(n, n, colptr, rowval, nzval)
+end
+
 function tri(uplo::Val{:L}, diag::Val{:N}, A::AbstractMatrix)
     return LowerTriangular(A)
 end
@@ -226,14 +347,6 @@ function unwrap(A::Transpose)
     return (parent(A), Val(:T))
 end
 
-"""
-    isforward(UPLO, TRANS, SIDE) -> Bool
-
-Determine whether to traverse the elimination tree forward (leaves → root) or backward (root → leaves).
-
-Forward traversal: L from left, Lᵀ from right (for lower); Uᵀ from left, U from right (for upper).
-Backward traversal: Lᵀ from left, L from right (for lower); U from left, Uᵀ from right (for upper).
-"""
 function isforward(UPLO, TRANS, SIDE)
     return UPLO === :L && (TRANS === :N && SIDE === :L || TRANS !== :N && SIDE === :R) ||
            UPLO === :U && (TRANS !== :N && SIDE === :L || TRANS === :N && SIDE === :R)
@@ -248,7 +361,7 @@ function copy_D!(
 
     nwr = one(I)
 
-    for j in vertices(res)
+    @inbounds for j in vertices(res)
         pj = Dptr[j] - one(I)
 
         swr = nwr
@@ -289,7 +402,7 @@ function copy_L!(
 
     npr = one(I)
 
-    for j in vertices(res)
+    @inbounds for j in vertices(res)
         pj = Lptr[j] - one(I)
 
         spr = npr
@@ -335,7 +448,7 @@ function copy_L!(
 
     nwr = one(I)
 
-    for j in vertices(res)
+    @inbounds for j in vertices(res)
         pj = Lptr[j] - one(I)
 
         swr = nwr
@@ -359,6 +472,120 @@ function copy_L!(
             while wr < nwr
                 pj += one(I); Lval[pj] = zero(T); wr += one(I)
             end
+        end
+    end
+
+    return
+end
+
+function flat_D!(
+        Dptr::AbstractVector{I},
+        Aval::AbstractVector,
+        res::AbstractGraph{I},
+        A::SparseMatrixCSC,
+    ) where {I <: Integer}
+
+    nwr = one(I)
+
+    @inbounds for j in vertices(res)
+        pj = Dptr[j] - one(I)
+
+        swr = nwr
+        nwr = pointers(res)[j + one(I)]
+
+        for vr in swr:nwr - one(I)
+            wr = swr
+
+            for pa in nzrange(A, vr)
+                wa = rowvals(A)[pa]
+                wa < swr && continue
+                wa < nwr || break
+
+                pj += wa - wr; wr = wa
+                pj += one(I); Aval[pa] = pj; wr += one(I)
+            end
+
+            pj += nwr - wr
+        end
+    end
+
+    return
+end
+
+function flat_L!(
+        Lptr::AbstractVector{I},
+        Aval::AbstractVector,
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        A::SparseMatrixCSC,
+        uplo::Val{:L},
+    ) where {I <: Integer}
+
+    npr = one(I)
+
+    @inbounds for j in vertices(res)
+        pj = Lptr[j] - one(I)
+
+        spr = npr
+        npr = pointers(sep)[j + one(I)]
+        spr >= npr && continue
+
+        swr = targets(sep)[spr]
+        nwr = targets(sep)[npr - one(I)] + one(I)
+
+        for vr in neighbors(res, j)
+            pr = spr
+
+            for pa in nzrange(A, vr)
+                wr = targets(sep)[pr]
+                wa = rowvals(A)[pa]
+                wa < swr && continue
+                wa < nwr || break
+
+                while wr < wa
+                    pj += one(I); pr += one(I); wr = targets(sep)[pr]
+                end
+
+                pj += one(I); Aval[pa] = -pj; pr += one(I)
+            end
+
+            pj += npr - pr
+        end
+    end
+
+    return
+end
+
+function flat_L!(
+        Lptr::AbstractVector{I},
+        Aval::AbstractVector,
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        A::SparseMatrixCSC,
+        uplo::Val{:U},
+    ) where {I <: Integer}
+
+    nwr = one(I)
+
+    @inbounds for j in vertices(res)
+        pj = Lptr[j] - one(I)
+
+        swr = nwr
+        nwr = pointers(res)[j + one(I)]
+
+        for vr in neighbors(sep, j)
+            wr = swr
+
+            for pa in nzrange(A, vr)
+                wa = rowvals(A)[pa]
+                wa < swr && continue
+                wa < nwr || break
+
+                pj += wa - wr; wr = wa
+                pj += one(I); Aval[pa] = -pj; wr += one(I)
+            end
+
+            pj += nwr - wr
         end
     end
 

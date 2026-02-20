@@ -3,13 +3,14 @@ using Base: @kwdef, oneto
 using Base.Order
 using CliqueTrees
 using CliqueTrees: SinglyLinkedList, DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!, simplegraph, connectedcomponents
-using CliqueTrees.Utilities
 using CliqueTrees.Multifrontal
+using CliqueTrees.Utilities
 using Graphs
 using Graphs: SimpleEdge
 using JET
 using LinearAlgebra
 using MatrixMarket
+using Random
 using SparseArrays
 using SuiteSparseMatrixCollection
 using Test
@@ -1375,6 +1376,32 @@ end
     @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M), RowMaximum())
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
+end
+
+@testset "regularization" begin
+    rng = Random.MersenneTwister(2401)
+    m = 20
+    n = 30
+
+    # KKT structure with zero diagonals - requires regularization
+    A = sprandn(rng, n, n, 0.2)
+    A = A + A'
+    A = A - Diagonal(diag(A))
+
+    B = sprandn(rng, m, n, 0.2)
+    C = spzeros(m, m)
+
+    M = [A B'; B C]
+    s = [ones(Int, n); -ones(Int, m)]
+
+    # Without regularization, factorization fails
+    F_noreg = ldlt!(ChordalLDLt{:L}(M); check=false)
+    @test !issuccess(F_noreg)
+
+    # With regularization, factorization succeeds
+    reg = DynamicRegularization(s)
+    F = ldlt!(ChordalLDLt{:L}(M); check=false, reg=reg)
+    @test issuccess(F)
 end
 
 @testset "selinv" begin

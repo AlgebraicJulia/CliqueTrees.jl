@@ -5,13 +5,13 @@ using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, isstored
 using FillArrays: Ones, Zeros, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, BlasFloat, Factorization, LAPACK, BLAS, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
+using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, Factorization, LAPACK, BLAS, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm
 using SparseArrays
 
 # Import from parent CliqueTrees module
 import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
-    ..eltypedegree, ..residual, ..half, ..ispositive, ..isnegative, ..twice,
+    ..eltypedegree, ..etype, ..residual, ..half, ..ispositive, ..isnegative, ..two, ..twice,
     ..cliquetree, ..residuals, ..separators, ..childindices
 
 export ChordalSymbolic

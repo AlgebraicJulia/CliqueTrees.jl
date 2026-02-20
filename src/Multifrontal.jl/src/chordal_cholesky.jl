@@ -26,13 +26,14 @@ struct ChordalCholesky{UPLO, T, I, Val <: AbstractVector{T}, Prm <: AbstractVect
     Dval::Val
     Lval::Val
     perm::Prm
+    invp::Prm
     info::FScalar{I}
 end
 
 const FChordalCholesky{UPLO, T, I} = ChordalCholesky{UPLO, T, I, FVector{T}, FVector{I}}
 
-function ChordalCholesky{UPLO}(S::ChordalSymbolic{I}, Dval::Val, Lval::Val, perm::Prm, info::FScalar{I}) where {UPLO, I <: Integer, T, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
-    return ChordalCholesky{UPLO, T, I, Val, Prm}(S, Dval, Lval, perm, info)
+function ChordalCholesky{UPLO}(S::ChordalSymbolic{I}, Dval::Val, Lval::Val, perm::Prm, invp::Prm, info::FScalar{I}) where {UPLO, I <: Integer, T, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
+    return ChordalCholesky{UPLO, T, I, Val, Prm}(S, Dval, Lval, perm, invp, info)
 end
 
 function ChordalCholesky{UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
@@ -40,9 +41,26 @@ function ChordalCholesky{UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {UPLO,
     Dval = FVector{T}(undef, S.Dptr[n + one(I)] - one(I))
     Lval = FVector{T}(undef, S.Lptr[n + one(I)] - one(I))
     info = FScalar{I}(undef); info[] = zero(I)
-    return ChordalCholesky{UPLO}(S, Dval, Lval, perm, info)
+    invp = similar(perm)
+
+    @inbounds for i in eachindex(perm)
+        invp[perm[i]] = i
+    end
+
+    return ChordalCholesky{UPLO}(S, Dval, Lval, perm, invp, info)
 end
 
+"""
+    ChordalCholesky(A::AbstractMatrix; check=true)
+
+Construct a Cholesky factorization object from a positive-definite matrix `A`.
+Perform the factorization using the function [`cholesky!`](@ref).
+
+### Arguments
+
+- `check`: check if `A` is symmetric
+
+"""
 function ChordalCholesky(A::AbstractMatrix; kw...)
     return ChordalCholesky{:L}(A; kw...)
 end
@@ -59,21 +77,41 @@ function ChordalCholesky{UPLO}(A::AbstractMatrix, perm::AbstractVector, S::Chord
     return ChordalCholesky{UPLO}(sparse(A), perm, S)
 end
 
-function ChordalCholesky{UPLO}(A::SparseMatrixCSC; kw...) where {UPLO}
+function ChordalCholesky{UPLO}(A::SparseMatrixCSC; check::Bool=true, kw...) where {UPLO}
+    if !check || ishermitian(A)
+        perm, S = symbolic(A; check=false, kw...)
+        return ChordalCholesky{UPLO}(Hermitian(A, UPLO), perm, S)
+    elseif istril(A)
+        return ChordalCholesky{UPLO}(Hermitian(A, :L); kw...)
+    elseif istriu(A)
+        return ChordalCholesky{UPLO}(Hermitian(A, :U); kw...)
+    end
+
+    error()
+end
+
+function ChordalCholesky{UPLO}(A::HermOrSym; kw...) where {UPLO}
     perm, S = symbolic(A; kw...)
     return ChordalCholesky{UPLO}(A, perm, S)
 end
 
-function ChordalCholesky{UPLO}(A::SparseMatrixCSC{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
+"""
+    ChordalCholesky(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic)
+
+Construct a Cholesky factorization object from a positive-definite matrix `A`.
+Perform the factorization using the function [`cholesky!`](@ref).
+"""
+function ChordalCholesky{UPLO}(A::AbstractMatrix{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
     return copy!(ChordalCholesky{UPLO, T}(perm, S), A)
 end
 
-function ChordalCholesky{UPLO}(A::SparseMatrixCSC{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T <: Integer, I <: Integer, Prm <: AbstractVector{I}}
-    return ChordalCholesky{UPLO}(SparseMatrixCSC{float(T)}(A), perm, S)
+function ChordalCholesky{UPLO}(A::AbstractMatrix{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T <: Integer, I <: Integer, Prm <: AbstractVector{I}}
+    R = float(T)
+    return ChordalCholesky{UPLO}(convert(AbstractMatrix{R}, A), perm, S)
 end
 
 function Base.propertynames(::ChordalCholesky)
-    return (:L, :U, :P, :S, :Dval, :Lval, :perm, :info)
+    return (:L, :U, :P, :S, :Dval, :Lval, :perm, :invp, :info)
 end
 
 function Base.getproperty(F::ChordalCholesky{UPLO}, d::Symbol) where {UPLO}
@@ -112,13 +150,72 @@ function Base.show(io::IO, ::MIME"text/plain", F::T) where {UPLO, T <: ChordalCh
 end
 
 function Base.copy(F::ChordalCholesky{UPLO, T, I, Val, Prm}) where {UPLO, T, I, Val, Prm}
-    return ChordalCholesky{UPLO, T, I, Val, Prm}(F.S, copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.info))
+    return ChordalCholesky{UPLO, T, I, Val, Prm}(F.S, copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.invp), copy(F.info))
 end
 
-function Base.copy!(F::ChordalCholesky{UPLO, T, I}, A::SparseMatrixCSC) where {UPLO, T, I <: Integer}
-    A = permute(A, F.perm, F.perm)
-    copy_D!(F.S.Dptr, F.Dval, F.S.res, A)
-    copy_L!(F.S.Lptr, F.Lval, F.S.res, F.S.sep, A, Val{UPLO}())
+function Base.copy!(F::ChordalCholesky{UPLO}, A::SparseMatrixCSC; check::Bool=true) where {UPLO}
+    if !check || ishermitian(A)
+        return copy!(F, Hermitian(A, UPLO))
+    elseif istril(A)
+        return copy!(F, Hermitian(A, :L))
+    elseif istriu(A)
+        return copy!(F, Hermitian(A, :U))
+    end
+
+    error()
+end
+
+function Base.copy!(F::ChordalCholesky{UPLO}, A::HermOrSym; check::Bool=true) where {UPLO}
+    if UPLO === :L
+        B = sympermute(parent(A), F.invp, A.uplo, 'U')
+    else
+        B = sympermute(parent(A), F.invp, A.uplo, 'L')
+    end
+
+    copy!(ChordalTriangular(F), copy(adjoint(B)))
+    return F
+end
+
+function Base.fill!(F::ChordalCholesky, x)
+    fill!(F.L, x)
+    return F
+end
+
+function flatindices(F::ChordalCholesky{UPLO}, A::SparseMatrixCSC; check::Bool=true) where {UPLO}
+    if !check || ishermitian(A)
+        return flatindices(F, Hermitian(A, UPLO))
+    elseif istril(A)
+        return flatindices(F, Hermitian(A, :L))
+    elseif istriu(A)
+        return flatindices(F, Hermitian(A, :U))
+    end
+
+    error()
+end
+
+function flatindices(F::ChordalCholesky{UPLO}, A::HermOrSym; check::Bool=true) where {UPLO}
+    colptr = parent(A).colptr
+    rowval = parent(A).rowval
+    nzval = collect(oneto(nnz(parent(A))))
+    B = SparseMatrixCSC{Int, Int}(size(A)..., colptr, rowval, nzval)
+
+    if UPLO === :L
+        B = sympermute(B, F.invp, A.uplo, 'U')
+    else
+        B = sympermute(B, F.invp, A.uplo, 'L')
+    end
+
+    C = copy(adjoint(B))
+    P = flatindices(ChordalTriangular(F), C)
+    return invpermute!(P, C.nzval)
+end
+
+function getflatindex(F::ChordalCholesky, p::Integer)
+    return getflatindex(F.L, p)
+end
+
+function setflatindex!(F::ChordalCholesky, x, p::Integer)
+    setflatindex!(F.L, x, p)
     return F
 end
 

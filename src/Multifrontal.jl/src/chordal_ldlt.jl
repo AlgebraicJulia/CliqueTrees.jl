@@ -28,13 +28,14 @@ struct ChordalLDLt{UPLO, T, I, Val <: AbstractVector{T}, Prm <: AbstractVector{I
     Dval::Val
     Lval::Val
     perm::Prm
+    invp::Prm
     info::FScalar{I}
 end
 
 const FChordalLDLt{UPLO, T, I} = ChordalLDLt{UPLO, T, I, FVector{T}, FVector{I}}
 
-function ChordalLDLt{UPLO}(S::ChordalSymbolic{I}, d::Val, Dval::Val, Lval::Val, perm::Prm, info::FScalar{I}) where {UPLO, I <: Integer, T, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
-    return ChordalLDLt{UPLO, T, I, Val, Prm}(S, d, Dval, Lval, perm, info)
+function ChordalLDLt{UPLO}(S::ChordalSymbolic{I}, d::Val, Dval::Val, Lval::Val, perm::Prm, invp::Prm, info::FScalar{I}) where {UPLO, I <: Integer, T, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
+    return ChordalLDLt{UPLO, T, I, Val, Prm}(S, d, Dval, Lval, perm, invp, info)
 end
 
 function ChordalLDLt{UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
@@ -43,9 +44,26 @@ function ChordalLDLt{UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, 
     Dval = FVector{T}(undef, S.Dptr[n + one(I)] - one(I))
     Lval = FVector{T}(undef, S.Lptr[n + one(I)] - one(I))
     info = FScalar{I}(undef); info[] = zero(I)
-    return ChordalLDLt{UPLO}(S, d, Dval, Lval, perm, info)
+    invp = similar(perm)
+
+    @inbounds for i in eachindex(perm)
+        invp[perm[i]] = i
+    end
+
+    return ChordalLDLt{UPLO}(S, d, Dval, Lval, perm, invp, info)
 end
 
+"""
+    ChordalLDLt(A::AbstractMatrix; check=true)
+
+Construct an LDLt factorization object from a quasi-definite matrix `A`.
+Perform the factorization using the function [`ldlt!`](@ref).
+
+### Arguments
+
+- `check`: check if `A` is symmetric
+
+"""
 function ChordalLDLt(A::AbstractMatrix; kw...)
     return ChordalLDLt{:L}(A; kw...)
 end
@@ -54,21 +72,41 @@ function ChordalLDLt{UPLO}(A::AbstractMatrix; kw...) where {UPLO}
     return ChordalLDLt{UPLO}(sparse(A); kw...)
 end
 
-function ChordalLDLt{UPLO}(A::SparseMatrixCSC; kw...) where {UPLO}
+function ChordalLDLt{UPLO}(A::SparseMatrixCSC; check::Bool=true, kw...) where {UPLO}
+    if !check || ishermitian(A)
+        perm, S = symbolic(A; check=false, kw...)
+        return ChordalLDLt{UPLO}(Hermitian(A, UPLO), perm, S)
+    elseif istril(A)
+        return ChordalLDLt{UPLO}(Hermitian(A, :L); kw...)
+    elseif istriu(A)
+        return ChordalLDLt{UPLO}(Hermitian(A, :U); kw...)
+    end
+
+    error()
+end
+
+function ChordalLDLt{UPLO}(A::HermOrSym; kw...) where {UPLO}
     perm, S = symbolic(A; kw...)
     return ChordalLDLt{UPLO}(A, perm, S)
 end
 
-function ChordalLDLt{UPLO}(A::SparseMatrixCSC{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
+"""
+    ChordalLDLt(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic)
+
+Construct an LDLt factorization object from a quasi-definite matrix `A`.
+Perform the factorization using the function [`ldlt!`](@ref).
+"""
+function ChordalLDLt{UPLO}(A::AbstractMatrix{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
     return copy!(ChordalLDLt{UPLO, T}(perm, S), A)
 end
 
-function ChordalLDLt{UPLO}(A::SparseMatrixCSC{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T <: Integer, I <: Integer, Prm <: AbstractVector{I}}
-    return ChordalLDLt{UPLO}(SparseMatrixCSC{float(T)}(A), perm, S)
+function ChordalLDLt{UPLO}(A::AbstractMatrix{T}, perm::Prm, S::ChordalSymbolic{I}) where {UPLO, T <: Integer, I <: Integer, Prm <: AbstractVector{I}}
+    R = float(T)
+    return ChordalLDLt{UPLO}(convert(AbstractMatrix{R}, A), perm, S)
 end
 
 function Base.propertynames(::ChordalLDLt)
-    return (:L, :U, :D, :P, :S, :d, :Dval, :Lval, :perm, :info)
+    return (:L, :U, :D, :P, :S, :d, :Dval, :Lval, :perm, :invp, :info)
 end
 
 function Base.getproperty(F::ChordalLDLt{UPLO}, d::Symbol) where {UPLO}
@@ -112,13 +150,72 @@ function Base.show(io::IO, ::MIME"text/plain", F::T) where {UPLO, T <: ChordalLD
 end
 
 function Base.copy(F::ChordalLDLt{UPLO, T, I, Val, Prm}) where {UPLO, T, I, Val, Prm}
-    return ChordalLDLt{UPLO, T, I, Val, Prm}(F.S, copy(F.d), copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.info))
+    return ChordalLDLt{UPLO, T, I, Val, Prm}(F.S, copy(F.d), copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.invp), copy(F.info))
 end
 
-function Base.copy!(F::ChordalLDLt{UPLO, T, I}, A::SparseMatrixCSC) where {UPLO, T, I <: Integer}
-    A = permute(A, F.perm, F.perm)
-    copy_D!(F.S.Dptr, F.Dval, F.S.res, A)
-    copy_L!(F.S.Lptr, F.Lval, F.S.res, F.S.sep, A, Val{UPLO}())
+function Base.copy!(F::ChordalLDLt{UPLO}, A::SparseMatrixCSC; check::Bool=true) where {UPLO}
+    if !check || ishermitian(A)
+        return copy!(F, Hermitian(A, UPLO))
+    elseif istril(A)
+        return copy!(F, Hermitian(A, :L))
+    elseif istriu(A)
+        return copy!(F, Hermitian(A, :U))
+    end
+
+    error()
+end
+
+function Base.copy!(F::ChordalLDLt{UPLO}, A::HermOrSym; check::Bool=true) where {UPLO}
+    if UPLO === :L
+        B = sympermute(parent(A), F.invp, A.uplo, 'U')
+    else
+        B = sympermute(parent(A), F.invp, A.uplo, 'L')
+    end
+
+    copy!(ChordalTriangular(F), copy(adjoint(B)))
+    return F
+end
+
+function Base.fill!(F::ChordalLDLt, x)
+    fill!(F.L, x)
+    return F
+end
+
+function flatindices(F::ChordalLDLt{UPLO}, A::SparseMatrixCSC; check::Bool=true) where {UPLO}
+    if !check || ishermitian(A)
+        return flatindices(F, Hermitian(A, UPLO))
+    elseif istril(A)
+        return flatindices(F, Hermitian(A, :L))
+    elseif istriu(A)
+        return flatindices(F, Hermitian(A, :U))
+    end
+
+    error()
+end
+
+function flatindices(F::ChordalLDLt{UPLO}, A::HermOrSym; check::Bool=true) where {UPLO}
+    colptr = parent(A).colptr
+    rowval = parent(A).rowval
+    nzval = collect(oneto(nnz(parent(A))))
+    B = SparseMatrixCSC{Int, Int}(size(A)..., colptr, rowval, nzval)
+
+    if UPLO === :L
+        B = sympermute(B, F.invp, A.uplo, 'U')
+    else
+        B = sympermute(B, F.invp, A.uplo, 'L')
+    end
+
+    C = copy(adjoint(B))
+    P = flatindices(ChordalTriangular(F), C)
+    return invpermute!(P, C.nzval)
+end
+
+function getflatindex(F::ChordalLDLt, p::Integer)
+    return getflatindex(F.L, p)
+end
+
+function setflatindex!(F::ChordalLDLt, x, p::Integer)
+    setflatindex!(F.L, x, p)
     return F
 end
 
