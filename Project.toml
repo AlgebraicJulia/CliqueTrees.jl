@@ -1,7 +1,7 @@
 name = "CliqueTrees"
 uuid = "60701a23-6482-424a-84db-faee86b9b1f8"
 license = "MIT"
-version = "1.14.0"
+version = "1.14.1"
 authors = ["Richard Samuelson <rsamuelson@ufl.edu>"]
 
 [deps]
