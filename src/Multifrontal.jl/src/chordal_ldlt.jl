@@ -177,7 +177,7 @@ function Base.copy!(F::ChordalLDLt{UPLO}, A::HermOrSym; check::Bool=true) where 
 end
 
 function Base.fill!(F::ChordalLDLt, x)
-    fill!(F.L, x)
+    fill!(ChordalTriangular(F), x)
     return F
 end
 
@@ -193,11 +193,12 @@ function flatindices(F::ChordalLDLt{UPLO}, A::SparseMatrixCSC; check::Bool=true)
     error()
 end
 
-function flatindices(F::ChordalLDLt{UPLO}, A::HermOrSym; check::Bool=true) where {UPLO}
+function flatindices(F::ChordalLDLt{UPLO, T, I}, A::HermOrSym; check::Bool=true) where {UPLO, T, I}
+    m = convert(I, nnz(parent(A)))
     colptr = parent(A).colptr
     rowval = parent(A).rowval
-    nzval = collect(oneto(nnz(parent(A))))
-    B = SparseMatrixCSC{Int, Int}(size(A)..., colptr, rowval, nzval)
+    nzval = collect(oneto(m))
+    B = SparseMatrixCSC(size(A)..., colptr, rowval, nzval)
 
     if UPLO === :L
         B = sympermute(B, F.invp, A.uplo, 'U')
@@ -205,17 +206,22 @@ function flatindices(F::ChordalLDLt{UPLO}, A::HermOrSym; check::Bool=true) where
         B = sympermute(B, F.invp, A.uplo, 'L')
     end
 
-    C = copy(adjoint(B))
-    P = flatindices(ChordalTriangular(F), C)
-    return invpermute!(P, C.nzval)
+    C = copy(adjoint(B)); P = flatindices(ChordalTriangular(F), C)
+    fill!(nzval, zero(I))
+
+    for (i, j) in zip(nonzeros(C), P)
+        nzval[i] = j
+    end
+
+    return nzval
 end
 
 function getflatindex(F::ChordalLDLt, p::Integer)
-    return getflatindex(F.L, p)
+    return getflatindex(ChordalTriangular(F), p)
 end
 
 function setflatindex!(F::ChordalLDLt, x, p::Integer)
-    setflatindex!(F.L, x, p)
+    setflatindex!(ChordalTriangular(F), x, p)
     return F
 end
 

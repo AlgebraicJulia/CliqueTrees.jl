@@ -43,13 +43,13 @@ julia> F = ldlt!(ChordalLDLt(A))
    - `reg`: triggers dynamic regularization
 
 """
-function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T, I}; check::Bool=true, reg::Union{DynamicRegularization, Nothing}=nothing) where {UPLO, T, I <: Integer}
+function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T, I}; check::Bool=true, reg::Union{DynReg, Nothing}=nothing) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
 
     if !isnothing(reg)
-        prg = DynamicRegularization{T, I}(nov(F.S.res), reg.delta, reg.epsilon)
+        prg = DynReg{T, I}(nov(F.S.res), reg.delta, reg.epsilon)
 
         for i in outvertices(F.S.res)
             prg.signs[i] = reg.signs[F.perm[i]]
@@ -86,7 +86,7 @@ function ldlt_impl!(
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
         uplo::Val{UPLO},
-        reg::Union{DynamicRegularization, Nothing},
+        reg::Union{DynReg, Nothing},
     ) where {T, I <: Integer, UPLO}
 
     ns = zero(I); Mptr[one(I)] = one(I)
@@ -119,7 +119,7 @@ function ldlt_loop!(
         ns::I,
         j::I,
         uplo::Val{UPLO},
-        reg::Union{DynamicRegularization, Nothing},
+        reg::Union{DynReg, Nothing},
     ) where {T, I <: Integer, UPLO}
     #
     # nn is the size of the residual at node j
@@ -239,7 +239,7 @@ function ldlt_kernel!(
         d::AbstractVector{T},
         uplo::Val{UPLO},
         node::Val{:S},
-        reg::Union{DynamicRegularization, Nothing},
+        reg::Union{DynReg, Nothing},
     ) where {T, UPLO}
     @assert size(D, 1) == size(D, 2)
     @assert size(S, 1) == size(S, 2)
@@ -309,7 +309,7 @@ function ldlt_kernel!(
         d::AbstractVector{T},
         uplo::Val{:L},
         node::Val{:N},
-        reg::Union{DynamicRegularization, Nothing},
+        reg::Union{DynReg, Nothing},
     ) where {T}
     @assert size(D, 1) == size(D, 2)
     @assert size(S, 1) == size(S, 2)
@@ -364,7 +364,7 @@ function ldlt_kernel!(
         d::AbstractVector{T},
         uplo::Val{:U},
         node::Val{:N},
-        reg::Union{DynamicRegularization, Nothing},
+        reg::Union{DynReg, Nothing},
     ) where {T}
     @assert size(D, 1) == size(D, 2)
     @assert size(S, 1) == size(S, 2)

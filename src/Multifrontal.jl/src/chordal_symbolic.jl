@@ -366,8 +366,8 @@ function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Int
     return zero(I)
 end
 
-function flatindices(S::ChordalSymbolic, B::SparseMatrixCSC, uplo::Val{UPLO}) where {UPLO}
-    P = zeros(Int, nnz(B))
+function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, uplo::Val{UPLO}) where {I, UPLO}
+    P = zeros(I, nnz(B))
     flat_D!(S.Dptr, P, S.res, B)
     flat_L!(S.Lptr, P, S.res, S.sep, B, uplo)
     return P

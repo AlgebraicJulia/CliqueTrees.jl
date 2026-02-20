@@ -1,4 +1,4 @@
-function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T}
+function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynReg, Nothing}) where {T}
     @inbounds @fastmath for j in axes(A, 1)
         Ajj = real(A[j, j])
 
@@ -32,7 +32,7 @@ function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{Dy
     return 0
 end
 
-function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T}
+function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynReg, Nothing}) where {T}
     @inbounds @fastmath for j in axes(A, 1)
         Ajj = real(A[j, j])
 
@@ -64,7 +64,7 @@ function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{Dy
     return 0
 end
 
-function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynamicRegularization, Nothing}) where {T, UPLO}
+function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynReg, Nothing}) where {T, UPLO}
     n = size(A, 1)
     n <= THRESHOLD && return qdtrf2!(uplo, A, D, R)
 

@@ -4,6 +4,7 @@ using Base.Order
 using CliqueTrees
 using CliqueTrees: SinglyLinkedList, DoublyLinkedList, EliminationAlgorithm, Parent, cliquetree!, simplegraph, connectedcomponents
 using CliqueTrees.Multifrontal
+using CliqueTrees.Multifrontal: flatindices, setflatindex!
 using CliqueTrees.Utilities
 using Graphs
 using Graphs: SimpleEdge
@@ -1376,6 +1377,50 @@ end
     @test_opt target_modules = (CliqueTrees,) ldlt!(ChordalLDLt{:U}(M), RowMaximum())
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
+
+    # test flatindices
+    for name in ("685_bus", "bcsstk26")
+        M = readmatrix(name); n = size(M, 2)
+        b = rand(n)
+
+        for A in (Symmetric(M, :L), M)
+            for UPLO in (:L, :U)
+                F = cholesky!(ChordalCholesky{UPLO}(A))
+                P = flatindices(F, A)
+
+                fill!(F, 0)
+                cholesky!(F; check=false)
+                @test !issuccess(F)
+
+                for (i, p) in enumerate(P)
+                    iszero(p) && continue
+                    setflatindex!(F, nonzeros(M)[i], p)
+                end
+
+                cholesky!(F)
+                @test issuccess(F)
+                @test isapprox(b, M * (F \ b); rtol=1e-6, atol=1e-14)
+            end
+
+            for UPLO in (:L, :U)
+                F = ldlt!(ChordalLDLt{UPLO}(A))
+                P = flatindices(F, A)
+
+                fill!(F, 0)
+                ldlt!(F; check=false)
+                @test !issuccess(F)
+
+                for (i, p) in enumerate(P)
+                    iszero(p) && continue
+                    setflatindex!(F, nonzeros(M)[i], p)
+                end
+
+                ldlt!(F)
+                @test issuccess(F)
+                @test isapprox(b, M * (F \ b); rtol=1e-6, atol=1e-14)
+            end
+        end
+    end
 end
 
 @testset "regularization" begin

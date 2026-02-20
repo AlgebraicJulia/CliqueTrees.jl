@@ -7,15 +7,17 @@ struct DynamicRegularization{T, I, Sgn <: AbstractVector{I}}
     epsilon::T
 end
 
-function DynamicRegularization{T, I}(n::Integer, delta::Number, epsilon::Number) where {T, I}
+const DynReg = DynamicRegularization
+
+function DynReg{T, I}(n::Integer, delta::Number, epsilon::Number) where {T, I}
     signs = FVector{I}(undef, n)
-    return DynamicRegularization{T, I, FVector{I}}(signs, delta, epsilon)
+    return DynReg{T, I, FVector{I}}(signs, delta, epsilon)
 end
 
-function DynamicRegularization(signs::Sgn; delta::T=1e-6, epsilon::T=1e-12) where {T, I, Sgn <: AbstractVector{I}}
-    return DynamicRegularization{T, I, Sgn}(signs, delta, epsilon)
+function DynReg(signs::Sgn; delta::T=1e-6, epsilon::T=1e-12) where {T, I, Sgn <: AbstractVector{I}}
+    return DynReg{T, I, Sgn}(signs, delta, epsilon)
 end
 
-function Base.view(reg::DynamicRegularization, inds)
-    return DynamicRegularization(view(reg.signs, inds), reg.delta, reg.epsilon)
+function Base.view(reg::DynReg, inds)
+    return DynReg(view(reg.signs, inds), reg.delta, reg.epsilon)
 end
