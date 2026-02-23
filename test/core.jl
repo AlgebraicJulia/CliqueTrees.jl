@@ -1424,29 +1424,39 @@ end
 end
 
 @testset "regularization" begin
-    rng = Random.MersenneTwister(2401)
-    m = 20
-    n = 30
+    A = readmatrix("bcsstk08")
+    A = laplacian_matrix(CliqueTrees.simplegraph(A))
+    A -= 0.0001 * I
+    signs = ones(Int, size(A, 1))
 
-    # KKT structure with zero diagonals - requires regularization
-    A = sprandn(rng, n, n, 0.2)
-    A = A + A'
-    A = A - Diagonal(diag(A))
+    for UPLO in (:L, :U)
+        F = ldlt!(ChordalLDLt{UPLO}(A); signs, check=false)
+        @test !issuccess(F)
 
-    B = sprandn(rng, m, n, 0.2)
-    C = spzeros(m, m)
+        for Reg in (DynamicRegularization, GMW81)
+            F = ChordalLDLt{UPLO}(A)
+            reg = Reg(F)
+            ldlt!(F; signs, reg, check=false)
+            @test issuccess(F)
 
-    M = [A B'; B C]
-    s = [ones(Int, n); -ones(Int, m)]
+            b = randn(size(A, 1))
+            x = F \ b
+            AA = F.P' * F.L * F.D * F.L' * F.P
+            @test norm(AA * x - b) / norm(b) < 1e-6
+            @test norm(AA - A) / norm(A) < 1e-3
 
-    # Without regularization, factorization fails
-    F_noreg = ldlt!(ChordalLDLt{:L}(M); check=false)
-    @test !issuccess(F_noreg)
+            F = ChordalLDLt{UPLO}(A)
+            reg = Reg(F)
+            ldlt!(F, RowMaximum(); signs, reg, check=false)
+            @test issuccess(F)
 
-    # With regularization, factorization succeeds
-    reg = DynamicRegularization(s)
-    F = ldlt!(ChordalLDLt{:L}(M); check=false, reg=reg)
-    @test issuccess(F)
+            b = randn(size(A, 1))
+            x = F \ b
+            AA = F.P' * F.L * F.D * F.L' * F.P
+            @test norm(AA * x - b) / norm(b) < 1e-6
+            @test norm(AA - A) / norm(A) < 1e-3
+        end
+    end
 end
 
 @testset "selinv" begin
@@ -1974,8 +1984,6 @@ end
 end
 
 @testset "lowrank" begin
-    using LinearAlgebra: lowrankupdate!, lowrankdowndate!
-
     matrices = ("nos4", "mesh3e1", "494_bus")
 
     for name in matrices

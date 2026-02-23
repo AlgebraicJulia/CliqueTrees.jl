@@ -18,26 +18,28 @@ export ChordalSymbolic
 export ChordalCholesky, FChordalCholesky
 export ChordalLDLt, FChordalLDLt
 export ChordalTriangular, FChordalTriangular
-export DynamicRegularization
+export DynamicRegularization, GMW81
 export Permutation, FPermutation
 export symbolic
 export complete!
 export selinv!
 
 const THRESHOLD = 64
+const MaybeVector = Union{Nothing, AbstractVector}
 
 include("utils.jl")
-include("dynamic_regularization.jl")
 include("permutation.jl")
 include("chordal_symbolic.jl")
 include("chordal_cholesky.jl")
+include("chordal_ldlt.jl")
+include("chordal_triangular.jl")
+include("dynamic_regularization.jl")
 include("cholesky.jl")
 include("cholesky_pivoted.jl")
-include("chordal_ldlt.jl")
 include("ldlt.jl")
 include("ldlt_pivoted.jl")
+include("ldlt_pivoted_regularized.jl")
 include("blas.jl")
-include("chordal_triangular.jl")
 include("divide.jl")
 include("multiply.jl")
 include("completion.jl")

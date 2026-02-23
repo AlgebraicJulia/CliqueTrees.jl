@@ -1,20 +1,32 @@
-# ===== Pivoted LDLt Factorization =====
+# ===== Rank-Revealing Pivoted LDLt Factorization =====
 
-function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum; check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
-    R = real(T)
+function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T}, ::RowMaximum; signs::MaybeVector=nothing, reg::MaybeRegularization=nothing, check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T}
+    @assert !isnothing(signs) || isnothing(reg)
+    return _ldlt!(F, RowMaximum(), signs, reg, check, tol)
+end 
 
+function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::MaybeVector, ::Nothing, check::Bool, tol::Real) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    piv  = FVector{BlasInt}(undef, F.S.nFval)
-    work = FVector{R}(undef, twice(F.S.nFval))
+    piv  = FVector{I}(undef, F.S.nFval)
     invp = FVector{I}(undef, nov(F.S.res))
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)
 
-    info = ldltpiv_fwd!(
+    if isnothing(signs)
+        S = nothing
+    else
+        S = FVector{I}(undef, length(signs))
+
+        @inbounds for i in eachindex(F.perm)
+            S[i] = signs[F.perm[i]]
+        end
+    end
+
+    info = ldlt_piv_fwd!(
         Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, work, invp, convert(R, tol), Val{UPLO}()
+        F.S.res, F.S.rel, F.S.chd, piv, invp, S, convert(real(T), tol), Val{UPLO}()
     )
 
     if isnegative(info)
@@ -23,15 +35,15 @@ function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum; check::Bo
         F.info[] = zero(I)
     end
 
-    ldltpiv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
+    ldlt_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
     cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
     invpermute!(F.perm, invp)
     return F
 end
 
-# ============================= ldltpiv_fwd! =============================
+# ============================= ldlt_piv_fwd! =============================
 
-function ldltpiv_fwd!(
+function ldlt_piv_fwd!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
@@ -43,9 +55,9 @@ function ldltpiv_fwd!(
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
-        piv::AbstractVector{BlasInt},
-        work::AbstractVector{<:Real},
+        piv::AbstractVector{I},
         invp::AbstractVector{I},
+        S::MaybeVector,
         tol::Real,
         uplo::Val{UPLO},
     ) where {T, I <: Integer, UPLO}
@@ -53,9 +65,9 @@ function ldltpiv_fwd!(
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns, info = ldltpiv_fwd_loop!(
+        ns, info = ldlt_piv_fwd_loop!(
             Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
-            res, rel, chd, ns, j, piv, work, invp, tol, uplo
+            res, rel, chd, ns, j, piv, invp, S, tol, uplo
         )
 
         if isnegative(info)
@@ -66,7 +78,7 @@ function ldltpiv_fwd!(
     return zero(I)
 end
 
-function ldltpiv_fwd_loop!(
+function ldlt_piv_fwd_loop!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
@@ -80,9 +92,9 @@ function ldltpiv_fwd_loop!(
         chd::AbstractGraph{I},
         ns::I,
         j::I,
-        piv::AbstractVector{BlasInt},
-        work::AbstractVector{<:Real},
+        piv::AbstractVector{I},
         invp::AbstractVector{I},
+        S::MaybeVector,
         tol::Real,
         uplo::Val{UPLO},
     ) where {T, I <: Integer, UPLO}
@@ -163,22 +175,30 @@ function ldltpiv_fwd_loop!(
     addtri!(D₁₁, F₁₁, uplo)
     addrec!(L₂₁, F₂₁)
     #
-    # pivoted factorization of D₁₁
+    # M₂₂ is the update matrix for node j
     #
-    #     invp₁₁' D₁₁ invp₁₁ = L₁₁ d₁₁ L₁₁'
-    #
-    W₁₁ = reshape(view(Fval, oneto(nn * nn)), nn, nn)
-    info, rank = qstrf!(uplo, W₁₁, D₁₁, d₁₁, piv, tol)
-    #
-    # zero out the rank-deficient part of D₁₁ and L₂₁
-    #
-    zerotri!(D₁₁, uplo, rank + one(I):nn)
-
-    if UPLO === :L
-        zerorec!(L₂₁, oneto(na), rank + one(I):nn)
+    if ispositive(na)
+        ns += one(I)
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * na
+        M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
+        #
+        #     M₂₂ ← F₂₂
+        #
+        copytri!(M₂₂, F₂₂, uplo)
     else
-        zerorec!(L₂₁, rank + one(I):nn, oneto(na))
+        M₂₂ = reshape(view(Mval, oneto(zero(I))), zero(I), zero(I))
     end
+
+    if isnothing(S)
+        S₁₁ = nothing
+    else
+        S₁₁ = view(S, neighbors(res, j))
+    end
+    #
+    # pivoted factorization
+    #
+    info, rank = ldlt_piv_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, piv, S₁₁, tol, uplo)
     #
     # update invp with local pivot permutation
     # invp maps P-indices to Q-indices
@@ -190,92 +210,160 @@ function ldltpiv_fwd_loop!(
         invp[offset + piv[v]] = offset + v
     end
 
-    if ispositive(na) && ispositive(rank)
-        ns += one(I)
-        #
-        # S₂₂ is the update matrix for node j
-        #
-        strt = Mptr[ns]
-        stop = Mptr[ns + one(I)] = strt + na * na
-        S₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
-        #
-        #     S₂₂ ← F₂₂
-        #
-        copytri!(S₂₂, F₂₂, uplo)
-        #
-        # permute L₂₁ by pivot
-        #
-        copyto!(F₂₁, L₂₁)
-
-        if UPLO === :L
-            copyrec!(L₂₁, F₂₁, oneto(na), view(piv, oneto(nn)))
-        else
-            copyrec!(L₂₁, F₂₁, view(piv, oneto(nn)), oneto(na))
-        end
-        #
-        # Use only the first `rank` columns/rows for the solve
-        #
-        rD₁₁ = view(D₁₁, oneto(rank), oneto(rank))
-        rd₁₁ = view(d₁₁, oneto(rank))
-
-        if UPLO === :L
-            rL₂₁ = view(L₂₁, oneto(na), oneto(rank))
-        else
-            rL₂₁ = view(L₂₁, oneto(rank), oneto(na))
-        end
-        #
-        #     rL₂₁ ← rL₂₁ rD₁₁⁻ᴴ
-        #
-        if UPLO === :L
-            trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), rD₁₁, rL₂₁)
-        else
-            trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), rD₁₁, rL₂₁)
-        end
-        #
-        # W₂₁ ← rL₂₁ (save before scaling by d⁻¹)
-        #
-        W₂₁ = view(F, oneto(size(rL₂₁, 1)), oneto(size(rL₂₁, 2)))
-        copyrec!(W₂₁, rL₂₁)
-        #
-        #     rL₂₁ ← rL₂₁ rd₁₁⁻¹
-        #
-        if UPLO === :L
-            @inbounds for k in axes(rL₂₁, 2)
-                idk = inv(rd₁₁[k])
-                for i in axes(rL₂₁, 1)
-                    rL₂₁[i, k] *= idk
-                end
-            end
-        else
-            @inbounds for i in axes(rL₂₁, 2)
-                for k in axes(rL₂₁, 1)
-                    rL₂₁[k, i] *= inv(rd₁₁[k])
-                end
-            end
-        end
-        #
-        #     S₂₂ ← S₂₂ - W₂₁ rL₂₁ᴴ
-        #
-        if UPLO === :L
-            trrk!(uplo, Val(:N), W₂₁, rL₂₁, S₂₂)
-        else
-            trrk!(uplo, Val(:C), W₂₁, rL₂₁, S₂₂)
-        end
-    elseif ispositive(na) && iszero(rank)
-        # Rank-deficient: just copy F₂₂ to update matrix
-        ns += one(I)
-        strt = Mptr[ns]
-        stop = Mptr[ns + one(I)] = strt + na * na
-        S₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
-        copytri!(S₂₂, F₂₂, uplo)
+    if ispositive(na) && iszero(rank)
+        ns -= one(I)
     end
 
     return ns, info
 end
 
-# ============================= ldltpiv_bwd! =============================
+# ============================= ldlt_piv_kernel! =============================
 
-function ldltpiv_bwd!(
+function ldlt_piv_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        M::AbstractMatrix{T},
+        Wval::AbstractVector{T},
+        d::AbstractVector{T},
+        P::AbstractVector{<:Integer},
+        S::MaybeVector,
+        tol::Real,
+        uplo::Val{UPLO},
+    ) where {T, UPLO}
+    @assert size(D, 1) == size(D, 1) == length(d)
+    @assert size(M, 1) == size(M, 2)
+    @assert length(L) <= length(Wval)
+
+    if UPLO === :L
+        @assert size(L, 1) == size(M, 1)
+        @assert size(L, 2) == size(D, 1)
+    else
+        @assert size(L, 1) == size(D, 1)
+        @assert size(L, 2) == size(M, 1)
+    end
+
+    info, rank = ldlt_piv_factor!(D, L, Wval, d, P, S, tol, uplo)
+
+    if iszero(info) && !isempty(M) && ispositive(rank)
+        #
+        # Use only the first `rank` columns/rows for the Schur complement
+        #
+        rd = view(d, 1:rank)
+
+        if UPLO === :L
+            rL = view(L, :, 1:rank)
+            W = view(Wval, 1:size(L, 1) * rank)
+            W₂₁ = reshape(W, size(L, 1), rank)
+        else
+            rL = view(L, 1:rank, :)
+            W = view(Wval, 1:rank * size(L, 2))
+            W₂₁ = reshape(W, rank, size(L, 2))
+        end
+        #
+        #     M ← M - rL rd rLᴴ
+        #
+        if UPLO === :L
+            syrk!(uplo, Val(:N), -one(real(T)), W₂₁, rL, rd, one(real(T)), M)
+        else
+            syrk!(uplo, Val(:C), -one(real(T)), W₂₁, rL, rd, one(real(T)), M)
+        end
+    end
+
+    return info, rank
+end
+
+function ldlt_piv_factor!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        Wval::AbstractVector{T},
+        d::AbstractVector{T},
+        P::AbstractVector{<:Integer},
+        S::MaybeVector,
+        tol::Real,
+        uplo::Val{UPLO},
+    ) where {T, UPLO}
+    @assert size(D, 1) == size(D, 2) == length(d)
+    @assert length(D) <= length(Wval)
+
+    if UPLO === :L
+        @assert size(L, 2) == size(D, 1)
+    else
+        @assert size(L, 1) == size(D, 1)
+    end
+    #
+    # factorize D with pivoting
+    #
+    #     P' D P = L d L'
+    #
+    W = reshape(view(Wval, eachindex(D)), size(D))
+    info, rank = qstrf!(uplo, W, D, d, P, S, nothing, tol)
+    #
+    # zero out the rank-deficient part of D and L
+    #
+    zerotri!(D, uplo, rank + 1:size(D, 1))
+
+    if UPLO === :L
+        zerorec!(L, axes(L, 1), rank + 1:size(D, 1))
+    else
+        zerorec!(L, rank + 1:size(D, 1), axes(L, 2))
+    end
+
+    if iszero(info) && !isempty(L) && ispositive(rank)
+        #
+        # permute L by pivot
+        #
+        W = reshape(view(Wval, eachindex(L)), size(L))
+        copyrec!(W, L)
+
+        if UPLO === :L
+            copyrec!(L, W, axes(L, 1), view(P, axes(D, 1)))
+        else
+            copyrec!(L, W, view(P, axes(D, 1)), axes(L, 2))
+        end
+        #
+        # Use only the first `rank` columns/rows for the solve
+        #
+        rD = view(D, 1:rank, 1:rank)
+        rd = view(d, 1:rank)
+
+        if UPLO === :L
+            rL = view(L, :, 1:rank)
+        else
+            rL = view(L, 1:rank, :)
+        end
+        #
+        #     rL ← rL rD⁻ᴴ
+        #
+        if UPLO === :L
+            trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), rD, rL)
+        else
+            trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), rD, rL)
+        end
+        #
+        #     rL ← rL rd⁻¹
+        #
+        if UPLO === :L
+            @inbounds for k in axes(rL, 2)
+                idk = inv(rd[k])
+                for i in axes(rL, 1)
+                    rL[i, k] *= idk
+                end
+            end
+        else
+            @inbounds for i in axes(rL, 2)
+                for k in axes(rL, 1)
+                    rL[k, i] *= inv(rd[k])
+                end
+            end
+        end
+    end
+
+    return info, rank
+end
+
+# ============================= ldlt_piv_bwd! =============================
+
+function ldlt_piv_bwd!(
         mptr::AbstractVector{I},
         mval::AbstractVector{I},
         fval::AbstractVector{I},
@@ -294,7 +382,7 @@ function ldltpiv_bwd!(
     ns = zero(I); mptr[one(I)] = one(I)
 
     for j in reverse(vertices(res))
-        ns = ldltpiv_bwd_loop!(
+        ns = ldlt_piv_bwd_loop!(
             mptr, mval, fval, Dptr, Lptr, Lval,
             res, rel, sep, chd, ns, j, invp, Fval, uplo
         )
@@ -303,7 +391,7 @@ function ldltpiv_bwd!(
     return
 end
 
-function ldltpiv_bwd_loop!(
+function ldlt_piv_bwd_loop!(
         mptr::AbstractVector{I},
         mval::AbstractVector{I},
         fval::AbstractVector{I},

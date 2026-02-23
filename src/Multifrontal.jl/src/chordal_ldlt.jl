@@ -264,9 +264,8 @@ function LinearAlgebra.logabsdet(F::ChordalLDLt)
 end
 
 function LinearAlgebra.logdet(F::ChordalLDLt)
-    out, sgn = logabsdet(F)
-    ispositive(real(sgn)) || error()
-    return out
+    d, s = logabsdet(F)
+    return d + log(s)
 end
 
 function LinearAlgebra.rank(F::ChordalLDLt; kw...)

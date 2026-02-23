@@ -1,86 +1,35 @@
-"""
-    ldlt!(F::ChordalLDLt[, strategy::PivotingStrategy]; check=true, signs=nothing, reg=nothing)
+# ===== Pivoted LDLt Factorization with Dynamic Regularization =====
 
-Perform an LDLᵀ factorization of a sparse quasi-definite
-matrix.
-
-### Basic Usage
-
-Use [`ChordalLDLt`](@ref) to construct a factorization object.
-Use [`ldlt!`](@ref) to perform the factorization.
-
-```julia-repl
-julia> using CliqueTrees.Multifrontal, LinearAlgebra
-
-julia> A = [
-           4  2  0  0  2
-           2  5  0  0  3
-           0  0  4  2  0
-           0  0  2  5  2
-           2  3  0  2  7
-       ];
-
-julia> F = ldlt!(ChordalLDLt(A))
-5×5 FChordalLDLt{:L, Float64, Int64} with 10 stored entries:
- 1.0   ⋅    ⋅    ⋅    ⋅
- 0.0  1.0   ⋅    ⋅    ⋅
- 0.0  0.5  1.0   ⋅    ⋅
- 0.5  0.0  0.0  1.0   ⋅
- 0.0  0.5  0.5  0.5  1.0
-
- 4.0   ⋅    ⋅    ⋅    ⋅
-  ⋅   4.0   ⋅    ⋅    ⋅
-  ⋅    ⋅   4.0   ⋅    ⋅
-  ⋅    ⋅    ⋅   4.0   ⋅
-  ⋅    ⋅    ⋅    ⋅   4.0
-```
-
-### Parameters
-
-   - `F`: quasi-definite matrix
-   - `strategy`: pivoting strategy
-   - `check`: if `check = true`, then the function errors
-     if the matrix is singular
-   - `signs`: pivot signs
-   - `reg`: dynamic regularization strategy 
-
-"""
-function LinearAlgebra.ldlt!(F::ChordalLDLt{T}, ::NoPivot=NoPivot(); signs::MaybeVector=nothing, reg::MaybeRegularization=nothing, check::Bool=true) where {T}
-    @assert !isnothing(signs) || isnothing(reg)
-    return _ldlt!(F, NoPivot(), signs, reg, check)
-end 
-
-function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::NoPivot, signs::MaybeVector, reg::MaybeRegularization, check::Bool) where {UPLO, T, I <: Integer}
+function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::AbstractVector, reg::AbstractRegularization, check::Bool, tol::Real) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+    piv  = FVector{I}(undef, F.S.nFval)
+    invp = FVector{I}(undef, nov(F.S.res))
+    mval = FVector{I}(undef, F.S.nNval)
+    fval = FVector{I}(undef, F.S.nFval)
+    S = FVector{I}(undef, length(signs))
 
-    if isnothing(signs)
-        S = nothing
-    else
-        S = FVector{I}(undef, length(signs))
-
-        @inbounds for i in eachindex(F.perm)
-            S[i] = signs[F.perm[i]]
-        end
+    @inbounds for i in eachindex(F.perm)
+        S[i] = signs[F.perm[i]]
     end
 
-    info = ldlt_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval, F.S.res, F.S.rel, F.S.chd, Val{UPLO}(), S, reg)
+    ldlt_piv_reg_fwd!(
+        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
+        F.S.res, F.S.rel, F.S.chd, piv, invp, Val{UPLO}(), S, reg
+    )
 
-    if isnegative(info)
-        throw(ArgumentError(info))
-    elseif ispositive(info) && check
-        throw(SingularException(F.perm[info]))
-    elseif ispositive(info) && !check
-        F.info[] = F.perm[info]
-    else
-        F.info[] = zero(I)
-    end
+    F.info[] = zero(I)
 
+    ldlt_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
+    cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
+    invpermute!(F.perm, invp)
     return F
 end
 
-function ldlt_impl!(
+# ============================= ldlt_piv_reg_fwd! =============================
+
+function ldlt_piv_reg_fwd!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
@@ -92,27 +41,26 @@ function ldlt_impl!(
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
+        piv::AbstractVector{I},
+        invp::AbstractVector{I},
         uplo::Val{UPLO},
-        S::MaybeVector,
-        R::MaybeRegularization,
+        S::AbstractVector,
+        R::AbstractRegularization,
     ) where {T, I <: Integer, UPLO}
 
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns, localinfo = ldlt_loop!(Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval, res, rel, chd, ns, j, uplo, S, R)
-
-        if isnegative(localinfo)
-            return localinfo
-        elseif ispositive(localinfo)
-            return localinfo + pointers(res)[j] - one(I)
-        end
+        ns = ldlt_piv_reg_fwd_loop!(
+            Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
+            res, rel, chd, ns, j, piv, invp, uplo, S, R
+        )
     end
 
-    return zero(I)
+    return
 end
 
-function ldlt_loop!(
+function ldlt_piv_reg_fwd_loop!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
@@ -126,9 +74,11 @@ function ldlt_loop!(
         chd::AbstractGraph{I},
         ns::I,
         j::I,
+        piv::AbstractVector{I},
+        invp::AbstractVector{I},
         uplo::Val{UPLO},
-        S::MaybeVector,
-        R::MaybeRegularization,
+        S::AbstractVector,
+        R::AbstractRegularization,
     ) where {T, I <: Integer, UPLO}
     #
     # nn is the size of the residual at node j
@@ -166,7 +116,7 @@ function ldlt_loop!(
         F₂₁ = view(F, oneto(nn), nn + one(I):nj)
     end
     #
-    # L is part of the LDLᵀ factor
+    # L is part of the LDLt factor
     #
     #          res(j)
     #     L = [ D₁₁  ] res(j)
@@ -221,31 +171,37 @@ function ldlt_loop!(
     else
         M₂₂ = reshape(view(Mval, oneto(zero(I))), zero(I), zero(I))
     end
+    #
+    # pivoted factorization with regularization
+    #
+    S₁₁ = view(S, neighbors(res, j))
+    ldlt_piv_reg_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, piv, uplo, S₁₁, R)
+    #
+    # update invp with local pivot permutation
+    # invp maps P-indices to Q-indices
+    # piv[k] = p means vertex (offset + p) gets Q-index (offset + k)
+    #
+    offset = first(neighbors(res, j)) - one(I)
 
-    if isnothing(S)
-        S₂ = nothing
-    else
-        S₂ = view(S, neighbors(res, j))
+    @inbounds for v in oneto(nn)
+        invp[offset + piv[v]] = offset + v
     end
 
-    info = convert(I, ldlt_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, S₂, R, uplo))
-
-    if ispositive(na) && ispositive(info)
-        ns -= one(I)
-    end
-
-    return ns, info
+    return ns
 end
 
-function ldlt_kernel!(
+# ============================= ldlt_piv_reg_kernel! =============================
+
+function ldlt_piv_reg_kernel!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         M::AbstractMatrix{T},
         Wval::AbstractVector{T},
         d::AbstractVector{T},
-        S::MaybeVector,
-        R::MaybeRegularization,
+        P::AbstractVector{<:Integer},
         uplo::Val{UPLO},
+        S::AbstractVector,
+        R::AbstractRegularization,
     ) where {T, UPLO}
     @assert size(D, 1) == size(D, 1) == length(d)
     @assert size(M, 1) == size(M, 2)
@@ -259,13 +215,15 @@ function ldlt_kernel!(
         @assert size(L, 2) == size(M, 1)
     end
 
-    info = ldlt_factor!(D, L, Wval, d, S, R, uplo)
+    ldlt_piv_reg_factor!(D, L, Wval, d, P, uplo, S, R)
 
-    if iszero(info) && !isempty(M)
-        W₂₁ = reshape(view(Wval, eachindex(L)), size(L))
+    if !isempty(M) && !isempty(D)
         #
         #     M ← M - L d Lᴴ
         #
+        W = view(Wval, eachindex(L))
+        W₂₁ = reshape(W, size(L))
+
         if UPLO === :L
             syrk!(uplo, Val(:N), -one(real(T)), W₂₁, L, d, one(real(T)), M)
         else
@@ -273,17 +231,18 @@ function ldlt_kernel!(
         end
     end
 
-    return info
+    return
 end
 
-function ldlt_factor!(
+function ldlt_piv_reg_factor!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         Wval::AbstractVector{T},
         d::AbstractVector{T},
-        S::MaybeVector,
-        R::MaybeRegularization,
+        P::AbstractVector{<:Integer},
         uplo::Val{UPLO},
+        S::AbstractVector,
+        R::DynamicRegularization,
     ) where {T, UPLO}
     @assert size(D, 1) == size(D, 2) == length(d)
     @assert length(D) <= length(Wval)
@@ -293,19 +252,16 @@ function ldlt_factor!(
     else
         @assert size(L, 1) == size(D, 1)
     end
-    #
-    # factorize D
-    #
-    #     D, d ← ldlt(D)
-    #
-    W₁₁ = reshape(view(Wval, eachindex(D)), size(D))
-    info = qdtrf!(uplo, W₁₁, D, d, S, R)
 
-    if iszero(info) && !isempty(L)
-        #
-        #     L ← L D⁻ᴴ d⁻¹
-        #
+    W = reshape(view(Wval, eachindex(D)), size(D))
+    qstrf!(uplo, W, D, d, P, S, R)
+
+    if !isempty(L)
+        W = reshape(view(Wval, eachindex(L)), size(L))
+        copyrec!(W, L)
+
         if UPLO === :L
+            copyrec!(L, W, axes(L, 1), view(P, axes(D, 1)))
             trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), D, L)
 
             @inbounds for k in axes(L, 2)
@@ -316,6 +272,7 @@ function ldlt_factor!(
                 end
             end
         else
+            copyrec!(L, W, view(P, axes(D, 1)), axes(L, 2))
             trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), D, L)
 
             @inbounds for i in axes(L, 2)
@@ -326,138 +283,79 @@ function ldlt_factor!(
         end
     end
 
-    return info
+    return
 end
 
-function ldlt_factor!(
+function ldlt_piv_reg_factor!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         Wval::AbstractVector{T},
         d::AbstractVector{T},
+        P::AbstractVector{<:Integer},
+        uplo::Val{UPLO},
         S::AbstractVector,
         R::GMW81,
-        uplo::Val{:L},
-    ) where {T}
-    @assert size(D, 1) == size(D, 2) == size(L, 2) == length(d)
+    ) where {T, UPLO}
+    if UPLO === :L
+        @assert size(D, 1) == size(D, 2) == size(L, 2) == length(d)
+    else
+        @assert size(D, 1) == size(D, 2) == size(L, 1) == length(d)
+    end
+
+    @inbounds for j in axes(D, 1)
+        P[j] = j
+    end
 
     @inbounds for bstrt in 1:THRESHOLD:size(D, 1)
         bstop = min(bstrt + THRESHOLD - 1, size(D, 1))
         bsize = bstop - bstrt + 1
-        #
-        #            b   r
-        #     D = [ Dbb Drb ] b
-        #         [ Dbr Drr ] r
-        #
-        Dbb = view(D, bstrt:size(D, 1), bstrt:bstop)
-        #
-        #            b   r
-        #     L = [ Lnb Lnr ] n
-        #
-        Lnb = view(L, :, bstrt:bstop)
-        #
-        #            b   r
-        #     d = [ dbb     ] b
-        #         [     drr ] r
-        #
+
+        if UPLO === :L
+            Dbb = view(D, bstrt:size(D, 1), bstrt:bstop)
+            Lbb = view(L, :, bstrt:bstop)
+        else
+            Dbb = view(D, bstrt:bstop, bstrt:size(D, 1))
+            Lbb = view(L, bstrt:bstop, :)
+        end
+
         dbb = view(d, bstrt:bstop)
-        #
-        #     Sbb ← view(S, b)
-        #
+        Pbb = view(P, bstrt:size(D, 1))
         Sbb = view(S, bstrt:bstop)
 
-        info = ldlt_factor_block!(Dbb, Lnb, dbb, Sbb, R, uplo)
-        !iszero(info) && return bstrt + info - 1
+        ldlt_piv_reg_factor_block!(Dbb, Lbb, dbb, Pbb, Sbb, R, uplo)
 
         if bstop < size(D, 1)
             brest = size(D, 1) - bstop
-            #
-            #     Drb, Drr, Lnr
-            #
-            Drb = view(D, bstop + 1:size(D, 1), bstrt:bstop)
             Drr = view(D, bstop + 1:size(D, 1), bstop + 1:size(D, 1))
-            Lnr = view(L, :, bstop + 1:size(D, 1))
-            Wrb = reshape(view(Wval, 1:brest * bsize), brest, bsize)
-            #
-            #     Drr ← Drr - Drb dbb Drbᴴ
-            #
-            syrk!(uplo, Val(:N), -one(real(T)), Wrb, Drb, dbb, one(real(T)), Drr)
-            #
-            #     Lnr ← Lnr - Lnb Drbᴴ
-            #
-            gemm!(Val(:N), Val(:C), -one(T), Lnb, Drb, one(T), Lnr)
+
+            if UPLO === :L
+                Drb = view(D, bstop + 1:size(D, 1), bstrt:bstop)
+                Lrb = view(L, :, bstop + 1:size(D, 1))
+                W = reshape(view(Wval, 1:brest * bsize), brest, bsize)
+
+                syrk!(uplo, Val(:N), -one(real(T)), W, Drb, dbb, one(real(T)), Drr)
+                gemm!(Val(:N), Val(:C), -one(T), Lbb, Drb, one(T), Lrb)
+            else
+                Dbr = view(D, bstrt:bstop, bstop + 1:size(D, 1))
+                Lbr = view(L, bstop + 1:size(D, 1), :)
+                W = reshape(view(Wval, 1:bsize * brest), bsize, brest)
+
+                syrk!(uplo, Val(:C), -one(real(T)), W, Dbr, dbb, one(real(T)), Drr)
+                gemm!(Val(:C), Val(:N), -one(T), Dbr, Lbb, one(T), Lbr)
+            end
         end
     end
 
-    return 0
+    return
 end
 
-function ldlt_factor!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
-        Wval::AbstractVector{T},
-        d::AbstractVector{T},
-        S::AbstractVector,
-        R::GMW81,
-        uplo::Val{:U},
-    ) where {T}
-    @assert size(D, 1) == size(D, 2) == size(L, 1) == length(d)
+# ============================= ldlt_piv_reg_factor_block! =============================
 
-    @inbounds for bstrt in 1:THRESHOLD:size(D, 1)
-        bstop = min(bstrt + THRESHOLD - 1, size(D, 1))
-        bsize = bstop - bstrt + 1
-        #
-        #            b   r
-        #     D = [ Dbb Dbr ] b
-        #         [ Drb Drr ] r
-        #
-        Dbb = view(D, bstrt:bstop, bstrt:size(D, 1))
-        #
-        #            n
-        #     L = [ Lbn ] b
-        #         [ Lrn ] r
-        #
-        Lbn = view(L, bstrt:bstop, :)
-        #
-        #            b   r
-        #     d = [ dbb     ] b
-        #         [     drr ] r
-        #
-        dbb = view(d, bstrt:bstop)
-        #
-        #     Sbb ← view(S, b)
-        #
-        Sbb = view(S, bstrt:bstop)
-
-        info = ldlt_factor_block!(Dbb, Lbn, dbb, Sbb, R, uplo)
-        !iszero(info) && return bstrt + info - 1
-
-        if bstop < size(D, 1)
-            brest = size(D, 1) - bstop
-            #
-            #     Dbr, Drr, Lrn
-            #
-            Dbr = view(D, bstrt:bstop, bstop + 1:size(D, 1))
-            Drr = view(D, bstop + 1:size(D, 1), bstop + 1:size(D, 1))
-            Lrn = view(L, bstop + 1:size(D, 1), :)
-            Wbr = reshape(view(Wval, 1:bsize * brest), bsize, brest)
-            #
-            #     Drr ← Drr - Dbrᴴ dbb Dbr
-            #
-            syrk!(uplo, Val(:C), -one(real(T)), Wbr, Dbr, dbb, one(real(T)), Drr)
-            #
-            #     Lrn ← Lrn - Dbrᴴ Lbn
-            #
-            gemm!(Val(:C), Val(:N), -one(T), Dbr, Lbn, one(T), Lrn)
-        end
-    end
-
-    return 0
-end
-
-function ldlt_factor_block!(
+function ldlt_piv_reg_factor_block!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         d::AbstractVector{T},
+        P::AbstractVector,
         S::AbstractVector,
         R::GMW81,
         uplo::Val{:L},
@@ -465,6 +363,25 @@ function ldlt_factor_block!(
     @assert size(D, 2) == size(L, 2) == length(d)
 
     @inbounds for j in axes(D, 2)
+        maxval = abs(real(D[j, j]))
+        maxind = j
+
+        for i in j + 1:size(D, 1)
+            absAii = abs(real(D[i, i]))
+
+            if absAii > maxval
+                maxval = absAii
+                maxind = i
+            end
+        end
+
+        if maxind != j
+            swaptri!(D, j, maxind, uplo)
+            swapcol!(L, j, maxind)
+            swaprec!(P, j, maxind)
+            swaprec!(S, j, maxind)
+        end
+
         for k in 1:j - 1
             cDkj = d[k] * conj(D[j, k])
 
@@ -488,7 +405,6 @@ function ldlt_factor_block!(
         end
 
         Djj = d[j] = regularize(R, S, D, L, Djj, j, uplo); iDjj = inv(Djj)
-        iszero(Djj) && return j
 
         for i in j + 1:size(D, 1)
             D[i, j] *= iDjj
@@ -499,13 +415,14 @@ function ldlt_factor_block!(
         end
     end
 
-    return 0
+    return
 end
 
-function ldlt_factor_block!(
+function ldlt_piv_reg_factor_block!(
         D::AbstractMatrix{T},
         L::AbstractMatrix{T},
         d::AbstractVector{T},
+        P::AbstractVector,
         S::AbstractVector,
         R::GMW81,
         uplo::Val{:U},
@@ -513,6 +430,25 @@ function ldlt_factor_block!(
     @assert size(D, 1) == size(L, 1) == length(d)
 
     @inbounds for j in axes(D, 1)
+        maxval = abs(real(D[j, j]))
+        maxind = j
+
+        for i in j + 1:size(D, 2)
+            absAii = abs(real(D[i, i]))
+
+            if absAii > maxval
+                maxval = absAii
+                maxind = i
+            end
+        end
+
+        if maxind != j
+            swaptri!(D, j, maxind, uplo)
+            swaprow!(L, j, maxind)
+            swaprec!(P, j, maxind)
+            swaprec!(S, j, maxind)
+        end
+
         for i in j + 1:size(D, 2)
             for k in 1:j - 1
                 D[j, i] -= D[k, i] * d[k] * conj(D[k, j])
@@ -532,7 +468,6 @@ function ldlt_factor_block!(
         end
 
         Djj = d[j] = regularize(R, S, D, L, Djj, j, uplo); iDjj = inv(Djj)
-        iszero(Djj) && return j
 
         for i in j + 1:size(D, 2)
             D[j, i] *= iDjj
@@ -543,6 +478,5 @@ function ldlt_factor_block!(
         end
     end
 
-    return 0
+    return
 end
-

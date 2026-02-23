@@ -362,28 +362,18 @@ function copy_D!(
     nwr = one(I)
 
     @inbounds for j in vertices(res)
-        pj = Dptr[j] - one(I)
-
         swr = nwr
         nwr = pointers(res)[j + one(I)]
+        nn = nwr - swr
 
         for vr in swr:nwr - one(I)
-            wr = swr
-
             for pa in nzrange(A, vr)
                 wa = rowvals(A)[pa]
                 wa < swr && continue
                 wa < nwr || break
 
-                while wr < wa
-                    pj += one(I); Dval[pj] = zero(T); wr += one(I)
-                end
-
-                pj += one(I); Dval[pj] = nonzeros(A)[pa]; wr += one(I)
-            end
-
-            while wr < nwr
-                pj += one(I); Dval[pj] = zero(T); wr += one(I)
+                pj = Dptr[j] + (vr - swr) * nn + (wa - swr)
+                Dval[pj] = nonzeros(A)[pa]
             end
         end
     end
@@ -403,34 +393,34 @@ function copy_L!(
     npr = one(I)
 
     @inbounds for j in vertices(res)
-        pj = Lptr[j] - one(I)
-
         spr = npr
         npr = pointers(sep)[j + one(I)]
         spr >= npr && continue
 
+        na = npr - spr
         swr = targets(sep)[spr]
         nwr = targets(sep)[npr - one(I)] + one(I)
+
+        wr = zero(I)
 
         for vr in neighbors(res, j)
             pr = spr
 
             for pa in nzrange(A, vr)
-                wr = targets(sep)[pr]
                 wa = rowvals(A)[pa]
                 wa < swr && continue
                 wa < nwr || break
 
-                while wr < wa
-                    pj += one(I); Lval[pj] = zero(T); pr += one(I); wr = targets(sep)[pr]
+                while targets(sep)[pr] < wa
+                    pr += one(I)
                 end
 
-                pj += one(I); Lval[pj] = nonzeros(A)[pa]; pr += one(I)
+                pj = Lptr[j] + wr * na + (pr - spr)
+                Lval[pj] = nonzeros(A)[pa]
+                pr += one(I)
             end
 
-            while pr < npr
-                pj += one(I); Lval[pj] = zero(T); pr += one(I)
-            end
+            wr += one(I)
         end
     end
 
@@ -449,29 +439,23 @@ function copy_L!(
     nwr = one(I)
 
     @inbounds for j in vertices(res)
-        pj = Lptr[j] - one(I)
-
         swr = nwr
         nwr = pointers(res)[j + one(I)]
+        nn = nwr - swr
+
+        wr = zero(I)
 
         for vr in neighbors(sep, j)
-            wr = swr
-
             for pa in nzrange(A, vr)
                 wa = rowvals(A)[pa]
                 wa < swr && continue
                 wa < nwr || break
 
-                while wr < wa
-                    pj += one(I); Lval[pj] = zero(T); wr += one(I)
-                end
-
-                pj += one(I); Lval[pj] = nonzeros(A)[pa]; wr += one(I)
+                pj = Lptr[j] + wr * nn + (wa - swr)
+                Lval[pj] = nonzeros(A)[pa]
             end
 
-            while wr < nwr
-                pj += one(I); Lval[pj] = zero(T); wr += one(I)
-            end
+            wr += one(I)
         end
     end
 
@@ -501,8 +485,7 @@ function flat_D!(
                 wa < swr && continue
                 wa < nwr || break
 
-                pj += wa - wr; wr = wa
-                pj += one(I); Aval[pa] = pj; wr += one(I)
+                pj += wa - wr + one(I); Aval[pa] = pj; wr = wa + one(I)
             end
 
             pj += nwr - wr
@@ -581,8 +564,7 @@ function flat_L!(
                 wa < swr && continue
                 wa < nwr || break
 
-                pj += wa - wr; wr = wa
-                pj += one(I); Aval[pa] = -pj; wr += one(I)
+                pj += wa - wr + one(I); Aval[pa] = -pj; wr = wa + one(I)
             end
 
             pj += nwr - wr
@@ -642,6 +624,22 @@ function swaptri!(A::AbstractMatrix, j::Integer, k::Integer, ::Val{:U})
         end
 
         A[j, k] = conj(A[j, k])
+    end
+
+    return
+end
+
+function swapcol!(A::AbstractMatrix, j::Integer, k::Integer)
+    @inbounds for i in axes(A, 1)
+        A[i, j], A[i, k] = A[i, k], A[i, j]
+    end
+
+    return
+end
+
+function swaprow!(A::AbstractMatrix, j::Integer, k::Integer)
+    @inbounds for i in axes(A, 2)
+        A[j, i], A[k, i] = A[k, i], A[j, i]
     end
 
     return

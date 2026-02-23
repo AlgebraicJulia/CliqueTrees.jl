@@ -1,12 +1,8 @@
-function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynReg, Nothing}) where {T}
-    @inbounds @fastmath for j in axes(A, 1)
-        Ajj = real(A[j, j])
+function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, S::MaybeVector, R::MaybeRegularization) where {T}
+    @assert !isnothing(S) || isnothing(R)
 
-        if !isnothing(R)
-            if R.signs[j] * Ajj < R.epsilon
-                Ajj = R.delta * R.signs[j]
-            end
-        end
+    @inbounds @fastmath for j in axes(A, 1)
+        Ajj = regularize(R, S, real(A[j, j]), j)
 
         if iszero(Ajj)
             return j
@@ -32,7 +28,37 @@ function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{Dy
     return 0
 end
 
-function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynReg, Nothing}) where {T}
+function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, ::Nothing, ::Nothing) where {T}
+    @inbounds @fastmath for j in axes(A, 1)
+        Ajj = real(A[j, j])
+
+        if iszero(Ajj)
+            return j
+        else
+            D[j] = Ajj; iDjj = inv(Ajj)
+
+            for i in j + 1:size(A, 1)
+                A[i, j] *= iDjj
+            end
+
+            for k in j + 1:size(A, 1)
+                Akj = A[k, j]; cAkj = Ajj * conj(Akj)
+
+                A[k, k] -= Ajj * abs2(Akj)
+
+                for i in k + 1:size(A, 1)
+                    A[i, k] -= A[i, j] * cAkj
+                end
+            end
+        end
+    end
+
+    return 0
+end
+
+function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, S::MaybeVector, R::MaybeRegularization) where {T}
+    @assert !isnothing(S) || isnothing(R)
+
     @inbounds @fastmath for j in axes(A, 1)
         Ajj = real(A[j, j])
 
@@ -40,10 +66,32 @@ function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{Dy
             Ajj -= abs2(A[k, j]) * D[k]
         end
 
-        if !isnothing(R)
-            if R.signs[j] * Ajj < R.epsilon
-                Ajj = R.delta * R.signs[j]
+        Ajj = regularize(R, S, Ajj, j)
+
+        if iszero(Ajj)
+            return j
+        else
+            D[j] = Ajj; iDjj = inv(Ajj)
+
+            for i in j + 1:size(A, 1)
+                for k in 1:j - 1
+                    A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
+                end
+
+                A[j, i] *= iDjj
             end
+        end
+    end
+
+    return 0
+end
+
+function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, ::Nothing, ::Nothing) where {T}
+    @inbounds @fastmath for j in axes(A, 1)
+        Ajj = real(A[j, j])
+
+        for k in 1:j - 1
+            Ajj -= abs2(A[k, j]) * D[k]
         end
 
         if iszero(Ajj)
@@ -64,9 +112,9 @@ function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{Dy
     return 0
 end
 
-function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, R::Union{DynReg, Nothing}) where {T, UPLO}
+function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, S::MaybeVector, R::MaybeRegularization) where {T, UPLO}
     n = size(A, 1)
-    n <= THRESHOLD && return qdtrf2!(uplo, A, D, R)
+    n <= THRESHOLD && return qdtrf2!(uplo, A, D, S, R)
 
     n₁  = 2^floor(Int, log2(n)) ÷ 2
     A₁₁ = view(A, 1:n₁, 1:n₁)
@@ -74,17 +122,17 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
     A₂₂ = view(A, n₁+1:n, n₁+1:n)
     D₂₂ = view(D, n₁+1:n)
 
-    if isnothing(R)
-        R₁ = nothing
-        R₂ = nothing
+    if isnothing(S)
+        S₁ = nothing
+        S₂ = nothing
     else
-        R₁ = view(R, 1:n₁)
-        R₂ = view(R, n₁+1:n)
+        S₁ = view(S, 1:n₁)
+        S₂ = view(S, n₁+1:n)
     end
     #
     # factorize A₁₁
     #
-    info = qdtrf!(uplo, W, A₁₁, D₁₁, R₁)
+    info = qdtrf!(uplo, W, A₁₁, D₁₁, S₁, R)
     !iszero(info) && return info
 
     if UPLO === :L
@@ -94,10 +142,6 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
         # A₂₁ ← A₂₁ L₁₁⁻ᴴ
         #
         trsm!(Val(:R), Val(:L), Val(:C), Val(:U), one(T), A₁₁, A₂₁)
-        #
-        # W₂₁ ← A₂₁
-        #
-        copyrec!(W₂₁, A₂₁)
         #
         # A₂₁ ← A₂₁ D₁₁⁻¹
         #
@@ -109,9 +153,9 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
             end
         end
         #
-        # A₂₂ ← A₂₂ - W₂₁ A₂₁ᴴ
+        # A₂₂ ← A₂₂ - A₂₁ D₁₁ A₂₁ᴴ
         #
-        trrk!(uplo, Val(:N), W₂₁, A₂₁, A₂₂)
+        syrk!(uplo, Val(:N), -one(real(T)), W₂₁, A₂₁, D₁₁, one(real(T)), A₂₂)
     else
         A₁₂ = view(A, 1:n₁, n₁+1:n)
         W₁₂ = view(W, 1:n₁, 1:n-n₁)
@@ -119,10 +163,6 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
         # A₁₂ ← U₁₁⁻ᴴ A₁₂
         #
         trsm!(Val(:L), Val(:U), Val(:C), Val(:U), one(T), A₁₁, A₁₂)
-        #
-        # W₁₂ ← A₁₂
-        #
-        copyrec!(W₁₂, A₁₂)
         #
         # A₁₂ ← D₁₁⁻¹ A₁₂
         #
@@ -132,20 +172,88 @@ function qdtrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
             end
         end
         #
-        # A₂₂ ← A₂₂ - W₁₂ᴴ A₁₂
+        # A₂₂ ← A₂₂ - A₁₂ᴴ D₁₁ A₁₂
         #
-        trrk!(uplo, Val(:C), W₁₂, A₁₂, A₂₂)
+        syrk!(uplo, Val(:C), -one(real(T)), W₁₂, A₁₂, D₁₁, one(real(T)), A₂₂)
     end
 
     #
     # factorize A₂₂
     #
-    info = qdtrf!(uplo, W, A₂₂, D₂₂, R₂)
+    info = qdtrf!(uplo, W, A₂₂, D₂₂, S₂, R)
     !iszero(info) && return n₁ + info
     return 0
 end
 
-function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector{BlasInt}, bstrt::Int, bstop::Int, tol::Real) where {T}
+# ===== Pivoted Factorization =====
+
+function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, S::MaybeVector, R::MaybeRegularization, tol::Real) where {T}
+    @assert !isnothing(S) || isnothing(R)
+
+    @inbounds for j in bstrt:bstop
+        maxval = abs(real(A[j, j]) - D[j])
+        maxind = j
+
+        for i in j + 1:size(A, 1)
+            absAii = abs(real(A[i, i]) - D[i])
+
+            if absAii > maxval
+                maxval = absAii
+                maxind = i
+            end
+        end
+
+        if isnothing(R) && maxval < tol
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        if maxind != j
+            swaptri!(A, j, maxind, Val(:L))
+            swaprec!(P, j, maxind)
+            swaprec!(D, j, maxind)
+
+            if !isnothing(S)
+                swaprec!(S, j, maxind)
+            end
+        end
+
+        for k in bstrt:j - 1
+            cLjk = D[k] * conj(A[j, k])
+
+            for i in j + 1:size(A, 1)
+                A[i, j] -= A[i, k] * cLjk
+            end
+        end
+
+        Djj = regularize(R, S, real(A[j, j]) - D[j], j)
+
+        if iszero(Djj)
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        D[j] = Djj; iDjj = inv(Djj)
+
+        for i in j + 1:size(A, 1)
+            A[i, j] *= iDjj
+        end
+
+        for i in j + 1:size(A, 1)
+            D[i] += Djj * abs2(A[i, j])
+        end
+    end
+
+    return 0, bstop
+end
+
+function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, ::Nothing, ::Nothing, tol::Real) where {T}
     @inbounds for j in bstrt:bstop
         maxval = abs(real(A[j, j]) - D[j])
         maxind = j
@@ -181,7 +289,17 @@ function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::Abstract
             end
         end
 
-        Djj = D[j] = real(A[j, j]) - D[j]; iDjj = inv(Djj)
+        Djj = real(A[j, j]) - D[j]
+
+        if iszero(Djj)
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        D[j] = Djj; iDjj = inv(Djj)
 
         for i in j + 1:size(A, 1)
             A[i, j] *= iDjj
@@ -195,7 +313,64 @@ function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::Abstract
     return 0, bstop
 end
 
-function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector{BlasInt}, bstrt::Int, bstop::Int, tol::Real) where {T}
+function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, S::MaybeVector, R::MaybeRegularization, tol::Real) where {T}
+    @assert !isnothing(S) || isnothing(R)
+
+    @inbounds for j in bstrt:bstop
+        maxval = abs(D[j])
+        maxind = j
+
+        for i in j + 1:size(A, 1)
+            if abs(D[i]) > maxval
+                maxval = abs(D[i])
+                maxind = i
+            end
+        end
+
+        if isnothing(R) && maxval < tol
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        if maxind != j
+            swaptri!(A, j, maxind, Val(:U))
+            swaprec!(P, j, maxind)
+            swaprec!(D, j, maxind)
+
+            if !isnothing(S)
+                swaprec!(S, j, maxind)
+            end
+        end
+
+        Djj = regularize(R, S, D[j], j)
+
+        if iszero(Djj)
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        D[j] = Djj; iDjj = inv(Djj)
+
+        for i in j + 1:size(A, 1)
+            for k in bstrt:j - 1
+                A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
+            end
+
+            A[j, i] *= iDjj
+            D[i] -= Djj * abs2(A[j, i])
+        end
+    end
+
+    return 0, bstop
+end
+
+function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, ::Nothing, ::Nothing, tol::Real) where {T}
     @inbounds for j in bstrt:bstop
         maxval = abs(D[j])
         maxind = j
@@ -221,7 +396,17 @@ function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::Abstract
             swaprec!(D, j, maxind)
         end
 
-        Djj = D[j]; iDjj = inv(Djj)
+        Djj = D[j]
+
+        if iszero(Djj)
+            for i in j:size(A, 1)
+                D[i] = zero(real(T))
+            end
+
+            return 0, j - 1
+        end
+
+        D[j] = Djj; iDjj = inv(Djj)
 
         for i in j + 1:size(A, 1)
             for k in bstrt:j - 1
@@ -236,7 +421,17 @@ function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::Abstract
     return 0, bstop
 end
 
-function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector{BlasInt}, tol::Real) where {T, UPLO}
+function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, S::MaybeVector, R::MaybeRegularization, tol::Real=-one(real(T))) where {T, UPLO}
+    if isnegative(tol)
+        maxdiag = zero(real(T))
+
+        @inbounds for i in axes(A, 1)
+            maxdiag = max(maxdiag, abs(real(A[i, i])))
+        end
+
+        tol = size(A, 1) * eps(real(T)) * maxdiag
+    end
+
     @inbounds for j in axes(A, 1)
         P[j] = j
 
@@ -252,7 +447,14 @@ function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
     @inbounds for bstrt in 1:THRESHOLD:size(A, 1)
         bstop = min(bstrt + THRESHOLD - 1, size(A, 1))
         bsize = bstop - bstrt + 1
-        info, rank = qstrf2!(uplo, A, D, P, bstrt, bstop, tol)
+
+        if isnothing(S)
+            Sbb = nothing
+        else
+            Sbb = view(S, bstrt:size(A, 1))
+        end
+
+        info, rank = qstrf2!(uplo, A, D, P, bstrt, bstop, Sbb, R, tol)
 
         if rank < bstop
             return info, rank
@@ -261,36 +463,23 @@ function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
         if bstop < size(A, 1)
             brest = size(A, 1) - bstop
 
+            Arr = view(A, bstop + 1:size(A, 1), bstop + 1:size(A, 1))
+            Dbb = view(D, bstrt:bstop)
+
             if UPLO === :L
                 Arb = view(A, bstop + 1:size(A, 1), bstrt:bstop)
                 Wbb = view(W, 1:brest, 1:bsize)
-            else
-                Arb = view(A, bstrt:bstop, bstop + 1:size(A, 1))
-                Wbb = view(W, 1:bsize, 1:brest)
-            end
 
-            Arr = view(A, bstop + 1:size(A, 1), bstop + 1:size(A, 1))
-
-            @inbounds for j in 1:bsize
-                Djj = D[bstrt + j - 1]
-
-                for i in 1:brest
-                    if UPLO === :L
-                        Wbb[i, j] = Arb[i, j] * Djj
-                    else
-                        Wbb[j, i] = Arb[j, i] * Djj
-                    end
-                end
-            end
-
-            if UPLO === :L
-                trrk!(Val(:L), Val(:N), Wbb, Arb, Arr)
+                syrk!(Val(:L), Val(:N), -one(real(T)), Wbb, Arb, Dbb, one(real(T)), Arr)
 
                 @inbounds for j in bstop + 1:size(A, 1)
                     D[j] = zero(real(T))
                 end
             else
-                trrk!(Val(:U), Val(:C), Wbb, Arb, Arr)
+                Arb = view(A, bstrt:bstop, bstop + 1:size(A, 1))
+                Wbb = view(W, 1:bsize, 1:brest)
+
+                syrk!(Val(:U), Val(:C), -one(real(T)), Wbb, Arb, Dbb, one(real(T)), Arr)
             end
         end
     end
@@ -298,47 +487,82 @@ function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
     return 0, rank
 end
 
-function trrk!(uplo::Val, ::Val{:N}, A::AbstractMatrix{T}, B::AbstractMatrix{T}, C::AbstractMatrix{T}) where {T <: BlasFloat}
+function trrk!(uplo::Val, ::Val{:N}, alpha::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, beta::Real, C::AbstractMatrix{T}) where {T <: BlasFloat}
     if T <: Complex
-        BLAS.her2k!(char(uplo), 'N', convert(T, -1/2), A, B, one(real(T)), C)
+        BLAS.her2k!(char(uplo), 'N', convert(T, alpha / 2), A, B, beta, C)
     else
-        BLAS.syr2k!(char(uplo), 'N', convert(T, -1/2), A, B, one(T), C)
+        BLAS.syr2k!(char(uplo), 'N', convert(T, alpha / 2), A, B, beta, C)
     end
 
     return
 end
 
-function trrk!(uplo::Val, ::Val{:C}, A::AbstractMatrix{T}, B::AbstractMatrix{T}, C::AbstractMatrix{T}) where {T <: BlasFloat}
+function trrk!(uplo::Val, ::Val{:C}, alpha::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, beta::Real, C::AbstractMatrix{T}) where {T <: BlasFloat}
     if T <: Complex
-        BLAS.her2k!(char(uplo), 'C', convert(T, -1/2), A, B, one(real(T)), C)
+        BLAS.her2k!(char(uplo), 'C', convert(T, alpha / 2), A, B, beta, C)
     else
-        BLAS.syr2k!(char(uplo), 'C', convert(T, -1/2), A, B, one(T), C)
+        BLAS.syr2k!(char(uplo), 'C', convert(T, alpha / 2), A, B, beta, C)
     end
+
     return
 end
 
-function trrk!(uplo::Val{UPLO}, tA::Val{TRANS}, A::AbstractMatrix{T}, B::AbstractMatrix{T}, C::AbstractMatrix{T}) where {T, UPLO, TRANS}
+function trrk!(uplo::Val{UPLO}, ::Val{:N}, alpha::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, beta::Real, C::AbstractMatrix{T}) where {T, UPLO}
     @inbounds for j in axes(C, 2)
         if UPLO === :L
-            rows = j:size(C, 1)
-        else
-            rows = 1:j
-        end
+            for i in j:size(C, 1)
+                C[i, j] = beta * C[i, j]
+            end
 
-        if TRANS === :N
             for k in axes(A, 2)
-                Bjk = conj(B[j, k])
+                Bjk = alpha * conj(B[j, k])
 
-                for i in rows
-                    C[i, j] -= A[i, k] * Bjk
+                for i in j:size(C, 1)
+                    C[i, j] += A[i, k] * Bjk
                 end
             end
         else
-            for k in axes(A, 1)
-                Bkj = B[k, j]
+            for i in 1:j
+                C[i, j] = beta * C[i, j]
+            end
 
-                for i in rows
-                    C[i, j] -= conj(A[k, i]) * Bkj
+            for k in axes(A, 2)
+                Bjk = alpha * conj(B[j, k])
+
+                for i in 1:j
+                    C[i, j] += A[i, k] * Bjk
+                end
+            end
+        end
+    end
+
+    return
+end
+
+function trrk!(uplo::Val{UPLO}, ::Val{:C}, alpha::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, beta::Real, C::AbstractMatrix{T}) where {T, UPLO}
+    @inbounds for j in axes(C, 2)
+        if UPLO === :L
+            for i in j:size(C, 1)
+                C[i, j] = beta * C[i, j]
+            end
+
+            for k in axes(A, 1)
+                Bkj = alpha * B[k, j]
+
+                for i in j:size(C, 1)
+                    C[i, j] += conj(A[k, i]) * Bkj
+                end
+            end
+        else
+            for i in 1:j
+                C[i, j] = beta * C[i, j]
+            end
+
+            for k in axes(A, 1)
+                Bkj = alpha * B[k, j]
+
+                for i in 1:j
+                    C[i, j] += conj(A[k, i]) * Bkj
                 end
             end
         end
@@ -498,6 +722,30 @@ function syrk!(uplo::Val{UPLO}, ::Val{:C}, α, A::AbstractMatrix{T}, β, C::Abst
         end
     end
 
+    return
+end
+
+function syrk!(uplo::Val, trans::Val{:N}, alpha::Real, W::AbstractMatrix{T}, A::AbstractMatrix{T}, d::AbstractVector, beta::Real, C::AbstractMatrix{T}) where {T}
+    @inbounds for k in axes(A, 2)
+        dk = d[k]
+
+        for i in axes(A, 1)
+            W[i, k] = A[i, k] * dk
+        end
+    end
+
+    trrk!(uplo, trans, alpha, W, A, beta, C)
+    return
+end
+
+function syrk!(uplo::Val, trans::Val{:C}, alpha::Real, W::AbstractMatrix{T}, A::AbstractMatrix{T}, d::AbstractVector, beta::Real, C::AbstractMatrix{T}) where {T}
+    @inbounds for i in axes(A, 2)
+        for k in axes(A, 1)
+            W[k, i] = d[k] * A[k, i]
+        end
+    end
+
+    trrk!(uplo, trans, alpha, W, A, beta, C)
     return
 end
 

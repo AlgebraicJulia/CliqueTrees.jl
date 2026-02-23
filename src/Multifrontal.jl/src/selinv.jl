@@ -177,10 +177,10 @@ function selinv_loop!(
         #
         if UPLO === :L
             syrk!(Val(:L), Val(:C), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-            trrk!(Val(:L), Val(:C), F₂₁, L₂₁, D₁₁)
+            trrk!(Val(:L), Val(:C), -one(real(T)), F₂₁, L₂₁, one(real(T)), D₁₁)
         else
             syrk!(Val(:U), Val(:N), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-            trrk!(Val(:U), Val(:N), L₂₁, F₂₁, D₁₁)
+            trrk!(Val(:U), Val(:N), -one(real(T)), L₂₁, F₂₁, one(real(T)), D₁₁)
         end
     else
         #

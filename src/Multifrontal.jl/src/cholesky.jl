@@ -1,5 +1,5 @@
 """
-    cholesky!(F::ChordalCholesky; check=true)
+    cholesky!(F::ChordalCholesky[, strategy::PivotingStrategy]; check=true)
 
 Perform a Cholesky factorization of a sparse
 positive-definite matrix.
@@ -32,6 +32,7 @@ julia> F = cholesky!(ChordalCholesky(A))
 ## Parameters
 
   - `F`: positive-definite matrix
+  - `strategy`: pivoting strategy
   - `check`: if `check = true`, then the function errors if `F`
     is not positive definite
 

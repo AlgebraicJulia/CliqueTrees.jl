@@ -24,12 +24,16 @@ struct ChordalTriangular{UPLO, DIAG, T, I, Val <: AbstractVector{T}} <: Abstract
     Lval::Val
 end
 
-const FChordalTriangular{UPLO, DIAG, T, I} = ChordalTriangular{UPLO, T, I, FVector{T}}
+const FChordalTriangular{UPLO, DIAG, T, I} = ChordalTriangular{UPLO, DIAG, T, I, FVector{T}}
 
-const MaybeAdjOrTransTri{UPLO, DIAG, T, I, Val} = Union{
-                 ChordalTriangular{UPLO, DIAG, T, I, Val},
+const AdjOrTransTri{UPLO, DIAG, T, I, Val} = Union{
       Adjoint{T, ChordalTriangular{UPLO, DIAG, T, I, Val}},
     Transpose{T, ChordalTriangular{UPLO, DIAG, T, I, Val}},
+}
+
+const MaybeAdjOrTransTri{UPLO, DIAG, T, I, Val} = Union{
+        AdjOrTransTri{UPLO, DIAG, T, I, Val},
+    ChordalTriangular{UPLO, DIAG, T, I, Val},
 }
 
 function ChordalTriangular{UPLO, DIAG}(S::ChordalSymbolic{I}, Dval::Val, Lval::Val) where {UPLO, DIAG, I <: Integer, T, Val <: AbstractVector{T}}
@@ -80,6 +84,45 @@ end
 
 function Base.copy(A::ChordalTriangular{UPLO, DIAG, T, I, Val}) where {UPLO, DIAG, T, I, Val}
     return ChordalTriangular{UPLO, DIAG, T, I, Val}(A.S, copy(A.Dval), copy(A.Lval))
+end
+
+function Base.copy(A::AdjOrTransTri{UPLO, DIAG, T, I}) where {UPLO, DIAG, T, I}
+    P = parent(A)
+
+    if UPLO === :L
+        B = ChordalTriangular{:U, DIAG}(P.S, similar(P.Dval), similar(P.Lval))
+    else
+        B = ChordalTriangular{:L, DIAG}(P.S, similar(P.Dval), similar(P.Lval))
+    end
+
+    for j in vertices(P.S.res)
+        nn = eltypedegree(P.S.res, j)
+        na = eltypedegree(P.S.sep, j)
+
+        Dp = P.S.Dptr[j]
+        Lp = P.S.Lptr[j]
+
+        DA = reshape(view(P.Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
+        DB = reshape(view(B.Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
+
+        if UPLO === :L
+            LA = reshape(view(P.Lval, Lp:Lp + nn * na - one(I)), na, nn)
+            LB = reshape(view(B.Lval, Lp:Lp + nn * na - one(I)), nn, na)
+        else
+            LA = reshape(view(P.Lval, Lp:Lp + nn * na - one(I)), nn, na)
+            LB = reshape(view(B.Lval, Lp:Lp + nn * na - one(I)), na, nn)
+        end
+
+        if A isa Adjoint
+            adjoint!(DB, DA)
+            adjoint!(LB, LA)
+        else
+            transpose!(DB, DA)
+            transpose!(LB, LA)
+        end
+    end
+
+    return B
 end
 
 # ===== Abstract Matrix Interface =====
@@ -363,6 +406,8 @@ function setflatindex!(A::ChordalTriangular, x, p::Integer)
 end
 
 function Base.copy!(A::ChordalTriangular{UPLO, DIAG, T}, B::SparseMatrixCSC) where {UPLO, DIAG, T}
+    fill!(A.Dval, zero(T))
+    fill!(A.Lval, zero(T))
     copy_D!(A.S.Dptr, A.Dval, A.S.res, B)
     copy_L!(A.S.Lptr, A.Lval, A.S.res, A.S.sep, B, Val{UPLO}())
     return A
