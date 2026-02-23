@@ -1457,6 +1457,20 @@ end
             @test norm(AA - A) / norm(A) < 1e-3
         end
     end
+
+    A = [
+        1 1         2
+        1 1 + 1e-20 3
+        2 3         1
+    ]
+
+    signs = [1, 1, 1]
+
+    F = ChordalLDLt(A)
+    reg = GMW81(F)
+    ldlt!(F; signs, reg)
+
+    @test diag(F.D) ≈ [3.771, 5.750, 1.121] rtol=1e-3
 end
 
 @testset "selinv" begin

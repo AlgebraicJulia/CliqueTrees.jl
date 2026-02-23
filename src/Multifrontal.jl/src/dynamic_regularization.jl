@@ -126,11 +126,5 @@ function regularize(
         end
     end
 
-    threshold = max(Aimax^2 / R.beta, R.delta)
-
-    if S[j] * Djj < threshold
-        return S[j] * threshold
-    else
-        return Djj
-    end
+    return S[j] * max(abs(Djj), Aimax^2 / R.beta, R.delta)
 end
