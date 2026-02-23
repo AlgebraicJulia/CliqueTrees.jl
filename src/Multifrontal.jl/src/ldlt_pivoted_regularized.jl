@@ -5,7 +5,6 @@ function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::AbstractVector,
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
     piv  = FVector{I}(undef, F.S.nFval)
-    invp = FVector{I}(undef, nov(F.S.res))
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)
     S = FVector{I}(undef, length(signs))
@@ -16,14 +15,22 @@ function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::AbstractVector,
 
     ldlt_piv_reg_fwd!(
         Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, invp, Val{UPLO}(), S, reg
+        F.S.res, F.S.rel, F.S.chd, piv, F.perm, Val{UPLO}(), S, reg
     )
 
     F.info[] = zero(I)
 
-    ldlt_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
+    ldlt_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
     cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
-    invpermute!(F.perm, invp)
+
+    @inbounds for i in eachindex(F.invp)
+        F.invp[i] = F.perm[F.invp[i]]
+    end
+
+    @inbounds for i in eachindex(F.invp)
+        F.perm[F.invp[i]] = i
+    end
+
     return F
 end
 

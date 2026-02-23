@@ -81,6 +81,10 @@ end
 
 # ===== regularize functions =====
 
+function regularize(::Nothing, ::Nothing, Djj, j::Integer)
+    return Djj
+end
+
 function regularize(::Nothing, S::AbstractVector, Djj, j::Integer)
     if S[j] * Djj <= zero(Djj)
         return zero(Djj)

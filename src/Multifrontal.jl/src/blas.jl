@@ -28,34 +28,6 @@ function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, S::MaybeVec
     return 0
 end
 
-function qdtrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, ::Nothing, ::Nothing) where {T}
-    @inbounds @fastmath for j in axes(A, 1)
-        Ajj = real(A[j, j])
-
-        if iszero(Ajj)
-            return j
-        else
-            D[j] = Ajj; iDjj = inv(Ajj)
-
-            for i in j + 1:size(A, 1)
-                A[i, j] *= iDjj
-            end
-
-            for k in j + 1:size(A, 1)
-                Akj = A[k, j]; cAkj = Ajj * conj(Akj)
-
-                A[k, k] -= Ajj * abs2(Akj)
-
-                for i in k + 1:size(A, 1)
-                    A[i, k] -= A[i, j] * cAkj
-                end
-            end
-        end
-    end
-
-    return 0
-end
-
 function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, S::MaybeVector, R::MaybeRegularization) where {T}
     @assert !isnothing(S) || isnothing(R)
 
@@ -67,32 +39,6 @@ function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, S::MaybeVec
         end
 
         Ajj = regularize(R, S, Ajj, j)
-
-        if iszero(Ajj)
-            return j
-        else
-            D[j] = Ajj; iDjj = inv(Ajj)
-
-            for i in j + 1:size(A, 1)
-                for k in 1:j - 1
-                    A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
-                end
-
-                A[j, i] *= iDjj
-            end
-        end
-    end
-
-    return 0
-end
-
-function qdtrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, ::Nothing, ::Nothing) where {T}
-    @inbounds @fastmath for j in axes(A, 1)
-        Ajj = real(A[j, j])
-
-        for k in 1:j - 1
-            Ajj -= abs2(A[k, j]) * D[k]
-        end
 
         if iszero(Ajj)
             return j
@@ -253,66 +199,6 @@ function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::Abstract
     return 0, bstop
 end
 
-function qstrf2!(::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, ::Nothing, ::Nothing, tol::Real) where {T}
-    @inbounds for j in bstrt:bstop
-        maxval = abs(real(A[j, j]) - D[j])
-        maxind = j
-
-        for i in j + 1:size(A, 1)
-            absAii = abs(real(A[i, i]) - D[i])
-
-            if absAii > maxval
-                maxval = absAii
-                maxind = i
-            end
-        end
-
-        if maxval < tol
-            for i in j:size(A, 1)
-                D[i] = zero(real(T))
-            end
-
-            return 0, j - 1
-        end
-
-        if maxind != j
-            swaptri!(A, j, maxind, Val(:L))
-            swaprec!(P, j, maxind)
-            swaprec!(D, j, maxind)
-        end
-
-        for k in bstrt:j - 1
-            cLjk = D[k] * conj(A[j, k])
-
-            for i in j + 1:size(A, 1)
-                A[i, j] -= A[i, k] * cLjk
-            end
-        end
-
-        Djj = real(A[j, j]) - D[j]
-
-        if iszero(Djj)
-            for i in j:size(A, 1)
-                D[i] = zero(real(T))
-            end
-
-            return 0, j - 1
-        end
-
-        D[j] = Djj; iDjj = inv(Djj)
-
-        for i in j + 1:size(A, 1)
-            A[i, j] *= iDjj
-        end
-
-        for i in j + 1:size(A, 1)
-            D[i] += Djj * abs2(A[i, j])
-        end
-    end
-
-    return 0, bstop
-end
-
 function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, S::MaybeVector, R::MaybeRegularization, tol::Real) where {T}
     @assert !isnothing(S) || isnothing(R)
 
@@ -346,57 +232,6 @@ function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::Abstract
         end
 
         Djj = regularize(R, S, D[j], j)
-
-        if iszero(Djj)
-            for i in j:size(A, 1)
-                D[i] = zero(real(T))
-            end
-
-            return 0, j - 1
-        end
-
-        D[j] = Djj; iDjj = inv(Djj)
-
-        for i in j + 1:size(A, 1)
-            for k in bstrt:j - 1
-                A[j, i] -= A[k, i] * D[k] * conj(A[k, j])
-            end
-
-            A[j, i] *= iDjj
-            D[i] -= Djj * abs2(A[j, i])
-        end
-    end
-
-    return 0, bstop
-end
-
-function qstrf2!(::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::AbstractVector, bstrt::Int, bstop::Int, ::Nothing, ::Nothing, tol::Real) where {T}
-    @inbounds for j in bstrt:bstop
-        maxval = abs(D[j])
-        maxind = j
-
-        for i in j + 1:size(A, 1)
-            if abs(D[i]) > maxval
-                maxval = abs(D[i])
-                maxind = i
-            end
-        end
-
-        if maxval < tol
-            for i in j:size(A, 1)
-                D[i] = zero(real(T))
-            end
-
-            return 0, j - 1
-        end
-
-        if maxind != j
-            swaptri!(A, j, maxind, Val(:U))
-            swaprec!(P, j, maxind)
-            swaprec!(D, j, maxind)
-        end
-
-        Djj = D[j]
 
         if iszero(Djj)
             for i in j:size(A, 1)

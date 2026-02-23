@@ -175,7 +175,7 @@ function adj(tA::Val{:C}, A::AbstractMatrix)
     return adjoint(A)
 end
 
-function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}, col::AbstractVector{I}=axes(A, 1)) where {Q, T, I <: Integer}
+function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}, col::AbstractVector=axes(A, 1)) where {Q, T}
     @assert size(A, 1) == size(A, 2)
 
     @inbounds for j in eachindex(col)
@@ -195,7 +195,7 @@ function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}, col::AbstractVector{I}=axe
     return A
 end
 
-function zerorec!(A::AbstractVector{T}, row::AbstractVector{I}=axes(A, 1)) where {T, I <: Integer}
+function zerorec!(A::AbstractVector{T}, row::AbstractVector=axes(A, 1)) where {T}
     @inbounds for i in eachindex(row)
         A[row[i]] = zero(T)
     end
@@ -203,7 +203,7 @@ function zerorec!(A::AbstractVector{T}, row::AbstractVector{I}=axes(A, 1)) where
     return A
 end
 
-function zerorec!(A::AbstractMatrix{T}, row::AbstractVector{I}=axes(A, 1), col::AbstractVector{J}=axes(A, 2)) where {T, I <: Integer, J <: Integer}
+function zerorec!(A::AbstractMatrix{T}, row::AbstractVector=axes(A, 1), col::AbstractVector=axes(A, 2)) where {T}
     @inbounds for j in eachindex(col)
         cj = col[j]
 
@@ -219,8 +219,8 @@ function copytri!(
         A::AbstractMatrix{T},
         B::AbstractMatrix{T},
         uplo::Val{Q},
-        col::AbstractVector{I}=axes(A, 1),
-    ) where {Q, T, I <: Integer}
+        col::AbstractVector=axes(A, 1),
+    ) where {Q, T}
     @assert size(A, 1) == size(A, 2) == length(col)
     @assert size(B, 1) == size(B, 2)
 
@@ -245,8 +245,8 @@ function addtri!(
         A::AbstractMatrix{T},
         B::AbstractMatrix{T},
         uplo::Val{Q},
-        col::AbstractVector{I}=axes(B, 1),
-    ) where {Q, T, I <: Integer}
+        col::AbstractVector=axes(B, 1),
+    ) where {Q, T}
     @assert size(A, 1) == size(A, 2)
     @assert size(B, 1) == size(B, 2) == length(col)
 
@@ -270,8 +270,8 @@ end
 function addrec!(
         A::AbstractArray{T},
         B::AbstractVector{T},
-        row::AbstractVector{I}=axes(B, 1),
-    ) where {T, I <: Integer}
+        row::AbstractVector=axes(B, 1),
+    ) where {T}
     @assert length(row) == length(B)
 
     @inbounds for i in eachindex(row, B)
@@ -284,9 +284,9 @@ end
 function addrec!(
         A::AbstractArray{T},
         B::AbstractMatrix{T},
-        row::AbstractVector{I}=axes(B, 1),
-        col::AbstractVector{I}=axes(B, 2),
-    ) where {T, I <: Integer}
+        row::AbstractVector=axes(B, 1),
+        col::AbstractVector=axes(B, 2),
+    ) where {T}
     @assert length(row) == size(B, 1)
     @assert length(col) == size(B, 2)
 
@@ -304,8 +304,8 @@ end
 function copyrec!(
         A::AbstractVector{T},
         B::AbstractVector{T},
-        row::AbstractVector{I}=axes(A, 1),
-    ) where {T, I <: Integer}
+        row::AbstractVector=axes(A, 1),
+    ) where {T}
     @assert length(row) == length(A)
 
     @inbounds for i in eachindex(row)
@@ -318,9 +318,9 @@ end
 function copyrec!(
         A::AbstractMatrix{T},
         B::AbstractMatrix{T},
-        row::AbstractVector{I}=axes(A, 1),
-        col::AbstractVector{I}=axes(A, 2),
-    ) where {T, I <: Integer}
+        row::AbstractVector=axes(A, 1),
+        col::AbstractVector=axes(A, 2),
+    ) where {T}
     @assert length(row) == size(A, 1)
     @assert length(col) == size(A, 2)
 

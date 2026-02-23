@@ -8,13 +8,12 @@ function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; c
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
     piv  = FVector{BlasInt}(undef, F.S.nFval)
     work = FVector{R}(undef, twice(F.S.nFval))
-    invp = FVector{I}(undef, nov(F.S.res))
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)
 
     info = cholpiv_fwd!(
         Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, work, invp, convert(R, tol), Val{UPLO}()
+        F.S.res, F.S.rel, F.S.chd, piv, work, F.perm, convert(R, tol), Val{UPLO}()
     )
 
     if isnegative(info)
@@ -23,9 +22,17 @@ function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; c
         F.info[] = zero(I)
     end
 
-    cholpiv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
+    cholpiv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
     cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
-    invpermute!(F.perm, invp)
+
+    @inbounds for i in eachindex(F.invp)
+        F.invp[i] = F.perm[F.invp[i]]
+    end
+
+    @inbounds for i in eachindex(F.invp)
+        F.perm[F.invp[i]] = i
+    end
+
     return F
 end
 

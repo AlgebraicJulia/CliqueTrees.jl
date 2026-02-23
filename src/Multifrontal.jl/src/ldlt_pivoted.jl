@@ -10,7 +10,6 @@ function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::MaybeVector, ::
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
     piv  = FVector{I}(undef, F.S.nFval)
-    invp = FVector{I}(undef, nov(F.S.res))
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)
 
@@ -26,7 +25,7 @@ function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::MaybeVector, ::
 
     info = ldlt_piv_fwd!(
         Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, invp, S, convert(real(T), tol), Val{UPLO}()
+        F.S.res, F.S.rel, F.S.chd, piv, F.perm, S, convert(real(T), tol), Val{UPLO}()
     )
 
     if isnegative(info)
@@ -35,9 +34,17 @@ function _ldlt!(F::ChordalLDLt{UPLO, T, I}, ::RowMaximum, signs::MaybeVector, ::
         F.info[] = zero(I)
     end
 
-    ldlt_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, invp, Fval, Val{UPLO}())
+    ldlt_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
     cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
-    invpermute!(F.perm, invp)
+
+    @inbounds for i in eachindex(F.invp)
+        F.invp[i] = F.perm[F.invp[i]]
+    end
+
+    @inbounds for i in eachindex(F.invp)
+        F.perm[F.invp[i]] = i
+    end
+
     return F
 end
 
@@ -208,10 +215,6 @@ function ldlt_piv_fwd_loop!(
 
     @inbounds for v in oneto(nn)
         invp[offset + piv[v]] = offset + v
-    end
-
-    if ispositive(na) && iszero(rank)
-        ns -= one(I)
     end
 
     return ns, info
