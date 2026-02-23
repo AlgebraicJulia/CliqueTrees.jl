@@ -283,13 +283,7 @@ function qstrf!(uplo::Val{UPLO}, W::AbstractMatrix{T}, A::AbstractMatrix{T}, D::
         bstop = min(bstrt + THRESHOLD - 1, size(A, 1))
         bsize = bstop - bstrt + 1
 
-        if isnothing(S)
-            Sbb = nothing
-        else
-            Sbb = view(S, bstrt:size(A, 1))
-        end
-
-        info, rank = qstrf2!(uplo, A, D, P, bstrt, bstop, Sbb, R, tol)
+        info, rank = qstrf2!(uplo, A, D, P, bstrt, bstop, S, R, tol)
 
         if rank < bstop
             return info, rank
