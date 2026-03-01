@@ -10,13 +10,13 @@ function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::RowMaximum, S::Abstr
     fval = FVector{I}(undef, F.S.nFval)
 
     if DIAG === :U
+        foreachfront(ChordalTriangular(F)) do D, L, res, sep
+            F.d[res] .= view(parent(D), diagind(D))
+        end
+
         d = F.d
     else
-        d = FVector{T}(undef, size(F, 1))
-    end
-
-    foreachfront(ChordalTriangular(F)) do D, L, res, sep
-        d[res] .= view(parent(D), diagind(D))
+        d = LinearAlgebra.diag(ChordalTriangular(F))
     end
 
     chol_se99_piv_fwd!(

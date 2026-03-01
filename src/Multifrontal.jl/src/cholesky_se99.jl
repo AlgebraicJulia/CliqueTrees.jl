@@ -7,13 +7,13 @@ function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::NoPivot, S::Abstract
     Eval = FVector{T}(undef, F.S.nFval)
 
     if DIAG === :U
+        foreachfront(ChordalTriangular(F)) do D, L, res, sep
+            F.d[res] .= view(parent(D), diagind(D))
+        end
+
         d = F.d
     else
-        d = FVector{T}(undef, size(F, 1))
-    end
-
-    foreachfront(ChordalTriangular(F)) do D, L, res, sep
-        d[res] .= view(parent(D), diagind(D))
+        d = LinearAlgebra.diag(ChordalTriangular(F))
     end
 
     chol_se99_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, d, Eval, Fval, F.S.res, F.S.rel, F.S.sep, F.S.chd, Val{UPLO}(), S, R, diag)
