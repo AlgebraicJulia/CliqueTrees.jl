@@ -5,7 +5,7 @@ Compute the Cholesky factorization of the inverse of
 the maximum-determinant positive-definite completion
 of a symmetric matrix.
 
-### Basic Usage
+### Example
 
 Use [`ChordalCholesky`](@ref) to construct a factorization object,
 and use [`complete!`](@ref) to perform the factorization.

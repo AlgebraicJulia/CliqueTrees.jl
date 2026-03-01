@@ -1,29 +1,32 @@
-# ===== Pivoted Cholesky Factorization =====
-
-function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
-    R = real(T)
+function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::RowMaximum, S::AbstractVector{T}, reg::AbstractRegularization, check::Bool, tol::Real, diag::Val{DIAG}) where {DIAG, UPLO, T, I <: Integer}
+    @assert checksigns(S, reg)
 
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
     piv  = FVector{BlasInt}(undef, F.S.nFval)
-    work = FVector{R}(undef, twice(F.S.nFval))
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)
 
-    info = cholpiv_fwd!(
-        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, work, F.perm, convert(R, tol), Val{UPLO}()
+    if reg isa NoRegularization
+        R = convert(real(T), tol)
+    else
+        R = reg
+    end
+
+    info = chol_piv_fwd!(
+        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
+        F.S.res, F.S.rel, F.S.chd, piv, F.perm, S, R, Val{UPLO}(), diag
     )
 
     if isnegative(info)
         throw(ArgumentError(info))
-    else
-        F.info[] = zero(I)
     end
 
-    cholpiv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
-    cholpiv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
+    F.info[] = zero(I)
+
+    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
+    chol_piv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
 
     @inbounds for i in eachindex(F.invp)
         F.invp[i] = F.perm[F.invp[i]]
@@ -36,32 +39,37 @@ function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, ::RowMaximum; c
     return F
 end
 
-# ============================= cholpiv_fwd! =============================
+# ============================= chol_piv_fwd! =============================
+#
+# Unified pivoted forward pass for Cholesky (Val{:N}) and LDLt (Val{:U})
+#
 
-function cholpiv_fwd!(
+function chol_piv_fwd!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
+        d::AbstractVector{T},
         Fval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
-        piv::AbstractVector{BlasInt},
-        work::AbstractVector{<:Real},
+        piv::AbstractVector{<:Integer},
         invp::AbstractVector{I},
-        tol::Real,
+        S::AbstractVector{T},
+        R::Union{AbstractRegularization, Real},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+        diag::Val{DIAG},
+    ) where {T, I <: Integer, UPLO, DIAG}
 
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns, info = cholpiv_fwd_loop!(
-            Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval,
-            res, rel, chd, ns, j, piv, work, invp, tol, uplo
+        ns, info = chol_piv_fwd_loop!(
+            Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
+            res, rel, chd, ns, j, piv, invp, S, R, uplo, diag
         )
 
         if isnegative(info)
@@ -72,25 +80,27 @@ function cholpiv_fwd!(
     return zero(I)
 end
 
-function cholpiv_fwd_loop!(
+function chol_piv_fwd_loop!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
+        d::AbstractVector{T},
         Fval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
         ns::I,
         j::I,
-        piv::AbstractVector{BlasInt},
-        work::AbstractVector{<:Real},
+        piv::AbstractVector{<:Integer},
         invp::AbstractVector{I},
-        tol::Real,
+        S::AbstractVector{T},
+        R::Union{AbstractRegularization, Real},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+        diag::Val{DIAG},
+    ) where {T, I <: Integer, UPLO, DIAG}
     #
     # nn is the size of the residual at node j
     #
@@ -127,7 +137,7 @@ function cholpiv_fwd_loop!(
         F₂₁ = view(F, oneto(nn), nn + one(I):nj)
     end
     #
-    # L is part of the Cholesky factor
+    # L is part of the factor
     #
     #          res(j)
     #     L = [ D₁₁  ] res(j)
@@ -142,6 +152,10 @@ function cholpiv_fwd_loop!(
     else
         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
     end
+    #
+    # d₁₁ is the diagonal for the vertices in res(j)
+    #
+    d₁₁ = view(d, neighbors(res, j))
     #
     #     F ← 0
     #
@@ -164,21 +178,28 @@ function cholpiv_fwd_loop!(
     addtri!(D₁₁, F₁₁, uplo)
     addrec!(L₂₁, F₂₁)
     #
-    # pivoted factorization of D₁₁
+    # M₂₂ is the update matrix for node j
     #
-    #     invp₁₁' D₁₁ invp₁₁ = L₁₁ L₁₁'
-    #
-    info, rank = pstrf!(uplo, D₁₁, piv, work, tol)
-    #
-    # zero out the rank-deficient part of D₁₁ and L₂₁
-    #
-    zerotri!(D₁₁, uplo, rank + one(I):nn)
-
-    if UPLO === :L
-        zerorec!(L₂₁, oneto(na), rank + one(I):nn)
+    if ispositive(na)
+        ns += one(I)
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * na
+        M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
+        #
+        #     M₂₂ ← F₂₂
+        #
+        copytri!(M₂₂, F₂₂, uplo)
     else
-        zerorec!(L₂₁, rank + one(I):nn, oneto(na))
+        M₂₂ = reshape(view(Mval, one(I):zero(I)), zero(I), zero(I))
     end
+    #
+    # S₁₁ is the signs for the vertices in res(j)
+    #
+    S₁₁ = view(S, neighbors(res, j))
+    #
+    # pivoted factorization
+    #
+    info = chol_piv_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, piv, S₁₁, R, uplo, diag)
     #
     # update invp with local pivot permutation
     # invp maps P-indices to Q-indices
@@ -190,69 +211,148 @@ function cholpiv_fwd_loop!(
         invp[offset + piv[v]] = offset + v
     end
 
-    if ispositive(na) && ispositive(rank)
-        ns += one(I)
+    return ns, info
+end
+
+# ============================= chol_piv_kernel! =============================
+#
+# Unified pivoted factorization kernel for Cholesky (Val{:N}) and LDLt (Val{:U})
+#
+
+function chol_piv_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        M::AbstractMatrix{T},
+        W::AbstractVector{T},
+        d::AbstractFill{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        R::Union{AbstractRegularization, Real},
+        uplo::Val{UPLO},
+        diag::Val{:N},
+    ) where {T, UPLO}
+    return chol_piv_kernel!(D, L, M, W, W, P, S, R, uplo, diag)
+end
+
+function chol_piv_kernel!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        M::AbstractMatrix{T},
+        W::AbstractVector{T},
+        d::AbstractVector{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        R::Union{AbstractRegularization, Real},
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+    ) where {T, UPLO, DIAG}
+    @assert size(D, 1) == size(D, 2)
+    @assert size(M, 1) == size(M, 2)
+
+    if UPLO === :L
+        @assert size(L, 1) == size(M, 1)
+        @assert size(L, 2) == size(D, 1)
+    else
+        @assert size(L, 1) == size(D, 1)
+        @assert size(L, 2) == size(M, 1)
+    end
+
+    info, rank = chol_piv_factor!(D, L, W, d, P, S, R, uplo, diag)
+
+    if iszero(info) && !isempty(M) && ispositive(rank)
         #
-        # S₂₂ is the update matrix for node j
+        # Use only the first `rank` columns/rows for the Schur complement
         #
-        strt = Mptr[ns]
-        stop = Mptr[ns + one(I)] = strt + na * na
-        S₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
-        #
-        #     S₂₂ ← F₂₂
-        #
-        copytri!(S₂₂, F₂₂, uplo)
-        #
-        # permute L₂₁ by pivot
-        #
-        copyto!(F₂₁, L₂₁)
+        rd = view(d, 1:rank)
 
         if UPLO === :L
-            copyrec!(L₂₁, F₂₁, oneto(na), view(piv, oneto(nn)))
+            rL = view(L, :, 1:rank)
+            trans = Val(:N)
         else
-            copyrec!(L₂₁, F₂₁, view(piv, oneto(nn)), oneto(na))
+            rL = view(L, 1:rank, :)
+            trans = Val(:C)
+        end
+
+        syrk!(uplo, trans, -one(real(T)), W, rL, rd, one(real(T)), M, diag)
+    end
+
+    return info
+end
+
+function chol_piv_factor!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        W::AbstractVector{T},
+        d::AbstractVector{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        tol::Real,
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+    ) where {T, UPLO, DIAG}
+    @assert size(D, 1) == size(D, 2)
+
+    if UPLO === :L
+        @assert size(L, 2) == size(D, 1)
+    else
+        @assert size(L, 1) == size(D, 1)
+    end
+    #
+    # factorize D with pivoting
+    #
+    #     Pᵀ D P = L Lᵀ
+    #
+    info, rank = pstrf!(uplo, W, D, d, P, S, NoRegularization(), tol, diag)
+    #
+    # zero out the rank-deficient part of D and L
+    #
+    zerotri!(D, uplo, rank + 1:size(D, 1))
+
+    if UPLO === :L
+        zerorec!(L, axes(L, 1), rank + 1:size(D, 1))
+    else
+        zerorec!(L, rank + 1:size(D, 1), axes(L, 2))
+    end
+
+    if iszero(info) && !isempty(L) && ispositive(rank)
+        #
+        # permute L by pivot
+        #
+        M = reshape(view(W, 1:length(L)), size(L))
+        copyrec!(M, L)
+
+        if UPLO === :L
+            copyrec!(L, M, axes(L, 1), view(P, axes(D, 1)))
+        else
+            copyrec!(L, M, view(P, axes(D, 1)), axes(L, 2))
         end
         #
         # Use only the first `rank` columns/rows for the solve
         #
-        rD₁₁ = view(D₁₁, oneto(rank), oneto(rank))
+        rD = view(D, 1:rank, 1:rank)
+        rd = view(d, 1:rank)
 
         if UPLO === :L
-            rL₂₁ = view(L₂₁, oneto(na), oneto(rank))
+            rL = view(L, :, 1:rank)
+            side = Val(:R)
         else
-            rL₂₁ = view(L₂₁, oneto(rank), oneto(na))
+            rL = view(L, 1:rank, :)
+            side = Val(:L)
         end
         #
-        #     rL₂₁ ← rL₂₁ rD₁₁⁻ᴴ
+        #     rL ← rL rD⁻ᴴ       (Cholesky)
+        #     rL ← rL rD⁻ᴴ rd⁻¹  (LDLt)
         #
-        if UPLO === :L
-            trsm!(Val(:R), Val(:L), Val(:C), Val(:N), one(T), rD₁₁, rL₂₁)
-        else
-            trsm!(Val(:L), Val(:U), Val(:C), Val(:N), one(T), rD₁₁, rL₂₁)
-        end
-        #
-        #     S₂₂ ← S₂₂ - rL₂₁ rL₂₁ᴴ
-        #
-        if UPLO === :L
-            syrk!(Val(:L), Val(:N), -one(real(T)), rL₂₁, one(real(T)), S₂₂)
-        else
-            syrk!(Val(:U), Val(:C), -one(real(T)), rL₂₁, one(real(T)), S₂₂)
-        end
-    elseif ispositive(na) && iszero(rank)
-        # Rank-deficient: just copy F₂₂ to update matrix
-        ns += one(I)
-        strt = Mptr[ns]
-        stop = Mptr[ns + one(I)] = strt + na * na
-        S₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
-        copytri!(S₂₂, F₂₂, uplo)
+        trsm!(side, uplo, Val(:C), diag, one(T), rD, rL)
+        cdiv!(side, diag, rL, rd)
     end
 
-    return ns, info
+    return info, rank
 end
 
-# ============================= cholpiv_bwd! =============================
+# ============================= chol_piv_bwd! =============================
 
-function cholpiv_bwd!(
+function chol_piv_bwd!(
         mptr::AbstractVector{I},
         mval::AbstractVector{I},
         fval::AbstractVector{I},
@@ -271,7 +371,7 @@ function cholpiv_bwd!(
     ns = zero(I); mptr[one(I)] = one(I)
 
     for j in reverse(vertices(res))
-        ns = cholpiv_bwd_loop!(
+        ns = chol_piv_bwd_loop!(
             mptr, mval, fval, Dptr, Lptr, Lval,
             res, rel, sep, chd, ns, j, invp, Fval, uplo
         )
@@ -280,7 +380,7 @@ function cholpiv_bwd!(
     return
 end
 
-function cholpiv_bwd_loop!(
+function chol_piv_bwd_loop!(
         mptr::AbstractVector{I},
         mval::AbstractVector{I},
         fval::AbstractVector{I},
@@ -347,7 +447,7 @@ function cholpiv_bwd_loop!(
         #     mᵢ ← Rᵢᵀ f
         #
         ns += one(I)
-        cholpiv_bwd_update!(f, mptr, mval, rel, ns, i)
+        chol_piv_bwd_update!(f, mptr, mval, rel, ns, i)
     end
     #
     # s₂ is the sorting permutation for sep(j) by Q-index
@@ -399,7 +499,7 @@ function cholpiv_bwd_loop!(
     return ns
 end
 
-function cholpiv_bwd_update!(
+function chol_piv_bwd_update!(
         f::AbstractVector{I},
         ptr::AbstractVector{I},
         val::AbstractVector{I},
@@ -429,9 +529,9 @@ function cholpiv_bwd_update!(
     return
 end
 
-# ============================= cholpiv_rel! =============================
+# ============================= chol_piv_rel! =============================
 
-function cholpiv_rel!(
+function chol_piv_rel!(
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
         rel::AbstractGraph{I},
@@ -439,13 +539,13 @@ function cholpiv_rel!(
     ) where {I <: Integer}
 
     for j in vertices(res)
-        cholpiv_rel_loop!(res, sep, rel, chd, j)
+        chol_piv_rel_loop!(res, sep, rel, chd, j)
     end
 
     return
 end
 
-function cholpiv_rel_loop!(
+function chol_piv_rel_loop!(
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
         rel::AbstractGraph{I},
@@ -501,6 +601,290 @@ function cholpiv_rel_loop!(
             end
 
             targets(rel)[p] = q
+        end
+    end
+
+    return
+end
+
+function chol_piv_factor!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        W::AbstractVector{T},
+        d::AbstractVector{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        R::DynamicRegularization,
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+    ) where {T, UPLO, DIAG}
+    @assert size(D, 1) == size(D, 2)
+    @assert length(D) <= length(W)
+
+    if DIAG === :U
+        @assert length(d) == size(D, 1)
+    end
+
+    if UPLO === :L
+        @assert size(L, 2) == size(D, 1)
+    else
+        @assert size(L, 1) == size(D, 1)
+    end
+
+    pstrf!(uplo, W, D, d, P, S, R, -one(real(T)), diag)
+
+    if !isempty(L)
+        M = reshape(view(W, 1:length(L)), size(L))
+        copyrec!(M, L)
+
+        if UPLO === :L
+            copyrec!(L, M, axes(L, 1), view(P, axes(D, 1)))
+            side = Val(:R)
+        else
+            copyrec!(L, M, view(P, axes(D, 1)), axes(L, 2))
+            side = Val(:L)
+        end
+
+        trsm!(side, uplo, Val(:C), diag, one(T), D, L)
+        cdiv!(side, diag, L, d)
+    end
+
+    return 0, size(D, 1)
+end
+
+function chol_piv_factor!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        W::AbstractVector{T},
+        d::AbstractVector{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        R::GMW81,
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+    ) where {T, UPLO, DIAG}
+    if UPLO === :L
+        @assert size(D, 1) == size(D, 2) == size(L, 2)
+    else
+        @assert size(D, 1) == size(D, 2) == size(L, 1)
+    end
+
+    @inbounds for j in axes(D, 1)
+        P[j] = j
+
+        if UPLO === :L
+            d[j] = zero(real(T))
+        else
+            d[j] = real(D[j, j])
+        end
+    end
+
+    @inbounds for bstrt in 1:THRESHOLD:size(D, 1)
+        bstop = min(bstrt + THRESHOLD - 1, size(D, 1))
+
+        chol_piv_factor_block!(D, L, d, P, S, R, bstrt, bstop, uplo, diag)
+
+        if bstop < size(D, 1)
+            Drr = view(D, bstop + 1:size(D, 1), bstop + 1:size(D, 1))
+            dbb = view(d, bstrt:bstop)
+
+            if UPLO === :L
+                Drb = view(D, bstop + 1:size(D, 1), bstrt:bstop)
+                syrk!(uplo, Val(:N), -one(real(T)), W, Drb, dbb, one(real(T)), Drr, diag)
+
+                if !isempty(L)
+                    Lnb = view(L, :, bstrt:bstop)
+                    Lnr = view(L, :, bstop + 1:size(D, 1))
+                    gemm!(Val(:N), Val(:C), -one(T), W, Lnb, Drb, dbb, one(T), Lnr, diag)
+                end
+
+                @inbounds for j in bstop + 1:size(D, 1)
+                    d[j] = zero(real(T))
+                end
+            else
+                Drb = view(D, bstrt:bstop, bstop + 1:size(D, 1))
+                syrk!(uplo, Val(:C), -one(real(T)), W, Drb, dbb, one(real(T)), Drr, diag)
+
+                if !isempty(L)
+                    Lnb = view(L, bstrt:bstop, :)
+                    Lnr = view(L, bstop + 1:size(D, 1), :)
+                    gemm!(Val(:C), Val(:N), -one(T), W, Drb, Lnb, dbb, one(T), Lnr, diag)
+                end
+            end
+        end
+    end
+
+    return 0, size(D, 1)
+end
+
+function chol_piv_factor_block!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        d::AbstractVector{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        R::GMW81,
+        bstrt::Int,
+        bstop::Int,
+        ::Val{:L},
+        ::Val{DIAG},
+    ) where {T, DIAG}
+
+    @inbounds for j in bstrt:bstop
+        maxval = abs(real(D[j, j]) - d[j])
+        maxind = j
+
+        for i in j + 1:size(D, 1)
+            Aii = abs(real(D[i, i]) - d[i])
+
+            if Aii > maxval
+                maxval = Aii
+                maxind = i
+            end
+        end
+
+        if maxind != j
+            swaptri!(D, j, maxind, Val(:L))
+            swapcol!(L, j, maxind)
+            swaprec!(P, j, maxind)
+            swaprec!(d, j, maxind)
+            swaprec!(S, j, maxind)
+        end
+
+        for k in bstrt:j - 1
+            if DIAG === :U
+                cDkj = d[k] * conj(D[j, k])
+            else
+                cDkj = conj(D[j, k])
+            end
+
+            for i in j + 1:size(D, 1)
+                D[i, j] -= D[i, k] * cDkj
+            end
+        end
+
+        for k in bstrt:j - 1
+            if DIAG === :U
+                cDkj = d[k] * conj(D[j, k])
+            else
+                cDkj = conj(D[j, k])
+            end
+
+            for i in axes(L, 1)
+                L[i, j] -= L[i, k] * cDkj
+            end
+        end
+
+        Djj = real(D[j, j]) - real(d[j])
+
+        Djj = regularize(R, S, D, L, Djj, j, Val(:L))
+
+        if DIAG === :U
+            d[j] = Djj
+        else
+            D[j, j] = Djj = sqrt(Djj)
+        end
+
+        iDjj = inv(Djj)
+
+        for i in j + 1:size(D, 1)
+            D[i, j] *= iDjj
+        end
+
+        for i in axes(L, 1)
+            L[i, j] *= iDjj
+        end
+
+        for i in j + 1:size(D, 1)
+            if DIAG === :N
+                d[i] += abs2(D[i, j])
+            else
+                d[i] += Djj * abs2(D[i, j])
+            end
+        end
+    end
+
+    return
+end
+
+function chol_piv_factor_block!(
+        D::AbstractMatrix{T},
+        L::AbstractMatrix{T},
+        d::AbstractVector{T},
+        P::AbstractVector,
+        S::AbstractVector{T},
+        R::GMW81,
+        bstrt::Int,
+        bstop::Int,
+        ::Val{:U},
+        ::Val{DIAG},
+    ) where {T, DIAG}
+
+    @inbounds for j in bstrt:bstop
+        maxval = abs(d[j])
+        maxind = j
+
+        for i in j + 1:size(D, 1)
+            Aii = abs(d[i])
+
+            if Aii > maxval
+                maxval = Aii
+                maxind = i
+            end
+        end
+
+        if maxind != j
+            swaptri!(D, j, maxind, Val(:U))
+            swaprow!(L, j, maxind)
+            swaprec!(P, j, maxind)
+            swaprec!(d, j, maxind)
+            swaprec!(S, j, maxind)
+        end
+
+        for i in j + 1:size(D, 1)
+            for k in bstrt:j - 1
+                if DIAG === :U
+                    D[j, i] -= D[k, i] * d[k] * conj(D[k, j])
+                else
+                    D[j, i] -= D[k, i] * conj(D[k, j])
+                end
+            end
+        end
+
+        for i in axes(L, 2)
+            for k in bstrt:j - 1
+                if DIAG === :U
+                    L[j, i] -= L[k, i] * d[k] * conj(D[k, j])
+                else
+                    L[j, i] -= L[k, i] * conj(D[k, j])
+                end
+            end
+        end
+
+        Djj = real(d[j])
+
+        Djj = regularize(R, S, D, L, Djj, j, Val(:U))
+
+        if DIAG === :U
+            d[j] = Djj
+        else
+            D[j, j] = Djj = sqrt(Djj)
+        end
+
+        iDjj = inv(Djj)
+
+        for i in j + 1:size(D, 1)
+            D[j, i] *= iDjj
+
+            if DIAG === :N
+                d[i] -= abs2(D[j, i])
+            else
+                d[i] -= Djj * abs2(D[j, i])
+            end
+        end
+
+        for i in axes(L, 2)
+            L[j, i] *= iDjj
         end
     end
 

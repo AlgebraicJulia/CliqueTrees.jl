@@ -1,3 +1,17 @@
+function permuteto(::Type{T}, v::AbstractVector, perm::AbstractVector) where {T}
+    out = FVector{T}(undef, length(v))
+
+    @inbounds for i in eachindex(perm)
+        out[i] = v[perm[i]]
+    end
+
+    return out
+end
+
+function permuteto(::Type{T}, v::AbstractFill, ::AbstractVector) where {T}
+    return convert(AbstractFill{T}, v)
+end
+
 function char(::Val{:N})
     return 'N'
 end
@@ -352,232 +366,16 @@ function isforward(UPLO, TRANS, SIDE)
            UPLO === :U && (TRANS !== :N && SIDE === :L || TRANS === :N && SIDE === :R)
 end
 
-function copy_D!(
-        Dptr::AbstractVector{I},
-        Dval::AbstractVector{T},
-        res::AbstractGraph{I},
-        A::SparseMatrixCSC,
-    ) where {T, I <: Integer}
-
-    nwr = one(I)
-
-    @inbounds for j in vertices(res)
-        swr = nwr
-        nwr = pointers(res)[j + one(I)]
-        nn = nwr - swr
-
-        for vr in swr:nwr - one(I)
-            for pa in nzrange(A, vr)
-                wa = rowvals(A)[pa]
-                wa < swr && continue
-                wa < nwr || break
-
-                pj = Dptr[j] + (vr - swr) * nn + (wa - swr)
-                Dval[pj] = nonzeros(A)[pa]
-            end
-        end
-    end
-
-    return
-end
-
-function copy_L!(
-        Lptr::AbstractVector{I},
-        Lval::AbstractVector{T},
-        res::AbstractGraph{I},
-        sep::AbstractGraph{I},
-        A::SparseMatrixCSC,
-        ::Val{:L},
-    ) where {T, I <: Integer}
-
-    npr = one(I)
-
-    @inbounds for j in vertices(res)
-        spr = npr
-        npr = pointers(sep)[j + one(I)]
-        spr >= npr && continue
-
-        na = npr - spr
-        swr = targets(sep)[spr]
-        nwr = targets(sep)[npr - one(I)] + one(I)
-
-        wr = zero(I)
-
-        for vr in neighbors(res, j)
-            pr = spr
-
-            for pa in nzrange(A, vr)
-                wa = rowvals(A)[pa]
-                wa < swr && continue
-                wa < nwr || break
-
-                while targets(sep)[pr] < wa
-                    pr += one(I)
-                end
-
-                pj = Lptr[j] + wr * na + (pr - spr)
-                Lval[pj] = nonzeros(A)[pa]
-                pr += one(I)
-            end
-
-            wr += one(I)
-        end
-    end
-
-    return
-end
-
-function copy_L!(
-        Lptr::AbstractVector{I},
-        Lval::AbstractVector{T},
-        res::AbstractGraph{I},
-        sep::AbstractGraph{I},
-        A::SparseMatrixCSC,
-        ::Val{:U},
-    ) where {T, I <: Integer}
-
-    nwr = one(I)
-
-    @inbounds for j in vertices(res)
-        swr = nwr
-        nwr = pointers(res)[j + one(I)]
-        nn = nwr - swr
-
-        wr = zero(I)
-
-        for vr in neighbors(sep, j)
-            for pa in nzrange(A, vr)
-                wa = rowvals(A)[pa]
-                wa < swr && continue
-                wa < nwr || break
-
-                pj = Lptr[j] + wr * nn + (wa - swr)
-                Lval[pj] = nonzeros(A)[pa]
-            end
-
-            wr += one(I)
-        end
-    end
-
-    return
-end
-
-function flat_D!(
-        Dptr::AbstractVector{I},
-        Aval::AbstractVector,
-        res::AbstractGraph{I},
-        A::SparseMatrixCSC,
-    ) where {I <: Integer}
-
-    nwr = one(I)
-
-    @inbounds for j in vertices(res)
-        pj = Dptr[j] - one(I)
-
-        swr = nwr
-        nwr = pointers(res)[j + one(I)]
-
-        for vr in swr:nwr - one(I)
-            wr = swr
-
-            for pa in nzrange(A, vr)
-                wa = rowvals(A)[pa]
-                wa < swr && continue
-                wa < nwr || break
-
-                pj += wa - wr + one(I); Aval[pa] = pj; wr = wa + one(I)
-            end
-
-            pj += nwr - wr
-        end
-    end
-
-    return
-end
-
-function flat_L!(
-        Lptr::AbstractVector{I},
-        Aval::AbstractVector,
-        res::AbstractGraph{I},
-        sep::AbstractGraph{I},
-        A::SparseMatrixCSC,
-        uplo::Val{:L},
-    ) where {I <: Integer}
-
-    npr = one(I)
-
-    @inbounds for j in vertices(res)
-        pj = Lptr[j] - one(I)
-
-        spr = npr
-        npr = pointers(sep)[j + one(I)]
-        spr >= npr && continue
-
-        swr = targets(sep)[spr]
-        nwr = targets(sep)[npr - one(I)] + one(I)
-
-        for vr in neighbors(res, j)
-            pr = spr
-
-            for pa in nzrange(A, vr)
-                wr = targets(sep)[pr]
-                wa = rowvals(A)[pa]
-                wa < swr && continue
-                wa < nwr || break
-
-                while wr < wa
-                    pj += one(I); pr += one(I); wr = targets(sep)[pr]
-                end
-
-                pj += one(I); Aval[pa] = -pj; pr += one(I)
-            end
-
-            pj += npr - pr
-        end
-    end
-
-    return
-end
-
-function flat_L!(
-        Lptr::AbstractVector{I},
-        Aval::AbstractVector,
-        res::AbstractGraph{I},
-        sep::AbstractGraph{I},
-        A::SparseMatrixCSC,
-        uplo::Val{:U},
-    ) where {I <: Integer}
-
-    nwr = one(I)
-
-    @inbounds for j in vertices(res)
-        pj = Lptr[j] - one(I)
-
-        swr = nwr
-        nwr = pointers(res)[j + one(I)]
-
-        for vr in neighbors(sep, j)
-            wr = swr
-
-            for pa in nzrange(A, vr)
-                wa = rowvals(A)[pa]
-                wa < swr && continue
-                wa < nwr || break
-
-                pj += wa - wr + one(I); Aval[pa] = -pj; wr = wa + one(I)
-            end
-
-            pj += nwr - wr
-        end
-    end
-
-    return
-end
-
 function swaprec!(v::AbstractVector, j::Integer, k::Integer)
     @inbounds v[j], v[k] = v[k], v[j]
+
     return
 end
+
+function swaprec!(::AbstractFill, ::Integer, ::Integer)
+    return
+end
+
 
 # Hermitian swap: exchange rows/cols j and k for Hermitian matrix stored in lower triangle
 function swaptri!(A::AbstractMatrix, j::Integer, k::Integer, ::Val{:L})
@@ -644,3 +442,53 @@ function swaprow!(A::AbstractMatrix, j::Integer, k::Integer)
 
     return
 end
+
+
+function cdiv!(::Val, ::Val{:N}, ::AbstractMatrix, ::AbstractVector)
+    return
+end
+
+function cdiv!(::Val{:R}, ::Val{:U}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+    @inbounds for j in axes(A, 2)
+        idj = inv(d[j])
+
+        for i in axes(A, 1)
+            A[i, j] *= idj
+        end
+    end
+
+    return
+end
+
+function cdiv!(::Val{:L}, ::Val{:U}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+    @inbounds for j in axes(A, 2)
+        for i in axes(A, 1)
+            A[i, j] *= inv(d[i])
+        end
+    end
+
+    return
+end
+
+function cmul!(::Val{:R}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+    @inbounds for j in axes(A, 2)
+        dj = d[j]
+
+        for i in axes(A, 1)
+            A[i, j] *= dj
+        end
+    end
+
+    return
+end
+
+function cmul!(::Val{:L}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+    @inbounds for j in axes(A, 2)
+        for i in axes(A, 1)
+            A[i, j] *= d[i]
+        end
+    end
+
+    return
+end
+

@@ -63,3 +63,52 @@ end
 
     return list
 end
+
+@propagate_inbounds function Base.replace!(list::DoublyLinkedList{I}, (i, j)::Pair{I}) where {I}
+    @boundscheck checkbounds(list.prev, i)
+    @boundscheck checkbounds(list.prev, j)
+    @inbounds p = list.prev[j] = list.prev[i]
+    @inbounds n = list.next[j] = list.next[i]
+
+    if ispositive(p)
+        @inbounds list.next[p] = j
+    else
+        @inbounds list.head[] = j
+    end
+
+    if ispositive(n)
+        @inbounds list.prev[n] = j
+    end
+
+    return list
+end
+
+@propagate_inbounds function insertafter!(list::DoublyLinkedList{I}, i::I, j::I) where {I}
+    @boundscheck checkbounds(list.prev, i)
+    @boundscheck checkbounds(list.prev, j)
+    @inbounds n = list.next[j] = list.next[i]
+    @inbounds list.next[i] = j
+    @inbounds list.prev[j] = i
+
+    if ispositive(n)
+        @inbounds list.prev[n] = j
+    end
+
+    return list
+end
+
+@propagate_inbounds function insertbefore!(list::DoublyLinkedList{I}, i::I, j::I) where {I}
+    @boundscheck checkbounds(list.prev, i)
+    @boundscheck checkbounds(list.prev, j)
+    @inbounds p = list.prev[j] = list.prev[i]
+    @inbounds list.next[j] = i
+    @inbounds list.prev[i] = j
+
+    if ispositive(p)
+        @inbounds list.next[p] = j
+    else
+        @inbounds list.head[] = j
+    end
+
+    return list
+end

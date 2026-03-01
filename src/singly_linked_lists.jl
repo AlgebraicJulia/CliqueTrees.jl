@@ -36,4 +36,10 @@ end
     return list
 end
 
-
+@propagate_inbounds function insertafter!(list::SinglyLinkedList{I}, i::I, j::I) where {I}
+    @boundscheck checkbounds(list.next, i)
+    @boundscheck checkbounds(list.next, j)
+    @inbounds list.next[j] = list.next[i]
+    @inbounds list.next[i] = j
+    return list
+end

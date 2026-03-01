@@ -1378,7 +1378,6 @@ end
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.cholesky(M)
     @test_opt target_modules = (CliqueTrees,) CliqueTrees.ldlt(M)
 
-    # test flatindices
     for name in ("685_bus", "bcsstk26")
         M = readmatrix(name); n = size(M, 2)
         b = rand(n)
@@ -1423,54 +1422,79 @@ end
     end
 end
 
+@testset "condition number" begin
+    A = readmatrix("bcsstk26")
+    F = cholesky!(ChordalCholesky(A))
+
+    for p in (1, Inf)
+        @test cond(F, p) ≈ cond(A, p) rtol=1
+        @test cond(F.L, p) ≈ cond(sparse(F.L), p) rtol=1
+        @test cond(F.U, p) ≈ cond(sparse(F.U), p) rtol=1
+    end
+
+    F = ldlt!(ChordalLDLt(A))
+
+    for p in (1, Inf)
+        @test cond(F, p) ≈ cond(A, p) rtol=1
+        @test cond(F.L, p) ≈ cond(sparse(F.L), p) rtol=1
+        @test cond(F.U, p) ≈ cond(sparse(F.U), p) rtol=1
+    end
+end
+
 @testset "regularization" begin
-    A = readmatrix("bcsstk08")
-    A = laplacian_matrix(CliqueTrees.simplegraph(A))
-    A -= 0.0001 * I
-    signs = ones(Int, size(A, 1))
+    A = readmatrix("msc01440")
+    A -= 1.0001 * minimum(eigvals(Matrix(A))) * I
+    signs = ones(size(A, 1))
 
     for UPLO in (:L, :U)
-        F = ldlt!(ChordalLDLt{UPLO}(A); signs, check=false)
-        @test !issuccess(F)
+        for P in (NoPivot, RowMaximum)
+            for R in (GMW81, SE99)
+                F = ChordalCholesky{UPLO}(A)
+                cholesky!(F, P(); reg=R(F))
+                @test A ≈ Matrix(F) rtol=1e-3
 
-        for Reg in (DynamicRegularization, GMW81)
-            F = ChordalLDLt{UPLO}(A)
-            reg = Reg(F)
-            ldlt!(F; signs, reg, check=false)
-            @test issuccess(F)
+                F = ChordalLDLt{UPLO}(A)
+                ldlt!(F, P(); signs, reg=R(F))
+                @test A ≈ Matrix(F) rtol=1e-3
+            end
+        end
+    end
 
-            b = randn(size(A, 1))
-            x = F \ b
-            AA = F.P' * F.L * F.D * F.L' * F.P
-            @test norm(AA * x - b) / norm(b) < 1e-6
-            @test norm(AA - A) / norm(A) < 1e-3
+    C = readmatrix("662_bus")
+    C -= 1.0001 * minimum(eigvals(Matrix(C))) * I
+    B = sprand(size(A, 1), size(C, 1), .001)
 
-            F = ChordalLDLt{UPLO}(A)
-            reg = Reg(F)
-            ldlt!(F, RowMaximum(); signs, reg, check=false)
-            @test issuccess(F)
+    P = randperm(size(A, 1) + size(C, 1))
+    A = [A B; B' -C][P, P]
+    signs = [signs; -signs][P]
 
-            b = randn(size(A, 1))
-            x = F \ b
-            AA = F.P' * F.L * F.D * F.L' * F.P
-            @test norm(AA * x - b) / norm(b) < 1e-6
-            @test norm(AA - A) / norm(A) < 1e-3
+    for UPLO in (:L, :U)
+        for P in (NoPivot, RowMaximum)
+            for R in (GMW81, SE99)
+                F = ChordalLDLt{UPLO}(A)
+                ldlt!(F, P(); signs, reg=R(F))
+                @test A ≈ Matrix(F) rtol=1e-3
+            end
         end
     end
 
     A = [
-        1 1         2
-        1 1 + 1e-20 3
-        2 3         1
+        1 1 2
+        1 1 3
+        2 3 1
     ]
 
     signs = [1, 1, 1]
 
-    F = ChordalLDLt(A)
-    reg = GMW81(F)
-    ldlt!(F; signs, reg)
+    for UPLO in (:L, :U)
+        F = ChordalCholesky{UPLO}(A)
+        cholesky!(F; reg=GMW81(F))
+        @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
 
-    @test diag(F.D) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+        F = ChordalLDLt{UPLO}(A)
+        ldlt!(F; signs, reg=GMW81(F))
+        @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+    end
 end
 
 @testset "selinv" begin

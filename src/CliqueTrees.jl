@@ -84,6 +84,8 @@ export Clique, separator, residual
 # Clique Trees
 export CliqueTree, cliquetree, treewidth, treefill, separatorwidth, separators
 
+# Supernode Reordering (Partition Refinement)
+
 # Abstract Trees
 export rootindices, ancestorindices
 

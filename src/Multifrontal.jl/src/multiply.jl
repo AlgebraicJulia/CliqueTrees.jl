@@ -24,97 +24,84 @@ function Base.:*(A::SparseMatrixCSC, B::AdjOrTransPerm)
     return A / parent(B)
 end
 
-# --- ChordalCholesky ---
+# --- ChordalFactorization ---
 
-function Base.:*(F::ChordalCholesky{UPLO, T}, B::AbstractVecOrMat) where {UPLO, T}
+function Base.:*(F::ChordalFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
     return lmul!(F, Array{T}(B))
 end
 
-function Base.:*(B::AbstractMatrix, F::ChordalCholesky{UPLO, T}) where {UPLO, T}
-    return rmul!(Matrix{T}(B), F)
-end
-
-# --- ChordalLDLt ---
-
-function Base.:*(F::ChordalLDLt{UPLO, T}, B::AbstractVecOrMat) where {UPLO, T}
-    return lmul!(F, Array{T}(B))
-end
-
-function Base.:*(B::AbstractMatrix, F::ChordalLDLt{UPLO, T}) where {UPLO, T}
+function Base.:*(B::AbstractMatrix, F::ChordalFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), F)
 end
 
 # --- ChordalTriangular ---
 
-function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractVector) where {UPLO, DIAG, T}
+function Base.:*(A::MaybeAdjOrTransTri{DIAG, UPLO, T}, B::AbstractVector) where {DIAG, UPLO, T}
     return lmul!(A, Vector{T}(B))
 end
 
-function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractZerosVector) where {UPLO, DIAG, T}
+function Base.:*(A::MaybeAdjOrTransTri{DIAG, UPLO, T}, B::AbstractZerosVector) where {DIAG, UPLO, T}
     return Zeros{T}(size(A, 1))
 end
 
-function Base.:*(A::Transpose{T, ChordalTriangular{UPLO, DIAG, T, I, Val}}, B::AbstractZerosVector{T}) where {UPLO, DIAG, T <: Real, I, Val}
+function Base.:*(A::Transpose{T, ChordalTriangular{DIAG, UPLO, T, I, Val}}, B::AbstractZerosVector{T}) where {DIAG, UPLO, T <: Real, I, Val}
     return Zeros{T}(size(A, 1))
 end
 
-function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractMatrix) where {UPLO, DIAG, T}
+function Base.:*(A::MaybeAdjOrTransTri{DIAG, UPLO, T}, B::AbstractMatrix) where {DIAG, UPLO, T}
     return lmul!(A, Matrix{T}(B))
 end
 
-function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AbstractZerosMatrix) where {UPLO, DIAG, T}
+function Base.:*(A::MaybeAdjOrTransTri{DIAG, UPLO, T}, B::AbstractZerosMatrix) where {DIAG, UPLO, T}
     return Zeros{T}(size(A, 1), size(B, 2))
 end
 
-function Base.:*(A::MaybeAdjOrTransTri{UPLO, DIAG, T}, B::AdjOrTrans{<:Any, <:AbstractZerosVector}) where {UPLO, DIAG, T}
+function Base.:*(A::MaybeAdjOrTransTri{DIAG, UPLO, T}, B::AdjOrTrans{<:Any, <:AbstractZerosVector}) where {DIAG, UPLO, T}
     return Zeros{T}(size(A, 1), size(B, 2))
 end
 
-function Base.:*(B::AbstractMatrix, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+function Base.:*(B::AbstractMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), A)
 end
 
-function Base.:*(B::AbstractZerosMatrix, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+function Base.:*(B::AbstractZerosMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return Zeros{T}(size(B, 1), size(A, 2))
 end
 
-function Base.:*(B::Adjoint{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+function Base.:*(B::Adjoint{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), A)
 end
 
-function Base.:*(B::Adjoint{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+function Base.:*(B::Adjoint{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return Zeros{T}(1, size(A, 2))
 end
 
-function Base.:*(B::Transpose{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+function Base.:*(B::Transpose{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), A)
 end
 
-function Base.:*(B::Transpose{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri{UPLO, DIAG, T}) where {UPLO, DIAG, T}
+function Base.:*(B::Transpose{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return Zeros{T}(1, size(A, 2))
 end
 
 # ================================ lmul! ================================
 
-# --- ChordalCholesky ---
+# --- ChordalFactorization ---
 
-function LinearAlgebra.lmul!(F::ChordalCholesky{UPLO, T}, B::AbstractVecOrMat) where {UPLO, T}
+function LinearAlgebra.lmul!(F::ChordalFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
     @assert size(F, 1) == size(B, 1)
     C = FArray{T}(undef, size(B))
-    return ldiv!(B, F.P, lmul!(F.L, lmul!(F.U, mul!(C, F.P, B))))
-end
 
-# --- ChordalLDLt ---
-
-function LinearAlgebra.lmul!(F::ChordalLDLt{UPLO, T}, B::AbstractVecOrMat) where {UPLO, T}
-    @assert size(F, 1) == size(B, 1)
-    C = FArray{T}(undef, size(B))
-    return ldiv!(B, F.P, lmul!(F.L, lmul!(F.D, lmul!(F.U, mul!(C, F.P, B)))))
+    if DIAG === :N
+        return ldiv!(B, F.P, lmul!(F.L, lmul!(F.U, mul!(C, F.P, B))))
+    else
+        return ldiv!(B, F.P, lmul!(F.L, lmul!(F.D, lmul!(F.U, mul!(C, F.P, B)))))
+    end
 end
 
 # --- ChordalTriangular ---
 
-function LinearAlgebra.lmul!(A::MaybeAdjOrTransTri{UPLO, DIAG}, B::AbstractVecOrMat) where {UPLO, DIAG}
+function LinearAlgebra.lmul!(A::MaybeAdjOrTransTri{DIAG, UPLO}, B::AbstractVecOrMat) where {DIAG, UPLO}
     @assert size(A, 1) == size(B, 1)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
@@ -123,25 +110,22 @@ end
 
 # ================================ rmul! ================================
 
-# --- ChordalCholesky ---
+# --- ChordalFactorization ---
 
-function LinearAlgebra.rmul!(B::AbstractMatrix, F::ChordalCholesky{UPLO, T}) where {UPLO, T}
+function LinearAlgebra.rmul!(B::AbstractMatrix, F::ChordalFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     @assert size(F, 1) == size(B, 2)
     C = FMatrix{T}(undef, size(B))
-    return mul!(B, rmul!(rmul!(rdiv!(C, B, F.P), F.L), F.U), F.P)
-end
 
-# --- ChordalLDLt ---
-
-function LinearAlgebra.rmul!(B::AbstractMatrix, F::ChordalLDLt{UPLO, T}) where {UPLO, T}
-    @assert size(F, 1) == size(B, 2)
-    C = FMatrix{T}(undef, size(B))
-    return mul!(B, rmul!(rmul!(rmul!(rdiv!(C, B, F.P), F.L), F.D), F.U), F.P)
+    if DIAG === :N
+        return mul!(B, rmul!(rmul!(rdiv!(C, B, F.P), F.L), F.U), F.P)
+    else
+        return mul!(B, rmul!(rmul!(rmul!(rdiv!(C, B, F.P), F.L), F.D), F.U), F.P)
+    end
 end
 
 # --- ChordalTriangular ---
 
-function LinearAlgebra.rmul!(B::AbstractMatrix, A::MaybeAdjOrTransTri{UPLO, DIAG}) where {UPLO, DIAG}
+function LinearAlgebra.rmul!(B::AbstractMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO}) where {DIAG, UPLO}
     @assert size(A, 1) == size(B, 2)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
@@ -149,6 +133,18 @@ function LinearAlgebra.rmul!(B::AbstractMatrix, A::MaybeAdjOrTransTri{UPLO, DIAG
 end
 
 # ================================= mul! ================================
+
+# --- ChordalFactorization ---
+
+function LinearAlgebra.mul!(C::AbstractVecOrMat, F::ChordalFactorization, B::AbstractVecOrMat)
+    lmul!(F, copyrec!(C, B))
+end
+
+# --- ChordalTriangular ---
+
+function LinearAlgebra.mul!(C::AbstractVecOrMat, A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
+    lmul!(A, copyrec!(C, B))
+end
 
 # --- Permutation ---
 
@@ -350,12 +346,12 @@ function mul_fwd_loop!(
         F₂ = view(F, nn + one(I):nj)
     elseif SIDE === :L
         F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
-        F₁ = view(F, oneto(nn), :)
-        F₂ = view(F, nn + one(I):nj, :)
+        F₁ = view(F, oneto(nn), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
     else
         F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
-        F₁ = view(F, :, oneto(nn))
-        F₂ = view(F, :, nn + one(I):nj)
+        F₁ = view(F, oneto(nrhs), oneto(nn))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
     end
     #
     # B is part of the L factor
@@ -382,9 +378,9 @@ function mul_fwd_loop!(
     if C isa AbstractVector
         C₁ = view(C, neighbors(res, j))
     elseif SIDE === :L
-        C₁ = view(C, neighbors(res, j), :)
+        C₁ = view(C, neighbors(res, j), oneto(nrhs))
     else
-        C₁ = view(C, :, neighbors(res, j))
+        C₁ = view(C, oneto(nrhs), neighbors(res, j))
     end
     #
     #     F ← 0
@@ -530,9 +526,9 @@ function mul_bwd_loop!(
     if C isa AbstractVector
         C₁ = view(C, neighbors(res, j))
     elseif SIDE === :L
-        C₁ = view(C, neighbors(res, j), :)
+        C₁ = view(C, neighbors(res, j), oneto(nrhs))
     else
-        C₁ = view(C, :, neighbors(res, j))
+        C₁ = view(C, oneto(nrhs), neighbors(res, j))
     end
     #
     # F is the frontal matrix at node j
@@ -547,12 +543,12 @@ function mul_bwd_loop!(
         F₂ = view(F, nn + one(I):nj)
     elseif SIDE === :L
         F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
-        F₁ = view(F, oneto(nn), :)
-        F₂ = view(F, nn + one(I):nj, :)
+        F₁ = view(F, oneto(nn), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
     else
         F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
-        F₁ = view(F, :, oneto(nn))
-        F₂ = view(F, :, nn + one(I):nj)
+        F₁ = view(F, oneto(nrhs), oneto(nn))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
     end
     #
     #     F₁ ← C₁

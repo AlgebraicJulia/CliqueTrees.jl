@@ -111,6 +111,10 @@ Multifrontal.ChordalCholesky
 Multifrontal.ChordalLDLt
 Multifrontal.ChordalTriangular
 Multifrontal.Permutation
+Multifrontal.AbstractRegularization
+Multifrontal.DynamicRegularization
+Multifrontal.GMW81
+Multifrontal.SE99
 Multifrontal.symbolic
 Multifrontal.cholesky!
 Multifrontal.ldlt!

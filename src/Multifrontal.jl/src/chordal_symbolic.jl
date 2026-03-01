@@ -33,7 +33,7 @@ end
 Construct a symbolic factorization. The keyword arguments
 `kw` are passed to the function [`cliquetree`](@ref).
 
-### Basic Usage
+### Example
 
 ```julia-repl
 julia> using CliqueTrees.Multifrontal, LinearAlgebra
@@ -366,9 +366,117 @@ function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Int
     return zero(I)
 end
 
-function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, uplo::Val{UPLO}) where {I, UPLO}
+function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where {I}
     P = zeros(I, nnz(B))
-    flat_D!(S.Dptr, P, S.res, B)
-    flat_L!(S.Lptr, P, S.res, S.sep, B, uplo)
+    res = S.res
+    sep = S.sep
+
+    rhi = one(I)
+
+    @inbounds for j in vertices(res)
+        pj = S.Dptr[j] - one(I)
+        rlo = rhi
+        rhi = pointers(res)[j + one(I)]
+
+        for col in rlo:rhi - one(I)
+            row = rlo
+
+            for p in nzrange(B, col)
+                wa = rowvals(B)[p]
+                wa < rlo && continue
+                wa >= rhi && break
+                pj += wa - row + one(I)
+                P[p] = pj
+                row = wa + one(I)
+            end
+
+            pj += rhi - row
+        end
+    end
+
+    shi = one(I)
+
+    @inbounds for j in vertices(res)
+        pj = S.Lptr[j] - one(I)
+        slo = shi
+        shi = pointers(sep)[j + one(I)]
+        slo >= shi && continue
+
+        swr = targets(sep)[slo]
+        nwr = targets(sep)[shi - one(I)] + one(I)
+
+        for col in neighbors(res, j)
+            k = slo
+
+            for p in nzrange(B, col)
+                row = targets(sep)[k]
+                wa = rowvals(B)[p]
+                wa < swr && continue
+                wa >= nwr && break
+
+                while row < wa
+                    pj += one(I)
+                    k += one(I)
+                    row = targets(sep)[k]
+                end
+
+                pj += one(I)
+                P[p] = -pj
+                k += one(I)
+            end
+
+            pj += shi - k
+        end
+    end
+
+    return P
+end
+
+function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:U}) where {I}
+    P = zeros(I, nnz(B))
+    res = S.res
+    sep = S.sep
+
+    rhi = one(I)
+
+    @inbounds for j in vertices(res)
+        rlo = rhi
+        rhi = pointers(res)[j + one(I)]
+
+        pj = S.Dptr[j] - one(I)
+
+        for col in rlo:rhi - one(I)
+            row = rlo
+
+            for p in nzrange(B, col)
+                wa = rowvals(B)[p]
+                wa < rlo && continue
+                wa >= rhi && break
+                pj += wa - row + one(I)
+                P[p] = pj
+                row = wa + one(I)
+            end
+
+            pj += rhi - row
+        end
+
+        pj = S.Lptr[j] - one(I)
+
+        for col in neighbors(sep, j)
+            row = rlo
+
+            for p in nzrange(B, col)
+                wa = rowvals(B)[p]
+                wa < rlo && continue
+                wa >= rhi && break
+                pj += wa - row + one(I)
+                P[p] = -pj
+                row = wa + one(I)
+            end
+
+            pj += rhi - row
+        end
+    end
+
     return P
 end
