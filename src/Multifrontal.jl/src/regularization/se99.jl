@@ -80,21 +80,19 @@ function initialize(F::ChordalFactorization{DIAG, UPLO, T}, S::AbstractVector, R
 end
 
 function se99_gamma(A::ChordalTriangular{DIAG, UPLO, T}, S::AbstractVector, s::Real) where {DIAG, UPLO, T}
-    init = eps(real(T))
+    out = eps(real(T))
 
-    function maxabsdiag(D, res)
-        out = init
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
 
-        for (i, j) in zip(res, diagind(D))
+        for (i, k) in zip(res, diagind(D))
             if real(S[i]) == s
-                out = max(out, abs(parent(D)[j]))
+                out = max(out, abs(parent(D)[k]))
             end
-        end     
-
-        return out
+        end
     end
 
-    return mapreducefront((D, L, res, sep) -> maxabsdiag(D, res), max, A; init)
+    return out
 end
 
 function se99_gamma(R::SE99, s::Real)

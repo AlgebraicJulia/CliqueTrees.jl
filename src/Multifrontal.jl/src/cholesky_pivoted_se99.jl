@@ -16,7 +16,10 @@ function chol!(
     fval = FVector{I}(undef, F.S.nFval)
 
     if DIAG === :U
-        foreachfront(ChordalTriangular(F)) do D, L, res, sep
+        A = ChordalTriangular(F)
+
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
             F.d[res] .= view(parent(D), diagind(D))
         end
 

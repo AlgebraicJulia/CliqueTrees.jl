@@ -336,27 +336,39 @@ function LinearAlgebra.diag(F::ChordalFactorization{DIAG}) where {DIAG}
 end
 
 function SparseArrays.nnz(F::ChordalFactorization)
-    return nnz(F.S)
+    return nnz(ChordalTriangular(F))
 end
 
 function Base.size(F::ChordalFactorization)
-    return size(F.S)
+    return size(ChordalTriangular(F))
 end
 
 function Base.size(F::ChordalFactorization, args...)
-    return size(F.S, args...)
+    return size(ChordalTriangular(F), args...)
 end
 
 function Base.axes(F::ChordalFactorization, args...)
-    return axes(F.S, args...)
+    return axes(ChordalTriangular(F), args...)
 end
 
 function ncl(F::ChordalFactorization)
-    return ncl(F.S)
+    return ncl(ChordalTriangular(F))
 end
 
 function nfr(F::ChordalFactorization)
-    return nfr(F.S)
+    return nfr(ChordalTriangular(F))
+end
+
+function fronts(F::ChordalFactorization)
+    return fronts(ChordalTriangular(F))
+end
+
+function diagblock(F::ChordalFactorization, j::Integer)
+    return diagblock(ChordalTriangular(F), j)
+end
+
+function offdblock(F::ChordalFactorization, j::Integer)
+    return offdblock(ChordalTriangular(F), j)
 end
 
 function LinearAlgebra.issuccess(F::ChordalFactorization)

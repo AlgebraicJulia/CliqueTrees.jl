@@ -1,6 +1,9 @@
 function opnorm1(A::ChordalTriangular{DIAG, :L, T}) where {DIAG, T}
-    mapreducefront(max, A; init=zero(real(T))) do D, L, res, sep
-        maxsum = zero(real(T))
+    out = zero(real(T))
+
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
+        L, sep = offdblock(A, j)
 
         for w in axes(D, 2)
             colsum = zero(real(T))
@@ -13,17 +16,20 @@ function opnorm1(A::ChordalTriangular{DIAG, :L, T}) where {DIAG, T}
                 colsum += abs(L[v, w])
             end
 
-            maxsum = max(maxsum, colsum)
+            out = max(out, colsum)
         end
-
-        return maxsum
     end
+
+    return out
 end
 
 function opnorm1(A::ChordalTriangular{DIAG, :U, T}) where {DIAG, T}
     colsums = zeros(real(T), size(A, 1))
 
-    foreachfront(A) do D, L, res, sep
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
+        L, sep = offdblock(A, j)
+
         for w in eachindex(res)
             for v in w:length(res)
                 col = res[v]
@@ -43,7 +49,10 @@ end
 function opnorminf(A::ChordalTriangular{DIAG, :L, T}) where {DIAG, T}
     rowsums = zeros(real(T), size(A, 1))
 
-    foreachfront(A) do D, L, res, sep
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
+        L, sep = offdblock(A, j)
+
         for w in eachindex(res)
             for v in w:length(res)
                 row = res[v]
@@ -61,8 +70,11 @@ function opnorminf(A::ChordalTriangular{DIAG, :L, T}) where {DIAG, T}
 end
 
 function opnorminf(A::ChordalTriangular{DIAG, :U, T}) where {DIAG, T}
-    mapreducefront(max, A; init=zero(real(T))) do D, L, res, sep
-        maxsum = zero(real(T))
+    out = zero(real(T))
+
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
+        L, sep = offdblock(A, j)
 
         for w in axes(D, 1)
             rowsum = zero(real(T))
@@ -75,11 +87,11 @@ function opnorminf(A::ChordalTriangular{DIAG, :U, T}) where {DIAG, T}
                 rowsum += abs(L[w, v])
             end
 
-            maxsum = max(maxsum, rowsum)
+            out = max(out, rowsum)
         end
-
-        return maxsum
     end
+
+    return out
 end
 
 function opnorm1(A::AdjOrTransTri)

@@ -92,29 +92,17 @@ function Base.copy(A::AdjOrTransTri{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
         B = ChordalTriangular{DIAG, :L}(P.S, similar(P.Dval), similar(P.Lval))
     end
 
-    for j in vertices(P.S.res)
-        nn = eltypedegree(P.S.res, j)
-        na = eltypedegree(P.S.sep, j)
-
-        Dp = P.S.Dptr[j]
-        Lp = P.S.Lptr[j]
-
-        DA = reshape(view(P.Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
-        DB = reshape(view(B.Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
-
-        if UPLO === :L
-            LA = reshape(view(P.Lval, Lp:Lp + nn * na - one(I)), na, nn)
-            LB = reshape(view(B.Lval, Lp:Lp + nn * na - one(I)), nn, na)
-        else
-            LA = reshape(view(P.Lval, Lp:Lp + nn * na - one(I)), nn, na)
-            LB = reshape(view(B.Lval, Lp:Lp + nn * na - one(I)), na, nn)
-        end
+    @inbounds for j in fronts(P)
+        DA, res = diagblock(P, j)
+        LA, sep = offdblock(P, j)
+        DB, _   = diagblock(B, j)
+        LB, _   = offdblock(B, j)
 
         if A isa Adjoint
-            adjoint!(DB, DA)
+            adjoint!(parent(DB), parent(DA))
             adjoint!(LB, LA)
         else
-            transpose!(DB, DA)
+            transpose!(parent(DB), parent(DA))
             transpose!(LB, LA)
         end
     end
@@ -149,54 +137,82 @@ function LinearAlgebra.istril(::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO
 end
 
 function LinearAlgebra.isposdef(A::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
-    posdiag(D) = all(ispositive, view(D, diagind(D)))
-
     if DIAG === :N
-        return mapreducefront((D, L, res, sep) -> posdiag(D), &, A; init=true)
-    else
-        return true
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
+            all(ispositive, view(D, diagind(D))) || return false
+        end
     end
+
+    return true
 end
 
 function LinearAlgebra.det(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    out = one(T)
+
     if DIAG === :N
-        return mapreducefront((D, L, res, sep) -> det(D), *, A; init=one(T))
-    else
-        return one(T)
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
+            out *= det(D)
+        end
     end
+
+    return out
 end
 
 function LinearAlgebra.logdet(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    out = zero(T)
+
     if DIAG === :N
-        return mapreducefront((D, L, res, sep) -> logdet(D), +, A; init=zero(T))
-    else
-        return zero(T)
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
+            out += logdet(D)
+        end
     end
+
+    return out
 end
 
 function LinearAlgebra.logabsdet(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    addmul((a, b), (c, d)) = (a + c, b * d)
+    out = (zero(real(T)), one(T))
 
     if DIAG === :N
-        return mapreducefront((D, L, res, sep) -> logabsdet(D), addmul, A; init=(zero(real(T)), one(T)))
-    else
-        return (zero(real(T)), one(T))
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
+            a, b = out
+            c, d = logabsdet(D)
+            out = (a + c, b * d)
+        end
     end
+
+    return out
 end
 
 function LinearAlgebra.tr(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     if DIAG === :N
-        return mapreducefront((D, L, res, sep) -> tr(D), +, A; init=zero(T))
+        out = zero(T)
+
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
+            out += tr(D)
+        end
+
+        return out
     else
         return convert(T, ncl(A))
     end
 end
 
 function LinearAlgebra.rank(A::ChordalTriangular{DIAG, UPLO, T, I}; kw...) where {DIAG, UPLO, T, I <: Integer}
-    blockrank(D) = rank(D; kw...)
-
     if DIAG === :N
-        return mapreducefront((D, L, res, sep) -> blockrank(D), +, A; init=0)
+        out = 0
+
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
+            out += rank(D; kw...)
+        end
+
+        return out
     else
         return ncl(A)
     end
@@ -206,7 +222,8 @@ function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UP
     out = Vector{T}(undef, ncl(A))
 
     if DIAG === :N
-        foreachfront(A) do D, L, res, sep
+        @inbounds for j in fronts(A)
+            D, res = diagblock(A, j)
             out[res] .= view(D, diagind(D))
         end
     else
@@ -223,7 +240,10 @@ function SparseArrays.sparse(A::MaybeAdjOrTransTri{DIAG, UPLO, T, I}) where {DIA
 
     p = zeros(I)
 
-    foreachfront(parent(A)) do D, L, res, sep
+    @inbounds for j in fronts(parent(A))
+        D, res = diagblock(parent(A), j)
+        L, sep = offdblock(parent(A), j)
+
         for w in eachindex(res)
             colptr[res[w]] = p[] + one(I)
 
@@ -323,7 +343,10 @@ function Base.copy!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) wh
     zerorec!(A.Dval)
     zerorec!(A.Lval)
 
-    foreachfront(A) do D, L, res, sep
+    @inbounds for i in fronts(A)
+        D, res = diagblock(A, i)
+        L, sep = offdblock(A, i)
+
         rlo = first(res)
         rhi = last(res) + one(I)
 
@@ -332,7 +355,7 @@ function Base.copy!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) wh
             shi = last(sep) + one(I)
         end
 
-        @inbounds for j in eachindex(res)
+        for j in eachindex(res)
             k = one(I)
 
             for p in nzrange(B, res[j])
@@ -363,11 +386,14 @@ function Base.copy!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) wh
     zerorec!(A.Dval)
     zerorec!(A.Lval)
 
-    foreachfront(A) do D, L, res, sep
+    @inbounds for i in fronts(A)
+        D, res = diagblock(A, i)
+        L, sep = offdblock(A, i)
+
         rlo = first(res)
         rhi = last(res) + one(I)
 
-        @inbounds for j in eachindex(res)
+        for j in eachindex(res)
             for p in nzrange(B, res[j])
                 row = rowvals(B)[p]
                 row < rlo && continue
@@ -376,7 +402,7 @@ function Base.copy!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) wh
             end
         end
 
-        @inbounds for j in eachindex(sep)
+        for j in eachindex(sep)
             for p in nzrange(B, sep[j])
                 row = rowvals(B)[p]
                 row < rlo && continue
@@ -419,108 +445,79 @@ function LinearAlgebra.opnorm(A::MaybeAdjOrTransTri, p::Real)
     end
 end
 
-function foreachfront(f, A::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
-    return foreachfront_impl(f, A.S.res, A.S.sep, A.S.Dptr, A.S.Lptr, A.Dval, A.Lval, Val(DIAG), Val(UPLO))
+function fronts(A::MaybeAdjOrTransTri)
+    return oneto(nfr(A))
 end
 
-function foreachfront_impl(
-        f,
+function diagblock(A::ChordalTriangular{DIAG, UPLO}, j::Integer) where {DIAG, UPLO}
+    return diagblock_impl(A.S.res, A.S.Dptr, A.Dval, Val(DIAG), Val(UPLO), j)
+end
+
+function diagblock_impl(
         res::AbstractGraph{I},
-        sep::AbstractGraph{I},
         Dptr::AbstractVector{I},
-        Lptr::AbstractVector{I},
         Dval::AbstractVector{T},
-        Lval::AbstractVector{T},
         diag::Val{DIAG},
         uplo::Val{UPLO},
+        j::Integer,
     ) where {DIAG, UPLO, T, I}
-    @inbounds for j in vertices(res)
-        #
-        # nn is the length of the residual at node j
-        #
-        #   nn = | res(j) |
-        #
-        nn = eltypedegree(res, j)
-        #
-        # na is the length of the separator at node j
-        #
-        #   na = | sep(j) |
-        #
-        na = eltypedegree(sep, j)
-        #
-        # D and L are part of A:
-        #
-        #        res(j)
-        #   A = [ D    ] res(j)
-        #       [ L    ] sep(j)
-        #
-        Dp = Dptr[j]
-        Lp = Lptr[j]
-        D = tri(uplo, diag, reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn))
+    @boundscheck checkbounds(vertices(res), j)
+    #
+    # nn is the length of the residual at node j
+    #
+    #   nn = | res(j) |
+    #
+    nn = eltypedegree(res, j)
+    #
+    # D is the diagonal block of A at front j:
+    #
+    #        res(j)
+    #   A = [ D    ] res(j)
+    #
+    Dp = Dptr[j]
+    D = tri(uplo, diag, reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn))
 
-        if UPLO === :L
-            L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
-        else
-            L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
-        end
-
-        f(D, L, neighbors(res, j), neighbors(sep, j))
-    end
-
-    return
+    return D, neighbors(res, j)
 end
 
-function mapreducefront(f, op, A::ChordalTriangular{DIAG, UPLO}; init) where {DIAG, UPLO}
-    return mapreducefront_impl(f, op, A.S.res, A.S.sep, A.S.Dptr, A.S.Lptr, A.Dval, A.Lval, Val(DIAG), Val(UPLO), init)
+function offdblock(A::ChordalTriangular{DIAG, UPLO}, j::Integer) where {DIAG, UPLO}
+    return offdblock_impl(A.S.res, A.S.sep, A.S.Lptr, A.Lval, Val(UPLO), j)
 end
 
-function mapreducefront_impl(
-        f,
-        op,
+function offdblock_impl(
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
-        Dptr::AbstractVector{I},
         Lptr::AbstractVector{I},
-        Dval::AbstractVector{T},
         Lval::AbstractVector{T},
-        diag::Val{DIAG},
         uplo::Val{UPLO},
-        init,
-    ) where {DIAG, UPLO, T, I}
-    out = init
+        j::Integer,
+    ) where {UPLO, T, I}
+    @boundscheck checkbounds(vertices(res), j)
+    #
+    # nn is the length of the residual at node j
+    #
+    #   nn = | res(j) |
+    #
+    nn = eltypedegree(res, j)
+    #
+    # na is the length of the separator at node j
+    #
+    #   na = | sep(j) |
+    #
+    na = eltypedegree(sep, j)
+    #
+    # L is the off-diagonal block of A at front j:
+    #
+    #        res(j)
+    #   A = [ L    ] sep(j)
+    #
+    Lp = Lptr[j]
 
-    @inbounds for j in vertices(res)
-        #
-        # nn is the length of the residual at node j
-        #
-        #   nn = | res(j) |
-        #
-        nn = eltypedegree(res, j)
-        #
-        # na is the length of the separator at node j
-        #
-        #   na = | sep(j) |
-        #
-        na = eltypedegree(sep, j)
-        #
-        # D and L are part of A:
-        #
-        #        res(j)
-        #   A = [ D    ] res(j)
-        #       [ L    ] sep(j)
-        #
-        Dp = Dptr[j]
-        Lp = Lptr[j]
-        D = tri(uplo, diag, reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn))
-
-        if UPLO === :L
-            L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
-        else
-            L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
-        end
-
-        out = op(out, f(D, L, neighbors(res, j), neighbors(sep, j)))
+    if UPLO === :L
+        L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
+    else
+        L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
     end
 
-    return out
+    return L, neighbors(sep, j)
 end
