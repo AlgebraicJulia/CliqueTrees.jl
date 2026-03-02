@@ -1,6 +1,12 @@
-function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::RowMaximum, S::AbstractVector{T}, reg::AbstractRegularization, check::Bool, tol::Real, diag::Val{DIAG}) where {DIAG, UPLO, T, I <: Integer}
-    @assert checksigns(S, reg)
-
+function chol!(
+        F::ChordalFactorization{DIAG, UPLO, T, I},
+        ::RowMaximum,
+        S::AbstractVector{T},
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+        diag::Val{DIAG},
+    ) where {DIAG, UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)

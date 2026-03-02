@@ -1,6 +1,12 @@
-function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::NoPivot, S::AbstractVector{T}, R::SE99, check::Bool, tol::Real, diag::Val{DIAG}) where {DIAG, UPLO, T, I <: Integer}
-    @assert checksigns(S, R)
-
+function chol!(
+        F::ChordalFactorization{DIAG, UPLO, T, I},
+        ::NoPivot,
+        S::AbstractVector{T},
+        R::SE99,
+        check::Bool,
+        tol::Real,
+        diag::Val{DIAG},
+    ) where {DIAG, UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
@@ -44,12 +50,13 @@ function chol_se99_impl!(
 
     ns = zero(I); Mptr[one(I)] = one(I)
     phase = true
-    delta = zero(real(T))
+    deltapos = zero(real(T))
+    deltaneg = zero(real(T))
 
     for j in vertices(res)
-        ns, delta, phase = chol_se99_loop!(
+        ns, deltapos, deltaneg, phase = chol_se99_loop!(
             Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Eval, Fval,
-            res, rel, sep, chd, ns, j, uplo, S, R, diag, phase, delta
+            res, rel, sep, chd, ns, j, uplo, S, R, diag, phase, deltapos, deltaneg
         )
     end
 end
@@ -75,7 +82,8 @@ function chol_se99_loop!(
         R::SE99,
         diag::Val{DIAG},
         phase::Bool,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
     ) where {T, I <: Integer, UPLO, DIAG}
     #
     # nn is the size of the residual at node j
@@ -180,7 +188,7 @@ function chol_se99_loop!(
     #
     #     D₁₁ ← cholesky(D₁₁)
     #
-    delta, phase = chol_se99_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, e₂₂, S₁₁, S₂₂, R, phase, delta, uplo, diag)
+    deltapos, deltaneg, phase = chol_se99_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, e₂₂, S₁₁, S₂₂, R, phase, deltapos, deltaneg, uplo, diag)
     #
     # copy separator diagonal back to global
     #
@@ -188,7 +196,7 @@ function chol_se99_loop!(
     #
     copyrec!(d₂₂, e₂₂)
 
-    return ns, delta, phase
+    return ns, deltapos, deltaneg, phase
 end
 
 function chol_se99_kernel!(
@@ -202,7 +210,8 @@ function chol_se99_kernel!(
         Se::AbstractVector{T},
         R::SE99,
         phase::Bool,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         uplo::Val{UPLO},
         diag::Val{DIAG},
     ) where {T, UPLO, DIAG}
@@ -214,11 +223,11 @@ function chol_se99_kernel!(
     j = 1
 
     if phase
-        j, delta, phase = chol_se99_factor!(D, L, W, d, e, S, Se, R, delta, j, uplo, diag, Val(true))
+        j, deltapos, deltaneg, phase = chol_se99_factor!(D, L, W, d, e, S, Se, R, deltapos, deltaneg, j, uplo, diag, Val(true))
     end
 
     if !phase
-        j, delta, phase = chol_se99_factor!(D, L, W, d, e, S, Se, R, delta, j, uplo, diag, Val(false))
+        j, deltapos, deltaneg, phase = chol_se99_factor!(D, L, W, d, e, S, Se, R, deltapos, deltaneg, j, uplo, diag, Val(false))
     end
 
     if !isempty(M)
@@ -233,7 +242,7 @@ function chol_se99_kernel!(
         syrk!(uplo, trans, -one(real(T)), W, L, d, one(real(T)), M, diag)
     end
 
-    return delta, phase
+    return deltapos, deltaneg, phase
 end
 
 function chol_se99_factor_loop!(
@@ -285,7 +294,8 @@ function chol_se99_factor!(
         S::AbstractVector{T},
         Se::AbstractVector{T},
         R::SE99,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         bstrt::Int,
         uplo::Val{UPLO},
         diag::Val{DIAG},
@@ -296,20 +306,20 @@ function chol_se99_factor!(
     bstop = min(cld(bstrt, THRESHOLD) * THRESHOLD, n)
 
     @inbounds while bstrt <= n
-        j, delta, newphase = chol_se99_factor_block!(D, L, d, e, S, Se, R, delta, bstrt, bstop, uplo, diag, phase)
+        j, deltapos, deltaneg, newphase = chol_se99_factor_block!(D, L, d, e, S, Se, R, deltapos, deltaneg, bstrt, bstop, uplo, diag, phase)
 
         if PHASE && !newphase
-            j, delta = chol_se99_factor_block!(D, L, d, e, S, Se, R, delta, j, bstop, uplo, diag, Val(false))
+            j, deltapos, deltaneg = chol_se99_factor_block!(D, L, d, e, S, Se, R, deltapos, deltaneg, j, bstop, uplo, diag, Val(false))
             chol_se99_factor_loop!(D, L, W, d, bstrt, bstop, uplo, diag)
 
             for cstrt in bstop + 1:THRESHOLD:n
                 cstop = min(cstrt + THRESHOLD - 1, n)
 
-                j, delta = chol_se99_factor_block!(D, L, d, e, S, Se, R, delta, cstrt, cstop, uplo, diag, Val(false))
+                j, deltapos, deltaneg = chol_se99_factor_block!(D, L, d, e, S, Se, R, deltapos, deltaneg, cstrt, cstop, uplo, diag, Val(false))
                 chol_se99_factor_loop!(D, L, W, d, cstrt, cstop, uplo, diag)
             end
 
-            return n + 1, delta, false
+            return n + 1, deltapos, deltaneg, false
         end
 
         chol_se99_factor_loop!(D, L, W, d, bstrt, bstop, uplo, diag)
@@ -318,7 +328,7 @@ function chol_se99_factor!(
         bstop = min(bstrt + THRESHOLD - 1, n)
     end
 
-    return n + 1, delta, PHASE
+    return n + 1, deltapos, deltaneg, PHASE
 end
 
 function chol_se99_factor_block!(
@@ -329,7 +339,8 @@ function chol_se99_factor_block!(
         S₁::AbstractVector{T},
         S₂::AbstractVector{T},
         R::SE99,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         bstrt::Int,
         bstop::Int,
         uplo::Val{:L},
@@ -344,7 +355,7 @@ function chol_se99_factor_block!(
         # Check A: diagonal acceptability
         #
         if PHASE && !checkdiag(R, S₁, S₂, d₁, d₂, real(S₁[j]) * real(d₁[j]), j)
-            return j, delta, false
+            return j, deltapos, deltaneg, false
         end
         #
         # Left-looking update
@@ -376,9 +387,9 @@ function chol_se99_factor_block!(
         Ljj = real(d₁[j])
 
         if PHASE && !lookahead(R, S₁, S₂, L₁, L₂, d₁, d₂, j, uplo)
-            return j, delta, false
+            return j, deltapos, deltaneg, false
         elseif !PHASE
-            Ljj, delta = regularize(R, S₁, L₁, L₂, Ljj, j, delta, uplo)
+            Ljj, deltapos, deltaneg = regularize(R, S₁, L₁, L₂, Ljj, j, deltapos, deltaneg, uplo)
         end
 
         if DIAG === :N
@@ -416,7 +427,7 @@ function chol_se99_factor_block!(
         end
     end
 
-    return bstop + 1, delta, PHASE
+    return bstop + 1, deltapos, deltaneg, PHASE
 end
 
 function chol_se99_factor_block!(
@@ -427,7 +438,8 @@ function chol_se99_factor_block!(
         S₁::AbstractVector{T},
         S₂::AbstractVector{T},
         R::SE99,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         bstrt::Int,
         bstop::Int,
         uplo::Val{:U},
@@ -442,7 +454,7 @@ function chol_se99_factor_block!(
         # Check A: diagonal acceptability
         #
         if PHASE && !checkdiag(R, S₁, S₂, d₁, d₂, real(S₁[j]) * real(d₁[j]), j)
-            return j, delta, false
+            return j, deltapos, deltaneg, false
         end
         #
         # Left-looking update
@@ -470,9 +482,9 @@ function chol_se99_factor_block!(
         Ljj = real(d₁[j])
 
         if PHASE && !lookahead(R, S₁, S₂, L₁, L₂, d₁, d₂, j, uplo)
-            return j, delta, false
+            return j, deltapos, deltaneg, false
         elseif !PHASE
-            Ljj, delta = regularize(R, S₁, L₁, L₂, Ljj, j, delta, uplo)
+            Ljj, deltapos, deltaneg = regularize(R, S₁, L₁, L₂, Ljj, j, deltapos, deltaneg, uplo)
         end
 
         if DIAG === :N
@@ -510,5 +522,5 @@ function chol_se99_factor_block!(
         end
     end
 
-    return bstop + 1, delta, PHASE
+    return bstop + 1, deltapos, deltaneg, PHASE
 end

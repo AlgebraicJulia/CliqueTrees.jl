@@ -1,5 +1,5 @@
 function opnorm1(A::ChordalTriangular{DIAG, :L, T}) where {DIAG, T}
-    mapreducefront(max, A; init=zero(real(T))) do D, L
+    mapreducefront(max, A; init=zero(real(T))) do D, L, res, sep
         maxsum = zero(real(T))
 
         for w in axes(D, 2)
@@ -61,7 +61,7 @@ function opnorminf(A::ChordalTriangular{DIAG, :L, T}) where {DIAG, T}
 end
 
 function opnorminf(A::ChordalTriangular{DIAG, :U, T}) where {DIAG, T}
-    mapreducefront(max, A; init=zero(real(T))) do D, L
+    mapreducefront(max, A; init=zero(real(T))) do D, L, res, sep
         maxsum = zero(real(T))
 
         for w in axes(D, 1)

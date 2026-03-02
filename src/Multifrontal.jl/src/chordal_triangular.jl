@@ -40,25 +40,26 @@ function ChordalTriangular{DIAG, UPLO}(S::ChordalSymbolic{I}, Dval::Val, Lval::V
     return ChordalTriangular{DIAG, UPLO, T, I, Val}(S, Dval, Lval)
 end
 
-function ChordalTriangular{UPLO}(S::ChordalSymbolic{I}) where {UPLO, I <: Integer}
-    n = nv(S.res)
-    Dval = Ones{Bool}(S.Dptr[n + one(I)] - one(I))
-    Lval = Ones{Bool}(S.Lptr[n + one(I)] - one(I))
+function ChordalTriangular{UPLO}(S::ChordalSymbolic) where {UPLO}
+    n = nfr(S)
+    Dval = Ones{Bool}(convert(Int, S.Dptr[n + 1]) - 1)
+    Lval = Ones{Bool}(convert(Int, S.Lptr[n + 1]) - 1)
     return ChordalTriangular{:N, UPLO}(S, Dval, Lval)
 end
 
+# getfield fixes JET test
 function ChordalTriangular(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
-    return ChordalTriangular{DIAG, UPLO}(F.S, F.Dval, F.Lval)
+    return ChordalTriangular{DIAG, UPLO}(getfield(F, :S), getfield(F, :Dval), getfield(F, :Lval))
 end
 
 function Base.show(io::IO, A::T) where {T <: ChordalTriangular}
-    n = size(A, 1)
+    n = ncl(A)
     print(io, "$n×$n $T with $(nnz(A)) stored entries")
     return
 end
 
 function Base.show(io::IO, ::MIME"text/plain", A::T) where {DIAG, UPLO, T <: ChordalTriangular{DIAG, UPLO}}
-    n = size(A, 1)
+    n = ncl(A)
     println(io, "$n×$n $T with $(nnz(A)) stored entries:")
 
     if n < 16
@@ -127,9 +128,16 @@ function SparseArrays.nnz(A::ChordalTriangular)
     return nnz(A.S)
 end
 
+function ncl(A::MaybeAdjOrTransTri)
+    return ncl(parent(A).S)
+end
+
+function nfr(A::MaybeAdjOrTransTri)
+    return nfr(parent(A).S)
+end
+
 function Base.size(L::ChordalTriangular)
-    n = convert(Int, nov(L.S.res))
-    return (n, n)
+    return size(L.S)
 end
 
 function LinearAlgebra.istriu(::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
@@ -144,7 +152,7 @@ function LinearAlgebra.isposdef(A::ChordalTriangular{DIAG, UPLO}) where {DIAG, U
     posdiag(D) = all(ispositive, view(D, diagind(D)))
 
     if DIAG === :N
-        return mapreducefront((D, L) -> posdiag(D), &, A; init=true)
+        return mapreducefront((D, L, res, sep) -> posdiag(D), &, A; init=true)
     else
         return true
     end
@@ -152,7 +160,7 @@ end
 
 function LinearAlgebra.det(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     if DIAG === :N
-        return mapreducefront((D, L) -> det(D), *, A; init=one(T))
+        return mapreducefront((D, L, res, sep) -> det(D), *, A; init=one(T))
     else
         return one(T)
     end
@@ -160,7 +168,7 @@ end
 
 function LinearAlgebra.logdet(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     if DIAG === :N
-        return mapreducefront((D, L) -> logdet(D), +, A; init=zero(T))
+        return mapreducefront((D, L, res, sep) -> logdet(D), +, A; init=zero(T))
     else
         return zero(T)
     end
@@ -170,7 +178,7 @@ function LinearAlgebra.logabsdet(A::ChordalTriangular{DIAG, UPLO, T}) where {DIA
     addmul((a, b), (c, d)) = (a + c, b * d)
 
     if DIAG === :N
-        return mapreducefront((D, L) -> logabsdet(D), addmul, A; init=(zero(real(T)), one(T)))
+        return mapreducefront((D, L, res, sep) -> logabsdet(D), addmul, A; init=(zero(real(T)), one(T)))
     else
         return (zero(real(T)), one(T))
     end
@@ -178,9 +186,9 @@ end
 
 function LinearAlgebra.tr(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     if DIAG === :N
-        return mapreducefront((D, L) -> tr(D), +, A; init=zero(T))
+        return mapreducefront((D, L, res, sep) -> tr(D), +, A; init=zero(T))
     else
-        return convert(T, size(A, 1))
+        return convert(T, ncl(A))
     end
 end
 
@@ -188,14 +196,14 @@ function LinearAlgebra.rank(A::ChordalTriangular{DIAG, UPLO, T, I}; kw...) where
     blockrank(D) = rank(D; kw...)
 
     if DIAG === :N
-        return mapreducefront((D, L) -> blockrank(D), +, A; init=0)
+        return mapreducefront((D, L, res, sep) -> blockrank(D), +, A; init=0)
     else
-        return size(A, 1)
+        return ncl(A)
     end
 end
 
 function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    out = Vector{T}(undef, size(A, 1))
+    out = Vector{T}(undef, ncl(A))
 
     if DIAG === :N
         foreachfront(A) do D, L, res, sep
@@ -209,7 +217,7 @@ function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UP
 end
 
 function SparseArrays.sparse(A::MaybeAdjOrTransTri{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I <: Integer}
-    colptr = Vector{I}(undef, 1 + size(A, 1))
+    colptr = Vector{I}(undef, 1 + ncl(A))
     rowval = Vector{I}(undef, nnz(parent(A)))
     nzval = Vector{T}(undef, nnz(parent(A)))
 
@@ -511,7 +519,7 @@ function mapreducefront_impl(
             L = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
         end
 
-        out = op(out, f(D, L))
+        out = op(out, f(D, L, neighbors(res, j), neighbors(sep, j)))
     end
 
     return out

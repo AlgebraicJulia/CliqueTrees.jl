@@ -89,9 +89,9 @@ function ChordalFactorization{DIAG, UPLO}(S::ChordalSymbolic{I}, d::Dia, Dval::V
 end
 
 function ChordalFactorization{DIAG, UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
-    n = nv(S.res)
-    Dval = FVector{T}(undef, S.Dptr[n + one(I)] - one(I))
-    Lval = FVector{T}(undef, S.Lptr[n + one(I)] - one(I))
+    n = nfr(S)
+    Dval = FVector{T}(undef, convert(Int, S.Dptr[n + 1]) - 1)
+    Lval = FVector{T}(undef, convert(Int, S.Lptr[n + 1]) - 1)
     info = FScalar{I}(undef); info[] = zero(I)
     invp = similar(perm)
 
@@ -100,9 +100,9 @@ function ChordalFactorization{DIAG, UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) w
     end
 
     if DIAG === :N
-        d = Ones{T}(nov(S.res))
+        d = Ones{T}(ncl(S))
     else
-        d = FVector{T}(undef, nov(S.res))
+        d = FVector{T}(undef, ncl(S))
     end
 
     return ChordalFactorization{DIAG, UPLO}(S, d, Dval, Lval, perm, invp, info)
@@ -178,13 +178,13 @@ function Base.adjoint(F::ChordalFactorization)
 end
 
 function Base.show(io::IO, F::T) where {T <: ChordalFactorization}
-    n = size(F, 1)
+    n = ncl(F)
     print(io, "$n×$n $T with $(nnz(F)) stored entries")
     return
 end
 
 function Base.show(io::IO, ::MIME"text/plain", F::T) where {DIAG, UPLO, T <: ChordalFactorization{DIAG, UPLO}}
-    n = size(F, 1)
+    n = ncl(F)
     println(io, "$n×$n $T with $(nnz(F)) stored entries:")
 
     if n < 16
@@ -349,6 +349,14 @@ end
 
 function Base.axes(F::ChordalFactorization, args...)
     return axes(F.S, args...)
+end
+
+function ncl(F::ChordalFactorization)
+    return ncl(F.S)
+end
+
+function nfr(F::ChordalFactorization)
+    return nfr(F.S)
 end
 
 function LinearAlgebra.issuccess(F::ChordalFactorization)

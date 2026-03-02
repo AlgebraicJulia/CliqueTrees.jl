@@ -1,6 +1,12 @@
-function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::RowMaximum, S::AbstractVector{T}, R::SE99, check::Bool, tol::Real, diag::Val{DIAG}) where {DIAG, UPLO, T, I <: Integer}
-    @assert checksigns(S, R)
-
+function chol!(
+        F::ChordalFactorization{DIAG, UPLO, T, I},
+        ::RowMaximum,
+        S::AbstractVector{T},
+        R::SE99,
+        check::Bool,
+        tol::Real,
+        diag::Val{DIAG},
+    ) where {DIAG, UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
@@ -66,12 +72,13 @@ function chol_se99_piv_fwd!(
 
     ns = zero(I); Mptr[one(I)] = one(I)
     phase = true
-    delta = zero(real(T))
+    deltapos = zero(real(T))
+    deltaneg = zero(real(T))
 
     for j in vertices(res)
-        ns, delta, phase = chol_se99_piv_fwd_loop!(
+        ns, deltapos, deltaneg, phase = chol_se99_piv_fwd_loop!(
             Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Eval, Fval,
-            res, rel, sep, chd, ns, j, piv, invp, S, R, uplo, diag, phase, delta
+            res, rel, sep, chd, ns, j, piv, invp, S, R, uplo, diag, phase, deltapos, deltaneg
         )
     end
 end
@@ -99,7 +106,8 @@ function chol_se99_piv_fwd_loop!(
         uplo::Val{UPLO},
         diag::Val{DIAG},
         phase::Bool,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
     ) where {T, I <: Integer, UPLO, DIAG}
     #
     # nn is the size of the residual at node j
@@ -184,7 +192,7 @@ function chol_se99_piv_fwd_loop!(
     #
     # pivoted factorization
     #
-    delta, phase = chol_se99_piv_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, e₂₂, g₁₁, piv, S₁₁, S₂₂, R, phase, delta, uplo, diag)
+    deltapos, deltaneg, phase = chol_se99_piv_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, e₂₂, g₁₁, piv, S₁₁, S₂₂, R, phase, deltapos, deltaneg, uplo, diag)
     #
     # copy separator diagonal back to global
     #
@@ -198,7 +206,7 @@ function chol_se99_piv_fwd_loop!(
         invp[offset + piv[v]] = offset + v
     end
 
-    return ns, delta, phase
+    return ns, deltapos, deltaneg, phase
 end
 
 # ============================= chol_se99_piv_kernel! =============================
@@ -216,7 +224,8 @@ function chol_se99_piv_kernel!(
         Se::AbstractVector{T},
         R::SE99,
         phase::Bool,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         uplo::Val{UPLO},
         diag::Val{DIAG},
     ) where {T, UPLO, DIAG}
@@ -234,11 +243,11 @@ function chol_se99_piv_kernel!(
     j = 1
 
     if phase
-        j, delta, phase = chol_se99_piv_factor!(D, L, W, d, e, g, P, S, Se, R, delta, j, uplo, diag, Val(true))
+        j, deltapos, deltaneg, phase = chol_se99_piv_factor!(D, L, W, d, e, g, P, S, Se, R, deltapos, deltaneg, j, uplo, diag, Val(true))
     end
 
     if !phase
-        j, delta, phase = chol_se99_piv_factor!(D, L, W, d, e, g, P, S, Se, R, delta, j, uplo, diag, Val(false))
+        j, deltapos, deltaneg, phase = chol_se99_piv_factor!(D, L, W, d, e, g, P, S, Se, R, deltapos, deltaneg, j, uplo, diag, Val(false))
     end
 
     if !isempty(M)
@@ -253,7 +262,7 @@ function chol_se99_piv_kernel!(
         syrk!(uplo, trans, -one(real(T)), W, L, d, one(real(T)), M, diag)
     end
 
-    return delta, phase
+    return deltapos, deltaneg, phase
 end
 
 # ============================= chol_se99_piv_factor! =============================
@@ -309,7 +318,8 @@ function chol_se99_piv_factor!(
         S::AbstractVector{T},
         Se::AbstractVector{T},
         R::SE99,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         bstrt::Int,
         uplo::Val{UPLO},
         diag::Val{DIAG},
@@ -320,20 +330,20 @@ function chol_se99_piv_factor!(
     bstop = min(cld(bstrt, THRESHOLD) * THRESHOLD, n)
 
     @inbounds while bstrt <= n
-        j, delta, newphase = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, delta, bstrt, bstop, uplo, diag, phase)
+        j, deltapos, deltaneg, newphase = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, deltapos, deltaneg, bstrt, bstop, uplo, diag, phase)
 
         if PHASE && !newphase
-            j, delta = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, delta, j, bstop, uplo, diag, Val(false))
+            j, deltapos, deltaneg = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, deltapos, deltaneg, j, bstop, uplo, diag, Val(false))
             chol_se99_piv_factor_loop!(D, L, W, d, bstrt, bstop, uplo, diag)
 
             for cstrt in bstop + 1:THRESHOLD:n
                 cstop = min(cstrt + THRESHOLD - 1, n)
 
-                j, delta = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, delta, cstrt, cstop, uplo, diag, Val(false))
+                j, deltapos, deltaneg = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, deltapos, deltaneg, cstrt, cstop, uplo, diag, Val(false))
                 chol_se99_piv_factor_loop!(D, L, W, d, cstrt, cstop, uplo, diag)
             end
 
-            return n + 1, delta, false
+            return n + 1, deltapos, deltaneg, false
         end
 
         chol_se99_piv_factor_loop!(D, L, W, d, bstrt, bstop, uplo, diag)
@@ -342,7 +352,7 @@ function chol_se99_piv_factor!(
         bstop = min(bstrt + THRESHOLD - 1, n)
     end
 
-    return n + 1, delta, PHASE
+    return n + 1, deltapos, deltaneg, PHASE
 end
 
 # ============================= chol_se99_piv_factor_block! =============================
@@ -357,7 +367,8 @@ function chol_se99_piv_factor_block!(
         S₁::AbstractVector{T},
         S₂::AbstractVector{T},
         R::SE99,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         bstrt::Int,
         bstop::Int,
         uplo::Val{:L},
@@ -387,10 +398,10 @@ function chol_se99_piv_factor_block!(
 
             # Check A: diagonal acceptability (using pivot value)
             if !checkdiag(R, S₁, S₂, d₁, d₂, maxval, j)
-                return j, delta, false
+                return j, deltapos, deltaneg, false
             end
         else
-            # Phase 2: initialize Gerschgorin bounds
+            # Phase 2: initialize signed Gerschgorin bounds (g̃_i = s_i A_ii - Σ|A_ij|)
             if j == bstrt
                 for i in bstrt:n
                     g[i] = real(S₁[i]) * real(d₁[i])
@@ -405,7 +416,7 @@ function chol_se99_piv_factor_block!(
                 end
             end
 
-            # Phase 2: max Gerschgorin bound
+            # Phase 2: max signed Gerschgorin bound (max g̃_i)
             maxval = real(g[j])
             maxind = j
 
@@ -464,9 +475,9 @@ function chol_se99_piv_factor_block!(
         Ljj = real(d₁[j])
 
         if PHASE && !lookahead(R, S₁, S₂, L₁, L₂, d₁, d₂, j, uplo)
-            return j, delta, false
+            return j, deltapos, deltaneg, false
         elseif !PHASE
-            Ljj, delta = regularize(R, S₁, L₁, L₂, Ljj, j, delta, uplo)
+            Ljj, deltapos, deltaneg = regularize(R, S₁, L₁, L₂, Ljj, j, deltapos, deltaneg, uplo)
         end
         #
         # Update Gerschgorin bounds (before scaling)
@@ -482,8 +493,8 @@ function chol_se99_piv_factor_block!(
                 bound += abs(L₂[i, j])
             end
 
-            if Ljj > bound
-                temp = one(real(T)) - bound / Ljj
+            if abs(Ljj) > bound
+                temp = one(real(T)) - bound / abs(Ljj)
 
                 for i in j+1:n
                     g[i] += abs(L₁[i, j]) * temp
@@ -528,7 +539,7 @@ function chol_se99_piv_factor_block!(
         end
     end
 
-    return bstop + 1, delta, PHASE
+    return bstop + 1, deltapos, deltaneg, PHASE
 end
 
 function chol_se99_piv_factor_block!(
@@ -541,7 +552,8 @@ function chol_se99_piv_factor_block!(
         S₁::AbstractVector{T},
         S₂::AbstractVector{T},
         R::SE99,
-        delta::Real,
+        deltapos::Real,
+        deltaneg::Real,
         bstrt::Int,
         bstop::Int,
         uplo::Val{:U},
@@ -571,10 +583,10 @@ function chol_se99_piv_factor_block!(
 
             # Check A: diagonal acceptability (using pivot value)
             if !checkdiag(R, S₁, S₂, d₁, d₂, maxval, j)
-                return j, delta, false
+                return j, deltapos, deltaneg, false
             end
         else
-            # Phase 2: initialize Gerschgorin bounds
+            # Phase 2: initialize signed Gerschgorin bounds (g̃_i = s_i A_ii - Σ|A_ij|)
             if j == bstrt
                 for i in bstrt:n
                     g[i] = real(S₁[i]) * real(d₁[i])
@@ -589,7 +601,7 @@ function chol_se99_piv_factor_block!(
                 end
             end
 
-            # Phase 2: max Gerschgorin bound
+            # Phase 2: max signed Gerschgorin bound (max g̃_i)
             maxval = real(g[j])
             maxind = j
 
@@ -642,9 +654,9 @@ function chol_se99_piv_factor_block!(
         Ljj = real(d₁[j])
 
         if PHASE && !lookahead(R, S₁, S₂, L₁, L₂, d₁, d₂, j, uplo)
-            return j, delta, false
+            return j, deltapos, deltaneg, false
         elseif !PHASE
-            Ljj, delta = regularize(R, S₁, L₁, L₂, Ljj, j, delta, uplo)
+            Ljj, deltapos, deltaneg = regularize(R, S₁, L₁, L₂, Ljj, j, deltapos, deltaneg, uplo)
         end
         #
         # Update Gerschgorin bounds (before scaling)
@@ -660,8 +672,8 @@ function chol_se99_piv_factor_block!(
                 bound += abs(L₂[j, i])
             end
 
-            if Ljj > bound
-                temp = one(real(T)) - bound / Ljj
+            if abs(Ljj) > bound
+                temp = one(real(T)) - bound / abs(Ljj)
 
                 for i in j+1:n
                     g[i] += abs(L₁[j, i]) * temp
@@ -702,6 +714,6 @@ function chol_se99_piv_factor_block!(
         end
     end
 
-    return bstop + 1, delta, PHASE
+    return bstop + 1, deltapos, deltaneg, PHASE
 end
 

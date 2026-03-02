@@ -15,10 +15,10 @@ function LinearAlgebra.lowrankdowndate!(F::ChordalCholesky{UPLO, T, I}, v::Abstr
 end
 
 function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, sign::Val{SIGN}) where {UPLO, T, I, SIGN}
-    @assert length(v) == nov(F.S.res)
+    @assert length(v) == ncl(F)
 
-    Pval = FVector{I}(undef, nv(F.S.rel))
-    Cval = FVector{T}(undef, nov(F.S.res))
+    Pval = FVector{I}(undef, nfr(F))
+    Cval = FVector{T}(undef, ncl(F))
     Kval = FVector{T}(undef, ne(F.S.rel))
     Fval = FVector{T}(undef, F.S.nFval + F.S.nNval)
     Mval = FVector{T}(undef, F.S.nNval)
@@ -42,10 +42,10 @@ function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, sign:
 end
 
 function _lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}, sign::Val{SIGN}) where {UPLO, T, I, SIGN}
-    @assert length(v) == nov(F.S.res)
+    @assert length(v) == ncl(F)
 
-    Pval = FVector{I}(undef, nv(F.S.rel))
-    Cval = FVector{T}(undef, nov(F.S.res))
+    Pval = FVector{I}(undef, nfr(F))
+    Cval = FVector{T}(undef, ncl(F))
     Kval = FVector{T}(undef, ne(F.S.rel))
     Fval = FVector{T}(undef, F.S.nFval + F.S.nNval)
     Mval = FVector{T}(undef, F.S.nNval)

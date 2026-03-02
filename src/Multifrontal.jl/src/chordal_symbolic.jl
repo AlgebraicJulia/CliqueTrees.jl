@@ -184,13 +184,13 @@ function Base.getproperty(S::ChordalSymbolic, d::Symbol)
 end
 
 function Base.show(io::IO, S::T) where {T <: ChordalSymbolic}
-    n = size(S, 1)
+    n = ncl(S)
     print(io, "$n×$n $T with $(nnz(S)) stored entries")
     return
 end
 
 function Base.show(io::IO, ::MIME"text/plain", S::T) where {T <: ChordalSymbolic}
-    n = size(S, 1)
+    n = ncl(S)
     println(io, "$n×$n $T with $(nnz(S)) stored entries:")
 
     if n < 16
@@ -207,7 +207,7 @@ end
 const brailleblocks = UInt16['⠁', '⠂', '⠄', '⡀', '⠈', '⠐', '⠠', '⢀']
 
 function showsymbolic(io::IO, S::ChordalSymbolic, uplo::Val{Q}) where {Q}
-    n = size(S, 1)
+    n = ncl(S)
 
     maxheight, maxwidth = displaysize(io)
     maxheight -= 4
@@ -285,21 +285,29 @@ end
 
 # ===== Abstract Matrix Interface =====
 
-function SparseArrays.nnz(S::ChordalSymbolic{I}) where {I <: Integer}
-    n = nv(S.res)
-    nRval = S.Dptr[n + one(I)] - one(I)
-    nLval = S.Lptr[n + one(I)] - one(I)
-    nnz = half(nRval + nov(S.res)) + nLval
-    return convert(Int, nnz)
+function SparseArrays.nnz(S::ChordalSymbolic)
+    n = nfr(S)
+    nRval = convert(Int, S.Dptr[n + 1]) - 1
+    nLval = convert(Int, S.Lptr[n + 1]) - 1
+    nnz = half(nRval + ncl(S)) + nLval
+    return nnz
+end
+
+function ncl(S::ChordalSymbolic)
+    return convert(Int, nov(S.res))
+end
+
+function nfr(S::ChordalSymbolic)
+    return convert(Int, nv(S.res))
 end
 
 function Base.size(S::ChordalSymbolic)
-    n = convert(Int, nov(S.res))
+    n = ncl(S)
     return (n, n)
 end
 
 function Base.size(S::ChordalSymbolic, i::Integer)
-    return size(S)[i]
+    return ncl(S)
 end
 
 function Base.isstored(S::ChordalSymbolic, v::Integer, w::Integer, uplo::Val{UPLO}) where {UPLO}

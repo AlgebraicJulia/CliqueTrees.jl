@@ -1450,11 +1450,11 @@ end
         for P in (NoPivot, RowMaximum)
             for R in (GMW81, SE99)
                 F = ChordalCholesky{UPLO}(A)
-                cholesky!(F, P(); reg=R(F))
+                cholesky!(F, P(); reg=R())
                 @test A ≈ Matrix(F) rtol=1e-3
 
                 F = ChordalLDLt{UPLO}(A)
-                ldlt!(F, P(); signs, reg=R(F))
+                ldlt!(F, P(); signs, reg=R())
                 @test A ≈ Matrix(F) rtol=1e-3
             end
         end
@@ -1472,7 +1472,7 @@ end
         for P in (NoPivot, RowMaximum)
             for R in (GMW81, SE99)
                 F = ChordalLDLt{UPLO}(A)
-                ldlt!(F, P(); signs, reg=R(F))
+                ldlt!(F, P(); signs, reg=R())
                 @test A ≈ Matrix(F) rtol=1e-3
             end
         end
@@ -1488,11 +1488,11 @@ end
 
     for UPLO in (:L, :U)
         F = ChordalCholesky{UPLO}(A)
-        cholesky!(F; reg=GMW81(F))
+        cholesky!(F; reg=GMW81())
         @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
 
         F = ChordalLDLt{UPLO}(A)
-        ldlt!(F; signs, reg=GMW81(F))
+        ldlt!(F; signs, reg=GMW81())
         @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
     end
 end

@@ -38,8 +38,15 @@ julia> F = cholesky!(ChordalCholesky(A))
   - `reg`: dynamic regularization strategy
 
 """
-function LinearAlgebra.cholesky!(F::ChordalCholesky{UPLO, T, I}, pivot::PivotingStrategy=NoPivot(); check::Bool=true, reg::AbstractRegularization=NoRegularization(), tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
-    return chol!(F, pivot, Ones{T}(size(F, 1)), reg, check, tol, Val(:N))
+function LinearAlgebra.cholesky!(
+        F::ChordalCholesky{UPLO, T, I},
+        pivot::PivotingStrategy=NoPivot();
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T, I <: Integer}
+    S = Ones{T}(ncl(F))
+    return chol!(F, pivot, S, initialize(F, S, reg), check, tol, Val(:N))
 end
 
 """
@@ -89,14 +96,28 @@ julia> F = ldlt!(ChordalLDLt(A))
    - `reg`: dynamic regularization strategy
 
 """
-function LinearAlgebra.ldlt!(F::ChordalLDLt{UPLO, T, I}, pivot::PivotingStrategy=NoPivot(); signs::AbstractVector=Zeros{T}(size(F, 1)), reg::AbstractRegularization=NoRegularization(), check::Bool=true, tol::Real=-one(real(T))) where {UPLO, T, I <: Integer}
+function LinearAlgebra.ldlt!(
+        F::ChordalLDLt{UPLO, T, I},
+        pivot::PivotingStrategy=NoPivot();
+        signs::AbstractVector=Zeros{T}(ncl(F)),
+        reg::AbstractRegularization=NoRegularization(),
+        check::Bool=true,
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T, I <: Integer}
+    @assert checksigns(signs, reg)
     S = permuteto(T, signs, F.perm)
-    return chol!(F, pivot, S, reg, check, tol, Val(:U))
+    return chol!(F, pivot, S, initialize(F, S, reg), check, tol, Val(:U))
 end
 
-function chol!(F::ChordalFactorization{DIAG, UPLO, T, I}, ::NoPivot, S::AbstractVector{T}, reg::AbstractRegularization, check::Bool, tol::Real, diag::Val{DIAG}) where {DIAG, UPLO, T, I <: Integer}
-    @assert checksigns(S, reg)
-
+function chol!(
+        F::ChordalFactorization{DIAG, UPLO, T, I},
+        ::NoPivot,
+        S::AbstractVector{T},
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+        diag::Val{DIAG},
+    ) where {DIAG, UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
