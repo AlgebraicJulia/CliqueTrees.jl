@@ -1,12 +1,13 @@
 function chol!(
         F::ChordalFactorization{DIAG, UPLO, T, I},
         ::RowMaximum,
-        S::AbstractVector{T},
+        signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
         tol::Real,
-        diag::Val{DIAG},
     ) where {DIAG, UPLO, T, I <: Integer}
+    S = permuteto(T, signs, F.perm)
+
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
@@ -17,12 +18,12 @@ function chol!(
     if reg isa NoRegularization
         R = convert(real(T), tol)
     else
-        R = reg
+        R = initialize(F, S, reg)
     end
 
     info = chol_piv_fwd!(
         Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, F.perm, S, R, Val{UPLO}(), diag
+        F.S.res, F.S.rel, F.S.chd, piv, F.perm, S, R, F.uplo, F.diag
     )
 
     if isnegative(info)
@@ -31,7 +32,7 @@ function chol!(
 
     F.info[] = zero(I)
 
-    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
+    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, F.uplo)
     chol_piv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
 
     @inbounds for i in eachindex(F.invp)

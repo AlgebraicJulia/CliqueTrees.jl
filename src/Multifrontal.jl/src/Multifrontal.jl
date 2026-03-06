@@ -18,6 +18,8 @@ export ChordalSymbolic
 export ChordalCholesky, FChordalCholesky
 export ChordalLDLt, FChordalLDLt
 export ChordalTriangular, FChordalTriangular
+export DenseCholesky, DenseLDLt
+export DenseCholeskyPivoted, DenseLDLtPivoted
 export DynamicRegularization, GMW81, SE99
 export Permutation, FPermutation
 export symbolic
@@ -29,13 +31,11 @@ const DEFAULT_UPLO = :L
 
 include("permutation.jl")
 include("chordal_symbolic.jl")
+include("abstract_factorization.jl")
 include("chordal_factorization.jl")
+include("dense_factorization.jl")
 include("chordal_triangular.jl")
-include("regularization/abstract_regularization.jl")
-include("regularization/no_regularization.jl")
-include("regularization/dynamic_regularization.jl")
-include("regularization/gmw81.jl")
-include("regularization/se99.jl")
+include("regularization.jl")
 include("cholesky.jl")
 include("cholesky_pivoted.jl")
 include("cholesky_se99.jl")

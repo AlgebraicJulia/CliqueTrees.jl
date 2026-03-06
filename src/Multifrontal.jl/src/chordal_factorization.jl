@@ -1,4 +1,4 @@
-struct ChordalFactorization{DIAG, UPLO, T, I, Dia <: AbstractVector{T}, Val <: AbstractVector{T}, Prm <: AbstractVector{I}} <: Factorization{T}
+struct ChordalFactorization{DIAG, UPLO, T, I, Dia <: AbstractVector{T}, Val <: AbstractVector{T}, Prm <: AbstractVector{I}} <: AbstractFactorization{DIAG, UPLO, T, I, Prm}
     S::ChordalSymbolic{I}
     d::Dia
     Dval::Val
@@ -32,6 +32,7 @@ stored.
 
 """
 const ChordalCholesky = ChordalFactorization{:N}
+const FChordalCholesky{UPLO, T, I} = ChordalCholesky{UPLO, T, I, Ones{T, 1, Tuple{OneTo{Int}}}, FVector{T}, FVector{I}}
 
 """
     ChordalLDLt{UPLO, T, I, Val} <: Factorization{T}
@@ -58,25 +59,7 @@ stored.
 
 """
 const ChordalLDLt = ChordalFactorization{:U}
-
-const FChordalCholesky{UPLO, T, I} = ChordalCholesky{UPLO, T, I, Ones{T, 1, Tuple{OneTo{Int}}}, FVector{T}, FVector{I}}
 const FChordalLDLt{UPLO, T, I} = ChordalLDLt{UPLO, T, I, FVector{T}, FVector{T}, FVector{I}}
-
-function Base.show(io::IO, ::Type{FChordalCholesky{UPLO, T, I}}) where {UPLO, T, I}
-    if !isdefined(get(io, :module, Main), :FChordalCholesky)
-        print(io, "Multifrontal.")
-    end
-
-    print(io, "FChordalCholesky{", repr(UPLO), ", ", T, ", ", I, "}")
-end
-
-function Base.show(io::IO, ::Type{FChordalLDLt{UPLO, T, I}}) where {UPLO, T, I}
-    if !isdefined(get(io, :module, Main), :FChordalLDLt)
-        print(io, "Multifrontal.")
-    end
-
-    print(io, "FChordalLDLt{", repr(UPLO), ", ", T, ", ", I, "}")
-end
 
 # ===== Constructors =====
 
@@ -143,38 +126,31 @@ function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::Prm, S::Ch
     return ChordalFactorization{DIAG, UPLO}(convert(AbstractMatrix{R}, A), perm, S)
 end
 
+function IFactorization(F::ChordalFactorization{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
+    perm = invp = OneTo{I}(ncl(F))
+    return ChordalFactorization{DIAG, UPLO}(F.S, F.d, F.Dval, F.Lval, perm, invp, F.info)
+end
+
+function triangular(F::ChordalFactorization)
+    return ChordalTriangular(F)
+end
+
 # ===== Base methods =====
 
-function Base.copy!(F::ChordalFactorization{DIAG, UPLO}, A::SparseMatrixCSC; check::Bool=true) where {DIAG, UPLO}
-    if !check || ishermitian(A)
-        return copy!(F, Hermitian(A, UPLO))
-    elseif istril(A)
-        return copy!(F, Hermitian(A, :L))
-    elseif istriu(A)
-        return copy!(F, Hermitian(A, :U))
+function Base.show(io::IO, ::Type{FChordalCholesky{UPLO, T, I}}) where {UPLO, T, I}
+    if !isdefined(get(io, :module, Main), :FChordalCholesky)
+        print(io, "Multifrontal.")
     end
 
-    error()
+    print(io, "FChordalCholesky{", repr(UPLO), ", ", T, ", ", I, "}")
 end
 
-function Base.copy!(F::ChordalFactorization{DIAG, UPLO}, A::HermOrSym; check::Bool=true) where {DIAG, UPLO}
-    if UPLO === :L
-        B = sympermute(parent(A), F.invp, A.uplo, 'U')
-    else
-        B = sympermute(parent(A), F.invp, A.uplo, 'L')
+function Base.show(io::IO, ::Type{FChordalLDLt{UPLO, T, I}}) where {UPLO, T, I}
+    if !isdefined(get(io, :module, Main), :FChordalLDLt)
+        print(io, "Multifrontal.")
     end
 
-    copy!(ChordalTriangular(F), copy(adjoint(B)))
-    return F
-end
-
-function Base.fill!(F::ChordalFactorization, x)
-    fill!(ChordalTriangular(F), x)
-    return F
-end
-
-function Base.adjoint(F::ChordalFactorization)
-    return F
+    print(io, "FChordalLDLt{", repr(UPLO), ", ", T, ", ", I, "}")
 end
 
 function Base.show(io::IO, F::T) where {T <: ChordalFactorization}
@@ -189,13 +165,14 @@ function Base.show(io::IO, ::MIME"text/plain", F::T) where {DIAG, UPLO, T <: Cho
 
     if n < 16
         print_matrix(io, ChordalTriangular(F))
+
         if DIAG === :U
             println(io)
             println(io)
             print_matrix(io, F.D)
         end
     else
-        showsymbolic(io, F.S, Val(UPLO))
+        showsymbolic(io, F.S, F.uplo)
     end
 
     return
@@ -205,69 +182,8 @@ function Base.propertynames(::ChordalFactorization)
     return (:L, :U, :D, :P, :S, :d, :Dval, :Lval, :perm, :invp, :info)
 end
 
-function Base.getproperty(F::ChordalFactorization{DIAG, UPLO}, d::Symbol) where {DIAG, UPLO}
-    if d === :P
-        return Permutation(getfield(F, :perm))
-    elseif d === :D
-        return Diagonal(getfield(F, :d))
-    elseif d === :L || d === :U
-        A = ChordalTriangular(F)
-
-        if d === UPLO
-            return A
-        else
-            return A'
-        end
-    else
-        return getfield(F, d)
-    end
-end
-
 function Base.copy(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
     return ChordalFactorization{DIAG, UPLO}(F.S, copy(F.d), copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.invp), copy(F.info))
-end
-
-# ===== LinearAlgebra =====
-
-function LinearAlgebra.isposdef(F::ChordalFactorization{DIAG}) where {DIAG}
-    if DIAG === :N
-        return iszero(F.info[])
-    else
-        return isposdef(F.D)
-    end
-end
-
-function LinearAlgebra.rank(F::ChordalFactorization{DIAG}; kw...) where {DIAG}
-    if DIAG === :N
-        return rank(F.L; kw...)
-    else
-        return rank(F.D; kw...)
-    end
-end
-
-function LinearAlgebra.det(F::ChordalFactorization{DIAG}) where {DIAG}
-    if DIAG === :N
-        return det(F.L)^2
-    else
-        return det(F.L)^2 * det(F.D)
-    end
-end
-
-function LinearAlgebra.logdet(F::ChordalFactorization{DIAG}) where {DIAG}
-    if DIAG === :N
-        return 2logdet(F.L)
-    else
-        d, s = logabsdet(F)
-        return d + log(s)
-    end
-end
-
-function LinearAlgebra.logabsdet(F::ChordalFactorization{DIAG}) where {DIAG}
-    if DIAG === :N
-        return (2logdet(F.L), one(eltype(F)))
-    else
-        return logabsdet(F.D)
-    end
 end
 
 # ===== flatindices =====
@@ -292,12 +208,12 @@ function flatindices(F::ChordalFactorization{DIAG, UPLO, T, I}, A::HermOrSym; ch
     B = SparseMatrixCSC(size(A)..., colptr, rowval, nzval)
 
     if UPLO === :L
-        B = sympermute(B, F.invp, A.uplo, 'U')
+        C = sympermute(B, F.invp, A.uplo, 'L')
     else
-        B = sympermute(B, F.invp, A.uplo, 'L')
+        C = sympermute(B, F.invp, A.uplo, 'U')
     end
 
-    C = copy(adjoint(B)); P = flatindices(ChordalTriangular(F), C)
+    P = flatindices(ChordalTriangular(F), C)
     fill!(nzval, zero(I))
 
     for (i, j) in zip(nonzeros(C), P)
@@ -318,41 +234,8 @@ end
 
 # ===== Abstract Matrix Interface =====
 
-function Base.Matrix{T}(F::ChordalFactorization{DIAG}) where {DIAG, T}
-    B = Matrix{T}(I, size(F))
-    return lmul!(F, B)
-end
-
-function Base.Matrix(F::ChordalFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    return Matrix{T}(F)
-end
-
-function LinearAlgebra.diag(F::ChordalFactorization{DIAG}) where {DIAG}
-    if DIAG === :N
-        return diag(F.L).^2
-    else
-        return diag(F.D)
-    end
-end
-
 function SparseArrays.nnz(F::ChordalFactorization)
     return nnz(ChordalTriangular(F))
-end
-
-function Base.size(F::ChordalFactorization)
-    return size(ChordalTriangular(F))
-end
-
-function Base.size(F::ChordalFactorization, args...)
-    return size(ChordalTriangular(F), args...)
-end
-
-function Base.axes(F::ChordalFactorization, args...)
-    return axes(ChordalTriangular(F), args...)
-end
-
-function ncl(F::ChordalFactorization)
-    return ncl(ChordalTriangular(F))
 end
 
 function nfr(F::ChordalFactorization)
@@ -371,26 +254,3 @@ function offdblock(F::ChordalFactorization, j::Integer)
     return offdblock(ChordalTriangular(F), j)
 end
 
-function LinearAlgebra.issuccess(F::ChordalFactorization)
-    return iszero(F.info[])
-end
-
-function LinearAlgebra.cond(F::ChordalFactorization, p::Real)
-    if p == 1 || p == Inf
-        condest1(F)
-    elseif p == 2
-        condest2(F)
-    else
-        error()
-    end
-end
-
-function LinearAlgebra.opnorm(F::ChordalFactorization, p::Real)
-    if p == 1 || p == Inf
-        opnormest1(F)
-    elseif p == 2
-        opnormest2(F)
-    else
-        error()
-    end
-end

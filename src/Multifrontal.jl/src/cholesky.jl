@@ -1,8 +1,7 @@
 """
-    cholesky!(F::ChordalCholesky[, pivot::PivotingStrategy]; check=true, reg=NoRegularization())
+    cholesky!(F[, pivot::PivotingStrategy]; check=true, reg=NoRegularization())
 
-Perform a Cholesky factorization of a sparse
-positive-definite matrix.
+Perform a Cholesky factorization of a positive definite matrix.
 
 ### Example
 
@@ -29,9 +28,9 @@ julia> F = cholesky!(ChordalCholesky(A))
  0.0  1.0  1.0  1.0  2.0
 ```
 
-## Parameters
+### Parameters
 
-  - `F`: positive-definite matrix
+  - `F`: positive definite matrix
   - `pivot`: pivoting strategy
   - `check`: if `check = true`, then the function errors if `F`
     is not positive definite
@@ -39,26 +38,22 @@ julia> F = cholesky!(ChordalCholesky(A))
 
 """
 function LinearAlgebra.cholesky!(
-        F::ChordalCholesky{UPLO, T, I},
+        F::AbstractFactorization{:N, UPLO, T},
         pivot::PivotingStrategy=NoPivot();
         check::Bool=true,
         reg::AbstractRegularization=NoRegularization(),
         tol::Real=-one(real(T)),
-    ) where {UPLO, T, I <: Integer}
-    S = Ones{T}(ncl(F))
-    return chol!(F, pivot, S, initialize(F, S, reg), check, tol, Val(:N))
+    ) where {UPLO, T}
+    S = Ones{T}(size(F, 1))
+    return chol!(F, pivot, S, reg, check, tol)
 end
 
 """
-    ldlt!(F::ChordalLDLt[, pivot::PivotingStrategy]; check=true, signs=Zeros(size(F, 1)), reg=NoRegularization())
+    ldlt!(F[, pivot::PivotingStrategy]; check=true, signs=Zeros(size(F, 1)), reg=NoRegularization())
 
-Perform an LDLᵀ factorization of a sparse quasi-definite
-matrix.
+Perform an LDLᵀ factorization of a quasi-definite matrix.
 
 ### Example
-
-Use [`ChordalLDLt`](@ref) to construct a factorization object.
-Use [`ldlt!`](@ref) to perform the factorization.
 
 ```julia-repl
 julia> using CliqueTrees.Multifrontal, LinearAlgebra
@@ -97,32 +92,33 @@ julia> F = ldlt!(ChordalLDLt(A))
 
 """
 function LinearAlgebra.ldlt!(
-        F::ChordalLDLt{UPLO, T, I},
+        F::AbstractFactorization{:U, UPLO, T},
         pivot::PivotingStrategy=NoPivot();
-        signs::AbstractVector=Zeros{T}(ncl(F)),
+        signs::AbstractVector=Zeros{T}(size(F, 1)),
         reg::AbstractRegularization=NoRegularization(),
         check::Bool=true,
         tol::Real=-one(real(T)),
-    ) where {UPLO, T, I <: Integer}
+    ) where {UPLO, T}
     @assert checksigns(signs, reg)
-    S = permuteto(T, signs, F.perm)
-    return chol!(F, pivot, S, initialize(F, S, reg), check, tol, Val(:U))
+    return chol!(F, pivot, signs, reg, check, tol)
 end
 
 function chol!(
         F::ChordalFactorization{DIAG, UPLO, T, I},
         ::NoPivot,
-        S::AbstractVector{T},
+        signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
         tol::Real,
-        diag::Val{DIAG},
     ) where {DIAG, UPLO, T, I <: Integer}
+    S = permuteto(T, signs, F.perm)
+    R = initialize(F, S, reg)
+
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
 
-    info = chol_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval, F.S.res, F.S.rel, F.S.chd, Val{UPLO}(), S, reg, diag)
+    info = chol_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval, F.S.res, F.S.rel, F.S.chd, F.uplo, S, R, F.diag)
 
     if isnegative(info)
         throw(ArgumentError(info))
@@ -136,6 +132,89 @@ function chol!(
         F.info[] = F.perm[info]
     else
         F.info[] = zero(I)
+    end
+
+    return F
+end
+
+function chol!(
+        F::DenseFactorization{DIAG, UPLO, T},
+        ::NoPivot,
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {DIAG, UPLO, T}
+    S = permuteto(T, signs, eachindex(signs))
+    R = initialize(F, S, reg)
+    n = size(F, 1)
+
+    if DIAG === :N
+        W = Ones{T}(n * n)
+    else
+        W = FVector{T}(undef, n * n)
+    end
+
+    if R isa SE99
+        if DIAG === :N
+            d = diag(F.M)
+        else
+            d = F.d .= view(F.M, diagind(F.M))
+        end
+    else
+        d = F.d
+    end
+
+    F.info[] = potrf!(F.uplo, W, F.M, d, S, R, F.diag)
+
+    if ispositive(F.info[]) && check
+        if DIAG === :N
+            throw(PosDefException(F.info[]))
+        else
+            throw(ZeroPivotException(F.info[]))
+        end
+    end
+
+    if !(F isa IFactorization)
+        F.perm .= 1:n
+        F.invp .= 1:n
+    end
+
+    return F
+end
+
+function chol!(
+        F::DenseFactorization{DIAG, UPLO, T},
+        ::RowMaximum,
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {DIAG, UPLO, T}
+    S = permuteto(T, signs, eachindex(signs))
+    R = initialize(F, S, reg)
+    n = size(F, 1)
+
+    if DIAG === :N
+        W = FVector{real(T)}(undef, n * n)
+    else
+        W = FVector{T}(undef, n * n)
+    end
+
+    if R isa SE99 || R isa GMW81
+        if DIAG === :N
+            d = diag(F.M)
+        else
+            d = F.d .= view(F.M, diagind(F.M))
+        end
+    else
+        d = F.d
+    end
+
+    F.info[], rank = pstrf!(F.uplo, W, F.M, d, F.perm, S, R, tol, F.diag)
+
+    for i in eachindex(F.perm)
+        F.invp[F.perm[i]] = i
     end
 
     return F
@@ -444,17 +523,19 @@ function chol_factor!(
 
             syrk!(uplo, tA, -one(real(T)), W, Drb, dbb, one(real(T)), Drr, diag)
 
-            if UPLO === :L
-                Lnr = view(L, :, bstop + 1:n)
-                A = Lnb
-                B = Drb
-            else
-                Lnr = view(L, bstop + 1:n, :)
-                A = Drb
-                B = Lnb
-            end
+            if !isempty(L)
+                if UPLO === :L
+                    Lnr = view(L, :, bstop + 1:n)
+                    A = Lnb
+                    B = Drb
+                else
+                    Lnr = view(L, bstop + 1:n, :)
+                    A = Drb
+                    B = Lnb
+                end
 
-            gemm!(tA, tB, -one(T), W, A, B, dbb, one(T), Lnr, diag)
+                gemm!(tA, tB, -one(T), W, A, B, dbb, one(T), Lnr, diag)
+            end
         end
     end
 

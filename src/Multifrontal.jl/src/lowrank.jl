@@ -36,7 +36,7 @@ function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, sign:
     path = view(Pval, oneto(n))
 
     lowrank_copy!(Kval, path, Cval, F.S.res, F.S.rel)
-    ldlt_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.d, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, Val{UPLO}())
+    ldlt_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.d, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, F.uplo)
 
     return F
 end
@@ -63,7 +63,7 @@ function _lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}, s
     path = view(Pval, oneto(n))
 
     lowrank_copy!(Kval, path, Cval, F.S.res, F.S.rel)
-    chol_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, Val{UPLO}())
+    chol_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, F.uplo)
 
     return F
 end

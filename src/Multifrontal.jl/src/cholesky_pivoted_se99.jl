@@ -1,12 +1,14 @@
 function chol!(
         F::ChordalFactorization{DIAG, UPLO, T, I},
         ::RowMaximum,
-        S::AbstractVector{T},
-        R::SE99,
+        signs::AbstractVector,
+        reg::SE99,
         check::Bool,
         tol::Real,
-        diag::Val{DIAG},
     ) where {DIAG, UPLO, T, I <: Integer}
+    S = permuteto(T, signs, F.perm)
+    R = initialize(F, S, reg)
+
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
@@ -30,12 +32,12 @@ function chol!(
 
     chol_se99_piv_fwd!(
         Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, d, Eval, Fval,
-        F.S.res, F.S.rel, F.S.sep, F.S.chd, piv, F.perm, S, R, Val{UPLO}(), diag
+        F.S.res, F.S.rel, F.S.sep, F.S.chd, piv, F.perm, S, R, F.uplo, F.diag
     )
 
     F.info[] = zero(I)
 
-    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, Val{UPLO}())
+    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, F.uplo)
     chol_piv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
 
     @inbounds for i in eachindex(F.invp)
@@ -215,16 +217,16 @@ end
 # ============================= chol_se99_piv_kernel! =============================
 
 function chol_se99_piv_kernel!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
+        L₁::AbstractMatrix{T},
+        L₂::AbstractMatrix{T},
         M::AbstractMatrix{T},
         W::AbstractVector{T},
-        d::AbstractVector{T},
-        e::AbstractVector{T},
+        d₁::AbstractVector{T},
+        d₂::AbstractVector{T},
         g::AbstractVector{T},
         P::AbstractVector,
-        S::AbstractVector{T},
-        Se::AbstractVector{T},
+        S₁::AbstractVector{T},
+        S₂::AbstractVector{T},
         R::SE99,
         phase::Bool,
         deltapos::Real,
@@ -232,25 +234,25 @@ function chol_se99_piv_kernel!(
         uplo::Val{UPLO},
         diag::Val{DIAG},
     ) where {T, UPLO, DIAG}
-    @assert size(D, 1) == size(D, 2)
+    @assert size(L₁, 1) == size(L₁, 2)
     @assert size(M, 1) == size(M, 2)
     #
     # initialize P
     #
-    @inbounds for i in axes(D, 1)
+    @inbounds for i in axes(L₁, 1)
         P[i] = i
     end
     #
-    # factorize D
+    # factorize L₁
     #
     j = 1
 
     if phase
-        j, deltapos, deltaneg, phase = chol_se99_piv_factor!(D, L, W, d, e, g, P, S, Se, R, deltapos, deltaneg, j, uplo, diag, Val(true))
+        j, deltapos, deltaneg, phase = chol_se99_piv_factor!(L₁, L₂, W, d₁, d₂, g, P, S₁, S₂, R, deltapos, deltaneg, j, uplo, diag, Val(true))
     end
 
     if !phase
-        j, deltapos, deltaneg, phase = chol_se99_piv_factor!(D, L, W, d, e, g, P, S, Se, R, deltapos, deltaneg, j, uplo, diag, Val(false))
+        j, deltapos, deltaneg, phase = chol_se99_piv_factor!(L₁, L₂, W, d₁, d₂, g, P, S₁, S₂, R, deltapos, deltaneg, j, uplo, diag, Val(false))
     end
 
     if !isempty(M)
@@ -260,9 +262,9 @@ function chol_se99_piv_kernel!(
             trans = Val(:C)
         end
         #
-        #     M ← M - L D Lᴴ
+        #     M ← M - L₂ D₁ L₂ᴴ
         #
-        syrk!(uplo, trans, -one(real(T)), W, L, d, one(real(T)), M, diag)
+        syrk!(uplo, trans, -one(real(T)), W, L₂, d₁, one(real(T)), M, diag)
     end
 
     return deltapos, deltaneg, phase
@@ -271,38 +273,38 @@ end
 # ============================= chol_se99_piv_factor! =============================
 
 function chol_se99_piv_factor_loop!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
+        L₁::AbstractMatrix{T},
+        L₂::AbstractMatrix{T},
         W::AbstractVector{T},
-        d::AbstractVector{T},
+        d₁::AbstractVector{T},
         bstrt::Int,
         bstop::Int,
         uplo::Val{UPLO},
         diag::Val{DIAG},
     ) where {T, UPLO, DIAG}
 
-    n = size(D, 1)
+    n = size(L₁, 1)
     bstop >= n && return
 
-    Drr = view(D, bstop + 1:n, bstop + 1:n)
-    dbb = view(d, bstrt:bstop)
+    Drr = view(L₁, bstop + 1:n, bstop + 1:n)
+    dbb = view(d₁, bstrt:bstop)
 
     if UPLO === :L
-        Drb = view(D, bstop + 1:n, bstrt:bstop)
+        Drb = view(L₁, bstop + 1:n, bstrt:bstop)
         syrk!(Val(:L), Val(:N), -one(real(T)), W, Drb, dbb, one(real(T)), Drr, diag)
     else
-        Drb = view(D, bstrt:bstop, bstop + 1:n)
+        Drb = view(L₁, bstrt:bstop, bstop + 1:n)
         syrk!(Val(:U), Val(:C), -one(real(T)), W, Drb, dbb, one(real(T)), Drr, diag)
     end
 
-    if !isempty(L)
+    if !isempty(L₂)
         if UPLO === :L
-            Lnb = view(L, :, bstrt:bstop)
-            Lnr = view(L, :, bstop + 1:n)
+            Lnb = view(L₂, :, bstrt:bstop)
+            Lnr = view(L₂, :, bstop + 1:n)
             gemm!(Val(:N), Val(:C), -one(T), W, Lnb, Drb, dbb, one(T), Lnr, diag)
         else
-            Lnb = view(L, bstrt:bstop, :)
-            Lnr = view(L, bstop + 1:n, :)
+            Lnb = view(L₂, bstrt:bstop, :)
+            Lnr = view(L₂, bstop + 1:n, :)
             gemm!(Val(:C), Val(:N), -one(T), W, Drb, Lnb, dbb, one(T), Lnr, diag)
         end
     end
@@ -311,15 +313,15 @@ function chol_se99_piv_factor_loop!(
 end
 
 function chol_se99_piv_factor!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
+        L₁::AbstractMatrix{T},
+        L₂::AbstractMatrix{T},
         W::AbstractVector{T},
-        d::AbstractVector{T},
-        e::AbstractVector{T},
+        d₁::AbstractVector{T},
+        d₂::AbstractVector{T},
         g::AbstractVector{T},
         P::AbstractVector,
-        S::AbstractVector{T},
-        Se::AbstractVector{T},
+        S₁::AbstractVector{T},
+        S₂::AbstractVector{T},
         R::SE99,
         deltapos::Real,
         deltaneg::Real,
@@ -329,27 +331,27 @@ function chol_se99_piv_factor!(
         phase::Val{PHASE},
     ) where {T, UPLO, DIAG, PHASE}
 
-    n = size(D, 1)
+    n = size(L₁, 1)
     bstop = min(cld(bstrt, THRESHOLD) * THRESHOLD, n)
 
     @inbounds while bstrt <= n
-        j, deltapos, deltaneg, newphase = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, deltapos, deltaneg, bstrt, bstop, uplo, diag, phase)
+        j, deltapos, deltaneg, newphase = chol_se99_piv_factor_block!(L₁, L₂, d₁, d₂, g, P, S₁, S₂, R, deltapos, deltaneg, bstrt, bstop, uplo, diag, phase)
 
         if PHASE && !newphase
-            j, deltapos, deltaneg = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, deltapos, deltaneg, j, bstop, uplo, diag, Val(false))
-            chol_se99_piv_factor_loop!(D, L, W, d, bstrt, bstop, uplo, diag)
+            j, deltapos, deltaneg = chol_se99_piv_factor_block!(L₁, L₂, d₁, d₂, g, P, S₁, S₂, R, deltapos, deltaneg, j, bstop, uplo, diag, Val(false))
+            chol_se99_piv_factor_loop!(L₁, L₂, W, d₁, bstrt, bstop, uplo, diag)
 
             for cstrt in bstop + 1:THRESHOLD:n
                 cstop = min(cstrt + THRESHOLD - 1, n)
 
-                j, deltapos, deltaneg = chol_se99_piv_factor_block!(D, L, d, e, g, P, S, Se, R, deltapos, deltaneg, cstrt, cstop, uplo, diag, Val(false))
-                chol_se99_piv_factor_loop!(D, L, W, d, cstrt, cstop, uplo, diag)
+                j, deltapos, deltaneg = chol_se99_piv_factor_block!(L₁, L₂, d₁, d₂, g, P, S₁, S₂, R, deltapos, deltaneg, cstrt, cstop, uplo, diag, Val(false))
+                chol_se99_piv_factor_loop!(L₁, L₂, W, d₁, cstrt, cstop, uplo, diag)
             end
 
             return n + 1, deltapos, deltaneg, false
         end
 
-        chol_se99_piv_factor_loop!(D, L, W, d, bstrt, bstop, uplo, diag)
+        chol_se99_piv_factor_loop!(L₁, L₂, W, d₁, bstrt, bstop, uplo, diag)
 
         bstrt = bstop + 1
         bstop = min(bstrt + THRESHOLD - 1, n)

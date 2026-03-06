@@ -24,13 +24,13 @@ function Base.:*(A::SparseMatrixCSC, B::AdjOrTransPerm)
     return A / parent(B)
 end
 
-# --- ChordalFactorization ---
+# --- AbstractFactorization ---
 
-function Base.:*(F::ChordalFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
+function Base.:*(F::AbstractFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
     return lmul!(F, Array{T}(B))
 end
 
-function Base.:*(B::AbstractMatrix, F::ChordalFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:*(B::AbstractMatrix, F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), F)
 end
 
@@ -86,57 +86,67 @@ end
 
 # ================================ lmul! ================================
 
-# --- ChordalFactorization ---
+# --- AbstractFactorization ---
 
-function LinearAlgebra.lmul!(F::ChordalFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
+function LinearAlgebra.lmul!(F::IFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
-    C = FArray{T}(undef, size(B))
 
     if DIAG === :N
-        return ldiv!(B, F.P, lmul!(F.L, lmul!(F.U, mul!(C, F.P, B))))
+        return lmul!(F.L, lmul!(F.U, B))
     else
-        return ldiv!(B, F.P, lmul!(F.L, lmul!(F.D, lmul!(F.U, mul!(C, F.P, B)))))
+        return lmul!(F.L, lmul!(F.D, lmul!(F.U, B)))
     end
+end
+
+function LinearAlgebra.lmul!(F::AbstractFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
+    @assert size(F, 1) == size(B, 1)
+    C = FArray{T}(undef, size(B))
+    return ldiv!(B, F.P, lmul!(IFactorization(F), mul!(C, F.P, B)))
 end
 
 # --- ChordalTriangular ---
 
-function LinearAlgebra.lmul!(A::MaybeAdjOrTransTri{DIAG, UPLO}, B::AbstractVecOrMat) where {DIAG, UPLO}
+function LinearAlgebra.lmul!(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
     @assert size(A, 1) == size(B, 1)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return mul_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, Val(UPLO), Val(:L), Val(DIAG))
+    return mul_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:L), A.diag)
 end
 
 # ================================ rmul! ================================
 
-# --- ChordalFactorization ---
+# --- AbstractFactorization ---
 
-function LinearAlgebra.rmul!(B::AbstractMatrix, F::ChordalFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function LinearAlgebra.rmul!(B::AbstractMatrix, F::IFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
-    C = FMatrix{T}(undef, size(B))
 
     if DIAG === :N
-        return mul!(B, rmul!(rmul!(rdiv!(C, B, F.P), F.L), F.U), F.P)
+        return rmul!(rmul!(B, F.L), F.U)
     else
-        return mul!(B, rmul!(rmul!(rmul!(rdiv!(C, B, F.P), F.L), F.D), F.U), F.P)
+        return rmul!(rmul!(rmul!(B, F.L), F.D), F.U)
     end
+end
+
+function LinearAlgebra.rmul!(B::AbstractMatrix, F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    @assert size(F, 1) == size(B, 2)
+    C = FMatrix{T}(undef, size(B))
+    return mul!(B, rmul!(rdiv!(C, B, F.P), IFactorization(F)), F.P)
 end
 
 # --- ChordalTriangular ---
 
-function LinearAlgebra.rmul!(B::AbstractMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO}) where {DIAG, UPLO}
+function LinearAlgebra.rmul!(B::AbstractMatrix, A::MaybeAdjOrTransTri)
     @assert size(A, 1) == size(B, 2)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return mul_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, Val(UPLO), Val(:R), Val(DIAG))
+    return mul_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:R), A.diag)
 end
 
 # ================================= mul! ================================
 
-# --- ChordalFactorization ---
+# --- AbstractFactorization ---
 
-function LinearAlgebra.mul!(C::AbstractVecOrMat, F::ChordalFactorization, B::AbstractVecOrMat)
+function LinearAlgebra.mul!(C::AbstractVecOrMat, F::AbstractFactorization, B::AbstractVecOrMat)
     lmul!(F, copyrec!(C, B))
 end
 

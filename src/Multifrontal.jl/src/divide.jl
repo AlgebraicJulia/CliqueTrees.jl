@@ -100,26 +100,31 @@ function LinearAlgebra.ldiv!(C::AbstractVecOrMat, A::AdjOrTransPerm, B::Abstract
     return mul!(C, parent(A), B)
 end
 
-# --- ChordalFactorization ---
+# --- AbstractFactorization ---
 
-function LinearAlgebra.ldiv!(F::ChordalFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
+function LinearAlgebra.ldiv!(F::IFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
-    C = FArray{T}(undef, size(B))
 
     if DIAG === :N
-        return ldiv!(B, F.P, ldiv!(F.U, ldiv!(F.L, mul!(C, F.P, B))))
+        return ldiv!(F.U, ldiv!(F.L, B))
     else
-        return ldiv!(B, F.P, ldiv!(F.U, ldiv!(F.D, ldiv!(F.L, mul!(C, F.P, B)))))
+        return ldiv!(F.U, ldiv!(F.D, ldiv!(F.L, B)))
     end
+end
+
+function LinearAlgebra.ldiv!(F::AbstractFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
+    @assert size(F, 1) == size(B, 1)
+    C = FArray{T}(undef, size(B))
+    return ldiv!(B, F.P, ldiv!(IFactorization(F), mul!(C, F.P, B)))
 end
 
 # --- ChordalTriangular ---
 
-function LinearAlgebra.ldiv!(A::MaybeAdjOrTransTri{DIAG, UPLO}, B::AbstractVecOrMat) where {DIAG, UPLO}
+function LinearAlgebra.ldiv!(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
     @assert size(A, 1) == size(B, 1)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, Val(UPLO), Val(:L), Val(DIAG))
+    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:L), A.diag)
 end
 
 # ================================ rdiv! ================================
@@ -152,26 +157,31 @@ function LinearAlgebra.rdiv!(C::AbstractMatrix, A::AbstractMatrix, B::AdjOrTrans
     return mul!(C, A, parent(B))
 end
 
-# --- ChordalFactorization ---
+# --- AbstractFactorization ---
 
-function LinearAlgebra.rdiv!(B::AbstractMatrix, F::ChordalFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::IFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
-    C = FMatrix{T}(undef, size(B))
 
     if DIAG === :N
-        return mul!(B, rdiv!(rdiv!(rdiv!(C, B, F.P), F.U), F.L), F.P)
+        return rdiv!(rdiv!(B, F.U), F.L)
     else
-        return mul!(B, rdiv!(rdiv!(rdiv!(rdiv!(C, B, F.P), F.U), F.D), F.L), F.P)
+        return rdiv!(rdiv!(rdiv!(B, F.U), F.D), F.L)
     end
+end
+
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    @assert size(F, 1) == size(B, 2)
+    C = FMatrix{T}(undef, size(B))
+    return mul!(B, rdiv!(rdiv!(C, B, F.P), IFactorization(F)), F.P)
 end
 
 # --- ChordalTriangular ---
 
-function LinearAlgebra.rdiv!(B::AbstractMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO}) where {DIAG, UPLO}
+function LinearAlgebra.rdiv!(B::AbstractMatrix, A::MaybeAdjOrTransTri)
     @assert size(A, 1) == size(B, 2)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, Val(UPLO), Val(:R), Val(DIAG))
+    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:R), A.diag)
 end
 
 # ============================== div_impl! ==============================

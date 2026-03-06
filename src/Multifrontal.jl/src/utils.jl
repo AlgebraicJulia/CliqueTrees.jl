@@ -84,6 +84,44 @@ function symmetric(graph::AbstractGraph{V}, uplo::Char) where {V}
     return BipartiteGraph{V, E}(n, n, m, ptr, tgt)
 end
 
+function sympermute!(C::AbstractMatrix, A::SparseMatrixCSC, invp::AbstractVector, src::Char, tgt::Char)
+    return copyto!(C, sympermute(A, invp, src, tgt))
+end
+
+function sympermute!(C::AbstractMatrix{T}, A::AbstractMatrix{T}, invp::AbstractVector, src::Char, tgt::Char) where {T}
+    n = size(A, 1)
+
+    for j in 1:n
+        pj = invp[j]
+
+        if tgt === 'L'
+            rng = j:n
+        else
+            rng = 1:j
+        end
+
+        for i in rng
+            pi = invp[i]
+
+            if src === 'L'
+                if pi >= pj
+                    C[i, j] = A[pi, pj]
+                else
+                    C[i, j] = conj(A[pj, pi])
+                end
+            else
+                if pi <= pj
+                    C[i, j] = A[pi, pj]
+                else
+                    C[i, j] = conj(A[pj, pi])
+                end
+            end
+        end
+    end
+
+    return C
+end
+
 function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, tgt::Char) where {T, I}
     n = size(A, 1)
     m = zero(I)
@@ -101,9 +139,9 @@ function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, t
             pi = invp[i]
 
             if tgt === 'L'
-                hi = min(pi, pj)
-            else
                 hi = max(pi, pj)
+            else
+                hi = min(pi, pj)
             end
 
             if hi < n
@@ -135,9 +173,9 @@ function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, t
             pi = invp[i]
 
             if tgt === 'L'
-                hi, lo = minmax(pi, pj)
-            else
                 lo, hi = minmax(pi, pj)
+            else
+                hi, lo = minmax(pi, pj)
             end
 
             q = colptr[hi + one(I)]
@@ -154,7 +192,8 @@ function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, t
         end
     end
 
-    return SparseMatrixCSC(n, n, colptr, rowval, nzval)
+    B = SparseMatrixCSC{T, I}(n, n, colptr, rowval, nzval)
+    return copy(adjoint(B))
 end
 
 function tri(uplo::Val{:L}, diag::Val{:N}, A::AbstractMatrix)

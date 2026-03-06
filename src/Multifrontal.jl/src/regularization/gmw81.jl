@@ -47,9 +47,9 @@ function GMW81(; kw...)
     return GMW81{Float64}(; kw...)
 end
 
-function initialize(F::ChordalFactorization{DIAG, UPLO, T}, S::AbstractVector, R::GMW81) where {DIAG, UPLO, T}
+function initialize(F::AbstractFactorization{DIAG, UPLO, T}, S::AbstractVector, R::GMW81) where {DIAG, UPLO, T}
     if isnegative(R.beta)
-        beta = gmw81_beta(ChordalTriangular(F))
+        beta = gmw81_beta(triangular(F))
     else
         beta = convert(real(T), R.beta)
     end
@@ -63,49 +63,42 @@ function initialize(F::ChordalFactorization{DIAG, UPLO, T}, S::AbstractVector, R
     return GMW81{real(T)}(beta, delta)
 end
 
+function gmw81_gamma_xi(A::AbstractMatrix{T}) where {T}
+    gamma = zero(real(T))
+    xi = zero(real(T))
+
+    @inbounds for j in axes(A, 2)
+        for i in axes(A, 1)
+            if i == j
+                gamma = max(gamma, abs(parent(A)[i, j]))
+            else
+                xi = max(xi, abs(A[i, j]))
+            end
+        end
+    end
+
+    return gamma, xi
+end
+
 function gmw81_beta(A::ChordalTriangular{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
     n = size(A, 1)
     gamma = zero(real(T))
     xi = zero(real(T))
 
-    @inbounds for j in vertices(A.S.res)
-        nn = eltypedegree(A.S.res, j)
-        na = eltypedegree(A.S.sep, j)
+    @inbounds for j in fronts(A)
+        D, _ = diagblock(A, j)
+        L, _ = offdblock(A, j)
 
-        Dp = A.S.Dptr[j]
-        Lp = A.S.Lptr[j]
-
-        D = reshape(view(A.Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
-
-        if UPLO === :L
-            L = reshape(view(A.Lval, Lp:Lp + nn * na - one(I)), na, nn)
-        else
-            L = reshape(view(A.Lval, Lp:Lp + nn * na - one(I)), nn, na)
-        end
-
-        for i in oneto(nn)
-            gamma = max(gamma, abs(D[i, i]))
-        end
-
-        if UPLO === :L
-            for col in oneto(nn)
-                for row in col + one(I):nn
-                    xi = max(xi, abs(D[row, col]))
-                end
-            end
-        else
-            for col in oneto(nn)
-                for row in oneto(col - one(I))
-                    xi = max(xi, abs(D[row, col]))
-                end
-            end
-        end
-
-        for v in L
-            xi = max(xi, abs(v))
-        end
+        gamma, xi = max.((gamma, xi), gmw81_gamma_xi(D))
+        xi = max(xi, maximum(abs, L; init=zero(real(T))))
     end
 
+    return max(gamma, xi / sqrt(n^2 - 1), eps(real(T)))
+end
+
+function gmw81_beta(A::AbstractMatrix{T}) where {T}
+    n = size(A, 1)
+    gamma, xi = gmw81_gamma_xi(A)
     return max(gamma, xi / sqrt(n^2 - 1), eps(real(T)))
 end
 

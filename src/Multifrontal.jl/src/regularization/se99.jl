@@ -51,15 +51,15 @@ function SE99(; kw...)
     return SE99{Float64}(; kw...)
 end
 
-function initialize(F::ChordalFactorization{DIAG, UPLO, T}, S::AbstractVector, R::SE99) where {DIAG, UPLO, T}
+function initialize(F::AbstractFactorization{DIAG, UPLO, T}, S::AbstractVector, R::SE99) where {DIAG, UPLO, T}
     if isnegative(R.gammapos)
-        gammapos = se99_gamma(ChordalTriangular(F), S, 1)
+        gammapos = se99_gamma(triangular(F), S, 1)
     else
         gammapos = convert(real(T), R.gammapos)
     end
 
     if isnegative(R.gammaneg)
-        gammaneg = se99_gamma(ChordalTriangular(F), S, -1)
+        gammaneg = se99_gamma(triangular(F), S, -1)
     else
         gammaneg = convert(real(T), R.gammaneg)
     end
@@ -84,11 +84,18 @@ function se99_gamma(A::ChordalTriangular{DIAG, UPLO, T}, S::AbstractVector, s::R
 
     @inbounds for j in fronts(A)
         D, res = diagblock(A, j)
+        out = max(out, se99_gamma(D, view(S, res), s))
+    end
 
-        for (i, k) in zip(res, diagind(D))
-            if real(S[i]) == s
-                out = max(out, abs(parent(D)[k]))
-            end
+    return out
+end
+
+function se99_gamma(A::AbstractMatrix{T}, S::AbstractVector, s::Real) where {T}
+    out = eps(real(T))
+
+    @inbounds for (r, i) in zip(S, diagind(A))
+        if real(r) == s
+            out = max(out, abs(parent(A)[i]))
         end
     end
 

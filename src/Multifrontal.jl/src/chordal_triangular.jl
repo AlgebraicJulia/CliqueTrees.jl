@@ -52,6 +52,16 @@ function ChordalTriangular(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPL
     return ChordalTriangular{DIAG, UPLO}(getfield(F, :S), getfield(F, :Dval), getfield(F, :Lval))
 end
 
+function Base.getproperty(A::ChordalTriangular{DIAG, UPLO}, s::Symbol) where {DIAG, UPLO}
+    if s === :uplo
+        return Val(UPLO)
+    elseif s === :diag
+        return Val(DIAG)
+    else
+        return getfield(A, s)
+    end
+end
+
 function Base.show(io::IO, A::T) where {T <: ChordalTriangular}
     n = ncl(A)
     print(io, "$n×$n $T with $(nnz(A)) stored entries")
@@ -65,7 +75,7 @@ function Base.show(io::IO, ::MIME"text/plain", A::T) where {DIAG, UPLO, T <: Cho
     if n < 16
         print_matrix(io, A)
     else
-        showsymbolic(io, A.S, Val(UPLO))
+        showsymbolic(io, A.S, A.uplo)
     end
 
     return
@@ -296,8 +306,8 @@ function Base.getindex(A::ChordalTriangular{DIAG, UPLO, T}, v::Integer, w::Integ
     end
 end
 
-function Base.isstored(A::ChordalTriangular{DIAG, UPLO}, v::Integer, w::Integer) where {DIAG, UPLO}
-    return isstored(A.S, v, w, Val(UPLO))
+function Base.isstored(A::ChordalTriangular, v::Integer, w::Integer)
+    return isstored(A.S, v, w, A.uplo)
 end
 
 function Base.setindex!(A::ChordalTriangular{DIAG, UPLO}, x, v::Integer, w::Integer) where {DIAG, UPLO}
@@ -308,13 +318,13 @@ function Base.setindex!(A::ChordalTriangular{DIAG, UPLO}, x, v::Integer, w::Inte
     end
 end
 
-function flatindex(A::ChordalTriangular{DIAG, UPLO}, v::Integer, w::Integer) where {DIAG, UPLO}
+function flatindex(A::ChordalTriangular, v::Integer, w::Integer)
     @boundscheck checkbounds(A, v, w)
-    return flatindex(A.S, v, w, Val(UPLO))
+    return flatindex(A.S, v, w, A.uplo)
 end
 
-function flatindices(A::ChordalTriangular{DIAG, UPLO}, B::SparseMatrixCSC) where {DIAG, UPLO}
-    return flatindices(A.S, B, Val(UPLO))
+function flatindices(A::ChordalTriangular, B::SparseMatrixCSC)
+    return flatindices(A.S, B, A.uplo)
 end
 
 function getflatindex(A::ChordalTriangular{DIAG, UPLO, T}, p::Integer) where {DIAG, UPLO, T}
@@ -339,7 +349,7 @@ function setflatindex!(A::ChordalTriangular, x, p::Integer)
     return A
 end
 
-function Base.copy!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
+function Base.copyto!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
     zerorec!(A.Dval)
     zerorec!(A.Lval)
 
@@ -382,7 +392,7 @@ function Base.copy!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) wh
     return A
 end
 
-function Base.copy!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
+function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
     zerorec!(A.Dval)
     zerorec!(A.Lval)
 
@@ -415,13 +425,17 @@ function Base.copy!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) wh
     return A
 end
 
+function Base.copy!(A::ChordalTriangular, B::AbstractMatrix)
+    return copyto!(A, B)
+end
+
 function Base.fill!(A::ChordalTriangular, x)
     fill!(A.Dval, x)
     fill!(A.Lval, x)
     return A
 end
 
-function LinearAlgebra.cond(F::MaybeAdjOrTransTri, p::Real)
+function LinearAlgebra.cond(F::MaybeAdjOrTransTri, p::Real=2)
     if p == 1
         condest1(F)
     elseif p == 2
@@ -433,7 +447,7 @@ function LinearAlgebra.cond(F::MaybeAdjOrTransTri, p::Real)
     end
 end
 
-function LinearAlgebra.opnorm(A::MaybeAdjOrTransTri, p::Real)
+function LinearAlgebra.opnorm(A::MaybeAdjOrTransTri, p::Real=2)
     if p == 1
         opnorm1(A)
     elseif p == 2
@@ -449,8 +463,8 @@ function fronts(A::MaybeAdjOrTransTri)
     return oneto(nfr(A))
 end
 
-function diagblock(A::ChordalTriangular{DIAG, UPLO}, j::Integer) where {DIAG, UPLO}
-    return diagblock_impl(A.S.res, A.S.Dptr, A.Dval, Val(DIAG), Val(UPLO), j)
+function diagblock(A::ChordalTriangular, j::Integer)
+    return diagblock_impl(A.S.res, A.S.Dptr, A.Dval, A.diag, A.uplo, j)
 end
 
 function diagblock_impl(
@@ -480,8 +494,8 @@ function diagblock_impl(
     return D, neighbors(res, j)
 end
 
-function offdblock(A::ChordalTriangular{DIAG, UPLO}, j::Integer) where {DIAG, UPLO}
-    return offdblock_impl(A.S.res, A.S.sep, A.S.Lptr, A.Lval, Val(UPLO), j)
+function offdblock(A::ChordalTriangular, j::Integer)
+    return offdblock_impl(A.S.res, A.S.sep, A.S.Lptr, A.Lval, A.uplo, j)
 end
 
 function offdblock_impl(

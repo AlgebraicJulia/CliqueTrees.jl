@@ -1,0 +1,5 @@
+include("regularization/abstract_regularization.jl")
+include("regularization/no_regularization.jl")
+include("regularization/dynamic_regularization.jl")
+include("regularization/gmw81.jl")
+include("regularization/se99.jl")

@@ -1497,6 +1497,81 @@ end
     end
 end
 
+@testset "cholesky (dense)" begin
+    for n in (10, 50, 100)
+        A = rand(n, n)
+        M = A' * A + I
+        F0 = cholesky(M)
+
+        F1 = cholesky!(DenseCholesky{:L}(copy(M)))
+        F2 = cholesky!(DenseCholesky{:U}(copy(M)))
+        F3 = cholesky!(DenseCholeskyPivoted{:L}(copy(M)), RowMaximum())
+        F4 = cholesky!(DenseCholeskyPivoted{:U}(copy(M)), RowMaximum())
+        F5 = ldlt!(DenseLDLt{:L}(copy(M)))
+        F6 = ldlt!(DenseLDLt{:U}(copy(M)))
+        F7 = ldlt!(DenseLDLtPivoted{:L}(copy(M)), RowMaximum())
+        F8 = ldlt!(DenseLDLtPivoted{:U}(copy(M)), RowMaximum())
+
+        b = rand(n)
+        B = rand(n, 4)
+
+        for Fi in (F1, F2, F3, F4, F5, F6, F7, F8)
+            @test isa(repr("text/plain", Fi), String)
+            @test issuccess(Fi) == issuccess(F0)
+            @test logdet(Fi) ≈ logdet(F0)
+            @test det(Fi) ≈ det(F0)
+
+            @test isapprox(b, M * (Fi \ b); rtol=1e-6, atol=1e-14)
+            @test isapprox(B, M * (Fi \ B); rtol=1e-6, atol=1e-14)
+        end
+    end
+end
+
+@testset "regularization (dense)" begin
+    A = rand(10, 10)
+    A = A' * A
+    A -= 1.0001 * minimum(eigvals(A)) * I
+    signs = ones(size(A, 1))
+
+    for UPLO in (:L, :U)
+        for R in (GMW81, SE99)
+            F = DenseCholesky{UPLO}(copy(A))
+            cholesky!(F; reg=R())
+            @test A ≈ Matrix(F) rtol=1e-3
+
+            F = DenseCholeskyPivoted{UPLO}(copy(A))
+            cholesky!(F, RowMaximum(); reg=R())
+            @test A ≈ Matrix(F) rtol=1e-3
+
+            F = DenseLDLt{UPLO}(copy(A))
+            ldlt!(F; signs, reg=R())
+            @test A ≈ Matrix(F) rtol=1e-3
+
+            F = DenseLDLtPivoted{UPLO}(copy(A))
+            ldlt!(F, RowMaximum(); signs, reg=R())
+            @test A ≈ Matrix(F) rtol=1e-3
+        end
+    end
+
+    A = Float64[
+        1 1 2
+        1 1 3
+        2 3 1
+    ]
+
+    signs = [1, 1, 1]
+
+    for UPLO in (:L, :U)
+        F = DenseCholesky{UPLO}(copy(A))
+        cholesky!(F; reg=GMW81())
+        @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+
+        F = DenseLDLt{UPLO}(copy(A))
+        ldlt!(F; signs, reg=GMW81())
+        @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+    end
+end
+
 @testset "selinv" begin
     matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
 
