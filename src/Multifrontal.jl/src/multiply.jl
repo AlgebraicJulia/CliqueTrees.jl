@@ -2,26 +2,18 @@
 
 # --- Permutation ---
 
-function Base.:*(A::MaybeAdjOrTransPerm{I}, B::MaybeAdjOrTransPerm{I}) where {I}
+function Base.:*(A::Permutation{I}, B::Permutation{I}) where {I}
     @assert size(A, 1) == size(B, 1)
     C = Permutation{I}(size(A, 1))
     return mul!(C, A, B)
 end
 
 function Base.:*(A::Permutation, B::SparseMatrixCSC)
-    return permute(B, A.perm, axes(B, 2))
+    return rowpermute(B, A.perm)
 end
 
 function Base.:*(A::SparseMatrixCSC, B::Permutation)
-    return permute(A, axes(A, 1), invperm(B.perm))
-end
-
-function Base.:*(A::AdjOrTransPerm, B::SparseMatrixCSC)
-    return parent(A) \ B
-end
-
-function Base.:*(A::SparseMatrixCSC, B::AdjOrTransPerm)
-    return A / parent(B)
+    return colpermute(A, B.invp)
 end
 
 # --- AbstractFactorization ---
@@ -170,10 +162,6 @@ function LinearAlgebra.mul!(C::AbstractVecOrMat, A::Permutation, B::AbstractVecO
     return C
 end
 
-function LinearAlgebra.mul!(C::AbstractVecOrMat, A::AdjOrTransPerm, B::AbstractVecOrMat)
-    return ldiv!(C, parent(A), B)
-end
-
 function LinearAlgebra.mul!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation)
     @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
 
@@ -186,36 +174,15 @@ function LinearAlgebra.mul!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation
     return C
 end
 
-function LinearAlgebra.mul!(C::AbstractMatrix, A::AbstractMatrix, B::AdjOrTransPerm)
-    return rdiv!(C, A, parent(B))
-end
-
 function LinearAlgebra.mul!(C::Permutation, A::Permutation, B::Permutation)
     @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
 
     @inbounds for i in axes(C, 1)
-        C.perm[i] = A.perm[B.perm[i]]
+        j = C.perm[i] = B.perm[A.perm[i]]
+        C.invp[j] = i
     end
 
     return C
-end
-
-function LinearAlgebra.mul!(C::Permutation, A::AdjOrTransPerm, B::AdjOrTransPerm)
-    @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
-
-    @inbounds for i in axes(C, 1)
-        C.perm[parent(B).perm[parent(A).perm[i]]] = i
-    end
-
-    return C
-end
-
-function LinearAlgebra.mul!(C::AbstractMatrix, A::AdjOrTransPerm, B::Permutation)
-    return ldiv!(C, parent(A), B)
-end
-
-function LinearAlgebra.mul!(C::AbstractMatrix, A::Permutation, B::AdjOrTransPerm)
-    return rdiv!(C, A, parent(B))
 end
 
 function LinearAlgebra.mul!(C::AbstractMatrix{T}, A::Permutation, B::Permutation) where {T}
@@ -223,18 +190,7 @@ function LinearAlgebra.mul!(C::AbstractMatrix{T}, A::Permutation, B::Permutation
     fill!(C, zero(T))
 
     @inbounds for i in axes(C, 1)
-        C[i, A.perm[B.perm[i]]] = one(T)
-    end
-
-    return C
-end
-
-function LinearAlgebra.mul!(C::AbstractMatrix{T}, A::AdjOrTransPerm, B::AdjOrTransPerm) where {T}
-    @boundscheck size(C, 1) == size(C, 2) == size(A, 1) == size(B, 1) || throw(DimensionMismatch())
-    fill!(C, zero(T))
-
-    @inbounds for i in axes(C, 1)
-        C[parent(B).perm[parent(A).perm[i]], i] = one(T)
+        C[i, B.perm[A.perm[i]]] = one(T)
     end
 
     return C

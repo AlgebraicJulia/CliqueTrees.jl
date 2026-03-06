@@ -196,6 +196,33 @@ function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, t
     return copy(adjoint(B))
 end
 
+function colpermute(A::SparseMatrixCSC{T, I}, perm::AbstractVector) where {T, I}
+    n = size(A, 2)
+    m = nnz(A)
+    colptr = Vector{I}(undef, n + 1)
+    rowval = Vector{I}(undef, m)
+    nzval = Vector{T}(undef, m)
+
+    p = 1
+
+    for j in axes(A, 2)
+        colptr[j] = p
+
+        for q in nzrange(A, perm[j])
+            rowval[p] = rowvals(A)[q]
+            nzval[p] = nonzeros(A)[q]
+            p += 1
+        end
+    end
+
+    colptr[end] = p
+    return SparseMatrixCSC{T, I}(size(A)..., colptr, rowval, nzval)
+end
+
+function rowpermute(A::SparseMatrixCSC, perm::AbstractVector)
+    return permute(A, perm, axes(A, 2))
+end
+
 function tri(uplo::Val{:L}, diag::Val{:N}, A::AbstractMatrix)
     return LowerTriangular(A)
 end

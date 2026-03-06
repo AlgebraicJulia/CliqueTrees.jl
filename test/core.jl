@@ -2158,3 +2158,27 @@ end
         @test isapprox(M * (Gi \ b), b; rtol=1e-6, atol=1e-14)
     end
 end
+
+@testset "permutation" begin
+    using CliqueTrees.Multifrontal: Permutation
+
+    n = 50
+
+    perm = randperm(n)
+    P = Permutation(perm, invperm(perm))
+
+    perm = randperm(n)
+    Q = Permutation(perm, invperm(perm))
+
+    D = rand(n, n)
+    S = sprand(n, n, 0.3)
+
+    for M in (Q, D, S)
+        @assert P * M ≈ Matrix(P) * M
+        @assert M * P ≈ M * Matrix(P)
+        @assert P \ M ≈ Matrix(P) \ M
+        @assert M \ P ≈ M \ Matrix(P)
+        @assert P / M ≈ Matrix(P) / M
+        @assert M / P ≈ M / Matrix(P)
+    end
+end

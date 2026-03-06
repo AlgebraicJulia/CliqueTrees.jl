@@ -10,7 +10,7 @@ function chol!(
 
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+    Fval = FVector{T}(undef, max(F.S.nFval * F.S.nFval, two(I)))
     piv  = FVector{BlasInt}(undef, F.S.nFval)
     mval = FVector{I}(undef, F.S.nNval)
     fval = FVector{I}(undef, F.S.nFval)

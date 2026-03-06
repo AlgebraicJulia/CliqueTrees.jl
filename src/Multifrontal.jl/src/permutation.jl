@@ -6,15 +6,18 @@ A permutation matrix.
 ### Fields
 
   - `P.perm`: permutation vector
+  - `P.invp`: inverse permutation vector
 
 """
 struct Permutation{I, Prm <: AbstractVector{I}} <: AbstractMatrix{Bool}
     perm::Prm
+    invp::Prm
 end
 
 function Permutation{I, Prm}(n::Integer) where {I, Prm <: AbstractVector{I}}
     perm = Prm(undef, n)
-    return Permutation(perm)
+    invp = Prm(undef, n)
+    return Permutation(perm, invp)
 end
 
 function Permutation{I}(n::Integer) where {I}
@@ -23,15 +26,19 @@ end
 
 const FPermutation{I} = Permutation{I, FVector{I}}
 
-const AdjOrTransPerm{I, Prm} = Union{
-      Adjoint{Bool, Permutation{I, Prm}},
-    Transpose{Bool, Permutation{I, Prm}},
-}
+# ===== Adjoint, Transpose, Inverse =====
 
-const MaybeAdjOrTransPerm{I, Prm} = Union{
-       Permutation{I, Prm},
-    AdjOrTransPerm{I, Prm},
-}
+function Base.inv(P::Permutation)
+    return Permutation(P.invp, P.perm)
+end
+
+function Base.adjoint(P::Permutation)
+    return inv(P)
+end
+
+function Base.transpose(P::Permutation)
+    return inv(P)
+end
 
 # ===== Abstract Matrix Interface =====
 

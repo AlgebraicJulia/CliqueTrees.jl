@@ -6,7 +6,7 @@ const IFactorization{DIAG, UPLO, T, I} = AbstractFactorization{DIAG, UPLO, T, I,
 
 function Base.getproperty(F::AbstractFactorization{DIAG, UPLO}, s::Symbol) where {DIAG, UPLO}
     if s === :P
-        return Permutation(getfield(F, :perm))
+        return Permutation(getfield(F, :perm), getfield(F, :invp))
     elseif s === :D
         return Diagonal(getfield(F, :d))
     elseif s === :L || s === :U

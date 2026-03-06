@@ -6,16 +6,8 @@ function Base.:\(A::Permutation, b::AbstractVector)
     return ldiv!(Array(b), A, b)
 end
 
-function Base.:\(A::AdjOrTransPerm, b::AbstractVector)
-    return ldiv!(Array(b), A, b)
-end
-
 function Base.:\(A::Permutation, B::SparseMatrixCSC)
-    return permute(B, invperm(A.perm), axes(B, 2))
-end
-
-function Base.:\(A::AdjOrTransPerm, B::SparseMatrixCSC)
-    return parent(A) * B
+    return rowpermute(B, A.invp)
 end
 
 # --- ChordalTriangular ---
@@ -28,32 +20,20 @@ end
 
 # --- Permutation ---
 
-function Base.:/(A::AbstractMatrix, B::MaybeAdjOrTransPerm)
+function Base.:/(A::AbstractMatrix, B::Permutation)
     return rdiv!(Array(A), A, B)
 end
 
-function Base.:/(A::Transpose{<:Any, <:AbstractVector}, B::MaybeAdjOrTransPerm)
+function Base.:/(A::Transpose{<:Any, <:AbstractVector}, B::Permutation)
     return transpose(transpose(B) \ parent(A))
 end
 
-function Base.:/(A::Transpose{<:Any, <:AbstractVector}, B::Adjoint{Bool, <:Permutation})
-    return transpose(transpose(B) \ parent(A))
-end
-
-function Base.:/(A::Adjoint{<:Any, <:AbstractVector}, B::MaybeAdjOrTransPerm)
-    return adjoint(adjoint(B) \ parent(A))
-end
-
-function Base.:/(A::Adjoint{<:Any, <:AbstractVector}, B::Transpose{Bool, <:Permutation})
+function Base.:/(A::Adjoint{<:Any, <:AbstractVector}, B::Permutation)
     return adjoint(adjoint(B) \ parent(A))
 end
 
 function Base.:/(A::SparseMatrixCSC, B::Permutation)
-    return permute(A, axes(A, 1), B.perm)
-end
-
-function Base.:/(A::SparseMatrixCSC, B::AdjOrTransPerm)
-    return A * parent(B)
+    return colpermute(A, B.perm)
 end
 
 # --- ChordalTriangular ---
@@ -75,29 +55,11 @@ end
 # --- Permutation ---
 
 function LinearAlgebra.ldiv!(C::AbstractVecOrMat, A::Permutation, B::AbstractVecOrMat)
-    @boundscheck size(C, 1) == size(B, 1) == size(A, 1) || throw(DimensionMismatch())
-
-    @inbounds for j in axes(C, 2)
-        for i in axes(C, 1)
-            C[A.perm[i], j] = B[i, j]
-        end
-    end
-
-    return C
+    return mul!(C, inv(A), B)
 end
 
 function LinearAlgebra.ldiv!(C::Permutation, A::Permutation, B::Permutation)
-    @boundscheck size(C, 1) == size(B, 1) == size(A, 1) || throw(DimensionMismatch())
-
-    @inbounds for i in axes(C, 1)
-        C.perm[A.perm[i]] = B.perm[i]
-    end
-
-    return C
-end
-
-function LinearAlgebra.ldiv!(C::AbstractVecOrMat, A::AdjOrTransPerm, B::AbstractVecOrMat)
-    return mul!(C, parent(A), B)
+    return mul!(C, inv(A), B)
 end
 
 # --- AbstractFactorization ---
@@ -132,29 +94,11 @@ end
 # --- Permutation ---
 
 function LinearAlgebra.rdiv!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation)
-    @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
-
-    @inbounds for j in axes(C, 2)
-        for i in axes(C, 1)
-            C[i, j] = A[i, B.perm[j]]
-        end
-    end
-
-    return C
+    return mul!(C, A, inv(B))
 end
 
 function LinearAlgebra.rdiv!(C::Permutation, A::Permutation, B::Permutation)
-    @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
-
-    @inbounds for i in axes(C, 1)
-        C.perm[B.perm[i]] = A.perm[i]
-    end
-
-    return C
-end
-
-function LinearAlgebra.rdiv!(C::AbstractMatrix, A::AbstractMatrix, B::AdjOrTransPerm)
-    return mul!(C, A, parent(B))
+    return mul!(C, A, inv(B))
 end
 
 # --- AbstractFactorization ---
