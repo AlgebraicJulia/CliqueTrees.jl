@@ -18,7 +18,7 @@ function chol!(
     if reg isa NoRegularization
         R = convert(real(T), tol)
     else
-        R = initialize(F, S, reg)
+        R = initialize(triangular(F), S, reg)
     end
 
     info = chol_piv_fwd!(
@@ -313,12 +313,12 @@ function chol_piv_factor!(
     #
     # zero out the rank-deficient part of D and L
     #
-    zerotri!(D, uplo, rank + 1:size(D, 1))
+    zerotri!(D, rank + 1:size(D, 1), uplo)
 
     if UPLO === :L
-        zerorec!(L, axes(L, 1), rank + 1:size(D, 1))
+        zerorec!(L, rank + 1:size(D, 1), Val(:R))
     else
-        zerorec!(L, rank + 1:size(D, 1), axes(L, 2))
+        zerorec!(L, rank + 1:size(D, 1), Val(:L))
     end
 
     if iszero(info) && !isempty(L) && ispositive(rank)
@@ -329,9 +329,9 @@ function chol_piv_factor!(
         copyrec!(M, L)
 
         if UPLO === :L
-            copyrec!(L, M, axes(L, 1), view(P, axes(D, 1)))
+            copygatherrec!(L, M, P, Val(:R))
         else
-            copyrec!(L, M, view(P, axes(D, 1)), axes(L, 2))
+            copygatherrec!(L, M, P, Val(:L))
         end
         #
         # Use only the first `rank` columns/rows for the solve
@@ -434,7 +434,7 @@ function chol_piv_bwd_loop!(
     #
     #     f₁ ← invp[res(j)]
     #
-    copyrec!(f₁, view(invp, neighbors(res, j)))
+    copygatherrec!(f₁, invp, neighbors(res, j), Val(:L))
     #
     # pull Q-indices from ancestor's update matrix
     #
@@ -531,7 +531,7 @@ function chol_piv_bwd_update!(
     stop = ptr[ns + one(I)] = strt + na
     m = view(val, strt:stop - one(I))
 
-    copyrec!(m, f, inj)
+    copygatherrec!(m, f, inj, Val(:L))
 
     return
 end
@@ -645,10 +645,10 @@ function chol_piv_factor!(
         copyrec!(M, L)
 
         if UPLO === :L
-            copyrec!(L, M, axes(L, 1), view(P, axes(D, 1)))
+            copygatherrec!(L, M, P, Val(:R))
             side = Val(:R)
         else
-            copyrec!(L, M, view(P, axes(D, 1)), axes(L, 2))
+            copygatherrec!(L, M, P, Val(:L))
             side = Val(:L)
         end
 

@@ -18,38 +18,73 @@ A triangular matrix with chordal sparsity pattern. The type parameters
    - `A.S`: symbolic factorization
 
 """
-struct ChordalTriangular{DIAG, UPLO, T, I, Val <: AbstractVector{T}} <: AbstractMatrix{T}
+struct ChordalTriangular{DIAG, UPLO, T, I, Dvl <: AbstractVector{T}, Lvl <: AbstractVector{T}} <: AbstractMatrix{T}
     S::ChordalSymbolic{I}
-    Dval::Val
-    Lval::Val
+    Dval::Dvl
+    Lval::Lvl
 end
 
-const FChordalTriangular{DIAG, UPLO, T, I} = ChordalTriangular{DIAG, UPLO, T, I, FVector{T}}
-
-const AdjOrTransTri{DIAG, UPLO, T, I, Val} = Union{
-      Adjoint{T, ChordalTriangular{DIAG, UPLO, T, I, Val}},
-    Transpose{T, ChordalTriangular{DIAG, UPLO, T, I, Val}},
+const FChordalTriangular{DIAG, UPLO, T, I} = ChordalTriangular{
+    DIAG,
+    UPLO,
+    T,
+    I,
+    FVector{T},
+    FVector{T},
 }
 
-const MaybeAdjOrTransTri{DIAG, UPLO, T, I, Val} = Union{
-        AdjOrTransTri{DIAG, UPLO, T, I, Val},
-    ChordalTriangular{DIAG, UPLO, T, I, Val},
+const DChordalTriangular{DIAG, UPLO, T, I} = ChordalTriangular{
+    DIAG,
+    UPLO,
+    T,
+    I,
+    Vector{T},
+    Vector{T},
 }
 
-function ChordalTriangular{DIAG, UPLO}(S::ChordalSymbolic{I}, Dval::Val, Lval::Val) where {DIAG, UPLO, I <: Integer, T, Val <: AbstractVector{T}}
-    return ChordalTriangular{DIAG, UPLO, T, I, Val}(S, Dval, Lval)
+const SymbolicChordalTriangular{UPLO, I} = ChordalTriangular{
+    :N,
+    UPLO,
+    Bool,
+    I,
+    IOnes{Bool},
+    IOnes{Bool},
+}
+
+const AdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Union{
+      Adjoint{T, ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}},
+    Transpose{T, ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}},
+}
+
+const MaybeAdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Union{
+        AdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl},
+    ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl},
+}
+
+function ChordalTriangular{DIAG, UPLO}(S::ChordalSymbolic{I}, Dval::Dvl, Lval::Lvl) where {DIAG, UPLO, I <: Integer, T, Dvl <: AbstractVector{T}, Lvl <: AbstractVector{T}}
+    return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}(S, Dval, Lval)
 end
 
-function ChordalTriangular{UPLO}(S::ChordalSymbolic) where {UPLO}
-    n = nfr(S)
-    Dval = Ones{Bool}(convert(Int, S.Dptr[n + 1]) - 1)
-    Lval = Ones{Bool}(convert(Int, S.Lptr[n + 1]) - 1)
-    return ChordalTriangular{:N, UPLO}(S, Dval, Lval)
+function ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}(S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I, Dvl, Lvl}
+    Dval = allocate(Dvl, ndz(S))
+    Lval = allocate(Lvl, nlz(S))
+    return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}(S, Dval, Lval)
 end
 
-# getfield fixes JET test
-function ChordalTriangular(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+function SymbolicChordalTriangular{UPLO}(S::ChordalSymbolic{I}) where {UPLO, I}
+    return SymbolicChordalTriangular{UPLO, I}(S)
+end
+
+function ChordalTriangular{DIAG, UPLO}(F::ChordalFactorization) where {DIAG, UPLO}
     return ChordalTriangular{DIAG, UPLO}(getfield(F, :S), getfield(F, :Dval), getfield(F, :Lval))
+end
+
+function ChordalTriangular{DIAG}(F::ChordalFactorization{<:Any, UPLO}) where {DIAG, UPLO}
+    return ChordalTriangular{DIAG, UPLO}(F)
+end
+
+function ChordalTriangular(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+    return ChordalTriangular{DIAG, UPLO}(F)
 end
 
 function Base.getproperty(A::ChordalTriangular{DIAG, UPLO}, s::Symbol) where {DIAG, UPLO}
@@ -66,6 +101,12 @@ function Base.show(io::IO, A::T) where {T <: ChordalTriangular}
     n = ncl(A)
     print(io, "$n×$n $T with $(nnz(A)) stored entries")
     return
+end
+
+for Tri in (:FChordalTriangular, :DChordalTriangular)
+    @eval function Base.show(io::IO, ::Type{$Tri{DIAG, UPLO, T, I}}) where {DIAG, UPLO, T, I}
+        print(io, $("$Tri{"), repr(DIAG), ", ", repr(UPLO), ", ", T, ", ", I, "}")
+    end
 end
 
 function Base.show(io::IO, ::MIME"text/plain", A::T) where {DIAG, UPLO, T <: ChordalTriangular{DIAG, UPLO}}
@@ -89,11 +130,11 @@ function Base.replace_in_print_matrix(A::ChordalTriangular{DIAG, UPLO}, i::Integ
     return str
 end
 
-function Base.copy(A::ChordalTriangular{DIAG, UPLO, T, I, Val}) where {DIAG, UPLO, T, I, Val}
-    return ChordalTriangular{DIAG, UPLO, T, I, Val}(A.S, copy(A.Dval), copy(A.Lval))
+function Base.similar(A::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
+    return ChordalTriangular{DIAG, UPLO}(A.S, similar(A.Dval), similar(A.Lval))
 end
 
-function Base.copy(A::AdjOrTransTri{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
+function Base.similar(A::AdjOrTransTri{DIAG, UPLO}) where {DIAG, UPLO}
     P = parent(A)
 
     if UPLO === :L
@@ -102,28 +143,119 @@ function Base.copy(A::AdjOrTransTri{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
         B = ChordalTriangular{DIAG, :L}(P.S, similar(P.Dval), similar(P.Lval))
     end
 
-    @inbounds for j in fronts(P)
-        DA, res = diagblock(P, j)
-        LA, sep = offdblock(P, j)
-        DB, _   = diagblock(B, j)
-        LB, _   = offdblock(B, j)
+    return B
+end
 
-        if A isa Adjoint
-            adjoint!(parent(DB), parent(DA))
-            adjoint!(LB, LA)
+function Base.copy(A::MaybeAdjOrTransTri)
+    return copyto!(similar(A), A)
+end
+
+function Base.copyto!(A::MaybeAdjOrTransTri, B::MaybeAdjOrTransTri)
+    AP, TA = unwrap(A)
+    BP, TB = unwrap(B)
+    copy_impl!(AP, BP, TA, TB)
+    return A
+end
+
+function copy_impl!(A::ChordalTriangular, B::ChordalTriangular, ::Val{TA}, ::Val{TB}) where {TA, TB}
+    if TA === TB
+        copyto!(A.Dval, B.Dval)
+        copyto!(A.Lval, B.Lval)
+    elseif TA === :N
+        copy_impl!(A, B, TB)
+    elseif TB === :N
+        copy_impl!(A, B, TA)
+    else
+        conj!(copyto!(A.Dval, B.Dval))
+        conj!(copyto!(A.Lval, B.Lval))
+    end
+
+    return A
+end
+
+function copy_impl!(A::ChordalTriangular, B::ChordalTriangular, ::Val{TRANS}) where {TRANS}
+    @inbounds for j in fronts(B)
+        DB, _ = diagblock(B, j)
+        LB, _ = offdblock(B, j)
+        DA, _ = diagblock(A, j)
+        LA, _ = offdblock(A, j)
+
+        if TRANS === :C
+            adjoint!(parent(DA), parent(DB))
+            adjoint!(LA, LB)
         else
-            transpose!(parent(DB), parent(DA))
-            transpose!(LB, LA)
+            transpose!(parent(DA), parent(DB))
+            transpose!(LA, LB)
         end
     end
 
-    return B
+    return A
 end
 
 # ===== Abstract Matrix Interface =====
 
 function SparseArrays.nnz(A::ChordalTriangular)
     return nnz(A.S)
+end
+
+function SparseArrays.findnz(A::ChordalTriangular{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
+    m = half(ndz(A) + ncl(A)) + nlz(A)
+    rows = Vector{I}(undef, m)
+    cols = Vector{I}(undef, m)
+    vals = Vector{T}(undef, m)
+
+    p = zero(I)
+
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
+        L, sep = offdblock(A, j)
+
+        if UPLO === :L
+            for w in eachindex(res)
+                for v in w:length(res)
+                    p += one(I)
+                    rows[p] = res[v]
+                    cols[p] = res[w]
+                    vals[p] = D[v, w]
+                end
+
+                for v in eachindex(sep)
+                    p += one(I)
+                    rows[p] = sep[v]
+                    cols[p] = res[w]
+                    vals[p] = L[v, w]
+                end
+            end
+        else
+            for v in eachindex(res)
+                for w in 1:v
+                    p += one(I)
+                    rows[p] = res[w]
+                    cols[p] = res[v]
+                    vals[p] = D[w, v]
+                end
+            end
+
+            for v in eachindex(sep)
+                for w in eachindex(res)
+                    p += one(I)
+                    rows[p] = res[w]
+                    cols[p] = sep[v]
+                    vals[p] = L[w, v]
+                end
+            end
+        end
+    end
+
+    return (rows, cols, vals)
+end
+
+function ndz(A::ChordalTriangular)
+    return ndz(A.S)
+end
+
+function nlz(A::ChordalTriangular)
+    return nlz(A.S)
 end
 
 function ncl(A::MaybeAdjOrTransTri)
@@ -243,19 +375,33 @@ function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UP
     return out
 end
 
-function SparseArrays.sparse(A::MaybeAdjOrTransTri{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I <: Integer}
+function SparseArrays.sparse(A::ChordalTriangular{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I <: Integer}
+    return sparse_impl(A, Val(:N))
+end
+
+function SparseArrays.sparse(A::Adjoint{T, ChordalTriangular{DIAG, UPLO, T, I}}) where {DIAG, UPLO, T, I <: Integer}
+    return sparse_impl(parent(A), Val(:C))
+end
+
+function SparseArrays.sparse(A::Transpose{T, ChordalTriangular{DIAG, UPLO, T, I}}) where {DIAG, UPLO, T, I <: Integer}
+    return sparse_impl(parent(A), Val(:T))
+end
+
+function sparse_impl(A::ChordalTriangular{DIAG, UPLO, T, I}, ::Val{TRANS}) where {DIAG, UPLO, T, I <: Integer, TRANS}
+    m = half(ndz(A) + ncl(A)) + nlz(A)
+
     colptr = Vector{I}(undef, 1 + ncl(A))
-    rowval = Vector{I}(undef, nnz(parent(A)))
-    nzval = Vector{T}(undef, nnz(parent(A)))
+    rowval = Vector{I}(undef, m)
+    nzval = Vector{T}(undef, m)
 
-    p = zeros(I)
+    p = zero(I)
 
-    @inbounds for j in fronts(parent(A))
-        D, res = diagblock(parent(A), j)
-        L, sep = offdblock(parent(A), j)
+    @inbounds for j in fronts(A)
+        D, res = diagblock(A, j)
+        L, sep = offdblock(A, j)
 
         for w in eachindex(res)
-            colptr[res[w]] = p[] + one(I)
+            colptr[res[w]] = p + one(I)
 
             for v in w:length(res)
                 if UPLO === :L
@@ -264,11 +410,11 @@ function SparseArrays.sparse(A::MaybeAdjOrTransTri{DIAG, UPLO, T, I}) where {DIA
                     x = D[w, v]
                 end
 
-                if A isa Adjoint
+                if TRANS === :C
                     x = conj(x)
                 end
 
-                p[] += one(I); rowval[p[]] = res[v]; nzval[p[]] = x
+                p += one(I); rowval[p] = res[v]; nzval[p] = x
             end
 
             for v in eachindex(sep)
@@ -278,20 +424,20 @@ function SparseArrays.sparse(A::MaybeAdjOrTransTri{DIAG, UPLO, T, I}) where {DIA
                     x = L[w, v]
                 end
 
-                if A isa Adjoint
+                if TRANS === :C
                     x = conj(x)
                 end
 
-                p[] += one(I); rowval[p[]] = sep[v]; nzval[p[]] = x
+                p += one(I); rowval[p] = sep[v]; nzval[p] = x
             end
         end
     end
 
-    colptr[end] = p[] + one(I)
+    colptr[end] = p + one(I)
 
     S = SparseMatrixCSC{T, I}(size(A)..., colptr, rowval, nzval)
 
-    if (UPLO === :L && A isa AdjOrTransTri) || (UPLO === :U && A isa ChordalTriangular)
+    if isforward(UPLO, TRANS, :R)
         S = copy(transpose(S))
     end
 
@@ -328,26 +474,31 @@ function flatindices(A::ChordalTriangular, B::SparseMatrixCSC)
 end
 
 function getflatindex(A::ChordalTriangular{DIAG, UPLO, T}, p::Integer) where {DIAG, UPLO, T}
-    if ispositive(p)
-        return A.Dval[p]
-    elseif isnegative(p)
-        return A.Lval[-p]
-    else
+    poff = ndz(A)
+
+    if iszero(p)
         return zero(T)
+    elseif p <= poff
+        return A.Dval[p]
+    else
+        return A.Lval[p - poff]
     end
 end
 
 function setflatindex!(A::ChordalTriangular, x, p::Integer)
-    if ispositive(p)
-        A.Dval[p] = x
-    elseif isnegative(p)
-        A.Lval[-p] = x
-    else
+    poff = ndz(A)
+
+    if iszero(p)
         error()
+    elseif p <= poff
+        A.Dval[p] = x
+    else
+        A.Lval[p - poff] = x
     end
 
     return A
 end
+
 
 function Base.copyto!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
     zerorec!(A.Dval)
@@ -425,7 +576,7 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) 
     return A
 end
 
-function Base.copy!(A::ChordalTriangular, B::AbstractMatrix)
+function Base.copy!(A::ChordalTriangular, B)
     return copyto!(A, B)
 end
 
@@ -460,7 +611,7 @@ function LinearAlgebra.opnorm(A::MaybeAdjOrTransTri, p::Real=2)
 end
 
 function fronts(A::MaybeAdjOrTransTri)
-    return oneto(nfr(A))
+    return fronts(parent(A).S)
 end
 
 function diagblock(A::ChordalTriangular, j::Integer)

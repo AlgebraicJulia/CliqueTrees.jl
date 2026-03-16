@@ -112,7 +112,7 @@ function chol!(
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
     S = permuteto(T, signs, F.perm)
-    R = initialize(F, S, reg)
+    R = initialize(triangular(F), S, reg)
 
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
@@ -132,89 +132,6 @@ function chol!(
         F.info[] = F.perm[info]
     else
         F.info[] = zero(I)
-    end
-
-    return F
-end
-
-function chol!(
-        F::DenseFactorization{DIAG, UPLO, T},
-        ::NoPivot,
-        signs::AbstractVector,
-        reg::AbstractRegularization,
-        check::Bool,
-        tol::Real,
-    ) where {DIAG, UPLO, T}
-    S = permuteto(T, signs, eachindex(signs))
-    R = initialize(F, S, reg)
-    n = size(F, 1)
-
-    if DIAG === :N
-        W = Ones{T}(n * n)
-    else
-        W = FVector{T}(undef, n * n)
-    end
-
-    if R isa SE99
-        if DIAG === :N
-            d = diag(F.M)
-        else
-            d = F.d .= view(F.M, diagind(F.M))
-        end
-    else
-        d = F.d
-    end
-
-    F.info[] = potrf!(F.uplo, W, F.M, d, S, R, F.diag)
-
-    if ispositive(F.info[]) && check
-        if DIAG === :N
-            throw(PosDefException(F.info[]))
-        else
-            throw(ZeroPivotException(F.info[]))
-        end
-    end
-
-    if !(F isa IFactorization)
-        F.perm .= 1:n
-        F.invp .= 1:n
-    end
-
-    return F
-end
-
-function chol!(
-        F::DenseFactorization{DIAG, UPLO, T},
-        ::RowMaximum,
-        signs::AbstractVector,
-        reg::AbstractRegularization,
-        check::Bool,
-        tol::Real,
-    ) where {DIAG, UPLO, T}
-    S = permuteto(T, signs, eachindex(signs))
-    R = initialize(F, S, reg)
-    n = size(F, 1)
-
-    if DIAG === :N
-        W = FVector{real(T)}(undef, n * n)
-    else
-        W = FVector{T}(undef, n * n)
-    end
-
-    if R isa SE99 || R isa GMW81
-        if DIAG === :N
-            d = diag(F.M)
-        else
-            d = F.d .= view(F.M, diagind(F.M))
-        end
-    else
-        d = F.d
-    end
-
-    F.info[], rank = pstrf!(F.uplo, W, F.M, d, F.perm, S, R, tol, F.diag)
-
-    for i in eachindex(F.perm)
-        F.invp[F.perm[i]] = i
     end
 
     return F
@@ -706,6 +623,6 @@ function chol_send!(
     #
     #     F ← F + inj M injᵀ
     #
-    addtri!(F, M, uplo, inj)
+    addscattertri!(F, M, inj, uplo)
     return
 end

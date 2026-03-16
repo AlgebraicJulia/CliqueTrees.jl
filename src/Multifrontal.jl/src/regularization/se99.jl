@@ -51,15 +51,15 @@ function SE99(; kw...)
     return SE99{Float64}(; kw...)
 end
 
-function initialize(F::AbstractFactorization{DIAG, UPLO, T}, S::AbstractVector, R::SE99) where {DIAG, UPLO, T}
+function initialize(A::AbstractMatrix{T}, S::AbstractVector, R::SE99) where {T}
     if isnegative(R.gammapos)
-        gammapos = se99_gamma(triangular(F), S, 1)
+        gammapos = se99_gamma(A, S, 1)
     else
         gammapos = convert(real(T), R.gammapos)
     end
 
     if isnegative(R.gammaneg)
-        gammaneg = se99_gamma(triangular(F), S, -1)
+        gammaneg = se99_gamma(A, S, -1)
     else
         gammaneg = convert(real(T), R.gammaneg)
     end

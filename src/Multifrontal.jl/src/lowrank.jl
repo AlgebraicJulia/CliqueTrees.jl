@@ -249,7 +249,7 @@ function ldlt_lowrank_loop!(
         #
         #     f ← f + Rᵢ m
         #
-        addrec!(f, m, neighbors(rel, i))
+        addscatterrec!(f, m, neighbors(rel, i), Val(:L))
     end
     #
     # m₂ is the update vector from j
@@ -315,7 +315,7 @@ function chol_lowrank_loop!(
     if !isone(k)
         i = path[k - one(I)]
         m = view(Mval, oneto(eltypedegree(rel, i)))
-        addrec!(f, m, neighbors(rel, i))
+        addscatterrec!(f, m, neighbors(rel, i), Val(:L))
     end
 
     m₂ = view(Mval, oneto(na))

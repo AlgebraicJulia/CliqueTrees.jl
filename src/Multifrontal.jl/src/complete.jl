@@ -1,51 +1,19 @@
-"""
-    complete!(F::ChordalCholesky)
-
-Compute the Cholesky factorization of the inverse of
-the maximum-determinant positive-definite completion
-of a symmetric matrix.
-
-### Example
-
-Use [`ChordalCholesky`](@ref) to construct a factorization object,
-and use [`complete!`](@ref) to perform the factorization.
-
-```julia-repl
-julia> using CliqueTrees.Multifrontal, LinearAlgebra
-
-julia> A = [
-           4  2  0  0  2
-           2  5  0  0  3
-           0  0  4  2  0
-           0  0  2  5  2
-           2  3  0  2  7
-       ];
-
-julia> F = complete!(ChordalCholesky(A))
-5×5 FChordalCholesky{:L, Float64, Int64} with 10 stored entries:
-  0.5590169943749475     ⋅                   …   ⋅ 
-  0.0                   0.5700877125495689       ⋅ 
-  0.0                  -0.17541160386140583      ⋅ 
- -0.22360679774997896   0.0                      ⋅ 
-  0.0  
-```
-
-## Parameters
-
-  - `F`: symmetric matrix
-  - `check`: if `check = true`, then the function errors if `F`
-    is not positive definite
-
-"""
-function complete!(F::ChordalCholesky{UPLO, T, I}) where {UPLO, T, I <: Integer}
+function complete!(F::ChordalCholesky{UPLO, T, I}; check::Bool=true) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, twice(F.S.nFval * F.S.nFval))
-    cmpl_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval, F.S.res, F.S.rel, F.S.chd, F.uplo)
+    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+
+    info = complete_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval, F.S.res, F.S.rel, F.S.chd, F.uplo)
+
+    if ispositive(info) && check
+        throw(PosDefException(info))
+    end
+
+    F.info[] = info
     return F
 end
 
-function cmpl_impl!(
+function complete_impl!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
@@ -62,13 +30,14 @@ function cmpl_impl!(
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in reverse(vertices(res))
-        ns = cmpl_loop!(Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, uplo)
+        ns, info = complete_loop!(Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, uplo)
+        ispositive(info) && return info
     end
 
-    return
+    return zero(I)
 end
 
-function cmpl_loop!(
+function complete_loop!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
@@ -119,13 +88,6 @@ function cmpl_loop!(
         F₂₁ = view(F, oneto(nn), nn + one(I):nj)
     end
     #
-    # W is a workspace
-    #
-    #           nn
-    #     W = [ W₁₁ ] nn
-    #
-    W₁₁ = reshape(view(Fval, nj * nj + one(I):nj * nj + nn * nn), nn, nn)
-    #
     # L is part of the Cholesky factor
     #
     #          res(j)
@@ -169,8 +131,7 @@ function cmpl_loop!(
         #     M₂₂ ← chol(M₂₂)
         #
         info = potrf!(uplo, M₂₂)
-
-        @assert iszero(info)
+        ispositive(info) && return ns, info
         #
         # solve
         #
@@ -201,41 +162,19 @@ function cmpl_loop!(
         end
     end
     #
-    # factorize D₁₁
-    #
-    #     D₁₁ ← chol(D₁₁)
-    #
-    info = potrf!(uplo, D₁₁)
-    @assert iszero(info)
-    #
-    # copy L into W
-    #
-    #     W₁₁ ← D₁₁
-    #
-    copytri!(W₁₁, D₁₁, uplo)    
-    #
-    # invert D₁₁
-    #
-    #     D₁₁ ← D₁₁⁻¹
-    #
-    trtri!(uplo, Val(:N), D₁₁)
-    #
-    # solve
-    #
-    #    D₁₁ ← W₁₁⁻ᴴ D₁₁
+    #     D₁₁ ← chol(D₁₁⁻¹)
     #
     if UPLO === :L
-        trsm!(Val(:L), Val(:L), Val(:C), Val(:N), one(T), W₁₁, D₁₁)
+        loup = Val(:U)
     else
-        trsm!(Val(:R), Val(:U), Val(:C), Val(:N), one(T), W₁₁, D₁₁)
+        loup = Val(:L)
     end
-    #
-    # factorize D₁₁ (again)
-    #
-    #     D₁₁ ← chol(D₁₁)
-    #
-    info = potrf!(uplo, D₁₁)
-    @assert iszero(info)
+
+    revtri!(D₁₁, uplo)
+    info = potrf!(loup, D₁₁)
+    ispositive(info) && return ns, info
+    trtri!(loup, Val(:N), D₁₁)
+    revtri!(D₁₁, loup)
 
     if ispositive(na)
         #
@@ -255,13 +194,13 @@ function cmpl_loop!(
         #     Mᵢ ← Rᵢᵀ F Rᵢ
         #
         ns += one(I)
-        cmpl_update!(F, Mptr, Mval, rel, ns, i, uplo)
+        complete_send!(F, Mptr, Mval, rel, ns, i, uplo)
     end
 
-    return ns
+    return ns, zero(I)
 end
 
-function cmpl_update!(
+function complete_send!(
         F::AbstractMatrix{T},
         ptr::AbstractVector{I},
         val::AbstractVector{T},
@@ -293,6 +232,6 @@ function cmpl_update!(
     #
     #     M ← Rᵢᵀ F Rᵢ
     #
-    copytri!(M, F, uplo, inj)
+    copygathertri!(M, F, inj, uplo)
     return
 end

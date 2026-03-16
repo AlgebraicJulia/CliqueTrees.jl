@@ -32,7 +32,7 @@ function trsx2_fwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
     end
 end
 
-function trsx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {UPLO, DIAG, T}
+function trsx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {UPLO, DIAG, T}
     @inbounds @fastmath for j in axes(A, 1)
         for i in axes(B, 2)
             for k in 1:j - 1
@@ -46,22 +46,6 @@ function trsx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
             if DIAG === :N
                 B[j, i] *= inv(A[j, j])
             end
-        end
-    end
-end
-
-function trsx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, b::AbstractVector{T}) where {UPLO, DIAG, T}
-    @inbounds @fastmath for j in axes(A, 1)
-        for k in 1:j - 1
-            if UPLO === :U
-                b[j] -= A[k, j] * b[k]
-            else
-                b[j] -= A[j, k] * b[k]
-            end
-        end
-
-        if DIAG === :N
-            b[j] *= inv(A[j, j])
         end
     end
 end
@@ -90,7 +74,7 @@ function trsx2_bwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
     end
 end
 
-function trsx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {UPLO, DIAG, T}
+function trsx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {UPLO, DIAG, T}
     @inbounds @fastmath for j in reverse(axes(A, 1))
         for i in axes(B, 2)
             if DIAG === :N
@@ -103,22 +87,6 @@ function trsx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
                 else
                     B[k, i] -= A[j, k] * B[j, i]
                 end
-            end
-        end
-    end
-end
-
-function trsx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, b::AbstractVector{T}) where {UPLO, DIAG, T}
-    @inbounds @fastmath for j in reverse(axes(A, 1))
-        if DIAG === :N
-            b[j] *= inv(A[j, j])
-        end
-
-        for k in 1:j - 1
-            if UPLO === :U
-                b[k] -= A[k, j] * b[j]
-            else
-                b[k] -= A[j, k] * b[j]
             end
         end
     end

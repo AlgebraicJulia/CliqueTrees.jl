@@ -1,3 +1,21 @@
+# ================================= cong =================================
+
+function cong(A, B)
+    return B' * A * B
+end
+
+function cong(A::SparseMatrixCSC, B::Permutation)
+    return permute(A, B.invp, B.invp)
+end
+
+function cong(A::Hermitian, B::Permutation)
+    return Hermitian(sympermute(parent(A), B.perm, A.uplo, A.uplo), Symbol(A.uplo))
+end
+
+function cong(A::Symmetric{T}, B::Permutation) where {T <: Real}
+    return Symmetric(sympermute(parent(A), B.perm, A.uplo, A.uplo), Symbol(A.uplo))
+end
+
 # ================================== * ==================================
 
 # --- Permutation ---
@@ -60,7 +78,7 @@ function Base.:*(B::AbstractZerosMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) w
     return Zeros{T}(size(B, 1), size(A, 2))
 end
 
-function Base.:*(B::Adjoint{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:*(B::AdjVec, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), A)
 end
 
@@ -68,7 +86,7 @@ function Base.:*(B::Adjoint{<:Any, <:AbstractZerosVector}, A::MaybeAdjOrTransTri
     return Zeros{T}(1, size(A, 2))
 end
 
-function Base.:*(B::Transpose{<:Any, <:AbstractVector}, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:*(B::TransVec, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return rmul!(Matrix{T}(B), A)
 end
 
@@ -80,7 +98,7 @@ end
 
 # --- AbstractFactorization ---
 
-function LinearAlgebra.lmul!(F::IFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
+function LinearAlgebra.lmul!(F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
 
     if DIAG === :N
@@ -93,7 +111,7 @@ end
 function LinearAlgebra.lmul!(F::AbstractFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
     @assert size(F, 1) == size(B, 1)
     C = FArray{T}(undef, size(B))
-    return ldiv!(B, F.P, lmul!(IFactorization(F), mul!(C, F.P, B)))
+    return mul!!(C, F, B)
 end
 
 # --- ChordalTriangular ---
@@ -109,7 +127,7 @@ end
 
 # --- AbstractFactorization ---
 
-function LinearAlgebra.rmul!(B::AbstractMatrix, F::IFactorization{DIAG}) where {DIAG}
+function LinearAlgebra.rmul!(B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
 
     if DIAG === :N
@@ -122,7 +140,7 @@ end
 function LinearAlgebra.rmul!(B::AbstractMatrix, F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     @assert size(F, 1) == size(B, 2)
     C = FMatrix{T}(undef, size(B))
-    return mul!(B, rmul!(rdiv!(C, B, F.P), IFactorization(F)), F.P)
+    return mul!!(C, B, F)
 end
 
 # --- ChordalTriangular ---
@@ -152,26 +170,12 @@ end
 
 function LinearAlgebra.mul!(C::AbstractVecOrMat, A::Permutation, B::AbstractVecOrMat)
     @boundscheck size(C, 1) == size(B, 1) == size(A, 1) || throw(DimensionMismatch())
-
-    @inbounds for j in axes(C, 2)
-        for i in axes(C, 1)
-            C[i, j] = B[A.perm[i], j]
-        end
-    end
-
-    return C
+    return copyscatterrec!(C, B, A.invp, Val(:L))
 end
 
 function LinearAlgebra.mul!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation)
     @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
-
-    @inbounds for j in axes(C, 2)
-        for i in axes(C, 1)
-            C[i, B.perm[j]] = A[i, j]
-        end
-    end
-
-    return C
+    return copyscatterrec!(C, A, B.perm, Val(:R))
 end
 
 function LinearAlgebra.mul!(C::Permutation, A::Permutation, B::Permutation)
@@ -582,4 +586,16 @@ function mul_bwd_loop!(
     end
 
     return ns
+end
+
+# ================================ mul!! =================================
+
+# C is a workspace. Returns B.
+function mul!!(C, F::AbstractFactorization, B)
+    ldiv!(B, F.P, lmul!(NaturalFactorization(F), mul!(C, F.P, B)))
+end
+
+# C is a workspace. Returns B.
+function mul!!(C, B, F::AbstractFactorization)
+    mul!(B, rmul!(rdiv!(C, B, F.P), NaturalFactorization(F)), F.P)
 end

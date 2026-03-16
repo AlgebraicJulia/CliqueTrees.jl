@@ -1,6 +1,8 @@
-abstract type AbstractFactorization{DIAG, UPLO, T, I, Prm <: AbstractVector{I}} <: Factorization{T} end
+abstract type AbstractFactorization{DIAG, UPLO, T, I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}} <: Factorization{T} end
 
-const IFactorization{DIAG, UPLO, T, I} = AbstractFactorization{DIAG, UPLO, T, I, OneTo{I}}
+const AbstractCholesky = AbstractFactorization{:N}
+const AbstractLDLt = AbstractFactorization{:U}
+const NaturalFactorization{DIAG, UPLO, T, I} = AbstractFactorization{DIAG, UPLO, T, I, OneTo{I}, OneTo{I}}
 
 # ===== Base methods =====
 
@@ -24,6 +26,19 @@ function Base.getproperty(F::AbstractFactorization{DIAG, UPLO}, s::Symbol) where
     end
 end
 
+function Base.copyto!(F::AbstractFactorization{DIAG}, G::AbstractFactorization{DIAG}) where {DIAG}
+    if DIAG === :U
+        copyto!(F.d, G.d)
+    end
+
+    copyto!(triangular(F, Val(:N)), triangular(G, Val(:N)))
+    return F
+end
+
+function Base.copy(F::AbstractFactorization)
+    return copyto!(similar(F), F)
+end
+
 function Base.copyto!(F::AbstractFactorization{DIAG, UPLO}, A::AbstractMatrix; check::Bool=true) where {DIAG, UPLO}
     if !check || ishermitian(A)
         return copyto!(F, Hermitian(A, UPLO))
@@ -41,8 +56,8 @@ function Base.copyto!(F::AbstractFactorization, A::HermOrSym; check::Bool=true)
     return F
 end
 
-function Base.copy!(F::AbstractFactorization, A::AbstractMatrix; check::Bool=true)
-    return copyto!(F, A; check)
+function Base.copy!(F::AbstractFactorization, A; kw...)
+    return copyto!(F, A; kw...)
 end
 
 function Base.size(F::AbstractFactorization)
@@ -115,9 +130,9 @@ end
 
 function LinearAlgebra.diag(F::AbstractFactorization{DIAG}) where {DIAG}
     if DIAG === :N
-        return diag(F.L).^2
+        return F.P' * diag(F.L).^2
     else
-        return diag(F.D)
+        return F.P' * diag(F.D)
     end
 end
 
@@ -141,15 +156,46 @@ function LinearAlgebra.opnorm(F::AbstractFactorization, p::Real=2)
     end
 end
 
-function Base.Matrix{T}(F::AbstractFactorization) where {T}
-    B = Matrix{T}(I, size(F))
-    return lmul!(F, B)
-end
-
-function Base.Matrix(F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    return Matrix{T}(F)
-end
-
 function ncl(F::AbstractFactorization)
     return size(F, 1)
+end
+
+function Base.length(F::AbstractFactorization)
+    return ncl(F)^2
+end
+
+function uncopy(F::NaturalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+    return Hermitian(triangular(F, Val(:N)), UPLO)
+end
+
+function uncopy(F::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+    return cong(uncopy(NaturalFactorization(F)), F.P)
+end
+
+function uncopydiag(F::NaturalFactorization)
+    return diag(triangular(F))
+end
+
+function uncopydiag(F::AbstractFactorization)
+    return F.P \ uncopydiag(NaturalFactorization(F))
+end
+
+function unfactorize(F::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+    G = copy(F)
+
+    if DIAG === :N
+        G = uncholesky!(G)
+    else
+        G = unldlt!(G)
+    end
+
+    return uncopy(G)
+end
+
+function (::Type{Mat})(F::AbstractFactorization) where {Mat <: AbstractMatrix}
+    return Mat(unfactorize(F))
+end
+
+function SparseArrays.sparse(F::AbstractFactorization)
+    return sparse(unfactorize(F))
 end

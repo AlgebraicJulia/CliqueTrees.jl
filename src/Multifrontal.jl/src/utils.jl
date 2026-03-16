@@ -84,7 +84,19 @@ function symmetric(graph::AbstractGraph{V}, uplo::Char) where {V}
     return BipartiteGraph{V, E}(n, n, m, ptr, tgt)
 end
 
+function sympermute(A::AbstractMatrix, invp::AbstractVector, src::Char, tgt::Char)
+    return sympermute!(Matrix(A), A, invp, src, tgt)
+end
+
+function sympermute(A::ChordalTriangular, invp::AbstractVector, src::Char, tgt::Char)
+    return sympermute(sparse(A), invp, src, tgt)
+end
+
 function sympermute!(C::AbstractMatrix, A::SparseMatrixCSC, invp::AbstractVector, src::Char, tgt::Char)
+    return copyto!(C, sympermute(A, invp, src, tgt))
+end
+
+function sympermute!(C::AbstractMatrix, A::ChordalTriangular, invp::AbstractVector, src::Char, tgt::Char)
     return copyto!(C, sympermute(A, invp, src, tgt))
 end
 
@@ -94,7 +106,7 @@ function sympermute!(C::AbstractMatrix{T}, A::AbstractMatrix{T}, invp::AbstractV
     for j in 1:n
         pj = invp[j]
 
-        if tgt === 'L'
+        if src === 'L'
             rng = j:n
         else
             rng = 1:j
@@ -103,18 +115,16 @@ function sympermute!(C::AbstractMatrix{T}, A::AbstractMatrix{T}, invp::AbstractV
         for i in rng
             pi = invp[i]
 
-            if src === 'L'
-                if pi >= pj
-                    C[i, j] = A[pi, pj]
-                else
-                    C[i, j] = conj(A[pj, pi])
-                end
+            if tgt === 'L'
+                lo, hi = minmax(pi, pj)
             else
-                if pi <= pj
-                    C[i, j] = A[pi, pj]
-                else
-                    C[i, j] = conj(A[pj, pi])
-                end
+                hi, lo = minmax(pi, pj)
+            end
+
+            if (i > j) == (pi > pj)
+                C[hi, lo] = A[i, j]
+            else
+                C[hi, lo] = conj(A[i, j])
             end
         end
     end
@@ -255,164 +265,237 @@ function adj(tA::Val{:C}, A::AbstractMatrix)
     return adjoint(A)
 end
 
-function zerotri!(A::AbstractMatrix{T}, uplo::Val{Q}, col::AbstractVector=axes(A, 1)) where {Q, T}
+function zerotri!(A::AbstractMatrix{T}, ind::AbstractVector, ::Val{UPLO}) where {UPLO, T}
     @assert size(A, 1) == size(A, 2)
+    n = length(ind)
 
-    @inbounds for j in eachindex(col)
-        cj = col[j]
+    @inbounds for j in eachindex(ind)
+        indj = ind[j]
 
-        if Q === :L
-            for i in j:length(col)
-                A[col[i], cj] = zero(T)
-            end
+        if UPLO === :L
+            rng = j:n
         else
-            for i in oneto(j)
-                A[col[i], cj] = zero(T)
+            rng = 1:j
+        end
+
+        for i in rng
+            A[ind[i], indj] = zero(T)
+        end
+    end
+
+    return A
+end
+
+function zerotri!(A::AbstractMatrix, uplo::Val)
+    return zerotri!(A, axes(A, 1), uplo)
+end
+
+function zerorec!(A::AbstractVector{T}, ind::AbstractVector, ::Val{:L}) where {T}
+    @inbounds for i in eachindex(ind)
+        A[ind[i]] = zero(T)
+    end
+
+    return A
+end
+
+function zerorec!(A::AbstractVector)
+    return zerorec!(A, axes(A, 1), Val(:L))
+end
+
+function zerorec!(A::AbstractMatrix{T}, ind::AbstractVector, ::Val{:L}) where {T}
+    @inbounds for j in axes(A, 2)
+        for i in eachindex(ind)
+            A[ind[i], j] = zero(T)
+        end
+    end
+
+    return A
+end
+
+function zerorec!(A::AbstractMatrix{T}, ind::AbstractVector, ::Val{:R}) where {T}
+    @inbounds for j in eachindex(ind)
+        indj = ind[j]
+
+        for i in axes(A, 1)
+            A[i, indj] = zero(T)
+        end
+    end
+
+    return A
+end
+
+function zerorec!(A::AbstractMatrix)
+    return zerorec!(A, axes(A, 1), Val(:L))
+end
+
+function copyrec!(A::AbstractVecOrMat, B::AbstractVecOrMat)
+    return copyscatterrec!(A, B, axes(B, 1), Val(:L))
+end
+
+function addrec!(A::AbstractVecOrMat, B::AbstractVecOrMat)
+    return addscatterrec!(A, B, axes(B, 1), Val(:L))
+end
+
+function copytri!(A::AbstractMatrix, B::AbstractMatrix, uplo::Val)
+    return copyscattertri!(A, B, axes(B, 1), uplo)
+end
+
+function addtri!(A::AbstractMatrix, B::AbstractMatrix, uplo::Val)
+    return addscattertri!(A, B, axes(B, 1), uplo)
+end
+
+function symmtri!(A::AbstractMatrix{T}, ::Val{:L}) where {T}
+    n = size(A, 1)
+
+    @inbounds for j in axes(A, 2)
+        for i in 1:j-1
+            A[i, j] = conj(A[j, i])
+        end
+    end
+
+    return A
+end
+
+function symmtri!(A::AbstractMatrix{T}, ::Val{:U}) where {T}
+    n = size(A, 1)
+
+    @inbounds for j in axes(A, 2)
+        for i in j+1:n
+            A[i, j] = conj(A[j, i])
+        end
+    end
+
+    return A
+end
+
+for (f, op) in [(:copy, :(=)), (:add, :(+=))]
+    @eval function $(Symbol(f, :gatherrec!))(
+            A::AbstractVecOrMat,
+            B::AbstractVecOrMat,
+            ind::AbstractVector,
+            ::Val{:L},
+        )
+        @assert size(A, 1) <= length(ind)
+        @assert size(A, 2) == size(B, 2)
+
+        @inbounds for j in axes(A, 2)
+            for i in axes(A, 1)
+                $(Expr(op, :(A[i, j]), :(B[ind[i], j])))
             end
         end
+
+        return A
     end
 
-    return A
-end
+    @eval function $(Symbol(f, :gatherrec!))(
+            A::AbstractVecOrMat,
+            B::AbstractVecOrMat,
+            ind::AbstractVector,
+            ::Val{:R},
+        )
+        @assert size(A, 1) == size(B, 1)
+        @assert size(A, 2) <= length(ind)
 
-function zerorec!(A::AbstractVector{T}, row::AbstractVector=axes(A, 1)) where {T}
-    @inbounds for i in eachindex(row)
-        A[row[i]] = zero(T)
-    end
+        @inbounds for j in axes(A, 2)
+            indj = ind[j]
 
-    return A
-end
-
-function zerorec!(A::AbstractMatrix{T}, row::AbstractVector=axes(A, 1), col::AbstractVector=axes(A, 2)) where {T}
-    @inbounds for j in eachindex(col)
-        cj = col[j]
-
-        for i in eachindex(row)
-            A[row[i], cj] = zero(T)
-        end
-    end
-
-    return A
-end
-
-function copytri!(
-        A::AbstractMatrix{T},
-        B::AbstractMatrix{T},
-        uplo::Val{Q},
-        col::AbstractVector=axes(A, 1),
-    ) where {Q, T}
-    @assert size(A, 1) == size(A, 2) == length(col)
-    @assert size(B, 1) == size(B, 2)
-
-    @inbounds for j in eachindex(col)
-        cj = col[j]
-
-        if Q === :L
-            for i in j:length(col)
-                A[i, j] = B[col[i], cj]
-            end
-        else
-            for i in oneto(j)
-                A[i, j] = B[col[i], cj]
+            for i in axes(A, 1)
+                $(Expr(op, :(A[i, j]), :(B[i, indj])))
             end
         end
+
+        return A
     end
 
-    return A
-end
+    @eval function $(Symbol(f, :scatterrec!))(
+            A::AbstractVecOrMat,
+            B::AbstractVecOrMat,
+            ind::AbstractVector,
+            ::Val{:L},
+        )
+        @assert size(B, 1) <= length(ind)
+        @assert size(A, 2) == size(B, 2)
 
-function addtri!(
-        A::AbstractMatrix{T},
-        B::AbstractMatrix{T},
-        uplo::Val{Q},
-        col::AbstractVector=axes(B, 1),
-    ) where {Q, T}
-    @assert size(A, 1) == size(A, 2)
-    @assert size(B, 1) == size(B, 2) == length(col)
-
-    @inbounds for j in eachindex(col)
-        cj = col[j]
-
-        if Q === :L
-            for i in j:length(col)
-                A[col[i], cj] += B[i, j]
-            end
-        else
-            for i in oneto(j)
-                A[col[i], cj] += B[i, j]
+        @inbounds for j in axes(B, 2)
+            for i in axes(B, 1)
+                $(Expr(op, :(A[ind[i], j]), :(B[i, j])))
             end
         end
+
+        return A
     end
 
-    return A
-end
+    @eval function $(Symbol(f, :scatterrec!))(
+            A::AbstractVecOrMat,
+            B::AbstractVecOrMat,
+            ind::AbstractVector,
+            ::Val{:R},
+        )
+        @assert size(A, 1) == size(B, 1)
+        @assert size(B, 2) <= length(ind)
 
-function addrec!(
-        A::AbstractArray{T},
-        B::AbstractVector{T},
-        row::AbstractVector=axes(B, 1),
-    ) where {T}
-    @assert length(row) == length(B)
+        @inbounds for j in axes(B, 2)
+            indj = ind[j]
 
-    @inbounds for i in eachindex(row, B)
-        A[row[i]] += B[i]
-    end
-
-    return A
-end
-
-function addrec!(
-        A::AbstractArray{T},
-        B::AbstractMatrix{T},
-        row::AbstractVector=axes(B, 1),
-        col::AbstractVector=axes(B, 2),
-    ) where {T}
-    @assert length(row) == size(B, 1)
-    @assert length(col) == size(B, 2)
-
-    @inbounds for j in eachindex(col)
-        cj = col[j]
-
-        for i in eachindex(row)
-            A[row[i], cj] += B[i, j]
+            for i in axes(B, 1)
+                $(Expr(op, :(A[i, indj]), :(B[i, j])))
+            end
         end
+
+        return A
     end
 
-    return A
-end
+    @eval function $(Symbol(f, :gathertri!))(
+            A::AbstractMatrix,
+            B::AbstractMatrix,
+            ind::AbstractVector,
+            ::Val{UPLO},
+        ) where {UPLO}
+        @assert size(A, 1) == size(A, 2) <= length(ind)
+        n = size(A, 1)
 
-function copyrec!(
-        A::AbstractVector{T},
-        B::AbstractVector{T},
-        row::AbstractVector=axes(A, 1),
-    ) where {T}
-    @assert length(row) == length(A)
+        @inbounds for j in axes(A, 2)
+            indj = ind[j]
 
-    @inbounds for i in eachindex(row)
-        A[i] = B[row[i]]
-    end
+            if UPLO === :L
+                rng = j:n
+            else
+                rng = 1:j
+            end
 
-    return A
-end
-
-function copyrec!(
-        A::AbstractMatrix{T},
-        B::AbstractMatrix{T},
-        row::AbstractVector=axes(A, 1),
-        col::AbstractVector=axes(A, 2),
-    ) where {T}
-    @assert length(row) == size(A, 1)
-    @assert length(col) == size(A, 2)
-
-    @inbounds for j in eachindex(col)
-        cj = col[j]
-
-        for i in eachindex(row)
-            A[i, j] = B[row[i], cj]
+            for i in rng
+                $(Expr(op, :(A[i, j]), :(B[ind[i], indj])))
+            end
         end
+
+        return A
     end
 
-    return A
+    @eval function $(Symbol(f, :scattertri!))(
+            A::AbstractMatrix,
+            B::AbstractMatrix,
+            ind::AbstractVector,
+            ::Val{UPLO},
+        ) where {UPLO}
+        @assert size(B, 1) == size(B, 2) <= length(ind)
+        n = size(B, 1)
+
+        @inbounds for j in axes(B, 2)
+            indj = ind[j]
+
+            if UPLO === :L
+                rng = j:n
+            else
+                rng = 1:j
+            end
+
+            for i in rng
+                $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+            end
+        end
+
+        return A
+    end
 end
 
 function unwrap(A::AbstractVecOrMat)
@@ -536,7 +619,11 @@ function cdiv!(::Val{:L}, ::Val{:U}, A::AbstractMatrix{T}, d::AbstractVector{T})
     return
 end
 
-function cmul!(::Val{:R}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+function cmul!(::Val, ::Val{:N}, ::AbstractMatrix, ::AbstractVector)
+    return
+end
+
+function cmul!(::Val{:R}, ::Val{:U}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
     @inbounds for j in axes(A, 2)
         dj = d[j]
 
@@ -548,7 +635,7 @@ function cmul!(::Val{:R}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
     return
 end
 
-function cmul!(::Val{:L}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
+function cmul!(::Val{:L}, ::Val{:U}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
     @inbounds for j in axes(A, 2)
         for i in axes(A, 1)
             A[i, j] *= d[i]
@@ -558,3 +645,44 @@ function cmul!(::Val{:L}, A::AbstractMatrix{T}, d::AbstractVector{T}) where {T}
     return
 end
 
+function revtri!(A::AbstractMatrix, ::Val{UPLO}) where UPLO
+    n = size(A, 1)
+
+    @inbounds for i in 1:n ÷ 2
+        ri = n - i + 1
+        A[i, i], A[ri, ri] = A[ri, ri], A[i, i]
+    end
+
+    @inbounds for j in 1:n
+        rj = n - j + 1
+
+        if UPLO === :L
+            rng = j + 1:n
+        else
+            rng = 1:j - 1
+        end
+
+        for i in rng
+            ri = n - i + 1
+            A[ri, rj] = A[i, j]
+        end
+    end
+end
+
+# ===== allocate =====
+
+function allocate(::Type{Arr}, dims::Integer...) where {Arr}
+    return allocate(Arr, dims)
+end
+
+function allocate(::Type{Arr}, dims::Tuple) where {Arr}
+    return Arr(undef, dims)
+end
+
+function allocate(::Type{Arr}, dims::NTuple{N}) where {T, N, Axis, Arr <: AbstractFill{T, N, NTuple{N, Axis}}}
+    return Arr(map(Axis, dims))
+end
+
+function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}
+    return Arr(n)
+end

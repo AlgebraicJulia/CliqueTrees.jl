@@ -2,13 +2,10 @@
 
 # --- Permutation ---
 
-function Base.:\(A::Permutation, b::AbstractVector)
-    return ldiv!(Array(b), A, b)
+function Base.:\(A::Permutation, B::AbstractVecOrMat)
+    return inv(A) * B
 end
 
-function Base.:\(A::Permutation, B::SparseMatrixCSC)
-    return rowpermute(B, A.invp)
-end
 
 # --- ChordalTriangular ---
 
@@ -21,20 +18,17 @@ end
 # --- Permutation ---
 
 function Base.:/(A::AbstractMatrix, B::Permutation)
-    return rdiv!(Array(A), A, B)
+    return A * inv(B)
 end
 
-function Base.:/(A::Transpose{<:Any, <:AbstractVector}, B::Permutation)
+function Base.:/(A::TransVec, B::Permutation)
     return transpose(transpose(B) \ parent(A))
 end
 
-function Base.:/(A::Adjoint{<:Any, <:AbstractVector}, B::Permutation)
+function Base.:/(A::AdjVec, B::Permutation)
     return adjoint(adjoint(B) \ parent(A))
 end
 
-function Base.:/(A::SparseMatrixCSC, B::Permutation)
-    return colpermute(A, B.perm)
-end
 
 # --- ChordalTriangular ---
 
@@ -42,11 +36,11 @@ function Base.:/(B::AbstractMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where 
     return rdiv!(Matrix{T}(B), A)
 end
 
-function Base.:/(A::Transpose{<:Any, <:AbstractVector}, B::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:/(A::TransVec, B::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return transpose(transpose(B) \ parent(A))
 end
 
-function Base.:/(A::Adjoint{<:Any, <:AbstractVector}, B::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:/(A::AdjVec, B::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     return adjoint(adjoint(B) \ parent(A))
 end
 
@@ -64,7 +58,7 @@ end
 
 # --- AbstractFactorization ---
 
-function LinearAlgebra.ldiv!(F::IFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
+function LinearAlgebra.ldiv!(F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
 
     if DIAG === :N
@@ -77,7 +71,7 @@ end
 function LinearAlgebra.ldiv!(F::AbstractFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
     @assert size(F, 1) == size(B, 1)
     C = FArray{T}(undef, size(B))
-    return ldiv!(B, F.P, ldiv!(IFactorization(F), mul!(C, F.P, B)))
+    return ldiv!!(C, F, B)
 end
 
 # --- ChordalTriangular ---
@@ -103,7 +97,7 @@ end
 
 # --- AbstractFactorization ---
 
-function LinearAlgebra.rdiv!(B::AbstractMatrix, F::IFactorization{DIAG}) where {DIAG}
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
 
     if DIAG === :N
@@ -116,7 +110,7 @@ end
 function LinearAlgebra.rdiv!(B::AbstractMatrix, F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
     @assert size(F, 1) == size(B, 2)
     C = FMatrix{T}(undef, size(B))
-    return mul!(B, rdiv!(rdiv!(C, B, F.P), IFactorization(F)), F.P)
+    return rdiv!!(C, B, F)
 end
 
 # --- ChordalTriangular ---
@@ -554,13 +548,13 @@ function div_fwd_update!(
 
     if F isa AbstractVector
         M = view(val, strt:strt + na - one(I))
-        addrec!(F, M, inj)
+        addscatterrec!(F, M, inj, Val(:L))
     elseif SIDE === :L
         M = reshape(view(val, strt:strt + na * nrhs - one(I)), na, nrhs)
-        addrec!(F, M, inj, oneto(nrhs))
+        addscatterrec!(F, M, inj, Val(:L))
     else
         M = reshape(view(val, strt:strt + na * nrhs - one(I)), nrhs, na)
-        addrec!(F, M, oneto(nrhs), inj)
+        addscatterrec!(F, M, inj, Val(:R))
     end
 
     return
@@ -599,14 +593,28 @@ function div_bwd_update!(
 
     if F isa AbstractVector
         M = view(val, strt:stop - one(I))
-        copyrec!(M, F, inj)
+        copygatherrec!(M, F, inj, Val(:L))
     elseif SIDE === :L
         M = reshape(view(val, strt:stop - one(I)), na, nrhs)
-        copyrec!(M, F, inj, oneto(nrhs))
+        copygatherrec!(M, F, inj, Val(:L))
     else
         M = reshape(view(val, strt:stop - one(I)), nrhs, na)
-        copyrec!(M, F, oneto(nrhs), inj)
+        copygatherrec!(M, F, inj, Val(:R))
     end
 
     return
+end
+
+# ================================ ldiv!! ================================
+
+# C is a workspace. Returns B.
+function ldiv!!(C, F::AbstractFactorization, B)
+    ldiv!(B, F.P, ldiv!(NaturalFactorization(F), mul!(C, F.P, B)))
+end
+
+# ================================ rdiv!! ================================
+
+# C is a workspace. Returns B.
+function rdiv!!(C, B, F::AbstractFactorization)
+    mul!(B, rdiv!(rdiv!(C, B, F.P), NaturalFactorization(F)), F.P)
 end

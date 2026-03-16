@@ -9,14 +9,14 @@ A permutation matrix.
   - `P.invp`: inverse permutation vector
 
 """
-struct Permutation{I, Prm <: AbstractVector{I}} <: AbstractMatrix{Bool}
+struct Permutation{I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}} <: AbstractMatrix{Bool}
     perm::Prm
-    invp::Prm
+    invp::Ivp
 end
 
-function Permutation{I, Prm}(n::Integer) where {I, Prm <: AbstractVector{I}}
-    perm = Prm(undef, n)
-    invp = Prm(undef, n)
+function Permutation{I, Prm, Ivp}(n::Integer) where {I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}}
+    perm = allocate(Prm, n)
+    invp = allocate(Ivp, n)
     return Permutation(perm, invp)
 end
 
@@ -24,7 +24,17 @@ function Permutation{I}(n::Integer) where {I}
     return FPermutation{I}(n)
 end
 
-const FPermutation{I} = Permutation{I, FVector{I}}
+const FPermutation{I} = Permutation{I, FVector{I}, FVector{I}}
+const DPermutation{I} = Permutation{I, Vector{I}, Vector{I}}
+const NaturalPermutation{I} = Permutation{I, OneTo{I}, OneTo{I}}
+
+# ===== show =====
+
+for Prm in (:FPermutation, :DPermutation, :NaturalPermutation)
+    @eval function Base.show(io::IO, ::Type{$Prm{I}}) where {I}
+        print(io, $("$Prm{"), I, "}")
+    end
+end
 
 # ===== Adjoint, Transpose, Inverse =====
 

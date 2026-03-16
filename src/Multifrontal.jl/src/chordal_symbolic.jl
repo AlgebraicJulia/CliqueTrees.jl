@@ -175,9 +175,9 @@ end
 
 function Base.getproperty(S::ChordalSymbolic, d::Symbol)
     if d === :L
-        return ChordalTriangular{:L}(S)
+        return SymbolicChordalTriangular{:L}(S)
     elseif d === :U
-        return ChordalTriangular{:U}(S)
+        return SymbolicChordalTriangular{:U}(S)
     else
         return getfield(S, d)
     end
@@ -286,11 +286,17 @@ end
 # ===== Abstract Matrix Interface =====
 
 function SparseArrays.nnz(S::ChordalSymbolic)
+    return ndz(S) + nlz(S)
+end
+
+function ndz(S::ChordalSymbolic)
     n = nfr(S)
-    nRval = convert(Int, S.Dptr[n + 1]) - 1
-    nLval = convert(Int, S.Lptr[n + 1]) - 1
-    nnz = half(nRval + ncl(S)) + nLval
-    return nnz
+    return convert(Int, S.Dptr[n + 1]) - 1
+end
+
+function nlz(S::ChordalSymbolic)
+    n = nfr(S)
+    return convert(Int, S.Lptr[n + 1]) - 1
 end
 
 function ncl(S::ChordalSymbolic)
@@ -299,6 +305,10 @@ end
 
 function nfr(S::ChordalSymbolic)
     return convert(Int, nv(S.res))
+end
+
+function fronts(S::ChordalSymbolic)
+    return oneto(nfr(S))
 end
 
 function Base.size(S::ChordalSymbolic)
@@ -319,6 +329,8 @@ function flatindex(S::ChordalSymbolic{I}, v::Integer, w::Integer, uplo::Val) whe
 end
 
 function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Integer}
+    poff = convert(I, ndz(S))
+
     if v ≥ w
         j = S.idx[w]
 
@@ -338,7 +350,7 @@ function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Int
 
             if i ≤ na && sep[i] == v
                 v = convert(I, i) - one(I)
-                return -(S.Lptr[j] + v + w * na)
+                return S.Lptr[j] + poff + v + w * na
             end
         end
     end
@@ -347,6 +359,8 @@ function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:L}) where {I <: Int
 end
 
 function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Integer}
+    poff = convert(I, ndz(S))
+
     if v ≤ w
         j = S.idx[v]
 
@@ -366,7 +380,7 @@ function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Int
 
             if i ≤ na && sep[i] == w
                 w = convert(I, i) - one(I)
-                return -(S.Lptr[j] + v + w * nn)
+                return S.Lptr[j] + poff + v + w * nn
             end
         end
     end
@@ -375,7 +389,7 @@ function flatindex(S::ChordalSymbolic{I}, v::I, w::I, ::Val{:U}) where {I <: Int
 end
 
 function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where {I}
-    P = zeros(I, nnz(B))
+    P = zeros(I, nnz(B)); poff = convert(I, ndz(S))
     res = S.res
     sep = S.sep
 
@@ -383,6 +397,7 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where
 
     @inbounds for j in vertices(res)
         pj = S.Dptr[j] - one(I)
+
         rlo = rhi
         rhi = pointers(res)[j + one(I)]
 
@@ -393,8 +408,8 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where
                 wa = rowvals(B)[p]
                 wa < rlo && continue
                 wa >= rhi && break
-                pj += wa - row + one(I)
-                P[p] = pj
+
+                P[p] = pj += wa - row + one(I)
                 row = wa + one(I)
             end
 
@@ -405,7 +420,8 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where
     shi = one(I)
 
     @inbounds for j in vertices(res)
-        pj = S.Lptr[j] - one(I)
+        pj = S.Lptr[j] + poff - one(I)
+
         slo = shi
         shi = pointers(sep)[j + one(I)]
         slo >= shi && continue
@@ -428,8 +444,7 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where
                     row = targets(sep)[k]
                 end
 
-                pj += one(I)
-                P[p] = -pj
+                P[p] = pj += one(I)
                 k += one(I)
             end
 
@@ -441,17 +456,17 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:L}) where
 end
 
 function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:U}) where {I}
-    P = zeros(I, nnz(B))
+    P = zeros(I, nnz(B)); poff = convert(I, ndz(S))
     res = S.res
     sep = S.sep
 
     rhi = one(I)
 
     @inbounds for j in vertices(res)
+        pj = S.Dptr[j] - one(I)
+
         rlo = rhi
         rhi = pointers(res)[j + one(I)]
-
-        pj = S.Dptr[j] - one(I)
 
         for col in rlo:rhi - one(I)
             row = rlo
@@ -460,15 +475,15 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:U}) where
                 wa = rowvals(B)[p]
                 wa < rlo && continue
                 wa >= rhi && break
-                pj += wa - row + one(I)
-                P[p] = pj
+
+                P[p] = pj += wa - row + one(I)
                 row = wa + one(I)
             end
 
             pj += rhi - row
         end
 
-        pj = S.Lptr[j] - one(I)
+        pj = S.Lptr[j] + poff - one(I)
 
         for col in neighbors(sep, j)
             row = rlo
@@ -477,8 +492,8 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:U}) where
                 wa = rowvals(B)[p]
                 wa < rlo && continue
                 wa >= rhi && break
-                pj += wa - row + one(I)
-                P[p] = -pj
+
+                P[p] = pj += wa - row + one(I)
                 row = wa + one(I)
             end
 
@@ -487,4 +502,39 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:U}) where
     end
 
     return P
+end
+
+function flatindices(invp::AbstractVector{I}, S::ChordalSymbolic{I}, A::SparseMatrixCSC, uplo::Val{UPLO}; check::Bool=true) where {I, UPLO}
+    if !check || ishermitian(A)
+        return flatindices(invp, S, Hermitian(A, UPLO), uplo)
+    elseif istril(A)
+        return flatindices(invp, S, Hermitian(A, :L), uplo)
+    elseif istriu(A)
+        return flatindices(invp, S, Hermitian(A, :U), uplo)
+    end
+
+    error()
+end
+
+function flatindices(invp::AbstractVector{I}, S::ChordalSymbolic{I}, A::HermOrSym, uplo::Val{UPLO}) where {I, UPLO}
+    m = convert(I, nnz(parent(A)))
+    colptr = parent(A).colptr
+    rowval = parent(A).rowval
+    nzval = collect(oneto(m))
+    B = SparseMatrixCSC(size(A)..., colptr, rowval, nzval)
+
+    if UPLO === :L
+        C = sympermute(B, invp, A.uplo, 'L')
+    else
+        C = sympermute(B, invp, A.uplo, 'U')
+    end
+
+    P = flatindices(S, C, uplo)
+    fill!(nzval, zero(I))
+
+    for (i, j) in zip(nonzeros(C), P)
+        nzval[i] = j
+    end
+
+    return nzval
 end

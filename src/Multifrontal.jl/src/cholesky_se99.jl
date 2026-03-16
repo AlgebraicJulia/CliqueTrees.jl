@@ -7,7 +7,7 @@ function chol!(
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
     S = permuteto(T, signs, F.perm)
-    R = initialize(F, S, reg)
+    R = initialize(triangular(F), S, reg)
 
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)

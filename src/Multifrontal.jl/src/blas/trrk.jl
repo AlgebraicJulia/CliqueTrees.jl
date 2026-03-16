@@ -1,33 +1,17 @@
 # ===== trrk! =====
+# Triangular rank-k update: C = α * op(A) * op(B)' + β * C, writing only to the triangle.
+# Assumes A * B' is symmetric, so uses syr2k with α/2 for BLAS types.
 
-function trrk!(uplo::Val, trans::Val{TRANS}, alpha::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, beta::Real, C::AbstractMatrix{T}) where {T <: BlasFloat, TRANS}
-    if T <: Complex
-        BLAS.her2k!(char(uplo), char(trans), convert(T, alpha / 2), A, B, beta, C)
-    else
-        BLAS.syr2k!(char(uplo), char(trans), convert(T, alpha / 2), A, B, beta, C)
-    end
-
+function trrk!(uplo::Val, trans::Val, α::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β::Real, C::AbstractMatrix{T}) where {T <: BlasFloat}
+    syr2k!(uplo, trans, α / 2, A, B, β, C)
     return
 end
 
-function trrk!(uplo::Val{UPLO}, trans::Val{TRANS}, alpha::Real, A::AbstractMatrix{T}, B::AbstractMatrix{T}, beta::Real, C::AbstractMatrix{T}) where {T, TRANS, UPLO}
-    @inbounds for j in axes(C, 2)
-        if UPLO === :L
-            for i in 1:j-1
-                C[i, j] = zero(T)
-            end
-        else
-            for i in j + 1:size(C, 1)
-                C[i, j] = zero(T)
-            end
-        end
-    end
-
+function trrk!(uplo::Val, trans::Val{TRANS}, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β, C::AbstractMatrix{T}) where {T, TRANS}
     if TRANS === :N
-        mul!(C, A, B', alpha, beta)
+        gemmt!(uplo, trans, Val(:C), α, A, B, β, C)
     else
-        mul!(C, A', B, alpha, beta)
+        gemmt!(uplo, trans, Val(:N), α, A, B, β, C)
     end
-
     return
 end

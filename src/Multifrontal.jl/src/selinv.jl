@@ -8,7 +8,7 @@ factor `F.L`.
 
 Use [`ChordalCholesky`](@ref) to construct a factorization object,
 use [`cholesky!`](@ref) to perform the factorization, and use
-[`selinv!](@ref) to compute the selected inverse.
+[`selinv!`](@ref) to compute the selected inverse.
 
 ```julia-repl
 julia> using CliqueTrees.Multifrontal, LinearAlgebra
@@ -32,14 +32,16 @@ julia> F = selinv!(cholesky!(ChordalCholesky(A)))
 
 ### Parameters
 
-  - `F` factorized positive definite matrix
+  - `F`: factorized positive definite matrix
 
 """
 function selinv!(F::ChordalCholesky{UPLO, T, I}) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, F.S.nMptr)
     Mval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    selinv_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval, F.S.res, F.S.rel, F.S.chd, F.uplo)
+
+    selinv_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval, F.S.res, F.S.rel, F.S.chd, Val(UPLO))
+    F.info[] = zero(I)
     return F
 end
 
@@ -132,20 +134,15 @@ function selinv_loop!(
         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
     end
     #
-    #     F₁₁ ← D₁₁
+    #     F₁₁ ← 0
     #
     zerorec!(F₁₁)
-    copytri!(F₁₁, D₁₁, uplo)
     #
-    #     F₁₁ ← F₁₁⁻¹
+    #     D₁₁ ← D₁₁⁻¹
     #
-    trtri!(uplo, Val(:N), F₁₁)
+    trtri!(uplo, Val(:N), D₁₁)
 
     if ispositive(na)
-        #
-        #     F₂₁ ← L₂₁
-        #
-        copyrec!(F₂₁, L₂₁)
         #
         # M₂₂ is the update matrix from the parent of node j
         #
@@ -157,49 +154,48 @@ function selinv_loop!(
         #
         copytri!(F₂₂, M₂₂, uplo)
         #
-        #     F₂₁ ← F₂₁ F₁₁
+        #     L₂₁ ← L₂₁ D₁₁
         #
         if UPLO === :L
-            trmm!(Val(:R), Val(:L), Val(:N), Val(:N), one(T), F₁₁, F₂₁)
+            trmm!(Val(:R), Val(:L), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
         else
-            trmm!(Val(:L), Val(:U), Val(:N), Val(:N), one(T), F₁₁, F₂₁)
+            trmm!(Val(:L), Val(:U), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
         end
         #
-        #     L₂₁ ← -F₂₂ F₂₁
+        #     F₂₁ ← -M₂₂ L₂₁
         #
         if UPLO === :L
-            symm!(Val(:L), Val(:L), -one(T), F₂₂, F₂₁, zero(T), L₂₁)
+            symm!(Val(:L), Val(:L), -one(T), M₂₂, L₂₁, zero(T), F₂₁)
         else
-            symm!(Val(:R), Val(:U), -one(T), F₂₂, F₂₁, zero(T), L₂₁)
+            symm!(Val(:R), Val(:U), -one(T), M₂₂, L₂₁, zero(T), F₂₁)
         end
         #
-        #     D₁₁ ← F₁₁ᴴ F₁₁ - F₂₁ᴴ L₂₁
+        #     F₁₁ ← F₁₁ - L₂₁ᴴ F₂₁
         #
         if UPLO === :L
-            syrk!(Val(:L), Val(:C), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-            trrk!(Val(:L), Val(:C), -one(real(T)), F₂₁, L₂₁, one(real(T)), D₁₁)
+            trrk!(Val(:L), Val(:C), -one(real(T)), L₂₁, F₂₁, one(real(T)), F₁₁)
         else
-            syrk!(Val(:U), Val(:N), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-            trrk!(Val(:U), Val(:N), -one(real(T)), L₂₁, F₂₁, one(real(T)), D₁₁)
-        end
-    else
-        #
-        #     D₁₁ ← F₁₁ᴴ F₁₁
-        #
-        if UPLO === :L
-            syrk!(Val(:L), Val(:C), one(real(T)), F₁₁, zero(real(T)), D₁₁)
-        else
-            syrk!(Val(:U), Val(:N), one(real(T)), F₁₁, zero(real(T)), D₁₁)
+            trrk!(Val(:U), Val(:N), -one(real(T)), F₂₁, L₂₁, one(real(T)), F₁₁)
         end
     end
     #
-    #     F₁₁ ← D₁₁
+    #     F₁₁ ← F₁₁ + D₁₁ᴴ D₁₁
     #
-    copyrec!(F₁₁, D₁₁)
+    if UPLO === :L
+        tril!(D₁₁)
+        syrk!(Val(:L), Val(:C), one(real(T)), D₁₁, one(real(T)), F₁₁)
+    else
+        triu!(D₁₁)
+        syrk!(Val(:U), Val(:N), one(real(T)), D₁₁, one(real(T)), F₁₁)
+    end
     #
-    #     F₂₁ ← L₂₁
+    #     D₁₁ ← F₁₁
     #
-    copyrec!(F₂₁, L₂₁)
+    copyrec!(D₁₁, F₁₁)
+    #
+    #     L₂₁ ← F₂₁
+    #
+    copyrec!(L₂₁, F₂₁)
 
     for i in neighbors(chd, j)
         #
@@ -246,6 +242,6 @@ function selinv_send!(
     #
     #     M ← Rᵢᵀ F Rᵢ
     #
-    copytri!(M, F, uplo, inj)
+    copygathertri!(M, F, inj, uplo)
     return
 end

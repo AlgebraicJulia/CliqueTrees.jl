@@ -48,7 +48,7 @@ function DynamicRegularization(; kw...)
     return DynamicRegularization{Float64}(; kw...)
 end
 
-function initialize(F::AbstractFactorization{DIAG, UPLO, T}, S::AbstractVector, R::DynamicRegularization) where {DIAG, UPLO, T}
+function initialize(::AbstractMatrix{T}, S::AbstractVector, R::DynamicRegularization) where {T}
     if isnegative(R.delta)
         delta = dynm_delta(real(T))
     else

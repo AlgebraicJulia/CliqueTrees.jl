@@ -47,9 +47,9 @@ function GMW81(; kw...)
     return GMW81{Float64}(; kw...)
 end
 
-function initialize(F::AbstractFactorization{DIAG, UPLO, T}, S::AbstractVector, R::GMW81) where {DIAG, UPLO, T}
+function initialize(A::AbstractMatrix{T}, S::AbstractVector, R::GMW81) where {T}
     if isnegative(R.beta)
-        beta = gmw81_beta(triangular(F))
+        beta = gmw81_beta(A)
     else
         beta = convert(real(T), R.beta)
     end

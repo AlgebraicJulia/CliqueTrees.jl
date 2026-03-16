@@ -1,11 +1,22 @@
-struct ChordalFactorization{DIAG, UPLO, T, I, Dia <: AbstractVector{T}, Val <: AbstractVector{T}, Prm <: AbstractVector{I}} <: AbstractFactorization{DIAG, UPLO, T, I, Prm}
+struct ChordalFactorization{
+        DIAG,
+        UPLO,
+        T,
+        I,
+        Dia <: AbstractVector{T},
+        Dvl <: AbstractVector{T},
+        Lvl <: AbstractVector{T},
+        Prm <: AbstractVector{I},
+        Ivp <: AbstractVector{I},
+        Ifo,
+    } <: AbstractFactorization{DIAG, UPLO, T, I, Prm, Ivp}
     S::ChordalSymbolic{I}
     d::Dia
-    Dval::Val
-    Lval::Val
+    Dval::Dvl
+    Lval::Lvl
     perm::Prm
-    invp::Prm
-    info::FScalar{I}
+    invp::Ivp
+    info::Ifo
 end
 
 """
@@ -32,7 +43,30 @@ stored.
 
 """
 const ChordalCholesky = ChordalFactorization{:N}
-const FChordalCholesky{UPLO, T, I} = ChordalCholesky{UPLO, T, I, Ones{T, 1, Tuple{OneTo{Int}}}, FVector{T}, FVector{I}}
+
+const FChordalCholesky{UPLO, T, I} = ChordalCholesky{
+    UPLO,
+    T,
+    I,
+    IOnes{T},
+    FVector{T},
+    FVector{T},
+    FVector{I},
+    FVector{I},
+    FScalar{I},
+}
+
+const DChordalCholesky{UPLO, T, I} = ChordalCholesky{
+    UPLO,
+    T,
+    I,
+    IOnes{T},
+    Vector{T},
+    Vector{T},
+    Vector{I},
+    Vector{I},
+    Scalar{I},
+}
 
 """
     ChordalLDLt{UPLO, T, I, Val} <: Factorization{T}
@@ -59,98 +93,155 @@ stored.
 
 """
 const ChordalLDLt = ChordalFactorization{:U}
-const FChordalLDLt{UPLO, T, I} = ChordalLDLt{UPLO, T, I, FVector{T}, FVector{T}, FVector{I}}
+
+const FChordalLDLt{UPLO, T, I} = ChordalLDLt{
+    UPLO,
+    T,
+    I,
+    FVector{T},
+    FVector{T},
+    FVector{T},
+    FVector{I},
+    FVector{I},
+    FScalar{I},
+}
+
+const DChordalLDLt{UPLO, T, I} = ChordalLDLt{
+    UPLO,
+    T,
+    I,
+    Vector{T},
+    Vector{T},
+    Vector{T},
+    Vector{I},
+    Vector{I},
+    Scalar{I},
+}
 
 # ===== Constructors =====
 
-function ChordalFactorization{DIAG}(A::AbstractMatrix; kw...) where {DIAG}
-    return ChordalFactorization{DIAG, DEFAULT_UPLO}(A; kw...)
+function ChordalFactorization{DIAG, UPLO}(
+        S::ChordalSymbolic{I},
+        d::Dia,
+        Dval::Dvl,
+        Lval::Lvl,
+        perm::Prm,
+        invp::Ivp,
+        info::Ifo,
+    ) where {
+        DIAG,
+        UPLO,
+        I <: Integer,
+        T,
+        Dia <: AbstractVector{T},
+        Dvl <: AbstractVector{T},
+        Lvl <: AbstractVector{T},
+        Prm <: AbstractVector{I},
+        Ivp <: AbstractVector{I},
+        Ifo,
+    }
+    return ChordalFactorization{DIAG, UPLO, T, I, Dia, Dvl, Lvl, Prm, Ivp, Ifo}(S, d, Dval, Lval, perm, invp, info)
 end
 
-function ChordalFactorization{DIAG, UPLO}(S::ChordalSymbolic{I}, d::Dia, Dval::Val, Lval::Val, perm::Prm, invp::Prm, info::FScalar{I}) where {DIAG, UPLO, I <: Integer, T, Dia <: AbstractVector{T}, Val <: AbstractVector{T}, Prm <: AbstractVector{I}}
-    return ChordalFactorization{DIAG, UPLO, T, I, Dia, Val, Prm}(S, d, Dval, Lval, perm, invp, info)
-end
-
-function ChordalFactorization{DIAG, UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
-    n = nfr(S)
-    Dval = FVector{T}(undef, convert(Int, S.Dptr[n + 1]) - 1)
-    Lval = FVector{T}(undef, convert(Int, S.Lptr[n + 1]) - 1)
-    info = FScalar{I}(undef); info[] = zero(I)
-    invp = similar(perm)
+function ChordalFactorization{DIAG, UPLO, T, I, Dia, Dvl, Lvl, Prm, Ivp, Ifo}(
+        perm::AbstractVector,
+        S::ChordalSymbolic,
+    ) where {
+        DIAG,
+        UPLO,
+        T,
+        I <: Integer,
+        Dia <: AbstractVector{T},
+        Dvl <: AbstractVector{T},
+        Lvl <: AbstractVector{T},
+        Prm <: AbstractVector{I},
+        Ivp <: AbstractVector{I},
+        Ifo,
+    }
+    d = allocate(Dia, ncl(S))
+    Dval = allocate(Dvl, ndz(S))
+    Lval = allocate(Lvl, nlz(S))
+    invp = allocate(Ivp, ncl(S))
+    info = allocate(Ifo)
 
     @inbounds for i in eachindex(perm)
         invp[perm[i]] = i
     end
 
+    return ChordalFactorization{DIAG, UPLO, T, I, Dia, Dvl, Lvl, Prm, Ivp, Ifo}(S, d, Dval, Lval, perm, invp, info)
+end
+
+function ChordalFactorization{DIAG, UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
     if DIAG === :N
-        d = Ones{T}(ncl(S))
+        Dia = IOnes{T}
     else
-        d = FVector{T}(undef, ncl(S))
+        Dia = FVector{T}
     end
 
-    return ChordalFactorization{DIAG, UPLO}(S, d, Dval, Lval, perm, invp, info)
+    return ChordalFactorization{DIAG, UPLO, T, I, Dia, FVector{T}, FVector{T}, Prm, Prm, FScalar{I}}(perm, S)
 end
 
-function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix; kw...) where {DIAG, UPLO}
-    return ChordalFactorization{DIAG, UPLO}(sparse(A); kw...)
+function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T}
+    return ChordalFactorization{DIAG, UPLO, T}(A, perm, S)
 end
 
-function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO}
-    return ChordalFactorization{DIAG, UPLO}(sparse(A), perm, S)
+function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T <: Integer}
+    return ChordalFactorization{DIAG, UPLO, float(T)}(A, perm, S)
 end
 
-function ChordalFactorization{DIAG, UPLO}(A::SparseMatrixCSC; check::Bool=true, kw...) where {DIAG, UPLO}
+function (::Type{Fac})(A::AbstractMatrix; kw...) where {DIAG, Fac <: ChordalFactorization{DIAG}}
+    return Fac{DEFAULT_UPLO}(A; kw...)
+end
+
+function (::Type{Fac})(A::AbstractMatrix; kw...) where {DIAG, UPLO, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return Fac(sparse(A); kw...)
+end
+
+function (::Type{Fac})(A::SparseMatrixCSC; check::Bool=true, kw...) where {DIAG, UPLO, Fac <: ChordalFactorization{DIAG, UPLO}}
     if !check || ishermitian(A)
-        perm, S = symbolic(A; check=false, kw...)
-        return ChordalFactorization{DIAG, UPLO}(Hermitian(A, UPLO), perm, S)
+        return Fac(Hermitian(A, UPLO), symbolic(A; check=false, kw...)...)
     elseif istril(A)
-        return ChordalFactorization{DIAG, UPLO}(Hermitian(A, :L); kw...)
+        return Fac(Hermitian(A, :L); kw...)
     elseif istriu(A)
-        return ChordalFactorization{DIAG, UPLO}(Hermitian(A, :U); kw...)
+        return Fac(Hermitian(A, :U); kw...)
     end
 
     error()
 end
 
-function ChordalFactorization{DIAG, UPLO}(A::HermOrSym; kw...) where {DIAG, UPLO}
-    perm, S = symbolic(A; kw...)
-    return ChordalFactorization{DIAG, UPLO}(A, perm, S)
+function (::Type{Fac})(A::HermOrSym; kw...) where {DIAG, UPLO, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return Fac(A, symbolic(A; kw...)...)
 end
 
-function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::Prm, S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
-    return copy!(ChordalFactorization{DIAG, UPLO, T}(perm, S), A)
+function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return copy!(Fac(perm, S), A)
 end
 
-function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::Prm, S::ChordalSymbolic{I}) where {DIAG, UPLO, T <: Integer, I <: Integer, Prm <: AbstractVector{I}}
-    R = float(T)
-    return ChordalFactorization{DIAG, UPLO}(convert(AbstractMatrix{R}, A), perm, S)
-end
-
-function IFactorization(F::ChordalFactorization{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
+function NaturalFactorization(F::ChordalFactorization{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}
     perm = invp = OneTo{I}(ncl(F))
     return ChordalFactorization{DIAG, UPLO}(F.S, F.d, F.Dval, F.Lval, perm, invp, F.info)
 end
 
-function triangular(F::ChordalFactorization)
-    return ChordalTriangular(F)
+function triangular(F::ChordalFactorization, ::Val{DIAG}=F.diag) where {DIAG}
+    return ChordalTriangular{DIAG}(F)
 end
 
 # ===== Base methods =====
 
-function Base.show(io::IO, ::Type{FChordalCholesky{UPLO, T, I}}) where {UPLO, T, I}
-    if !isdefined(get(io, :module, Main), :FChordalCholesky)
-        print(io, "Multifrontal.")
-    end
+for Fac in (:FChordalCholesky, :FChordalLDLt)
+    @eval function Base.show(io::IO, ::Type{$Fac{UPLO, T, I}}) where {UPLO, T, I}
+        if !isdefined(get(io, :module, Main), $(QuoteNode(Fac)))
+            print(io, "Multifrontal.")
+        end
 
-    print(io, "FChordalCholesky{", repr(UPLO), ", ", T, ", ", I, "}")
+        print(io, $("$Fac{"), repr(UPLO), ", ", T, ", ", I, "}")
+    end
 end
 
-function Base.show(io::IO, ::Type{FChordalLDLt{UPLO, T, I}}) where {UPLO, T, I}
-    if !isdefined(get(io, :module, Main), :FChordalLDLt)
-        print(io, "Multifrontal.")
+for Fac in (:DChordalCholesky, :DChordalLDLt)
+    @eval function Base.show(io::IO, ::Type{$Fac{UPLO, T, I}}) where {UPLO, T, I}
+        print(io, $("$Fac{"), repr(UPLO), ", ", T, ", ", I, "}")
     end
-
-    print(io, "FChordalLDLt{", repr(UPLO), ", ", T, ", ", I, "}")
 end
 
 function Base.show(io::IO, F::T) where {T <: ChordalFactorization}
@@ -182,45 +273,24 @@ function Base.propertynames(::ChordalFactorization)
     return (:L, :U, :D, :P, :S, :d, :Dval, :Lval, :perm, :invp, :info)
 end
 
-function Base.copy(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
-    return ChordalFactorization{DIAG, UPLO}(F.S, copy(F.d), copy(F.Dval), copy(F.Lval), copy(F.perm), copy(F.invp), copy(F.info))
+function Base.similar(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+    if DIAG === :N
+        d = F.d
+    else
+        d = similar(F.d)
+    end
+
+    return ChordalFactorization{DIAG, UPLO}(F.S, d, similar(F.Dval), similar(F.Lval), F.perm, F.invp, similar(F.info))
 end
 
 # ===== flatindices =====
 
 function flatindices(F::ChordalFactorization{DIAG, UPLO}, A::SparseMatrixCSC; check::Bool=true) where {DIAG, UPLO}
-    if !check || ishermitian(A)
-        return flatindices(F, Hermitian(A, UPLO))
-    elseif istril(A)
-        return flatindices(F, Hermitian(A, :L))
-    elseif istriu(A)
-        return flatindices(F, Hermitian(A, :U))
-    end
-
-    error()
+    return flatindices(F.invp, F.S, A, Val(UPLO); check)
 end
 
-function flatindices(F::ChordalFactorization{DIAG, UPLO, T, I}, A::HermOrSym; check::Bool=true) where {DIAG, UPLO, T, I}
-    m = convert(I, nnz(parent(A)))
-    colptr = parent(A).colptr
-    rowval = parent(A).rowval
-    nzval = collect(oneto(m))
-    B = SparseMatrixCSC(size(A)..., colptr, rowval, nzval)
-
-    if UPLO === :L
-        C = sympermute(B, F.invp, A.uplo, 'L')
-    else
-        C = sympermute(B, F.invp, A.uplo, 'U')
-    end
-
-    P = flatindices(ChordalTriangular(F), C)
-    fill!(nzval, zero(I))
-
-    for (i, j) in zip(nonzeros(C), P)
-        nzval[i] = j
-    end
-
-    return nzval
+function flatindices(F::ChordalFactorization{DIAG, UPLO}, A::HermOrSym) where {DIAG, UPLO}
+    return flatindices(F.invp, F.S, A, Val(UPLO))
 end
 
 function getflatindex(F::ChordalFactorization, p::Integer)
@@ -238,12 +308,20 @@ function SparseArrays.nnz(F::ChordalFactorization)
     return nnz(ChordalTriangular(F))
 end
 
+function ndz(F::ChordalFactorization)
+    return ndz(ChordalTriangular(F))
+end
+
+function nlz(F::ChordalFactorization)
+    return nlz(ChordalTriangular(F))
+end
+
 function nfr(F::ChordalFactorization)
-    return nfr(ChordalTriangular(F))
+    return nfr(F.S)
 end
 
 function fronts(F::ChordalFactorization)
-    return fronts(ChordalTriangular(F))
+    return fronts(F.S)
 end
 
 function diagblock(F::ChordalFactorization, j::Integer)

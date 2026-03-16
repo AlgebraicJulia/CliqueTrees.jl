@@ -119,5 +119,4 @@ Multifrontal.symbolic
 Multifrontal.cholesky!
 Multifrontal.ldlt!
 Multifrontal.selinv!
-Multifrontal.complete!
 ```

@@ -100,7 +100,7 @@ function syrk!(uplo::Val{UPLO}, trans::Val{TRANS}, α, W::AbstractVector{T}, A::
         C₂₂ = view(C, m + 1:n, m + 1:n)
 
         if UPLO === :L
-            C₂₁ = view(C, m + 1:n,     1:m)
+            C₂₁ = view(C, m + 1:n, 1:m)
 
             if TRANS === :N
                 gemm!(Val(:N), Val(:T), α, W, A₂, A₁, D, β, C₂₁, diag)
@@ -108,7 +108,7 @@ function syrk!(uplo::Val{UPLO}, trans::Val{TRANS}, α, W::AbstractVector{T}, A::
                 gemm!(Val(:T), Val(:N), α, W, A₂, A₁, D, β, C₂₁, diag)
             end
         else
-            C₁₂ = view(C,     1:m, m + 1:n)
+            C₁₂ = view(C, 1:m, m + 1:n)
 
             if TRANS === :N
                 gemm!(Val(:N), Val(:T), α, W, A₁, A₂, D, β, C₁₂, diag)
@@ -139,9 +139,9 @@ function syrk!(uplo::Val, trans::Val{TRANS}, α::Real, W::AbstractVector{T}, A::
     copyrec!(B, A)
 
     if TRANS === :N
-        cmul!(Val(:R), B, D)
+        cmul!(Val(:R), Val(:U), B, D)
     else
-        cmul!(Val(:L), B, D)
+        cmul!(Val(:L), Val(:U), B, D)
     end
 
     trrk!(uplo, trans, α, B, A, β, C)

@@ -1,6 +1,6 @@
 struct NoRegularization <: AbstractRegularization end
 
-function initialize(::AbstractFactorization, S::AbstractVector, R::NoRegularization)
+function initialize(::AbstractMatrix, S::AbstractVector, R::NoRegularization)
     return R
 end
 
