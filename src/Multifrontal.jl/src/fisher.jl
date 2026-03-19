@@ -9,11 +9,12 @@ function fisher!(
     Uptr = FVector{I}(undef, F.S.nMptr)
     Uval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+    Wval = FVector{T}(undef, F.S.nFval * F.S.nFval)
 
     if inv
-        info = fisher_impl!(Uptr, Uval, Fval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true))
+        info = fisher_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true))
     else
-        info = fisher_impl!(Uptr, Uval, Fval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false))
+        info = fisher_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false))
     end
 
     if ispositive(info) && check
@@ -30,17 +31,17 @@ end
 #     fisherroot_fwd! → fisher_scale!(inv=false) → fisherroot_bwd!
 #
 function fisher_impl!(
-        Uptr, Uval, Fval,
+        Uptr, Uval, Fval, Wval,
         LDptr, LDval, LLptr, LLval,
         SDptr, SDval, SLptr, SLval,
         YDptr, YDval, YLptr, YLval,
         res, rel, chd,
         uplo, ::Val{false},
     )
-    fisherroot_fwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
+    fisherroot_fwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
     info = fisher_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
     ispositive(info) && return info
-    fisherroot_bwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
+    fisherroot_bwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
     return info
 end
 
@@ -50,17 +51,17 @@ end
 #     fisherroot_bwd!(inv=true) → fisher_scale!(inv=true) → fisherroot_fwd!(inv=true)
 #
 function fisher_impl!(
-        Uptr, Uval, Fval,
+        Uptr, Uval, Fval, Wval,
         LDptr, LDval, LLptr, LLval,
         SDptr, SDval, SLptr, SLval,
         YDptr, YDval, YLptr, YLval,
         res, rel, chd,
         uplo, ::Val{true},
     )
-    fisherroot_bwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
+    fisherroot_bwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
     info = fisher_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
     ispositive(info) && return info
-    fisherroot_fwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
+    fisherroot_fwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
     return info
 end
 

@@ -61,6 +61,11 @@ const MaybeAdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Union{
     ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl},
 }
 
+const HermOrSymTri{UPLO, T, I, Dvl, Lvl} = Union{
+    Hermitian{T, ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}},
+    Symmetric{T, ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}},
+}
+
 function ChordalTriangular{DIAG, UPLO}(S::ChordalSymbolic{I}, Dval::Dvl, Lval::Lvl) where {DIAG, UPLO, I <: Integer, T, Dvl <: AbstractVector{T}, Lvl <: AbstractVector{T}}
     return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}(S, Dval, Lval)
 end
@@ -372,6 +377,39 @@ function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UP
         out .= one(T)
     end
 
+    return out
+end
+
+function LinearAlgebra.dot(A::ChordalTriangular{DIAG, UPLO, T}, B::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    @assert A.S === B.S
+    out = zero(T)
+
+    @inbounds for j in fronts(A)
+        DA, _ = diagblock(A, j)
+        DB, _ = diagblock(B, j)
+        out += dot(DA, DB)
+    end
+
+    out += dot(A.Lval, B.Lval)
+    return out
+end
+
+function LinearAlgebra.dot(A::HermOrSymTri{UPLO, T}, B::HermOrSymTri{UPLO, T}) where {UPLO, T}
+    @assert !(T <: Complex) || (A isa Hermitian && B isa Hermitian)
+    @assert A.uplo == char(parent(A).uplo)
+    @assert B.uplo == char(parent(B).uplo)
+    @assert parent(A).S === parent(B).S
+    out = zero(real(T))
+    PA = parent(A)
+    PB = parent(B)
+
+    @inbounds for j in fronts(PA)
+        DA, _ = diagblock(PA, j)
+        DB, _ = diagblock(PB, j)
+        out += dot(Hermitian(parent(DA), UPLO), Hermitian(parent(DB), UPLO))
+    end
+
+    out += twice(real(dot(PA.Lval, PB.Lval)))
     return out
 end
 

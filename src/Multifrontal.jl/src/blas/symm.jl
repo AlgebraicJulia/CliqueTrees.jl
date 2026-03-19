@@ -1,3 +1,20 @@
+# ===== symv! =====
+
+function symv!(uplo::Val, α::T, A::AbstractMatrix{T}, x::AbstractVector{T}, β::T, y::AbstractVector{T}) where {T <: BlasFloat}
+    if T <: Complex
+        BLAS.hemv!(char(uplo), α, A, x, β, y)
+    else
+        BLAS.symv!(char(uplo), α, A, x, β, y)
+    end
+
+    return
+end
+
+function symv!(uplo::Val, α::T, A::AbstractMatrix{T}, x::AbstractVector{T}, β::T, y::AbstractVector{T}) where {T}
+    mul!(y, sym(uplo, A), x, α, β)
+    return
+end
+
 # ===== symm! =====
 
 function symm!(side::Val, uplo::Val, α::T, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β::T, C::AbstractMatrix{T}) where {T <: BlasFloat}

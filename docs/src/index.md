@@ -12,6 +12,7 @@ If you have a question about the library, feel free to open an [issue](https://g
 - [BayesNets.jl](https://github.com/sisl/BayesNets.jl)
 - [CausalInference.jl](https://github.com/mschauer/CausalInference.jl)
 - [EinExprs.jl](https://github.com/bsc-quantic/EinExprs.jl)
+- [GaussianMarkovRandomFields.jl](https://github.com/timweiland/GaussianMarkovRandomFields.jl)
 - [IncrementalInference.jl](https://github.com/JuliaRobotics/IncrementalInference.jl)
 - [OMEinsumContractionOrders.jl](https://github.com/TensorBFS/OMEinsumContractionOrders.jl)
 - [Scruff.jl](https://github.com/charles-river-analytics/Scruff.jl)

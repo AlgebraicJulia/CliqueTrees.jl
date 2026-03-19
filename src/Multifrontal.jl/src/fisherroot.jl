@@ -10,15 +10,16 @@ function fisherroot!(
     Uptr = FVector{I}(undef, F.S.nMptr)
     Uval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+    Wval = FVector{T}(undef, F.S.nFval * F.S.nFval)
 
     if adj && inv
-        info = fisherroot_impl!(Uptr, Uval, Fval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true), Val(true))
+        info = fisherroot_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true), Val(true))
     elseif adj
-        info = fisherroot_impl!(Uptr, Uval, Fval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true), Val(false))
+        info = fisherroot_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true), Val(false))
     elseif inv
-        info = fisherroot_impl!(Uptr, Uval, Fval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false), Val(true))
+        info = fisherroot_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false), Val(true))
     else
-        info = fisherroot_impl!(Uptr, Uval, Fval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false), Val(false))
+        info = fisherroot_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false), Val(false))
     end
 
     if ispositive(info) && check
@@ -30,19 +31,19 @@ function fisherroot!(
 end
 
 function fisherroot_impl!(
-        Uptr, Uval, Fval,
+        Uptr, Uval, Fval, Wval,
         LDptr, LDval, LLptr, LLval,
         SDptr, SDval, SLptr, SLval,
         YDptr, YDval, YLptr, YLval,
         res, rel, chd,
         uplo, ::Val{false}, ::Val{false},
     )
-    fisherroot_fwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
+    fisherroot_fwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
     return fisherroot_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false), Val(false))
 end
 
 function fisherroot_impl!(
-        Uptr, Uval, Fval,
+        Uptr, Uval, Fval, Wval,
         LDptr, LDval, LLptr, LLval,
         SDptr, SDval, SLptr, SLval,
         YDptr, YDval, YLptr, YLval,
@@ -51,12 +52,12 @@ function fisherroot_impl!(
     )
     info = fisherroot_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true), Val(false))
     ispositive(info) && return info
-    fisherroot_bwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
+    fisherroot_bwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
     return info
 end
 
 function fisherroot_impl!(
-        Uptr, Uval, Fval,
+        Uptr, Uval, Fval, Wval,
         LDptr, LDval, LLptr, LLval,
         SDptr, SDval, SLptr, SLval,
         YDptr, YDval, YLptr, YLval,
@@ -65,19 +66,19 @@ function fisherroot_impl!(
     )
     info = fisherroot_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false), Val(true))
     ispositive(info) && return info
-    fisherroot_fwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
+    fisherroot_fwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
     return info
 end
 
 function fisherroot_impl!(
-        Uptr, Uval, Fval,
+        Uptr, Uval, Fval, Wval,
         LDptr, LDval, LLptr, LLval,
         SDptr, SDval, SLptr, SLval,
         YDptr, YDval, YLptr, YLval,
         res, rel, chd,
         uplo, ::Val{true}, ::Val{true},
     )
-    fisherroot_bwd!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
+    fisherroot_bwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
     return fisherroot_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true), Val(true))
 end
 
@@ -85,6 +86,7 @@ function fisherroot_fwd!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
         Fval::AbstractVector{T},
+        Wval::AbstractVector{T},
         LDptr::AbstractVector{I},
         LDval::AbstractVector{T},
         LLptr::AbstractVector{I},
@@ -104,7 +106,7 @@ function fisherroot_fwd!(
 
     for j in vertices(res)
         ns = fisherroot_fwd_loop!(
-            Uptr, Uval, Fval,
+            Uptr, Uval, Fval, Wval,
             LDptr, LDval, LLptr, LLval,
             YDptr, YDval, YLptr, YLval,
             res, rel, chd, ns, j, uplo, inv
@@ -118,6 +120,7 @@ function fisherroot_fwd_loop!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
         Fval::AbstractVector{T},
+        Wval::AbstractVector{T},
         LDptr::AbstractVector{I},
         LDval::AbstractVector{T},
         LLptr::AbstractVector{I},
@@ -243,18 +246,34 @@ function fisherroot_fwd_loop!(
         #
         copytri!(U₂₂, F₂₂, uplo)
         #
-        #     U₂₂ ← U₂₂ + α L₂₁ Y₂₁ᴴ
-        #     Y₂₁ ← Y₂₁ + α L₂₁ Y₁₁
-        #     U₂₂ ← U₂₂ + α Y₂₁ L₂₁ᴴ
+        #     Compute W₂₁ = L₂₁ L₁₁⁻¹
         #
         if UPLO === :L
-            gemmt!(uplo, Val(:N), Val(:C), α, L₂₁, Y₂₁, one(T), U₂₂)
-            symm!(Val(:R), uplo, α, Y₁₁, L₂₁, one(T), Y₂₁)
-            gemmt!(uplo, Val(:N), Val(:C), α, Y₂₁, L₂₁, one(T), U₂₂)
+            W₂₁ = reshape(view(Wval, oneto(na * nn)), na, nn)
         else
-            gemmt!(uplo, Val(:C), Val(:N), α, Y₂₁, L₂₁, one(T), U₂₂)
-            symm!(Val(:L), uplo, α, Y₁₁, L₂₁, one(T), Y₂₁)
-            gemmt!(uplo, Val(:C), Val(:N), α, L₂₁, Y₂₁, one(T), U₂₂)
+            W₂₁ = reshape(view(Wval, oneto(nn * na)), nn, na)
+        end
+
+        copyrec!(W₂₁, L₂₁)
+
+        if UPLO === :L
+            trsm!(Val(:R), uplo, Val(:N), Val(:N), one(T), L₁₁, W₂₁)
+        else
+            trsm!(Val(:L), uplo, Val(:N), Val(:N), one(T), L₁₁, W₂₁)
+        end
+        #
+        #     U₂₂ ← U₂₂ + α W₂₁ Y₂₁ᴴ
+        #     Y₂₁ ← Y₂₁ + α W₂₁ Y₁₁
+        #     U₂₂ ← U₂₂ + α Y₂₁ W₂₁ᴴ
+        #
+        if UPLO === :L
+            gemmt!(uplo, Val(:N), Val(:C), α, W₂₁, Y₂₁, one(T), U₂₂)
+            symm!(Val(:R), uplo, α, Y₁₁, W₂₁, one(T), Y₂₁)
+            gemmt!(uplo, Val(:N), Val(:C), α, Y₂₁, W₂₁, one(T), U₂₂)
+        else
+            gemmt!(uplo, Val(:C), Val(:N), α, Y₂₁, W₂₁, one(T), U₂₂)
+            symm!(Val(:L), uplo, α, Y₁₁, W₂₁, one(T), Y₂₁)
+            gemmt!(uplo, Val(:C), Val(:N), α, W₂₁, Y₂₁, one(T), U₂₂)
         end
     end
     #
@@ -272,6 +291,7 @@ function fisherroot_bwd!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
         Fval::AbstractVector{T},
+        Wval::AbstractVector{T},
         LDptr::AbstractVector{I},
         LDval::AbstractVector{T},
         LLptr::AbstractVector{I},
@@ -291,7 +311,7 @@ function fisherroot_bwd!(
 
     for j in reverse(vertices(res))
         ns = fisherroot_bwd_loop!(
-            Uptr, Uval, Fval,
+            Uptr, Uval, Fval, Wval,
             LDptr, LDval, LLptr, LLval,
             YDptr, YDval, YLptr, YLval,
             res, rel, chd, ns, j, uplo, inv
@@ -305,6 +325,7 @@ function fisherroot_bwd_loop!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
         Fval::AbstractVector{T},
+        Wval::AbstractVector{T},
         LDptr::AbstractVector{I},
         LDval::AbstractVector{T},
         LLptr::AbstractVector{I},
@@ -413,18 +434,34 @@ function fisherroot_bwd_loop!(
         #
         copytri!(F₂₂, V₂₂, uplo)
         #
-        #     Y₁₁ ← Y₁₁ + α Y₂₁ᴴ L₂₁
-        #     Y₂₁ ← Y₂₁ + α V₂₂ L₂₁
-        #     Y₁₁ ← Y₁₁ + α L₂₁ᴴ Y₂₁
+        #     Compute W₂₁ = L₂₁ L₁₁⁻¹
         #
         if UPLO === :L
-            gemmt!(uplo, Val(:C), Val(:N), α, Y₂₁, L₂₁, one(T), Y₁₁)
-            symm!(Val(:L), uplo, α, V₂₂, L₂₁, one(T), Y₂₁)
-            gemmt!(uplo, Val(:C), Val(:N), α, L₂₁, Y₂₁, one(T), Y₁₁)
+            W₂₁ = reshape(view(Wval, oneto(na * nn)), na, nn)
         else
-            gemmt!(uplo, Val(:N), Val(:C), α, L₂₁, Y₂₁, one(T), Y₁₁)
-            symm!(Val(:R), uplo, α, V₂₂, L₂₁, one(T), Y₂₁)
-            gemmt!(uplo, Val(:N), Val(:C), α, Y₂₁, L₂₁, one(T), Y₁₁)
+            W₂₁ = reshape(view(Wval, oneto(nn * na)), nn, na)
+        end
+
+        copyrec!(W₂₁, L₂₁)
+
+        if UPLO === :L
+            trsm!(Val(:R), uplo, Val(:N), Val(:N), one(T), L₁₁, W₂₁)
+        else
+            trsm!(Val(:L), uplo, Val(:N), Val(:N), one(T), L₁₁, W₂₁)
+        end
+        #
+        #     Y₁₁ ← Y₁₁ + α Y₂₁ᴴ W₂₁
+        #     Y₂₁ ← Y₂₁ + α V₂₂ W₂₁
+        #     Y₁₁ ← Y₁₁ + α W₂₁ᴴ Y₂₁
+        #
+        if UPLO === :L
+            gemmt!(uplo, Val(:C), Val(:N), α, Y₂₁, W₂₁, one(T), Y₁₁)
+            symm!(Val(:L), uplo, α, V₂₂, W₂₁, one(T), Y₂₁)
+            gemmt!(uplo, Val(:C), Val(:N), α, W₂₁, Y₂₁, one(T), Y₁₁)
+        else
+            gemmt!(uplo, Val(:N), Val(:C), α, W₂₁, Y₂₁, one(T), Y₁₁)
+            symm!(Val(:R), uplo, α, V₂₂, W₂₁, one(T), Y₂₁)
+            gemmt!(uplo, Val(:N), Val(:C), α, Y₂₁, W₂₁, one(T), Y₁₁)
         end
     end
     #

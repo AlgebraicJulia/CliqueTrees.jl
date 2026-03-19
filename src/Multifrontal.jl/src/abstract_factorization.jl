@@ -172,14 +172,6 @@ function uncopy(F::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
     return cong(uncopy(NaturalFactorization(F)), F.P)
 end
 
-function uncopydiag(F::NaturalFactorization)
-    return diag(triangular(F))
-end
-
-function uncopydiag(F::AbstractFactorization)
-    return F.P \ uncopydiag(NaturalFactorization(F))
-end
-
 function unfactorize(F::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
     G = copy(F)
 

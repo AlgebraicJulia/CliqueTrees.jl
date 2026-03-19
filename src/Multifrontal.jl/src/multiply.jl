@@ -166,6 +166,26 @@ function LinearAlgebra.mul!(C::AbstractVecOrMat, A::MaybeAdjOrTransTri, B::Abstr
     lmul!(A, copyrec!(C, B))
 end
 
+# --- HermOrSymTri ---
+
+function LinearAlgebra.mul!(Y::AbstractVecOrMat, A::HermOrSymTri{UPLO, T}, X::AbstractVecOrMat) where {UPLO, T}
+    @assert size(A, 1) == size(X, 1) == size(Y, 1)
+    @assert !(T <: Complex) || A isa Hermitian
+    @assert A.uplo == char(parent(A).uplo)
+    P = parent(A)
+    X, tX = unwrap(X)
+    return symm_impl!(P.S, P.S.Dptr, P.Dval, P.S.Lptr, P.Lval, X, Y, tX, P.uplo, Val(:L))
+end
+
+function LinearAlgebra.mul!(Y::AbstractMatrix, X::AbstractMatrix, A::HermOrSymTri{UPLO, T}) where {UPLO, T}
+    @assert size(A, 1) == size(X, 2) == size(Y, 2)
+    @assert !(T <: Complex) || A isa Hermitian
+    @assert A.uplo == char(parent(A).uplo)
+    P = parent(A)
+    X, tX = unwrap(X)
+    return symm_impl!(P.S, P.S.Dptr, P.Dval, P.S.Lptr, P.Lval, X, Y, tX, P.uplo, Val(:R))
+end
+
 # --- Permutation ---
 
 function LinearAlgebra.mul!(C::AbstractVecOrMat, A::Permutation, B::AbstractVecOrMat)
@@ -598,4 +618,376 @@ end
 # C is a workspace. Returns B.
 function mul!!(C, B, F::AbstractFactorization)
     mul!(B, rmul!(rdiv!(C, B, F.P), NaturalFactorization(F)), F.P)
+end
+
+# ============================= symm_impl! ===============================
+
+function symm_impl!(
+        S::ChordalSymbolic{I},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        X::AbstractVecOrMat,
+        Y::AbstractVecOrMat,
+        tX::Val{TX},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+    ) where {T, I <: Integer, TX, UPLO, SIDE}
+
+    res = S.res
+    rel = S.rel
+    chd = S.chd
+
+    nMptr = S.nMptr
+    nNval = S.nNval
+    nFval = S.nFval
+
+    if X isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(X, 2))
+    else
+        nrhs = convert(I, size(X, 1))
+    end
+
+    Mptr = FVector{I}(undef, nMptr)
+    Mval = FVector{T}(undef, nNval * nrhs)
+    Fval = FVector{T}(undef, nFval * nrhs)
+
+    # Initialize Y to zero
+    zerorec!(Y)
+
+    ns = zero(I); Mptr[one(I)] = one(I)
+
+    # Forward pass: lower triangle, y-updates upward
+    for j in vertices(res)
+        ns = symm_fwd_loop!(X, Y, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tX, uplo, side)
+    end
+
+    # Backward pass: upper triangle, x-values downward
+    for j in reverse(vertices(res))
+        ns = symm_bwd_loop!(X, Y, Mptr, Mval, Lptr, Lval, Fval, res, rel, chd, ns, j, tX, uplo, side)
+    end
+
+    return Y
+end
+
+function symm_fwd_loop!(
+        X::AbstractVecOrMat{T},
+        Y::AbstractVecOrMat{T},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        tX::Val{TX},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+    ) where {T, I <: Integer, TX, UPLO, SIDE}
+    #
+    # nrhs is the number of right-hand sides
+    #
+    if X isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(X, 2))
+    else
+        nrhs = convert(I, size(X, 1))
+    end
+    #
+    # nn is the size of the residual at node j
+    #
+    #     nn = |res(j)|
+    #
+    nn = eltypedegree(res, j)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = |sep(j)|
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = |bag(j)|
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #        nrhs
+    #   F = [ F₁ ] nn
+    #       [ F₂ ] na
+    #
+    if X isa AbstractVector
+        F = view(Fval, oneto(nj))
+        F₁ = view(F, oneto(nn))
+        F₂ = view(F, nn + one(I):nj)
+    elseif SIDE === :L
+        F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
+        F₁ = view(F, oneto(nn), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
+    else
+        F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
+        F₁ = view(F, oneto(nrhs), oneto(nn))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    end
+    #
+    # A₁₁ is the symmetric diagonal block
+    # A₂₁ is the off-diagonal block
+    #
+    #        res(j)
+    #   A = [ A₁₁ ] res(j)
+    #       [ A₂₁ ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    A₁₁ = reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
+
+    if UPLO === :L
+        A₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
+    else
+        A₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
+    end
+    #
+    # X₁ is the input at res(j)
+    # Y₁ is the output at res(j)
+    #
+    if X isa AbstractVector
+        X₁ = view(X, neighbors(res, j))
+        Y₁ = view(Y, neighbors(res, j))
+    elseif SIDE === :L
+        X₁ = view(X, neighbors(res, j), oneto(nrhs))
+        Y₁ = view(Y, neighbors(res, j), oneto(nrhs))
+    else
+        X₁ = view(X, oneto(nrhs), neighbors(res, j))
+        Y₁ = view(Y, oneto(nrhs), neighbors(res, j))
+    end
+    #
+    #     F ← 0
+    #
+    zerorec!(F)
+
+    for i in Iterators.reverse(neighbors(chd, j))
+        #
+        # assemble child message into F
+        #
+        #     F[rel(i)] += M(i)
+        #
+        div_fwd_update!(F, Mptr, Mval, rel, ns, i, side)
+        ns -= one(I)
+    end
+    #
+    #     Y₁ += A₁₁ * X₁ (symmetric)
+    #
+    if X isa AbstractVector
+        symv!(uplo, one(T), A₁₁, X₁, one(T), Y₁)
+    else
+        symm!(side, uplo, one(T), A₁₁, X₁, one(T), Y₁)
+    end
+    #
+    #     Y₁ += F₁ (assembled lower-triangle contributions from subtree)
+    #
+    addrec!(Y₁, F₁)
+
+    if ispositive(na)
+        ns += one(I)
+        #
+        # M₂ is the message to ancestor
+        #
+        #     M₂ = A₂₁ * X₁ + F₂
+        #
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * nrhs
+
+        if X isa AbstractVector
+            M₂ = view(Mval, strt:stop - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:stop - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:stop - one(I)), nrhs, na)
+        end
+        #
+        #     M₂ ← F₂
+        #
+        copyrec!(M₂, F₂)
+        #
+        #     M₂ += A₂₁ * X₁
+        #
+        if X isa AbstractVector
+            if UPLO === :L
+                gemv!(Val(:N), one(T), A₂₁, X₁, one(T), M₂)
+            else
+                gemv!(Val(:C), one(T), A₂₁, X₁, one(T), M₂)
+            end
+        elseif SIDE === :L
+            if UPLO === :L
+                gemm!(Val(:N), tX, one(T), A₂₁, X₁, one(T), M₂)
+            else
+                gemm!(Val(:C), tX, one(T), A₂₁, X₁, one(T), M₂)
+            end
+        else
+            if UPLO === :L
+                gemm!(tX, Val(:C), one(T), X₁, A₂₁, one(T), M₂)
+            else
+                gemm!(tX, Val(:N), one(T), X₁, A₂₁, one(T), M₂)
+            end
+        end
+    end
+
+    return ns
+end
+
+function symm_bwd_loop!(
+        X::AbstractVecOrMat{T},
+        Y::AbstractVecOrMat{T},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        tX::Val{TX},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+    ) where {T, I <: Integer, TX, UPLO, SIDE}
+    #
+    # nrhs is the number of right-hand sides
+    #
+    if X isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(X, 2))
+    else
+        nrhs = convert(I, size(X, 1))
+    end
+    #
+    # nn is the size of the residual at node j
+    #
+    #     nn = |res(j)|
+    #
+    nn = eltypedegree(res, j)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = |sep(j)|
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = |bag(j)|
+    #
+    nj = nn + na
+    #
+    # A₂₁ is the off-diagonal block
+    #
+    Lp = Lptr[j]
+
+    if UPLO === :L
+        A₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
+    else
+        A₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
+    end
+    #
+    # X₁ is the input at res(j)
+    # Y₁ is the output at res(j)
+    #
+    if X isa AbstractVector
+        X₁ = view(X, neighbors(res, j))
+        Y₁ = view(Y, neighbors(res, j))
+    elseif SIDE === :L
+        X₁ = view(X, neighbors(res, j), oneto(nrhs))
+        Y₁ = view(Y, neighbors(res, j), oneto(nrhs))
+    else
+        X₁ = view(X, oneto(nrhs), neighbors(res, j))
+        Y₁ = view(Y, oneto(nrhs), neighbors(res, j))
+    end
+    #
+    # F is used to assemble x_bag = [X₁; N]
+    #
+    #        nrhs
+    #   F = [ F₁ ] nn   ← X₁
+    #       [ F₂ ] na   ← N (from parent)
+    #
+    if X isa AbstractVector
+        F = view(Fval, oneto(nj))
+        F₁ = view(F, oneto(nn))
+        F₂ = view(F, nn + one(I):nj)
+    elseif SIDE === :L
+        F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
+        F₁ = view(F, oneto(nn), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
+    else
+        F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
+        F₁ = view(F, oneto(nrhs), oneto(nn))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    end
+    #
+    #     F₁ ← X₁
+    #
+    copyrec!(F₁, X₁)
+    #
+    # Receive N from parent (x values at sep(j))
+    #
+    if ispositive(na)
+        strt = Mptr[ns]
+
+        if X isa AbstractVector
+            N = view(Mval, strt:strt + na - one(I))
+        elseif SIDE === :L
+            N = reshape(view(Mval, strt:strt + na * nrhs - one(I)), na, nrhs)
+        else
+            N = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
+        end
+
+        ns -= one(I)
+        #
+        #     Y₁ += A₂₁ᴴ * N (upper triangle contribution)
+        #
+        if X isa AbstractVector
+            if UPLO === :L
+                gemv!(Val(:C), one(T), A₂₁, N, one(T), Y₁)
+            else
+                gemv!(Val(:N), one(T), A₂₁, N, one(T), Y₁)
+            end
+        elseif SIDE === :L
+            if UPLO === :L
+                gemm!(Val(:C), Val(:N), one(T), A₂₁, N, one(T), Y₁)
+            else
+                gemm!(Val(:N), Val(:N), one(T), A₂₁, N, one(T), Y₁)
+            end
+        else
+            if UPLO === :L
+                gemm!(Val(:N), Val(:N), one(T), N, A₂₁, one(T), Y₁)
+            else
+                gemm!(Val(:N), Val(:C), one(T), N, A₂₁, one(T), Y₁)
+            end
+        end
+        #
+        #     F₂ ← N (for x_bag assembly)
+        #
+        copyrec!(F₂, N)
+    end
+    #
+    # Pass N(i) = x_bag[rel(i)] to each child
+    #
+    for i in neighbors(chd, j)
+        ns += one(I)
+        div_bwd_update!(F, Mptr, Mval, rel, ns, i, side)
+    end
+
+    return ns
 end
