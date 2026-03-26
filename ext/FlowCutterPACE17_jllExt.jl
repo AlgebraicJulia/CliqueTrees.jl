@@ -15,8 +15,8 @@ function flowcutter(graph::AbstractGraph{V}, time::Int, seed::Int) where {V}
     @assert seed >= 0
 
     index = mktempdir() do tmp
-        input = tmp * "/input.gr"
-        output = tmp * "/output.td"
+        input = joinpath(tmp, "/input.gr")
+        output = joinpath(tmp, "/output.td")
 
         open(input; write = true) do io
             writegr(io, graph)
