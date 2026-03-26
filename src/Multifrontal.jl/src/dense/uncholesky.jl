@@ -1,15 +1,21 @@
-function uncholesky!(F::DenseCholeskyPivoted{UPLO, T}) where {UPLO, T}
-    n = size(F, 1)
-    W = FVector{T}(undef, n * n)
-    unchol_dense!(F.M, F.d, W, F.uplo, F.diag)
-    return F
-end
+function unfactorize!(L::AbstractTriangular{T}, d::AbstractVector) where {T}
+    M = parent(L)
+    W = FVector{T}(undef, length(L))
 
-function unldlt!(F::DenseLDLtPivoted{UPLO, T}) where {UPLO, T}
-    n = size(F, 1)
-    W = FVector{T}(undef, n * n)
-    unchol_dense!(F.M, F.d, W, F.uplo, F.diag)
-    return F
+    if L isa LowerTriangular || L isa UnitLowerTriangular
+        uplo = Val(:L)
+    else
+        uplo = Val(:U)
+    end
+
+    if L isa LowerTriangular || L isa UpperTriangular
+        diag = Val(:N)
+    else
+        diag = Val(:U)
+    end
+
+    unchol_dense!(M, d, W, uplo, diag)
+    return 0
 end
 
 function unchol_dense!(

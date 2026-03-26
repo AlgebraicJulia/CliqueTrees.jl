@@ -35,14 +35,18 @@ julia> F = selinv!(cholesky!(ChordalCholesky(A)))
   - `F`: factorized positive definite matrix
 
 """
-function selinv!(F::ChordalCholesky{UPLO, T, I}) where {UPLO, T, I <: Integer}
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-
-    selinv_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval, F.S.res, F.S.rel, F.S.chd, Val(UPLO))
-    F.info[] = zero(I)
+function selinv!(F::ChordalCholesky)
+    F.info[] = selinv!(triangular(F))
     return F
+end
+
+function selinv!(L::ChordalTriangular{:N, UPLO, T, I}) where {UPLO, T, I <: Integer}
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+
+    selinv_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, Fval, L.S.res, L.S.rel, L.S.chd, Val(UPLO))
+    return zero(I)
 end
 
 function selinv_impl!(

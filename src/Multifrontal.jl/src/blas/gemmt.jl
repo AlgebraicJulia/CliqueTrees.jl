@@ -2,7 +2,7 @@
 # Triangular gemm: C = α * op(A) * op(B) + β * C, writing only to the triangle specified by uplo
 
 # WARNING: OVER-WRITES OTHER TRIANGLE
-function gemmt!(uplo::Val, tA::Val, tB::Val, α::T, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β::T, C::AbstractMatrix{T}) where {T <: BlasFloat}
+function gemmt!(uplo::Val, tA::Val, tB::Val, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β, C::AbstractMatrix{T}) where {T <: BlasFloat}
     gemm!(tA, tB, α, A, B, β, C)
     return
 end
@@ -17,30 +17,30 @@ function gemmt!(uplo::Val{UPLO}, tA::Val{TA}, tB::Val{TB}, α, A::AbstractMatrix
 
     m = prevpow(2, n) >> 1
 
-    C₁₁ = view(C, 1:m, 1:m)
-    C₂₂ = view(C, m+1:n, m+1:n)
+    C₁₁ = view(C,     1:m,     1:m)
+    C₂₂ = view(C, m + 1:n, m + 1:n)
 
     if TA === :N
-        A₁ = view(A, 1:m, :)
-        A₂ = view(A, m+1:n, :)
+        A₁ = view(A,     1:m, :)
+        A₂ = view(A, m + 1:n, :)
     else
-        A₁ = view(A, :, 1:m)
-        A₂ = view(A, :, m+1:n)
+        A₁ = view(A, :,     1:m)
+        A₂ = view(A, :, m + 1:n)
     end
 
     if TB === :N
-        B₁ = view(B, :, 1:m)
-        B₂ = view(B, :, m+1:n)
+        B₁ = view(B, :,     1:m)
+        B₂ = view(B, :, m + 1:n)
     else
-        B₁ = view(B, 1:m, :)
-        B₂ = view(B, m+1:n, :)
+        B₁ = view(B,     1:m, :)
+        B₂ = view(B, m + 1:n, :)
     end
 
     if UPLO === :L
-        C₂₁ = view(C, m+1:n, 1:m)
+        C₂₁ = view(C, m + 1:n, 1:m)
         gemx!(tA, tB, α, A₂, B₁, β, C₂₁)
     else
-        C₁₂ = view(C, 1:m, m+1:n)
+        C₁₂ = view(C, 1:m, m + 1:n)
         gemx!(tA, tB, α, A₁, B₂, β, C₁₂)
     end
 
@@ -68,7 +68,11 @@ function gemmt2!(::Val{UPLO}, ::Val{:N}, ::Val{:N}, α, A::AbstractMatrix{T}, B:
                 Δ += A[i, k] * B[k, j]
             end
 
-            C[i, j] = α * Δ + β * C[i, j]
+            if iszero(β)
+                C[i, j] = α * Δ
+            else
+                C[i, j] = α * Δ + β * C[i, j]
+            end
         end
     end
 
@@ -85,8 +89,14 @@ function gemmt2!(::Val{UPLO}, ::Val{:N}, ::Val{TB}, α, A::AbstractMatrix{T}, B:
             rng = 1:j
         end
 
-        for i in rng
-            C[i, j] = β * C[i, j]
+        if iszero(β)
+            for i in rng
+                C[i, j] = β
+            end
+        else
+            for i in rng
+                C[i, j] *= β
+            end
         end
     end
 
@@ -136,7 +146,11 @@ function gemmt2!(::Val{UPLO}, ::Val{TA}, ::Val{:N}, α, A::AbstractMatrix{T}, B:
                 Δ += Aki * B[k, j]
             end
 
-            C[i, j] = α * Δ + β * C[i, j]
+            if iszero(β)
+                C[i, j] = α * Δ
+            else
+                C[i, j] = α * Δ + β * C[i, j]
+            end
         end
     end
 
@@ -172,7 +186,11 @@ function gemmt2!(::Val{UPLO}, ::Val{TA}, ::Val{TB}, α, A::AbstractMatrix{T}, B:
                 Δ += Aki * Bjk
             end
 
-            C[i, j] = α * Δ + β * C[i, j]
+            if iszero(β)
+                C[i, j] = α * Δ
+            else
+                C[i, j] = α * Δ + β * C[i, j]
+            end
         end
     end
 

@@ -1,10 +1,24 @@
 function fisher!(
-        Y::ChordalCholesky{UPLO, T, I},
-        F::ChordalCholesky{UPLO, T, I},
-        S::ChordalCholesky{UPLO, T, I};
+        Y::AbstractCholesky,
+        F::AbstractCholesky,
+        S::AbstractCholesky;
+        inv::Bool=false,
+        check::Bool=true,
+    )
+    info = fisher!(triangular(Y), triangular(F), triangular(S); inv, check)
+    Y.info[] = info
+    return Y
+end
+
+function fisher!(
+        Y::ChordalTriangular{:N, UPLO, T, I},
+        F::ChordalTriangular{:N, UPLO, T, I},
+        S::ChordalTriangular{:N, UPLO, T, I};
         inv::Bool=false,
         check::Bool=true,
     ) where {UPLO, T, I <: Integer}
+    @assert checksymbolic(Y, F, S)
+
     # Allocate workspace
     Uptr = FVector{I}(undef, F.S.nMptr)
     Uval = FVector{T}(undef, F.S.nMval)
@@ -21,8 +35,7 @@ function fisher!(
         throw(PosDefException(info))
     end
 
-    Y.info[] = info
-    return Y
+    return info
 end
 
 #

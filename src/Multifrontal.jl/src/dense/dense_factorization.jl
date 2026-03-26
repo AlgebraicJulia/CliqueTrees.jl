@@ -120,6 +120,22 @@ function (::Type{Fac})(A::HermOrSym) where {DIAG, UPLO, Fac <: NaturalDenseFacto
 end
 
 function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
+        A::HermOrSym,
+    ) where {
+        DIAG,
+        UPLO,
+        T,
+        Mat <: AbstractMatrix{T},
+        Dia <: AbstractVector{T},
+        Prm <: AbstractVector{Int},
+        Ivp <: AbstractVector{Int},
+        Ifo,
+    }
+    @assert A.uplo === char(Val(UPLO))
+    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(parent(A))
+end
+
+function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
         A::AbstractMatrix,
     ) where {
         DIAG,
@@ -148,6 +164,11 @@ function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
     return DenseFactorization{DIAG, UPLO}(A, d, perm, invp, info)
 end
 
+function DenseFactorization{DIAG, UPLO}(A::HermOrSym) where {DIAG, UPLO}
+    @assert A.uplo === char(Val(UPLO))
+    return DenseFactorization{DIAG, UPLO}(parent(A))
+end
+
 function DenseFactorization{DIAG, UPLO}(A::Mat) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}}
     if DIAG === :N
         Dia = IOnes{T}
@@ -156,6 +177,11 @@ function DenseFactorization{DIAG, UPLO}(A::Mat) where {DIAG, UPLO, T, Mat <: Abs
     end
 
     return DenseFactorization{DIAG, UPLO, T, Mat, Dia, FVector{Int}, FVector{Int}, FScalar{Int}}(A)
+end
+
+function NaturalDenseFactorization{DIAG, UPLO}(A::HermOrSym) where {DIAG, UPLO}
+    @assert A.uplo === char(Val(UPLO))
+    return NaturalDenseFactorization{DIAG, UPLO}(parent(A))
 end
 
 function NaturalDenseFactorization{DIAG, UPLO}(A::Mat) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}}
@@ -179,14 +205,14 @@ function Base.propertynames(::DenseFactorization)
     return (:L, :U, :D, :P, :d, :perm, :invp, :info)
 end
 
-function Base.similar(F::DenseFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+function Base.similar(F::DenseFactorization{DIAG, UPLO}, ::Type{T}=eltype(F)) where {DIAG, UPLO, T}
     if DIAG === :N
         d = F.d
     else
-        d = similar(F.d)
+        d = similar(F.d, T)
     end
 
-    return DenseFactorization{DIAG, UPLO}(similar(F.M), d, F.perm, F.invp, similar(F.info))
+    return DenseFactorization{DIAG, UPLO}(similar(F.M, T), d, F.perm, F.invp, similar(F.info))
 end
 
 function triangular(F::DenseFactorization, diag::Val=F.diag)

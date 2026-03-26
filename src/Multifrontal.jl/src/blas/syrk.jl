@@ -21,8 +21,14 @@ function syrk2!(::Val{UPLO}, ::Val{:N}, α, A::AbstractMatrix{T}, D::AbstractVec
             rng = 1:j
         end
 
-        for i in rng
-            C[i, j] *= β
+        if iszero(β)
+            for i in rng
+                C[i, j] = β
+            end
+        else
+            for i in rng
+                C[i, j] *= β
+            end
         end
     end
 
@@ -71,7 +77,11 @@ function syrk2!(::Val{UPLO}, ::Val, α, A::AbstractMatrix{T}, D::AbstractVector{
                 end
             end
 
-            C[i, j] = β * C[i, j] + Δij
+            if iszero(β)
+                C[i, j] = Δij
+            else
+                C[i, j] = Δij + β * C[i, j]
+            end
         end
     end
 
@@ -124,17 +134,17 @@ function syrk!(uplo::Val{UPLO}, trans::Val{TRANS}, α, W::AbstractVector{T}, A::
     return
 end
 
-function syrk!(uplo::Val, trans::Val{TRANS}, α::Real, ::AbstractVector{T}, A::AbstractMatrix{T}, ::AbstractVector{T}, β::Real, C::AbstractMatrix{T}, ::Val{:N}) where {T <: BlasFloat, TRANS}
+function syrk!(uplo::Val, trans::Val{TRANS}, α, ::AbstractVector{T}, A::AbstractMatrix{T}, ::AbstractVector{T}, β, C::AbstractMatrix{T}, ::Val{:N}) where {T <: BlasFloat, TRANS}
     if T <: Complex
-        BLAS.herk!(char(uplo), char(trans), α, A, β, C)
+        BLAS.herk!(char(uplo), char(trans), convert(real(T), α), A, convert(real(T), β), C)
     else
-        BLAS.syrk!(char(uplo), char(trans), α, A, β, C)
+        BLAS.syrk!(char(uplo), char(trans), convert(T, α), A, convert(T, β), C)
     end
 
     return
 end
 
-function syrk!(uplo::Val, trans::Val{TRANS}, α::Real, W::AbstractVector{T}, A::AbstractMatrix{T}, D::AbstractVector{T}, β::Real, C::AbstractMatrix{T}, ::Val{:U}) where {T <: BlasFloat, TRANS}
+function syrk!(uplo::Val, trans::Val{TRANS}, α, W::AbstractVector{T}, A::AbstractMatrix{T}, D::AbstractVector{T}, β, C::AbstractMatrix{T}, ::Val{:U}) where {T <: BlasFloat, TRANS}
     B = reshape(view(W, 1:length(A)), size(A))
     copyrec!(B, A)
 

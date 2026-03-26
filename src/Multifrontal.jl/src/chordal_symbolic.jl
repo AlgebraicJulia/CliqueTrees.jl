@@ -93,11 +93,43 @@ end
 function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
     res = residuals(tree)
     sep = separators(tree)
+    return ChordalSymbolic(res, sep, Tree(tree))
+end
+
+function ChordalSymbolic(res::BipartiteGraph{I, I}, sep::BipartiteGraph{I, I}) where {I}
+    pnt = FVector{I}(undef, nv(res))
+    idx = FVector{I}(undef, nov(res))
+    pstop = ne(sep) + one(I)
+
+    for i in reverse(vertices(res))
+        pstrt = pointers(sep)[i]
+
+        if pstrt < pstop
+            w = targets(sep)[pstrt]
+            j = idx[w]
+        else
+            j = zero(I)
+        end
+
+        pnt[i] = j
+
+        for v in neighbors(res, i)
+            idx[v] = i
+        end
+
+        pstop = pstrt
+    end
+
+    return ChordalSymbolic(res, sep, Tree(nv(res), pnt))
+end
+
+function ChordalSymbolic(res::BipartiteGraph{I, I}, sep::BipartiteGraph{I, I}, tree::Tree{I}) where {I}
+    chd = tree.graph
+    pnt = tree.tree.prnt
 
     reltgt = FVector{I}(undef, ne(sep))
     rel = BipartiteGraph(nov(sep), nv(sep), ne(sep), pointers(sep), reltgt)
 
-    # compute workspace sizes
     nMptr = jMptr = one(I)
     nMval = jMval = zero(I)
     nNval = jNval = zero(I)
@@ -105,7 +137,6 @@ function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
     Dp = zero(I)
     Lp = zero(I)
 
-    # compute column to supernode mapping
     idx = FVector{I}(undef, nov(res))
     Dptr = FVector{I}(undef, nv(res) + one(I))
     Lptr = FVector{I}(undef, nv(res) + one(I))
@@ -114,29 +145,29 @@ function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
         Dptr[j] = Dp + one(I)
         Lptr[j] = Lp + one(I)
 
-        # nn = |res(j)|
         nn = eltypedegree(res, j)
-
-        # na = |sep(j)|
         na = eltypedegree(sep, j)
-
-        # nj = |bag(j)|
         nj = nn + na
 
-        bag = tree[j]
+        jres = neighbors(res, j)
+        jsep = neighbors(sep, j)
 
-        for w in residual(bag)
+        for w in jres
             idx[w] = j
         end
 
-        for i in childindices(tree, j)
-            q = one(I); w = bag[q]
+        for i in neighbors(chd, j)
+            q = one(I); w = jres[q]
 
             for p in incident(sep, i)
                 v = targets(sep)[p]
 
+                while w < v && q < nn
+                    q += one(I); w = jres[q]
+                end
+
                 while w < v
-                    q += one(I); w = bag[q]
+                    q += one(I); w = jsep[q - nn]
                 end
 
                 targets(rel)[p] = q
@@ -166,9 +197,6 @@ function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
 
     Dptr[nv(res) + one(I)] = Dp + one(I)
     Lptr[nv(res) + one(I)] = Lp + one(I)
-
-    chd = tree.tree.tree.graph
-    pnt = tree.tree.tree.tree.prnt
 
     return ChordalSymbolic(res, sep, rel, chd, pnt, idx, Dptr, Lptr, nMptr, nMval, nNval, nFval)
 end

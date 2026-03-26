@@ -1,6 +1,6 @@
 # ===== trmx2! =====
 
-function trmx2!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {SIDE, UPLO, TRANS, DIAG, T}
+function trmx2!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {SIDE, UPLO, TRANS, DIAG}
     # Multiply uses opposite direction from solve
     if isforward(UPLO, TRANS, SIDE)
         trmx2_bwd!(side, uplo, diag, A, B)
@@ -9,7 +9,7 @@ function trmx2!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val{D
     end
 end
 
-function trmx2_fwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {UPLO, DIAG, T}
+function trmx2_fwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {UPLO, DIAG}
     @inbounds @fastmath for j in axes(A, 1)
         for k in 1:j - 1
             if UPLO === :L
@@ -33,7 +33,7 @@ function trmx2_fwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
     end
 end
 
-function trmx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {UPLO, DIAG, T}
+function trmx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {UPLO, DIAG}
     @inbounds @fastmath for j in axes(A, 1)
         for i in axes(B, 2)
             for k in 1:j - 1
@@ -51,7 +51,7 @@ function trmx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
     end
 end
 
-function trmx2_bwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {UPLO, DIAG, T}
+function trmx2_bwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {UPLO, DIAG}
     @inbounds @fastmath for j in reverse(axes(A, 1))
         if DIAG === :N
             Ajj = A[j, j]
@@ -75,7 +75,7 @@ function trmx2_bwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B
     end
 end
 
-function trmx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {UPLO, DIAG, T}
+function trmx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {UPLO, DIAG}
     @inbounds @fastmath for j in reverse(axes(A, 1))
         for i in axes(B, 2)
             if DIAG === :N
@@ -95,7 +95,7 @@ end
 
 # ===== trmx! =====
 
-function trmx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}) where {SIDE, UPLO, TRANS, T}
+function trmx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A::AbstractMatrix, B::AbstractVecOrMat) where {SIDE, UPLO, TRANS}
     n = size(A, 1)
 
     if n <= THRESHOLD
@@ -129,11 +129,11 @@ function trmx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A
         trmx!(side, uplo, trans, diag, A₂₂, B₂)
 
         if B isa AbstractVector
-            gemv!(trans, one(T), A₂₁, B₁, one(T), B₂)
+            gemv!(trans, 1, A₂₁, B₁, 1, B₂)
         elseif SIDE === :R
-            gemm!(Val(:N), trans, one(T), B₁, A₂₁, one(T), B₂)
+            gemm!(Val(:N), trans, 1, B₁, A₂₁, 1, B₂)
         else
-            gemm!(trans, Val(:N), one(T), A₂₁, B₁, one(T), B₂)
+            gemm!(trans, Val(:N), 1, A₂₁, B₁, 1, B₂)
         end
 
         trmx!(side, uplo, trans, diag, A₁₁, B₁)
@@ -141,11 +141,11 @@ function trmx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A
         trmx!(side, uplo, trans, diag, A₁₁, B₁)
 
         if B isa AbstractVector
-            gemv!(trans, one(T), A₂₁, B₂, one(T), B₁)
+            gemv!(trans, 1, A₂₁, B₂, 1, B₁)
         elseif SIDE === :R
-            gemm!(Val(:N), trans, one(T), B₂, A₂₁, one(T), B₁)
+            gemm!(Val(:N), trans, 1, B₂, A₂₁, 1, B₁)
         else
-            gemm!(trans, Val(:N), one(T), A₂₁, B₂, one(T), B₁)
+            gemm!(trans, Val(:N), 1, A₂₁, B₂, 1, B₁)
         end
 
         trmx!(side, uplo, trans, diag, A₂₂, B₂)
@@ -154,12 +154,12 @@ end
 
 # ===== trmm! =====
 
-function trmm!(side::Val, uplo::Val, tA::Val, diag::Val, α::T, A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: BlasFloat}
-    BLAS.trmm!(char(side), char(uplo), char(tA), char(diag), α, A, B)
+function trmm!(side::Val, uplo::Val, tA::Val, diag::Val, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T <: BlasFloat}
+    BLAS.trmm!(char(side), char(uplo), char(tA), char(diag), convert(T, α), A, B)
     return
 end
 
-function trmm!(side::Val, uplo::Val, tA::Val, diag::Val, α::T, A::AbstractMatrix{T}, B::AbstractMatrix{T}) where {T}
+function trmm!(side::Val, uplo::Val, tA::Val, diag::Val, α, A::AbstractMatrix, B::AbstractMatrix)
     trmx!(side, uplo, tA, diag, A, B)
     lmul!(α, B)
     return
@@ -172,7 +172,7 @@ function trmv!(uplo::Val, tA::Val, diag::Val, A::AbstractMatrix{T}, b::AbstractV
     return
 end
 
-function trmv!(uplo::Val, tA::Val, diag::Val, A::AbstractMatrix{T}, b::AbstractVector{T}) where {T}
+function trmv!(uplo::Val, tA::Val, diag::Val, A::AbstractMatrix, b::AbstractVector)
     trmx!(Val(:L), uplo, tA, diag, A, b)
     return
 end

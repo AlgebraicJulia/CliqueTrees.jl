@@ -1,49 +1,46 @@
-function chol!(
-        F::ChordalFactorization{DIAG, UPLO, T, I},
-        ::RowMaximum,
+# ===== factorize! Level 3: ChordalTriangular all positional (pivoted) =====
+
+function factorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        pivot::RowMaximum,
+        perm::AbstractVector,
+        invp::AbstractVector,
         signs::AbstractVector,
         reg::AbstractRegularization,
-        check::Bool,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
-    S = permuteto(T, signs, F.perm)
 
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, max(F.S.nFval * F.S.nFval, two(I)))
-    piv  = FVector{BlasInt}(undef, F.S.nFval)
-    mval = FVector{I}(undef, F.S.nNval)
-    fval = FVector{I}(undef, F.S.nFval)
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, max(L.S.nFval * L.S.nFval, two(I)))
+    piv  = FVector{BlasInt}(undef, L.S.nFval)
+    mval = FVector{I}(undef, L.S.nNval)
+    fval = FVector{I}(undef, L.S.nFval)
 
     if reg isa NoRegularization
         R = convert(real(T), tol)
     else
-        R = initialize(triangular(F), S, reg)
+        R = initialize(L, signs, reg)
     end
 
     info = chol_piv_fwd!(
-        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval,
-        F.S.res, F.S.rel, F.S.chd, piv, F.perm, S, R, F.uplo, F.diag
+        Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, d, Fval,
+        L.S.res, L.S.rel, L.S.chd, piv, perm, signs, R, L.uplo, L.diag
     )
 
-    if isnegative(info)
-        throw(ArgumentError(info))
+    chol_piv_bwd!(Mptr, mval, fval, L.S.Dptr, L.S.Lptr, L.Lval, L.S.res, L.S.rel, L.S.sep, L.S.chd, perm, Fval, L.uplo)
+    chol_piv_rel!(L.S.res, L.S.sep, L.S.rel, L.S.chd)
+
+    @inbounds for i in eachindex(invp)
+        invp[i] = perm[invp[i]]
     end
 
-    F.info[] = zero(I)
-
-    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, F.uplo)
-    chol_piv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
-
-    @inbounds for i in eachindex(F.invp)
-        F.invp[i] = F.perm[F.invp[i]]
+    @inbounds for i in eachindex(invp)
+        perm[invp[i]] = i
     end
 
-    @inbounds for i in eachindex(F.invp)
-        F.perm[F.invp[i]] = i
-    end
-
-    return F
+    return info
 end
 
 # ============================= chol_piv_fwd! =============================

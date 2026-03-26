@@ -1,7 +1,7 @@
 struct CMPLHessian{UPLO, T, I}
-    A::FChordalCholesky{UPLO, T, I}
-    B::FChordalCholesky{UPLO, T, I}
-    C::FChordalCholesky{UPLO, T, I}
+    A::FChordalTriangular{:N, UPLO, T, I}
+    B::FChordalTriangular{:N, UPLO, T, I}
+    C::FChordalTriangular{:N, UPLO, T, I}
     Mptr::FVector{I}
     Mval::FVector{T}
     Fval::FVector{T}
@@ -44,44 +44,57 @@ function LinearAlgebra.mul!(c::AbstractVector{T}, H::CMPLHessian{UPLO, T, I}, b:
 end
 
 function complete!(
-        F::ChordalCholesky{UPLO, T, I},
+        F::AbstractCholesky,
         A::HermOrSym;
         alpha::Real = 0.01,
         beta::Real = 0.5,
         tol::Real = 1e-7,
         maxiter::Integer = 50,
         cgmaxiter::Integer = 100,
-    ) where {UPLO, T, I}
+    )
     C = sympermute(parent(A), F.invp, A.uplo, char(F.uplo))
-    copyto!(triangular(F), C)
+    F.info[] = complete!(triangular(F), C; alpha, beta, tol, maxiter, cgmaxiter)
+    return F
+end
 
-    n = size(F, 1)
-    m = half(ndz(F.S) + ncl(F.S)) + nlz(F.S) - nnz(C)
+function complete!(
+        L::FChordalTriangular{:N, UPLO, T, I},
+        A::SparseMatrixCSC;
+        alpha::Real = 0.01,
+        beta::Real = 0.5,
+        tol::Real = 1e-7,
+        maxiter::Integer = 50,
+        cgmaxiter::Integer = 100,
+    ) where {UPLO, T, I}
+    copyto!(L, A)
+
+    n = size(L, 1)
+    m = half(ndz(L.S) + ncl(L.S)) + nlz(L.S) - nnz(A)
     diag = FVector{I}(undef, n)
     fill = FVector{I}(undef, m)
     frow = FVector{I}(undef, m)
     fcol = FVector{I}(undef, m)
-    complete_gen_diag_ind!(diag, F.S)
-    complete_gen_fill!(fill, frow, fcol, diag, F.S, C, F.uplo)
+    complete_gen_diag_ind!(diag, L.S)
+    complete_gen_fill!(fill, frow, fcol, diag, L.S, A, L.uplo)
 
-    B = similar(F)
-    C = similar(F)
+    B = similar(L)
+    C = similar(L)
 
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    Wval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+    Wval = FVector{T}(undef, L.S.nFval * L.S.nFval)
 
     dual = FVector{T}(undef, length(fill))
     grad = FVector{T}(undef, length(fill))
     prec = FVector{T}(undef, length(fill))
     workspace = cgworkspace(T, length(fill))
-    H = CMPLHessian(F, B, C, Mptr, Mval, Fval, Wval, fill, frow, fcol, prec)
+    H = CMPLHessian(L, B, C, Mptr, Mval, Fval, Wval, fill, frow, fcol, prec)
 
-    complete_gen_impl!(workspace, F, B, C, H, Mptr, Mval, Fval, Wval, fill, dual, grad,
+    complete_gen_impl!(workspace, L, B, C, H, Mptr, Mval, Fval, Wval, fill, dual, grad,
         convert(Int, cgmaxiter), convert(Int, maxiter), convert(T, alpha), convert(T, beta), convert(T, tol))
 
-    return F
+    return zero(I)
 end
 
 function complete_gen_prec!(H::CMPLHessian{UPLO, T, I}) where {UPLO, T, I}
@@ -119,9 +132,9 @@ end
 #
 function complete_gen_impl!(
         workspace,
-        A::ChordalCholesky{UPLO, T, I},
-        B::ChordalCholesky{UPLO, T, I},
-        C::ChordalCholesky{UPLO, T, I},
+        A::ChordalTriangular{:N, UPLO, T, I},
+        B::ChordalTriangular{:N, UPLO, T, I},
+        C::ChordalTriangular{:N, UPLO, T, I},
         H::CMPLHessian{UPLO, T, I},
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
@@ -136,6 +149,8 @@ function complete_gen_impl!(
         beta::T,
         tol::T,
     ) where {UPLO, T, I}
+
+    d = Ones{T}(size(A, 1))
 
     iter = 0; drop = typemax(T)
     #
@@ -167,7 +182,7 @@ function complete_gen_impl!(
         copyto!(C, B)
 
         unchol_impl!(
-            Mptr, Mval, A.S.Dptr, C.Dval, A.S.Lptr, C.Lval, C.d, Fval, Wval,
+            Mptr, Mval, A.S.Dptr, C.Dval, A.S.Lptr, C.Lval, d, Fval, Wval,
             A.S.res, A.S.rel, A.S.chd, C.uplo, C.diag)
 
         complete_gen_prec!(H)
@@ -195,7 +210,7 @@ function complete_gen_impl!(
         #     δ ← dᵀ g
         #
         drop = dot(desc, grad)
-        cost = logdet(B)
+        cost = 2 * logdet(B)
         step = one(T)
         #
         #     A ← C + E(y + d)
@@ -218,7 +233,7 @@ function complete_gen_impl!(
         #
         #     f(y + t d) ≤ f(y) - α t δ
         #
-        while logdet(B) > cost - alpha * step * drop
+        while 2 * logdet(B) > cost - alpha * step * drop
             step *= beta
             #
             #     A ← C + E(y + t d)

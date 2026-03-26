@@ -36,6 +36,18 @@ function char(::Val{:R})
     return 'R'
 end
 
+function checksymtri(A::HermOrSymTri{UPLO, T}) where {UPLO, T}
+    return (!(T <: Complex) || A isa Hermitian) && A.uplo == char(parent(A).uplo)
+end
+
+function checksymbolic(A)
+    return true
+end
+
+function checksymbolic(A, B, C...)
+    return symbolic(A) === symbolic(B) && checksymbolic(B, C...)
+end
+
 function symmetric(graph, uplo::Char)
     return symmetric(BipartiteGraph(graph), uplo)
 end
@@ -332,6 +344,22 @@ function copyrec!(A::AbstractVecOrMat, B::AbstractVecOrMat)
     return copyscatterrec!(A, B, axes(B, 1), Val(:L))
 end
 
+function copygatherrec!(A::AbstractVector, B::AbstractVector, ind::AbstractVector)
+    return copygatherrec!(A, B, ind, Val(:L))
+end
+
+function copyscatterrec!(A::AbstractVector, B::AbstractVector, ind::AbstractVector)
+    return copyscatterrec!(A, B, ind, Val(:L))
+end
+
+function addgatherrec!(A::AbstractVector, B::AbstractVector, ind::AbstractVector)
+    return addgatherrec!(A, B, ind, Val(:L))
+end
+
+function addscatterrec!(A::AbstractVector, B::AbstractVector, ind::AbstractVector)
+    return addscatterrec!(A, B, ind, Val(:L))
+end
+
 function addrec!(A::AbstractVecOrMat, B::AbstractVecOrMat)
     return addscatterrec!(A, B, axes(B, 1), Val(:L))
 end
@@ -362,6 +390,28 @@ function symmtri!(A::AbstractMatrix{T}, ::Val{:U}) where {T}
     @inbounds for j in axes(A, 2)
         for i in j+1:n
             A[i, j] = conj(A[j, i])
+        end
+    end
+
+    return A
+end
+
+function rdivtri!(A::AbstractMatrix{T}, α, ::Val{:L}) where {T}
+    n = size(A, 1)
+
+    @inbounds for j in axes(A, 2)
+        for i in j:n
+            A[i, j] /= α
+        end
+    end
+
+    return A
+end
+
+function rdivtri!(A::AbstractMatrix{T}, α, ::Val{:U}) where {T}
+    @inbounds for j in axes(A, 2)
+        for i in 1:j
+            A[i, j] /= α
         end
     end
 
@@ -679,8 +729,12 @@ function allocate(::Type{Arr}, dims::Tuple) where {Arr}
     return Arr(undef, dims)
 end
 
-function allocate(::Type{Arr}, dims::NTuple{N}) where {T, N, Axis, Arr <: AbstractFill{T, N, NTuple{N, Axis}}}
-    return Arr(map(Axis, dims))
+function allocate(::Type{Zeros{T, N, NTuple{N, OneTo{Int}}}}, dims::NTuple{N}) where {T, N}
+    return Zeros{T, N}(map(OneTo{Int}, dims))
+end
+
+function allocate(::Type{Ones{T, N, NTuple{N, OneTo{Int}}}}, dims::NTuple{N}) where {T, N}
+    return Ones{T, N}(map(OneTo{Int}, dims))
 end
 
 function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}

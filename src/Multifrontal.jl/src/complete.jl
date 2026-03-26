@@ -1,16 +1,21 @@
-function complete!(F::ChordalCholesky{UPLO, T, I}; check::Bool=true) where {UPLO, T, I <: Integer}
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
+function complete!(F::AbstractCholesky; check::Bool=true)
+    info = complete!(triangular(F); check)
+    F.info[] = info
+    return F
+end
 
-    info = complete_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, Fval, F.S.res, F.S.rel, F.S.chd, F.uplo)
+function complete!(L::ChordalTriangular{:N, UPLO, T, I}; check::Bool=true) where {UPLO, T, I <: Integer}
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+
+    info = complete_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, Fval, L.S.res, L.S.rel, L.S.chd, L.uplo)
 
     if ispositive(info) && check
         throw(PosDefException(info))
     end
 
-    F.info[] = info
-    return F
+    return info
 end
 
 function complete_impl!(

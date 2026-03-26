@@ -6,6 +6,7 @@ authors = ["Richard Samuelson <rsamuelson@ufl.edu>"]
 
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
 FixedSizeArrays = "3821ddf9-e5b5-40d5-8e25-6813ab96b5e2"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
@@ -16,27 +17,36 @@ SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 [weakdeps]
 AMD = "14f7f29c-3bd6-536c-9a0b-7339e30b5a3e"
 Catlab = "134e5e36-593f-5add-ad60-77f754baafbe"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 FlowCutterPACE17_jll = "008204e2-cd5c-5c6d-9360-d31f32b5f6c2"
 KaHyPar = "2a6221f6-aa48-11e9-3542-2d9e0ef01880"
 Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 Laplacians = "6f8e5838-0efe-5de0-80a3-5fb4f8dbb1de"
 Metis = "2679e427-3c69-5b7f-982b-ece356f1e94b"
+Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
 TreeWidthSolver = "7d267fc5-9ace-409f-a54c-cd2374872a55"
+Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [extensions]
 AMDExt = "AMD"
 CatlabExt = "Catlab"
+EnzymeExt = "Enzyme"
 FlowCutterPACE17_jllExt = "FlowCutterPACE17_jll"
 KaHyParExt = "KaHyPar"
 KrylovExt = "Krylov"
 LaplaciansExt = "Laplacians"
 MetisExt = "Metis"
+MooncakeExt = "Mooncake"
 TreeWidthSolverExt = "TreeWidthSolver"
+ZygoteExt = "Zygote"
 
 [compat]
 AMD = "0.5"
 AbstractTrees = "0.4"
 Catlab = "0.16, 0.17"
+ChainRules = "1"
+ChainRulesCore = "1.26.0"
+Enzyme = "0.13"
 FillArrays = "1"
 FixedSizeArrays = "1"
 FlowCutterPACE17_jll = "0.0.2"
@@ -46,17 +56,23 @@ Krylov = "0.10"
 Laplacians = "1.1"
 LinearAlgebra = "1"
 Metis = "1"
+Mooncake = "0.4"
 Random = "1"
 SparseArrays = "1"
 TreeWidthSolver = "0.3"
+Zygote = "0.7"
 julia = "1.10"
 
 [extras]
 AMD = "14f7f29c-3bd6-536c-9a0b-7339e30b5a3e"
 Catlab = "134e5e36-593f-5add-ad60-77f754baafbe"
+ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
 FlowCutterPACE17_jll = "008204e2-cd5c-5c6d-9360-d31f32b5f6c2"
 KaHyPar = "2a6221f6-aa48-11e9-3542-2d9e0ef01880"
 Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 Laplacians = "6f8e5838-0efe-5de0-80a3-5fb4f8dbb1de"
 Metis = "2679e427-3c69-5b7f-982b-ece356f1e94b"
 TreeWidthSolver = "7d267fc5-9ace-409f-a54c-cd2374872a55"
+
+[targets]
+test = ["ChainRules"]

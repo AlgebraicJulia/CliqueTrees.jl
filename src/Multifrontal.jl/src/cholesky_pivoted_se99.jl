@@ -1,54 +1,53 @@
-function chol!(
-        F::ChordalFactorization{DIAG, UPLO, T, I},
-        ::RowMaximum,
+# ===== factorize! Level 3: ChordalTriangular all positional (pivoted SE99) =====
+
+function factorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        pivot::RowMaximum,
+        perm::AbstractVector,
+        invp::AbstractVector,
         signs::AbstractVector,
         reg::SE99,
-        check::Bool,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
-    S = permuteto(T, signs, F.perm)
-    R = initialize(triangular(F), S, reg)
+    R = initialize(L, signs, reg)
 
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    Eval = FVector{T}(undef, F.S.nFval)
-    piv  = FVector{I}(undef, F.S.nFval)
-    mval = FVector{I}(undef, F.S.nNval)
-    fval = FVector{I}(undef, F.S.nFval)
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+    Eval = FVector{T}(undef, L.S.nFval)
+    piv  = FVector{I}(undef, L.S.nFval)
+    mval = FVector{I}(undef, L.S.nNval)
+    fval = FVector{I}(undef, L.S.nFval)
 
     if DIAG === :U
-        A = ChordalTriangular(F)
-
-        @inbounds for j in fronts(A)
-            D, res = diagblock(A, j)
-            F.d[res] .= view(parent(D), diagind(D))
+        @inbounds for j in fronts(L)
+            D, res = diagblock(L, j)
+            d[res] .= view(parent(D), diagind(D))
         end
 
-        d = F.d
+        e = d
     else
-        d = LinearAlgebra.diag(ChordalTriangular(F))
+        e = LinearAlgebra.diag(L)
     end
 
     chol_se99_piv_fwd!(
-        Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, d, Eval, Fval,
-        F.S.res, F.S.rel, F.S.sep, F.S.chd, piv, F.perm, S, R, F.uplo, F.diag
+        Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, e, Eval, Fval,
+        L.S.res, L.S.rel, L.S.sep, L.S.chd, piv, perm, signs, R, L.uplo, L.diag
     )
 
-    F.info[] = zero(I)
+    chol_piv_bwd!(Mptr, mval, fval, L.S.Dptr, L.S.Lptr, L.Lval, L.S.res, L.S.rel, L.S.sep, L.S.chd, perm, Fval, L.uplo)
+    chol_piv_rel!(L.S.res, L.S.sep, L.S.rel, L.S.chd)
 
-    chol_piv_bwd!(Mptr, mval, fval, F.S.Dptr, F.S.Lptr, F.Lval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.perm, Fval, F.uplo)
-    chol_piv_rel!(F.S.res, F.S.sep, F.S.rel, F.S.chd)
-
-    @inbounds for i in eachindex(F.invp)
-        F.invp[i] = F.perm[F.invp[i]]
+    @inbounds for i in eachindex(invp)
+        invp[i] = perm[invp[i]]
     end
 
-    @inbounds for i in eachindex(F.invp)
-        F.perm[F.invp[i]] = i
+    @inbounds for i in eachindex(invp)
+        perm[invp[i]] = i
     end
 
-    return F
+    return zero(I)
 end
 
 # ============================= chol_se99_piv_fwd! =============================

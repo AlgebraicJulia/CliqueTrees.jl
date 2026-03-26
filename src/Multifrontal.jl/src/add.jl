@@ -1,0 +1,169 @@
+# ================================ convert ================================
+
+# Convert ChordalTriangular to a different element type (for ForwardDiff Dual support)
+function Base.convert(::Type{ChordalTriangular{DIAG, UPLO, R}}, A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, R, T}
+    if R === T
+        return copy(A)
+    else
+        Dval = convert(Vector{R}, A.Dval)
+        Lval = convert(Vector{R}, A.Lval)
+        return ChordalTriangular{DIAG, UPLO}(A.S, Dval, Lval)
+    end
+end
+
+# ================================= axpy! =================================
+
+function LinearAlgebra.axpy!(α::Number, X::ChordalTriangular{DIAG, UPLO}, Y::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
+    @assert checksymbolic(X, Y)
+    axpy!(α, X.Dval, Y.Dval)
+    axpy!(α, X.Lval, Y.Lval)
+    return Y
+end
+
+function LinearAlgebra.axpy!(α::Number, X::AdjTri{DIAG, UPLO}, Y::AdjTri{DIAG, UPLO}) where {DIAG, UPLO}
+    axpy!(α, parent(X), parent(Y))
+    return Y
+end
+
+function LinearAlgebra.axpy!(α::Number, X::TransTri{DIAG, UPLO}, Y::TransTri{DIAG, UPLO}) where {DIAG, UPLO}
+    axpy!(α, parent(X), parent(Y))
+    return Y
+end
+
+function LinearAlgebra.axpy!(α::Number, X::HermTri{UPLO, T}, Y::HermTri{UPLO, T}) where {UPLO, T}
+    @assert checksymtri(X) && checksymtri(Y)
+    axpy!(α, parent(X), parent(Y))
+    return Y
+end
+
+function LinearAlgebra.axpy!(α::Number, X::SymTri{UPLO, T}, Y::SymTri{UPLO, T}) where {UPLO, T}
+    @assert checksymtri(X) && checksymtri(Y)
+    axpy!(α, parent(X), parent(Y))
+    return Y
+end
+
+# =================================== + ===================================
+
+function Base.:+(A::ChordalTriangular{:N, UPLO, T}, B::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
+    return axpy!(one(T), A, copy(B))
+end
+
+function Base.:+(A::HermTri{UPLO}, B::HermTri{UPLO}) where {UPLO}
+    return Hermitian(parent(A) + parent(B), UPLO)
+end
+
+function Base.:+(A::SymTri{UPLO}, B::SymTri{UPLO}) where {UPLO}
+    return Symmetric(parent(A) + parent(B), UPLO)
+end
+
+function Base.:+(A::AdjTri{:N, UPLO}, B::AdjTri{:N, UPLO}) where {UPLO}
+    return adjoint(parent(A) + parent(B))
+end
+
+function Base.:+(A::TransTri{:N, UPLO}, B::TransTri{:N, UPLO}) where {UPLO}
+    return transpose(parent(A) + parent(B))
+end
+
+function Base.:+(A::ChordalTriangular{:N, UPLO}, J::UniformScaling) where {UPLO}
+    B = similar(A, promote_eltype(A, J))
+    copyto!(B, A)
+
+    @inbounds for j in fronts(B)
+        D, _ = diagblock(B, j)
+
+        for i in diagind(D)
+            D[i] += J.λ
+        end
+    end
+
+    return B
+end
+
+function Base.:+(J::UniformScaling, A::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
+    return A + J
+end
+
+function Base.:+(A::HermTri{UPLO}, J::UniformScaling) where {UPLO}
+    return Hermitian(parent(A) + J, UPLO)
+end
+
+function Base.:+(A::HermTri{UPLO}, J::UniformScaling{<:Complex}) where {UPLO}
+    @assert iszero(imag(J.λ))
+    return Hermitian(parent(A) + real(J.λ) * I, UPLO)
+end
+
+function Base.:+(J::UniformScaling, A::HermTri{UPLO}) where {UPLO}
+    return A + J
+end
+
+function Base.:+(J::UniformScaling{<:Complex}, A::HermTri{UPLO}) where {UPLO}
+    return A + J
+end
+
+function Base.:+(A::SymTri{UPLO}, J::UniformScaling) where {UPLO}
+    return Symmetric(parent(A) + J, UPLO)
+end
+
+function Base.:+(J::UniformScaling, A::SymTri{UPLO}) where {UPLO}
+    return A + J
+end
+
+# =================================== - ===================================
+
+function Base.:-(X::ChordalTriangular{:N})
+    return -1 * X
+end
+
+function Base.:-(X::HermOrSymTri)
+    return -1 * X
+end
+
+function Base.:-(X::AdjTri{:N})
+    return -1 * X
+end
+
+function Base.:-(X::TransTri{:N})
+    return -1 * X
+end
+
+function Base.:-(A::ChordalTriangular{:N, UPLO, T}, B::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
+    return axpy!(-one(T), B, copy(A))
+end
+
+function Base.:-(A::HermTri{UPLO}, B::HermTri{UPLO}) where {UPLO}
+    return Hermitian(parent(A) - parent(B), UPLO)
+end
+
+function Base.:-(A::SymTri{UPLO}, B::SymTri{UPLO}) where {UPLO}
+    return Symmetric(parent(A) - parent(B), UPLO)
+end
+
+function Base.:-(A::AdjTri{:N, UPLO}, B::AdjTri{:N, UPLO}) where {UPLO}
+    return adjoint(parent(A) - parent(B))
+end
+
+function Base.:-(A::TransTri{:N, UPLO}, B::TransTri{:N, UPLO}) where {UPLO}
+    return transpose(parent(A) - parent(B))
+end
+
+# ================================== zero ==================================
+
+function Base.zero(A::ChordalTriangular{:N})
+    return fill!(similar(A), 0)
+end
+
+function Base.zero(A::HermTri{UPLO}) where {UPLO}
+    return Hermitian(zero(parent(A)), UPLO)
+end
+
+function Base.zero(A::SymTri{UPLO}) where {UPLO}
+    return Symmetric(zero(parent(A)), UPLO)
+end
+
+function Base.zero(A::AdjTri{:N})
+    return adjoint(zero(parent(A)))
+end
+
+function Base.zero(A::TransTri{:N})
+    return transpose(zero(parent(A)))
+end

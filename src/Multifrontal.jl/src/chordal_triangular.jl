@@ -1,23 +1,3 @@
-"""
-    ChordalTriangular{DIAG, UPLO, T, I, Val} <: AbstractMatrix{T}
-
-A triangular matrix with chordal sparsity pattern. The type parameters
-`DIAG` and `UPLO` specify its precise structure:
-
-  - `DIAG`: `:N` or `:U` (non-unit / unit triangular)
-  - `UPLO`: `:L` or `:U` (lower / upper triangular)
-
-### Example
-
-```julia
-
-```
-
-### Fields
-
-   - `A.S`: symbolic factorization
-
-"""
 struct ChordalTriangular{DIAG, UPLO, T, I, Dvl <: AbstractVector{T}, Lvl <: AbstractVector{T}} <: AbstractMatrix{T}
     S::ChordalSymbolic{I}
     Dval::Dvl
@@ -51,9 +31,14 @@ const SymbolicChordalTriangular{UPLO, I} = ChordalTriangular{
     IOnes{Bool},
 }
 
+const AdjTri{DIAG, UPLO, T, I, Dvl, Lvl} = Adjoint{T, ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}}
+const TransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Transpose{T, ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}}
+const HermTri{UPLO, T, I, Dvl, Lvl} = Hermitian{T, ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}}
+const SymTri{UPLO, T, I, Dvl, Lvl} = Symmetric{T, ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}}
+
 const AdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Union{
-      Adjoint{T, ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}},
-    Transpose{T, ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}},
+      AdjTri{DIAG, UPLO, T, I, Dvl, Lvl},
+    TransTri{DIAG, UPLO, T, I, Dvl, Lvl},
 }
 
 const MaybeAdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Union{
@@ -62,8 +47,13 @@ const MaybeAdjOrTransTri{DIAG, UPLO, T, I, Dvl, Lvl} = Union{
 }
 
 const HermOrSymTri{UPLO, T, I, Dvl, Lvl} = Union{
-    Hermitian{T, ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}},
-    Symmetric{T, ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}},
+    HermTri{UPLO, T, I, Dvl, Lvl},
+     SymTri{UPLO, T, I, Dvl, Lvl},
+}
+
+const MaybeHermOrSymTri{UPLO, T, I, Dvl, Lvl} = Union{
+             HermOrSymTri{UPLO, T, I, Dvl, Lvl},
+    ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl},
 }
 
 function ChordalTriangular{DIAG, UPLO}(S::ChordalSymbolic{I}, Dval::Dvl, Lval::Lvl) where {DIAG, UPLO, I <: Integer, T, Dvl <: AbstractVector{T}, Lvl <: AbstractVector{T}}
@@ -135,24 +125,40 @@ function Base.replace_in_print_matrix(A::ChordalTriangular{DIAG, UPLO}, i::Integ
     return str
 end
 
-function Base.similar(A::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
-    return ChordalTriangular{DIAG, UPLO}(A.S, similar(A.Dval), similar(A.Lval))
+function Base.similar(A::ChordalTriangular{DIAG, UPLO}, ::Type{T}=eltype(A)) where {DIAG, UPLO, T}
+    return ChordalTriangular{DIAG, UPLO}(A.S, similar(A.Dval, T), similar(A.Lval, T))
 end
 
-function Base.similar(A::AdjOrTransTri{DIAG, UPLO}) where {DIAG, UPLO}
+function Base.similar(A::AdjOrTransTri{DIAG, UPLO}, ::Type{T}=eltype(A)) where {DIAG, UPLO, T}
     P = parent(A)
 
     if UPLO === :L
-        B = ChordalTriangular{DIAG, :U}(P.S, similar(P.Dval), similar(P.Lval))
+        B = ChordalTriangular{DIAG, :U}(P.S, similar(P.Dval, T), similar(P.Lval, T))
     else
-        B = ChordalTriangular{DIAG, :L}(P.S, similar(P.Dval), similar(P.Lval))
+        B = ChordalTriangular{DIAG, :L}(P.S, similar(P.Dval, T), similar(P.Lval, T))
     end
 
     return B
 end
 
+function Base.similar(A::HermTri{UPLO}, ::Type{T}=eltype(A)) where {UPLO, T}
+    return Hermitian(similar(parent(A), T), UPLO)
+end
+
+function Base.similar(A::SymTri{UPLO}, ::Type{T}=eltype(A)) where {UPLO, T}
+    return Symmetric(similar(parent(A), T), UPLO)
+end
+
 function Base.copy(A::MaybeAdjOrTransTri)
     return copyto!(similar(A), A)
+end
+
+function Base.copy(A::HermTri{UPLO}) where {UPLO}
+    return Hermitian(copy(parent(A)), UPLO)
+end
+
+function Base.copy(A::SymTri{UPLO}) where {UPLO}
+    return Symmetric(copy(parent(A)), UPLO)
 end
 
 function Base.copyto!(A::MaybeAdjOrTransTri, B::MaybeAdjOrTransTri)
@@ -350,6 +356,10 @@ function LinearAlgebra.tr(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO
     end
 end
 
+function LinearAlgebra.tr(A::HermOrSymTri)
+    return tr(parent(A))
+end
+
 function LinearAlgebra.rank(A::ChordalTriangular{DIAG, UPLO, T, I}; kw...) where {DIAG, UPLO, T, I <: Integer}
     if DIAG === :N
         out = 0
@@ -381,7 +391,7 @@ function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UP
 end
 
 function LinearAlgebra.dot(A::ChordalTriangular{DIAG, UPLO, T}, B::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    @assert A.S === B.S
+    @assert checksymbolic(A, B)
     out = zero(T)
 
     @inbounds for j in fronts(A)
@@ -395,10 +405,8 @@ function LinearAlgebra.dot(A::ChordalTriangular{DIAG, UPLO, T}, B::ChordalTriang
 end
 
 function LinearAlgebra.dot(A::HermOrSymTri{UPLO, T}, B::HermOrSymTri{UPLO, T}) where {UPLO, T}
-    @assert !(T <: Complex) || (A isa Hermitian && B isa Hermitian)
-    @assert A.uplo == char(parent(A).uplo)
-    @assert B.uplo == char(parent(B).uplo)
-    @assert parent(A).S === parent(B).S
+    @assert checksymtri(A) && checksymtri(B)
+    @assert checksymbolic(A, B)
     out = zero(real(T))
     PA = parent(A)
     PB = parent(B)
@@ -411,6 +419,87 @@ function LinearAlgebra.dot(A::HermOrSymTri{UPLO, T}, B::HermOrSymTri{UPLO, T}) w
 
     out += twice(real(dot(PA.Lval, PB.Lval)))
     return out
+end
+
+function dist2(A::AbstractVecOrMat{TA}, B::AbstractVecOrMat{TB}) where {TA, TB}
+    out = zero(real(promote_type(TA, TB)))
+
+    @inbounds for i in eachindex(A, B)
+        out += abs2(A[i] - B[i])
+    end
+
+    return out
+end
+
+function dist2(A::ChordalTriangular{DIAG, UPLO, TA}, B::ChordalTriangular{DIAG, UPLO, TB}) where {DIAG, UPLO, TA, TB}
+    @assert checksymbolic(A, B)
+    out = zero(real(promote_type(TA, TB)))
+
+    @inbounds for j in fronts(A)
+        DA, _ = diagblock(A, j)
+        DB, _ = diagblock(B, j)
+        out += dist2(DA, DB)
+    end
+
+    out += dist2(A.Lval, B.Lval)
+    return out
+end
+
+function norm1(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    out = zero(real(T))
+
+    @inbounds for j in fronts(A)
+        D, _ = diagblock(A, j)
+        out += norm(D, 1)
+    end
+
+    out += norm(A.Lval, 1)
+    return out
+end
+
+function norm2(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    out = zero(real(T))
+
+    @inbounds for j in fronts(A)
+        D, _ = diagblock(A, j)
+        out += sum(abs2, D)
+    end
+
+    out += sum(abs2, A.Lval)
+    return sqrt(out)
+end
+
+function norminf(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+    out = zero(real(T))
+
+    @inbounds for j in fronts(A)
+        D, _ = diagblock(A, j)
+        out = max(out, norm(D, Inf))
+    end
+
+    out = max(out, norm(A.Lval, Inf))
+    return out
+end
+
+function LinearAlgebra.norm(A::ChordalTriangular, p::Real=2)
+    if p == 1
+        return norm1(A)
+    elseif p == 2
+        return norm2(A)
+    elseif p == Inf
+        return norminf(A)
+    else
+        error()
+    end
+end
+
+function Base.isapprox(A::ChordalTriangular{DIAG, UPLO, T}, B::ChordalTriangular{DIAG, UPLO, T}; rtol=sqrt(eps(real(T))), atol=zero(real(T))) where {DIAG, UPLO, T}
+    @assert checksymbolic(A, B)
+    return sqrt(dist2(A, B)) <= max(atol, rtol * max(norm2(A), norm2(B)))
+end
+
+function Base.isapprox(A::HermOrSymTri{UPLO}, B::HermOrSymTri{UPLO}; kw...) where {UPLO}
+    return isapprox(parent(A), parent(B); kw...)
 end
 
 function SparseArrays.sparse(A::ChordalTriangular{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I <: Integer}
@@ -614,7 +703,7 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) 
     return A
 end
 
-function Base.copy!(A::ChordalTriangular, B)
+function Base.copy!(A::ChordalTriangular, B::AbstractMatrix)
     return copyto!(A, B)
 end
 
@@ -622,6 +711,114 @@ function Base.fill!(A::ChordalTriangular, x)
     fill!(A.Dval, x)
     fill!(A.Lval, x)
     return A
+end
+
+function selupd!(C::ChordalTriangular, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
+    AP, tA = unwrap(A)
+    BP, tB = unwrap(B)
+    return selupd_impl!(C, AP, BP, α, β, tA, tB)
+end
+
+function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, A::AbstractMatrix, B::AbstractMatrix, α, β, tA::Val{TA}, tB::Val{TB}) where {DIAG, UPLO, T, TA, TB}
+    if TA === :N
+        @assert size(A, 1) == ncl(C)
+        k = size(A, 2)
+    else
+        @assert size(A, 2) == ncl(C)
+        k = size(A, 1)
+    end
+
+    if TB === :N
+        @assert size(B, 1) == k
+        @assert size(B, 2) == ncl(C)
+    else
+        @assert size(B, 2) == k
+        @assert size(B, 1) == ncl(C)
+    end
+
+    Wval = FVector{T}(undef, C.S.nFval * k)
+
+    @inbounds for f in fronts(C)
+        D₁, res = diagblock(C, f)
+        L₂, sep = offdblock(C, f)
+        na = length(sep)
+
+        if TA === :N
+            A₁ = view(A, res, :)
+        else
+            A₁ = view(A, :, res)
+        end
+
+        if TB === :N
+            B₁ = view(B, :, res)
+        else
+            B₁ = view(B, res, :)
+        end
+
+        gemmt!(C.uplo, tA, tB, α, A₁, B₁, β, parent(D₁))
+
+        if ispositive(na)
+            if UPLO === :L
+                if TA === :N
+                    W₂ = reshape(view(Wval, 1:na * k), na, k)
+                    copygatherrec!(W₂, A, sep, Val(:L))
+                    gemm!(tA, tB, α, W₂, B₁, β, L₂)
+                else
+                    W₂ = reshape(view(Wval, 1:k * na), k, na)
+                    copygatherrec!(W₂, A, sep, Val(:R))
+                    gemm!(tA, tB, α, W₂, B₁, β, L₂)
+                end
+            else
+                if TB === :N
+                    W₂ = reshape(view(Wval, 1:k * na), k, na)
+                    copygatherrec!(W₂, B, sep, Val(:R))
+                    gemm!(tA, tB, α, A₁, W₂, β, L₂)
+                else
+                    W₂ = reshape(view(Wval, 1:na * k), na, k)
+                    copygatherrec!(W₂, B, sep, Val(:L))
+                    gemm!(tA, tB, α, A₁, W₂, β, L₂)
+                end
+            end
+        end
+    end
+
+    return C
+end
+
+function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, a::AbstractVector, b::AbstractVector, α, β, ::Val{:N}, ::Val{:C}) where {DIAG, UPLO, T}
+    @assert length(a) == length(b) == ncl(C)
+
+    Wval = FVector{T}(undef, C.S.nFval)
+
+    if iszero(β)
+        fill!(C, zero(T))
+    else
+        rmul!(C, β)
+    end
+
+    @inbounds for f in fronts(C)
+        D₁, res = diagblock(C, f)
+        L₂, sep = offdblock(C, f)
+        na = length(sep)
+
+        a₁ = view(a, res)
+        b₁ = view(b, res)
+        ger!(α, a₁, b₁, parent(D₁))
+
+        if ispositive(na)
+            w₂ = view(Wval, 1:na)
+
+            if UPLO === :L
+                copygatherrec!(w₂, a, sep)
+                ger!(α, w₂, b₁, L₂)
+            else
+                copygatherrec!(w₂, b, sep)
+                ger!(α, a₁, w₂, L₂)
+            end
+        end
+    end
+
+    return C
 end
 
 function LinearAlgebra.cond(F::MaybeAdjOrTransTri, p::Real=2)
@@ -723,4 +920,16 @@ function offdblock_impl(
     end
 
     return L, neighbors(sep, j)
+end
+
+function symbolic(A::ChordalTriangular)
+    return A.S
+end
+
+function symbolic(A::HermOrSymTri)
+    return symbolic(parent(A))
+end
+
+function symbolic(A::AdjOrTransTri)
+    return symbolic(parent(A))
 end

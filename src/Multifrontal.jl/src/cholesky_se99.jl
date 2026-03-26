@@ -1,36 +1,34 @@
-function chol!(
-        F::ChordalFactorization{DIAG, UPLO, T, I},
-        ::NoPivot,
+# ===== factorize! Level 3: ChordalTriangular all positional (SE99) =====
+
+function factorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        pivot::NoPivot,
         signs::AbstractVector,
         reg::SE99,
-        check::Bool,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
-    S = permuteto(T, signs, F.perm)
-    R = initialize(triangular(F), S, reg)
+    R = initialize(L, signs, reg)
 
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    Eval = FVector{T}(undef, F.S.nFval)
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+    Eval = FVector{T}(undef, L.S.nFval)
 
     if DIAG === :U
-        A = ChordalTriangular(F)
-
-        @inbounds for j in fronts(A)
-            D, res = diagblock(A, j)
-            F.d[res] .= view(parent(D), diagind(D))
+        @inbounds for j in fronts(L)
+            D, res = diagblock(L, j)
+            d[res] .= view(parent(D), diagind(D))
         end
 
-        d = F.d
+        e = d
     else
-        d = LinearAlgebra.diag(ChordalTriangular(F))
+        e = LinearAlgebra.diag(L)
     end
 
-    chol_se99_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, d, Eval, Fval, F.S.res, F.S.rel, F.S.sep, F.S.chd, F.uplo, S, R, F.diag)
+    chol_se99_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, e, Eval, Fval, L.S.res, L.S.rel, L.S.sep, L.S.chd, L.uplo, signs, R, L.diag)
 
-    F.info[] = zero(I)
-    return F
+    return zero(I)
 end
 
 function chol_se99_impl!(

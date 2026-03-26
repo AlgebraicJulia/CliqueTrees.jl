@@ -172,19 +172,12 @@ function uncopy(F::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
     return cong(uncopy(NaturalFactorization(F)), F.P)
 end
 
-function unfactorize(F::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
-    G = copy(F)
-
-    if DIAG === :N
-        G = uncholesky!(G)
-    else
-        G = unldlt!(G)
-    end
-
+function unfactorize(F::AbstractFactorization)
+    G = unfactorize!(copy(F))
     return uncopy(G)
 end
 
-function (::Type{Mat})(F::AbstractFactorization) where {Mat <: AbstractMatrix}
+function (::Type{Mat})(F::AbstractFactorization) where {Mat <: Matrix}
     return Mat(unfactorize(F))
 end
 

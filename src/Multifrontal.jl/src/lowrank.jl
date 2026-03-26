@@ -1,33 +1,39 @@
-function LinearAlgebra.lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, Val{:P}())
+function LinearAlgebra.lowrankupdate!(F::ChordalFactorization, v::AbstractVector)
+    lowrankupdate!!(triangular(F), F.d, mul!(similar(v, promote_eltype(F, v)), F.P, v))
+    return F
 end
 
-function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, Val{:P}())
+function LinearAlgebra.lowrankdowndate!(F::ChordalFactorization, v::AbstractVector)
+    lowrankdowndate!!(triangular(F), F.d, mul!(similar(v, promote_eltype(F, v)), F.P, v))
+    return F
 end
 
-function LinearAlgebra.lowrankdowndate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, Val{:N}())
+function lowrankupdate!!(F::ChordalTriangular{:N, UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
+    lowrankupdate!!(F, Ones{T}(ncl(F)), v)
+    return zero(I)
 end
 
-function LinearAlgebra.lowrankdowndate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
-    return _lowrankupdate!(F, v, Val{:N}())
+function lowrankupdate!!(F::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector{T}, v::AbstractVector{T}) where {DIAG, UPLO, T, I}
+    return lowrank!!(F, d, v, Val{:P}())
 end
 
-function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, sign::Val{SIGN}) where {UPLO, T, I, SIGN}
+function lowrankdowndate!!(F::ChordalTriangular{:N, UPLO, T, I}, v::AbstractVector{T}) where {UPLO, T, I}
+    return lowrankdowndate!!(F, Ones{T}(ncl(F)), v)
+end
+
+function lowrankdowndate!!(F::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector{T}, v::AbstractVector{T}) where {DIAG, UPLO, T, I}
+    return lowrank!!(F, d, v, Val{:N}())
+end
+
+function lowrank!!(F::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector{T}, v::AbstractVector{T}, sign::Val{SIGN}) where {DIAG, UPLO, T, I, SIGN}
     @assert length(v) == ncl(F)
 
     Pval = FVector{I}(undef, nfr(F))
-    Cval = FVector{T}(undef, ncl(F))
     Kval = FVector{T}(undef, ne(F.S.rel))
     Fval = FVector{T}(undef, F.S.nFval + F.S.nNval)
     Mval = FVector{T}(undef, F.S.nNval)
 
-    for i in outvertices(F.S.res)
-        Cval[i] = v[F.perm[i]]
-    end
-
-    j = findbag(F.S, Cval); n = zero(I)
+    j = findbag(F.S, v); n = zero(I)
 
     while !iszero(j)
         n += one(I); Pval[n] = j; j = F.S.pnt[j]
@@ -35,37 +41,10 @@ function _lowrankupdate!(F::ChordalLDLt{UPLO, T, I}, v::AbstractVector{T}, sign:
 
     path = view(Pval, oneto(n))
 
-    lowrank_copy!(Kval, path, Cval, F.S.res, F.S.rel)
-    ldlt_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.d, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, F.uplo)
+    lowrank_copy!(Kval, path, v, F.S.res, F.S.rel)
+    lowrank_impl!(Kval, Fval, Mval, path, v, d, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, F.uplo, F.diag)
 
-    return F
-end
-
-function _lowrankupdate!(F::ChordalCholesky{UPLO, T, I}, v::AbstractVector{T}, sign::Val{SIGN}) where {UPLO, T, I, SIGN}
-    @assert length(v) == ncl(F)
-
-    Pval = FVector{I}(undef, nfr(F))
-    Cval = FVector{T}(undef, ncl(F))
-    Kval = FVector{T}(undef, ne(F.S.rel))
-    Fval = FVector{T}(undef, F.S.nFval + F.S.nNval)
-    Mval = FVector{T}(undef, F.S.nNval)
-
-    for i in outvertices(F.S.res)
-        Cval[i] = v[F.perm[i]]
-    end
-
-    j = findbag(F.S, Cval); n = zero(I)
-
-    while !iszero(j)
-        n += one(I); Pval[n] = j; j = F.S.pnt[j]
-    end
-
-    path = view(Pval, oneto(n))
-
-    lowrank_copy!(Kval, path, Cval, F.S.res, F.S.rel)
-    chol_lowrank_impl!(Kval, Fval, Mval, path, Cval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.S.res, F.S.rel, sign, F.uplo)
-
-    return F
+    return zero(I)
 end
 
 function lowrank_copy!(
@@ -105,7 +84,7 @@ function lowrank_copy!(
     return
 end
 
-function ldlt_lowrank_impl!(
+function lowrank_impl!(
         Kval::AbstractVector{T},
         Fval::AbstractVector{T},
         Mval::AbstractVector{T},
@@ -120,6 +99,7 @@ function ldlt_lowrank_impl!(
         rel::AbstractGraph{I},
         sign::Val{SIGN},
         uplo::Val{UPLO},
+        diag::Val{:U},
     ) where {T, I <: Integer, SIGN, UPLO}
 
     path_len = length(path)
@@ -132,12 +112,13 @@ function ldlt_lowrank_impl!(
     return
 end
 
-function chol_lowrank_impl!(
+function lowrank_impl!(
         Kval::AbstractVector{T},
         Fval::AbstractVector{T},
         Mval::AbstractVector{T},
         path::AbstractVector{I},
         Cval::AbstractVector{T},
+        d::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
@@ -146,6 +127,7 @@ function chol_lowrank_impl!(
         rel::AbstractGraph{I},
         sign::Val{SIGN},
         uplo::Val{UPLO},
+        diag::Val{:N},
     ) where {T, I <: Integer, SIGN, UPLO}
 
     path_len = length(path)

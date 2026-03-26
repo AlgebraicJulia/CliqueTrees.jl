@@ -1,43 +1,31 @@
-"""
-    uncholesky!(F::AbstractCholesky)
-
-Compute the product L Lᵀ in place, replacing the Cholesky factor with the
-original matrix. This is the inverse operation of [`cholesky!`](@ref).
-
-### Parameters
-
-  - `F`: Cholesky factorization (will be overwritten with L Lᵀ)
-
-"""
-function uncholesky!(F::ChordalCholesky{UPLO, T, I}) where {UPLO, T, I <: Integer}
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    Wval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-
-    unchol_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval, Wval, F.S.res, F.S.rel, F.S.chd, F.uplo, F.diag)
+function uncholesky!(F::AbstractCholesky)
+    F.info[] = unfactorize!(triangular(F), F.d)
     return F
 end
 
-"""
-    unldlt!(F::AbstractLDLt)
+function uncholesky!(L::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
+    d = Ones{T}(ncl(L))
+    return unfactorize!(L, d)
+end
 
-Compute the product L D Lᵀ in place, replacing the LDLt factor with the
-original matrix. This is the inverse operation of [`ldlt!`](@ref).
-
-### Parameters
-
-  - `F`: LDLt factorization (will be overwritten with L D Lᵀ)
-
-"""
-function unldlt!(F::ChordalLDLt{UPLO, T, I}) where {UPLO, T, I <: Integer}
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    Wval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-
-    unchol_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval, Wval, F.S.res, F.S.rel, F.S.chd, F.uplo, F.diag)
+function unldlt!(F::AbstractLDLt)
+    F.info[] = unfactorize!(triangular(F), F.d)
     return F
+end
+
+function unfactorize!(F::AbstractFactorization)
+    F.info[] = unfactorize!(triangular(F), F.d)
+    return F
+end
+
+function unfactorize!(L::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector) where {DIAG, UPLO, T, I <: Integer}
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+    Wval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+
+    unchol_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, d, Fval, Wval, L.S.res, L.S.rel, L.S.chd, L.uplo, L.diag)
+    return zero(I)
 end
 
 function unchol_impl!(

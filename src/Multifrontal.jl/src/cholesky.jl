@@ -38,14 +38,59 @@ julia> F = cholesky!(ChordalCholesky(A))
 
 """
 function LinearAlgebra.cholesky!(
-        F::AbstractFactorization{:N, UPLO, T},
+        F::AbstractCholesky{UPLO, T},
         pivot::PivotingStrategy=NoPivot();
         check::Bool=true,
         reg::AbstractRegularization=NoRegularization(),
         tol::Real=-one(real(T)),
     ) where {UPLO, T}
-    S = Ones{T}(size(F, 1))
-    return chol!(F, pivot, S, reg, check, tol)
+    signs = Ones{T}(size(F, 1))
+    return factorize!(F, pivot; signs, reg, check, tol)
+end
+
+function LinearAlgebra.cholesky!(
+        L::ChordalTriangular{:N, UPLO, T},
+        pivot::PivotingStrategy;
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    signs = Ones{T}(size(L, 1))
+    d = Ones{T}(size(L, 1))
+    return factorize!(L, d, pivot; signs, reg, check, tol)
+end
+
+function LinearAlgebra.cholesky!(
+        L::ChordalTriangular{:N, UPLO, T},
+        pivot::RowMaximum;
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    signs = Ones{T}(size(L, 1))
+    d = Ones{T}(size(L, 1))
+    return factorize!(L, d, pivot; signs, reg, check, tol)
+end
+
+function LinearAlgebra.cholesky!(
+        L::ChordalTriangular{:N, UPLO, T},
+        ::NoPivot;
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    signs = Ones{T}(size(L, 1))
+    d = Ones{T}(size(L, 1))
+    return factorize!(L, d, NoPivot(); signs, reg, check, tol)
+end
+
+function LinearAlgebra.cholesky!(
+        L::ChordalTriangular{:N, UPLO, T};
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    return cholesky!(L, NoPivot(); check, reg, tol)
 end
 
 """
@@ -92,49 +137,128 @@ julia> F = ldlt!(ChordalLDLt(A))
 
 """
 function LinearAlgebra.ldlt!(
-        F::AbstractFactorization{:U, UPLO, T},
+        F::AbstractLDLt{UPLO, T},
         pivot::PivotingStrategy=NoPivot();
         signs::AbstractVector=Zeros{T}(size(F, 1)),
         reg::AbstractRegularization=NoRegularization(),
         check::Bool=true,
         tol::Real=-one(real(T)),
     ) where {UPLO, T}
-    @assert checksigns(signs, reg)
-    return chol!(F, pivot, signs, reg, check, tol)
+    return factorize!(F, pivot; signs, reg, check, tol)
 end
 
-function chol!(
-        F::ChordalFactorization{DIAG, UPLO, T, I},
-        ::NoPivot,
+function LinearAlgebra.ldlt!(
+        L::ChordalTriangular{:U, UPLO, T},
+        d::AbstractVector{T},
+        pivot::PivotingStrategy=NoPivot();
+        signs::AbstractVector=Zeros{T}(size(L, 1)),
+        reg::AbstractRegularization=NoRegularization(),
+        check::Bool=true,
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    return factorize!(L, d, pivot; signs, reg, check, tol)
+end
+
+# ===== factorize! Level 1: AbstractFactorization =====
+
+function factorize!(
+        F::AbstractFactorization{DIAG, UPLO, T},
+        pivot::PivotingStrategy;
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {DIAG, UPLO, T}
+    S = permuteto(T, signs, F.perm)
+
+    if pivot isa NoPivot
+        info = factorize!(triangular(F), F.d, pivot; signs=S, reg, check, tol)
+    else
+        info = factorize!(triangular(F), F.d, pivot, F.perm, F.invp; signs=S, reg, check, tol)
+    end
+
+    if iszero(info)
+        F.info[] = info
+    else
+        F.info[] = F.perm[info]
+    end
+
+    return F
+end
+
+# ===== factorize! Level 2: ChordalTriangular with kwargs =====
+
+function factorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        pivot::NoPivot;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
-    S = permuteto(T, signs, F.perm)
-    R = initialize(triangular(F), S, reg)
+    @assert checksigns(signs, reg)
 
-    Mptr = FVector{I}(undef, F.S.nMptr)
-    Mval = FVector{T}(undef, F.S.nMval)
-    Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-
-    info = chol_impl!(Mptr, Mval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, F.d, Fval, F.S.res, F.S.rel, F.S.chd, F.uplo, S, R, F.diag)
+    info = factorize!(L, d, pivot, signs, reg, tol)
 
     if isnegative(info)
         throw(ArgumentError(info))
     elseif ispositive(info) && check
         if DIAG === :N
-            throw(PosDefException(F.perm[info]))
+            throw(PosDefException(info))
         else
-            throw(SingularException(F.perm[info]))
+            throw(SingularException(info))
         end
-    elseif ispositive(info) && !check
-        F.info[] = F.perm[info]
-    else
-        F.info[] = zero(I)
     end
 
-    return F
+    return info
+end
+
+function factorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        pivot::RowMaximum,
+        perm::AbstractVector,
+        invp::AbstractVector;
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {DIAG, UPLO, T, I <: Integer}
+    @assert checksigns(signs, reg)
+
+    info = factorize!(L, d, pivot, perm, invp, signs, reg, tol)
+
+    if isnegative(info)
+        throw(ArgumentError(info))
+    elseif ispositive(info) && check
+        if DIAG === :N
+            throw(PosDefException(info))
+        else
+            throw(SingularException(info))
+        end
+    end
+
+    return info
+end
+
+# ===== factorize! Level 3: all positional (core computation) =====
+
+function factorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        ::NoPivot,
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        tol::Real,
+    ) where {DIAG, UPLO, T, I <: Integer}
+    R = initialize(L, signs, reg)
+
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{T}(undef, L.S.nMval)
+    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
+
+    return chol_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, d, Fval, L.S.res, L.S.rel, L.S.chd, L.uplo, signs, R, L.diag)
 end
 
 function chol_impl!(

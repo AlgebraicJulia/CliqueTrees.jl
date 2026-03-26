@@ -9,8 +9,9 @@ end
 
 # --- ChordalTriangular ---
 
-function Base.:\(A::MaybeAdjOrTransTri{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
-    return ldiv!(A, Array{T}(B))
+function Base.:\(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
+    T = promote_eltype(A, B)
+    return ldiv!(A, copyto!(similar(B, T), B))
 end
 
 # ================================== / ==================================
@@ -32,31 +33,115 @@ end
 
 # --- ChordalTriangular ---
 
-function Base.:/(B::AbstractMatrix, A::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    return rdiv!(Matrix{T}(B), A)
+function Base.:/(B::AbstractMatrix, A::MaybeAdjOrTransTri)
+    T = promote_eltype(A, B)
+    return rdiv!(copyto!(similar(B, T), B), A)
 end
 
-function Base.:/(A::TransVec, B::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:/(A::TransVec, B::MaybeAdjOrTransTri)
     return transpose(transpose(B) \ parent(A))
 end
 
-function Base.:/(A::AdjVec, B::MaybeAdjOrTransTri{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function Base.:/(A::AdjVec, B::MaybeAdjOrTransTri)
     return adjoint(adjoint(B) \ parent(A))
+end
+
+function Base.:\(α::Number, A::ChordalTriangular)
+    B = similar(A, promote_eltype(A, α))
+    copyto!(B, A)
+    rdiv!(B, α)
+    return B
+end
+
+function Base.:/(A::ChordalTriangular, α::Number)
+    return α \ A
+end
+
+function Base.:\(α::Number, A::HermOrSymTri)
+    return A / α
+end
+
+function Base.:/(A::HermTri{UPLO}, α::Number) where {UPLO}
+    return Hermitian(parent(A) / α, UPLO)
+end
+
+function Base.:/(A::HermTri{UPLO}, α::Real) where {UPLO}
+    return Hermitian(parent(A) / α, UPLO)
+end
+
+function Base.:/(A::HermTri{UPLO}, α::Complex) where {UPLO}
+    @assert iszero(imag(α))
+    return Hermitian(parent(A) / real(α), UPLO)
+end
+
+function Base.:/(A::SymTri{UPLO}, α::Number) where {UPLO}
+    return Symmetric(parent(A) / α, UPLO)
+end
+
+function Base.:\(α::Number, A::AdjTri)
+    return adjoint(conj(α) \ parent(A))
+end
+
+function Base.:/(A::AdjTri, α::Number)
+    return adjoint(parent(A) / conj(α))
+end
+
+function Base.:\(α::Number, A::TransTri)
+    return transpose(α \ parent(A))
+end
+
+function Base.:/(A::TransTri, α::Number)
+    return transpose(parent(A) / α)
 end
 
 # ================================ ldiv! ================================
 
-# --- Permutation ---
+# --- ChordalTriangular ---
 
-function LinearAlgebra.ldiv!(C::AbstractVecOrMat, A::Permutation, B::AbstractVecOrMat)
-    return mul!(C, inv(A), B)
+function LinearAlgebra.ldiv!(α::Number, C::ChordalTriangular)
+    ldiv!(α, C.Dval)
+    ldiv!(α, C.Lval)
+    return C
 end
 
-function LinearAlgebra.ldiv!(C::Permutation, A::Permutation, B::Permutation)
-    return mul!(C, inv(A), B)
+function LinearAlgebra.ldiv!(α::Number, A::HermTri)
+    ldiv!(α, parent(A))
+    return A
+end
+
+function LinearAlgebra.ldiv!(α::Number, A::SymTri)
+    ldiv!(α, parent(A))
+    return A
+end
+
+function LinearAlgebra.ldiv!(α::Number, A::AdjTri)
+    ldiv!(conj(α), parent(A))
+    return A
+end
+
+function LinearAlgebra.ldiv!(α::Number, A::TransTri)
+    ldiv!(α, parent(A))
+    return A
+end
+
+function LinearAlgebra.ldiv!(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
+    @assert size(A, 1) == size(B, 1)
+    A, tA = unwrap(A)
+    B, tB = unwrap(B)
+    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:L), A.diag)
 end
 
 # --- AbstractFactorization ---
+
+function LinearAlgebra.ldiv!(α::Number, F::AbstractFactorization{DIAG}) where {DIAG}
+    if DIAG === :N
+        ldiv!(sqrt(α), triangular(F))
+    else
+        ldiv!(α, F.D)
+    end
+
+    return F
+end
 
 function LinearAlgebra.ldiv!(F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
@@ -68,34 +153,71 @@ function LinearAlgebra.ldiv!(F::NaturalFactorization{DIAG}, B::AbstractVecOrMat)
     end
 end
 
-function LinearAlgebra.ldiv!(F::AbstractFactorization{DIAG, UPLO, T}, B::AbstractVecOrMat) where {DIAG, UPLO, T}
+function LinearAlgebra.ldiv!(F::AbstractFactorization, B::AbstractVecOrMat)
     @assert size(F, 1) == size(B, 1)
+    T = promote_eltype(F, B)
     C = FArray{T}(undef, size(B))
     return ldiv!!(C, F, B)
 end
 
-# --- ChordalTriangular ---
+# --- Permutation ---
 
-function LinearAlgebra.ldiv!(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
-    @assert size(A, 1) == size(B, 1)
-    A, tA = unwrap(A)
-    B, tB = unwrap(B)
-    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:L), A.diag)
+function LinearAlgebra.ldiv!(C::AbstractVecOrMat, A::Permutation, B::AbstractVecOrMat)
+    return mul!(C, inv(A), B)
+end
+
+function LinearAlgebra.ldiv!(C::Permutation, A::Permutation, B::Permutation)
+    return mul!(C, inv(A), B)
 end
 
 # ================================ rdiv! ================================
 
-# --- Permutation ---
+# --- ChordalTriangular ---
 
-function LinearAlgebra.rdiv!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation)
-    return mul!(C, A, inv(B))
+function LinearAlgebra.rdiv!(C::ChordalTriangular, α::Number)
+    rdiv!(C.Dval, α)
+    rdiv!(C.Lval, α)
+    return C
 end
 
-function LinearAlgebra.rdiv!(C::Permutation, A::Permutation, B::Permutation)
-    return mul!(C, A, inv(B))
+function LinearAlgebra.rdiv!(A::HermTri, α::Number)
+    rdiv!(parent(A), α)
+    return A
+end
+
+function LinearAlgebra.rdiv!(A::SymTri, α::Number)
+    rdiv!(parent(A), α)
+    return A
+end
+
+function LinearAlgebra.rdiv!(A::AdjTri, α::Number)
+    rdiv!(parent(A), conj(α))
+    return A
+end
+
+function LinearAlgebra.rdiv!(A::TransTri, α::Number)
+    rdiv!(parent(A), α)
+    return A
+end
+
+function LinearAlgebra.rdiv!(B::AbstractMatrix, A::MaybeAdjOrTransTri)
+    @assert size(A, 1) == size(B, 2)
+    A, tA = unwrap(A)
+    B, tB = unwrap(B)
+    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:R), A.diag)
 end
 
 # --- AbstractFactorization ---
+
+function LinearAlgebra.rdiv!(F::AbstractFactorization{DIAG}, α::Number) where {DIAG}
+    if DIAG === :N
+        rdiv!(triangular(F), sqrt(α))
+    else
+        rdiv!(F.D, α)
+    end
+
+    return F
+end
 
 function LinearAlgebra.rdiv!(B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
@@ -107,19 +229,21 @@ function LinearAlgebra.rdiv!(B::AbstractMatrix, F::NaturalFactorization{DIAG}) w
     end
 end
 
-function LinearAlgebra.rdiv!(B::AbstractMatrix, F::AbstractFactorization{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function LinearAlgebra.rdiv!(B::AbstractMatrix, F::AbstractFactorization)
     @assert size(F, 1) == size(B, 2)
+    T = promote_eltype(F, B)
     C = FMatrix{T}(undef, size(B))
     return rdiv!!(C, B, F)
 end
 
-# --- ChordalTriangular ---
+# --- Permutation ---
 
-function LinearAlgebra.rdiv!(B::AbstractMatrix, A::MaybeAdjOrTransTri)
-    @assert size(A, 1) == size(B, 2)
-    A, tA = unwrap(A)
-    B, tB = unwrap(B)
-    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:R), A.diag)
+function LinearAlgebra.rdiv!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation)
+    return mul!(C, A, inv(B))
+end
+
+function LinearAlgebra.rdiv!(C::Permutation, A::Permutation, B::Permutation)
+    return mul!(C, A, inv(B))
 end
 
 # ============================== div_impl! ==============================
@@ -130,13 +254,13 @@ function div_impl!(
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
-        B::AbstractVecOrMat,
+        B::AbstractVecOrMat{R},
         tA::Val{TA},
         tB::Val{TB},
         uplo::Val{UPLO},
         side::Val{SIDE},
         diag::Val{DIAG},
-    ) where {T, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
 
     res = S.res
     rel = S.rel
@@ -155,8 +279,8 @@ function div_impl!(
     end
 
     Mptr = FVector{I}(undef, nMptr)
-    Mval = FVector{T}(undef, nNval * nrhs)
-    Fval = FVector{T}(undef, nFval * nrhs)
+    Mval = FVector{R}(undef, nNval * nrhs)
+    Fval = FVector{R}(undef, nFval * nrhs)
 
     ns = zero(I); Mptr[one(I)] = one(I)
 
@@ -174,14 +298,14 @@ function div_impl!(
 end
 
 function div_fwd_loop!(
-        C::AbstractVecOrMat{T},
+        C::AbstractVecOrMat{R},
         Mptr::AbstractVector{I},
-        Mval::AbstractVector{T},
+        Mval::AbstractVector{R},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
-        Fval::AbstractVector{T},
+        Fval::AbstractVector{R},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
@@ -192,7 +316,7 @@ function div_fwd_loop!(
         uplo::Val{UPLO},
         side::Val{SIDE},
         diag::Val{DIAG},
-    ) where {T, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
     #
     # nrhs is the number of right-hand sides
     #
@@ -294,7 +418,7 @@ function div_fwd_loop!(
     if C isa AbstractVector
         trsv!(uplo, tA, diag, D₁₁, C₁)
     else
-        trsm!(side, uplo, tA, diag, one(T), D₁₁, C₁)
+        trsm!(side, uplo, tA, diag, 1, D₁₁, C₁)
     end
 
     if ispositive(na)
@@ -319,21 +443,21 @@ function div_fwd_loop!(
 
         if C isa AbstractVector
             if UPLO === :L
-                gemv!(Val(:N), -one(T), L₂₁, C₁, one(T), M₂)
+                gemv!(Val(:N), -1, L₂₁, C₁, 1, M₂)
             else
-                gemv!(tA, -one(T), L₂₁, C₁, one(T), M₂)
+                gemv!(tA, -1, L₂₁, C₁, 1, M₂)
             end
         elseif SIDE === :L
             if UPLO === :L
-                gemm!(Val(:N), tB, -one(T), L₂₁, C₁, one(T), M₂)
+                gemm!(Val(:N), tB, -1, L₂₁, C₁, 1, M₂)
             else
-                gemm!(tA, tB, -one(T), L₂₁, C₁, one(T), M₂)
+                gemm!(tA, tB, -1, L₂₁, C₁, 1, M₂)
             end
         else
             if UPLO === :L
-                gemm!(tB, tA, -one(T), C₁, L₂₁, one(T), M₂)
+                gemm!(tB, tA, -1, C₁, L₂₁, 1, M₂)
             else
-                gemm!(tB, Val(:N), -one(T), C₁, L₂₁, one(T), M₂)
+                gemm!(tB, Val(:N), -1, C₁, L₂₁, 1, M₂)
             end
         end
     end
@@ -342,14 +466,14 @@ function div_fwd_loop!(
 end
 
 function div_bwd_loop!(
-        C::AbstractVecOrMat{T},
+        C::AbstractVecOrMat{R},
         Mptr::AbstractVector{I},
-        Mval::AbstractVector{T},
+        Mval::AbstractVector{R},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
-        Fval::AbstractVector{T},
+        Fval::AbstractVector{R},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
@@ -360,7 +484,7 @@ function div_bwd_loop!(
         uplo::Val{UPLO},
         side::Val{SIDE},
         diag::Val{DIAG},
-    ) where {T, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
     #
     # nrhs is the number of right-hand sides
     #
@@ -438,21 +562,21 @@ function div_bwd_loop!(
 
         if C isa AbstractVector
             if UPLO === :L
-                gemv!(tA, -one(T), L₂₁, M₂, one(T), C₁)
+                gemv!(tA, -1, L₂₁, M₂, 1, C₁)
             else
-                gemv!(Val(:N), -one(T), L₂₁, M₂, one(T), C₁)
+                gemv!(Val(:N), -1, L₂₁, M₂, 1, C₁)
             end
         elseif SIDE === :L
             if UPLO === :L
-                gemm!(tA, Val(:N), -one(T), L₂₁, M₂, one(T), C₁)
+                gemm!(tA, Val(:N), -1, L₂₁, M₂, 1, C₁)
             else
-                gemm!(Val(:N), Val(:N), -one(T), L₂₁, M₂, one(T), C₁)
+                gemm!(Val(:N), Val(:N), -1, L₂₁, M₂, 1, C₁)
             end
         else
             if UPLO === :L
-                gemm!(Val(:N), Val(:N), -one(T), M₂, L₂₁, one(T), C₁)
+                gemm!(Val(:N), Val(:N), -1, M₂, L₂₁, 1, C₁)
             else
-                gemm!(Val(:N), tA, -one(T), M₂, L₂₁, one(T), C₁)
+                gemm!(Val(:N), tA, -1, M₂, L₂₁, 1, C₁)
             end
         end
     end
@@ -462,7 +586,7 @@ function div_bwd_loop!(
     if C isa AbstractVector
         trsv!(uplo, tA, diag, D₁₁, C₁)
     else
-        trsm!(side, uplo, tA, diag, one(T), D₁₁, C₁)
+        trsm!(side, uplo, tA, diag, 1, D₁₁, C₁)
     end
     #
     # F is the frontal matrix at node j
@@ -517,14 +641,14 @@ function div_bwd_loop!(
 end
 
 function div_fwd_update!(
-        F::AbstractVecOrMat{T},
+        F::AbstractVecOrMat{R},
         ptr::AbstractVector{I},
-        val::AbstractVector{T},
+        val::AbstractVector{R},
         rel::AbstractGraph{I},
         ns::I,
         i::I,
         side::Val{SIDE},
-    ) where {T, I <: Integer, SIDE}
+    ) where {R, I <: Integer, SIDE}
 
     if F isa AbstractVector
         nrhs = one(I)
@@ -561,14 +685,14 @@ function div_fwd_update!(
 end
 
 function div_bwd_update!(
-        F::AbstractVecOrMat{T},
+        F::AbstractVecOrMat{R},
         ptr::AbstractVector{I},
-        val::AbstractVector{T},
+        val::AbstractVector{R},
         rel::AbstractGraph{I},
         ns::I,
         i::I,
         side::Val{SIDE},
-    ) where {T, I <: Integer, SIDE}
+    ) where {R, I <: Integer, SIDE}
 
     if F isa AbstractVector
         nrhs = one(I)

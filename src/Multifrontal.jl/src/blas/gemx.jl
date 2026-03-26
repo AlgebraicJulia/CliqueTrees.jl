@@ -1,20 +1,20 @@
 # ===== gemm! =====
 
-function gemm!(tA::Val, tB::Val, α::T, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β::T, C::AbstractMatrix{T}) where {T <: BlasFloat}
-    BLAS.gemm!(char(tA), char(tB), α, A, B, β, C)
+function gemm!(tA::Val, tB::Val, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β, C::AbstractMatrix{T}) where {T <: BlasFloat}
+    BLAS.gemm!(char(tA), char(tB), convert(T, α), A, B, convert(T, β), C)
     return
 end
 
-function gemm!(tA::Val, tB::Val, α::T, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β::T, C::AbstractMatrix{T}) where {T}
+function gemm!(tA::Val, tB::Val, α, A::AbstractMatrix, B::AbstractMatrix, β, C::AbstractMatrix)
     gemx!(tA, tB, α, A, B, β, C)
     return
 end
 
-function gemm!(tA::Val, tB::Val, α::T, ::AbstractVector{T}, A::AbstractMatrix{T}, B::AbstractMatrix{T}, ::AbstractVector{T}, β::T, C::AbstractMatrix{T}, ::Val{:N}) where {T}
+function gemm!(tA::Val, tB::Val, α, ::AbstractVector, A::AbstractMatrix, B::AbstractMatrix, ::AbstractVector, β, C::AbstractMatrix, ::Val{:N})
     return gemm!(tA, tB, α, A, B, β, C)
 end
 
-function gemm!(tA::Val{TA}, tB::Val{TB}, α::T, W::AbstractVector{T}, A::AbstractMatrix{T}, B::AbstractMatrix{T}, d::AbstractVector{T}, β::T, C::AbstractMatrix{T}, ::Val{:U}) where {T, TA, TB}
+function gemm!(tA::Val{TA}, tB::Val{TB}, α, W::AbstractVector, A::AbstractMatrix, B::AbstractMatrix, d::AbstractVector, β, C::AbstractMatrix, ::Val{:U}) where {TA, TB}
     D = reshape(view(W, 1:length(A)), size(A))
     copyrec!(D, A)
 
@@ -30,19 +30,19 @@ end
 
 # ===== gemv! =====
 
-function gemv!(tA::Val, α::T, A::AbstractMatrix{T}, b::AbstractVector{T}, β::T, c::AbstractVector{T}) where {T <: BlasFloat}
-    BLAS.gemv!(char(tA), α, A, b, β, c)
+function gemv!(tA::Val, α, A::AbstractMatrix{T}, b::AbstractVector{T}, β, c::AbstractVector{T}) where {T <: BlasFloat}
+    BLAS.gemv!(char(tA), convert(T, α), A, b, convert(T, β), c)
     return
 end
 
-function gemv!(tA::Val, α::T, A::AbstractMatrix{T}, b::AbstractVector{T}, β::T, c::AbstractVector{T}) where {T}
+function gemv!(tA::Val, α, A::AbstractMatrix, b::AbstractVector, β, c::AbstractVector)
     gemx!(tA, Val(:N), α, A, b, β, c)
     return
 end
 
 # ===== gemx! =====
 
-function gemx!(tA::Val{TA}, tB::Val{TB}, α::T, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, β::T, C::AbstractVecOrMat{T}) where {T, TA, TB}
+function gemx!(tA::Val{TA}, tB::Val{TB}, α, A::AbstractMatrix, B::AbstractVecOrMat, β, C::AbstractVecOrMat) where {TA, TB}
     m = size(C, 1)
     n = size(C, 2)
 
@@ -117,18 +117,26 @@ function gemx!(tA::Val{TA}, tB::Val{TB}, α::T, A::AbstractMatrix{T}, B::Abstrac
                 B₂ = view(B, :, l + 1:k)
             end
 
-            gemx!(tA, tB, α, A₁, B₁,      β, C)
-            gemx!(tA, tB, α, A₂, B₂, one(T), C)
+            gemx!(tA, tB, α, A₁, B₁, β, C)
+            gemx!(tA, tB, α, A₂, B₂, 1, C)
         end
     end
 
     return
 end
 
-function gemx2!(::Val{:N}, ::Val{:N}, α, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, β, C::AbstractVecOrMat{T}) where {T}
-    @inbounds @fastmath for j in axes(C, 2)
-        for i in axes(C, 1)
-            C[i, j] *= β
+function gemx2!(::Val{:N}, ::Val{:N}, α, A::AbstractMatrix, B::AbstractVecOrMat, β, C::AbstractVecOrMat)
+    if iszero(β)
+        @inbounds @fastmath for j in axes(C, 2)
+            for i in axes(C, 1)
+                C[i, j] = β
+            end
+        end
+    else
+        @inbounds @fastmath for j in axes(C, 2)
+            for i in axes(C, 1)
+                C[i, j] *= β
+            end
         end
     end
 
@@ -145,10 +153,18 @@ function gemx2!(::Val{:N}, ::Val{:N}, α, A::AbstractMatrix{T}, B::AbstractVecOr
     return
 end
 
-function gemx2!(::Val{:N}, ::Val{TB}, α, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, β, C::AbstractVecOrMat{T}) where {T, TB}
-    @inbounds @fastmath for j in axes(C, 2)
-        for i in axes(C, 1)
-            C[i, j] *= β
+function gemx2!(::Val{:N}, ::Val{TB}, α, A::AbstractMatrix, B::AbstractVecOrMat, β, C::AbstractVecOrMat) where {TB}
+    if iszero(β)
+        @inbounds @fastmath for j in axes(C, 2)
+            for i in axes(C, 1)
+                C[i, j] = β
+            end
+        end
+    else
+        @inbounds @fastmath for j in axes(C, 2)
+            for i in axes(C, 1)
+                C[i, j] *= β
+            end
         end
     end
 
@@ -169,10 +185,10 @@ function gemx2!(::Val{:N}, ::Val{TB}, α, A::AbstractMatrix{T}, B::AbstractVecOr
     return
 end
 
-function gemx2!(::Val{TA}, ::Val{:N}, α, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, β, C::AbstractVecOrMat{T}) where {T, TA}
+function gemx2!(::Val{TA}, ::Val{:N}, α, A::AbstractMatrix, B::AbstractVecOrMat, β, C::AbstractVecOrMat) where {TA}
     @inbounds @fastmath for j in axes(C, 2)
         for i in axes(C, 1)
-            Δ = zero(T)
+            Δ = zero(promote_eltype(A, B))
 
             for k in axes(A, 1)
                 if TA === :C
@@ -182,17 +198,21 @@ function gemx2!(::Val{TA}, ::Val{:N}, α, A::AbstractMatrix{T}, B::AbstractVecOr
                 end
             end
 
-            C[i, j] = α * Δ + β * C[i, j]
+            if iszero(β)
+                C[i, j] = α * Δ
+            else
+                C[i, j] = α * Δ + β * C[i, j]
+            end
         end
     end
 
     return
 end
 
-function gemx2!(::Val{TA}, ::Val{TB}, α, A::AbstractMatrix{T}, B::AbstractVecOrMat{T}, β, C::AbstractVecOrMat{T}) where {T, TA, TB}
+function gemx2!(::Val{TA}, ::Val{TB}, α, A::AbstractMatrix, B::AbstractVecOrMat, β, C::AbstractVecOrMat) where {TA, TB}
     @inbounds @fastmath for j in axes(C, 2)
         for i in axes(C, 1)
-            Δ = zero(T)
+            Δ = zero(promote_eltype(A, B))
 
             for k in axes(A, 1)
                 if TA === :C
@@ -208,7 +228,11 @@ function gemx2!(::Val{TA}, ::Val{TB}, α, A::AbstractMatrix{T}, B::AbstractVecOr
                 end
             end
 
-            C[i, j] = α * Δ + β * C[i, j]
+            if iszero(β)
+                C[i, j] = α * Δ
+            else
+                C[i, j] = α * Δ + β * C[i, j]
+            end
         end
     end
 

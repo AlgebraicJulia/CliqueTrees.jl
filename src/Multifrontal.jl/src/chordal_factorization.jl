@@ -145,7 +145,7 @@ end
 
 function ChordalFactorization{DIAG, UPLO, T, I, Dia, Dvl, Lvl, Prm, Ivp, Ifo}(
         perm::AbstractVector,
-        S::ChordalSymbolic,
+        S::ChordalSymbolic{I},
     ) where {
         DIAG,
         UPLO,
@@ -171,6 +171,19 @@ function ChordalFactorization{DIAG, UPLO, T, I, Dia, Dvl, Lvl, Prm, Ivp, Ifo}(
     return ChordalFactorization{DIAG, UPLO, T, I, Dia, Dvl, Lvl, Prm, Ivp, Ifo}(S, d, Dval, Lval, perm, invp, info)
 end
 
+for Fac in (:FChordalCholesky, :DChordalCholesky, :FChordalLDLt, :DChordalLDLt)
+    @eval function $Fac{UPLO, T}(
+            perm::AbstractVector,
+            S::ChordalSymbolic{I},
+        ) where {
+            UPLO,
+            T,
+            I <: Integer,
+        }
+        return $Fac{UPLO, T, I}(perm, S)
+    end
+end
+
 function ChordalFactorization{DIAG, UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I <: Integer, Prm <: AbstractVector{I}}
     if DIAG === :N
         Dia = IOnes{T}
@@ -179,14 +192,6 @@ function ChordalFactorization{DIAG, UPLO, T}(perm::Prm, S::ChordalSymbolic{I}) w
     end
 
     return ChordalFactorization{DIAG, UPLO, T, I, Dia, FVector{T}, FVector{T}, Prm, Prm, FScalar{I}}(perm, S)
-end
-
-function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T}
-    return ChordalFactorization{DIAG, UPLO, T}(A, perm, S)
-end
-
-function ChordalFactorization{DIAG, UPLO}(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T <: Integer}
-    return ChordalFactorization{DIAG, UPLO, float(T)}(A, perm, S)
 end
 
 function (::Type{Fac})(A::AbstractMatrix; kw...) where {DIAG, Fac <: ChordalFactorization{DIAG}}
@@ -213,7 +218,23 @@ function (::Type{Fac})(A::HermOrSym; kw...) where {DIAG, UPLO, Fac <: ChordalFac
     return Fac(A, symbolic(A; kw...)...)
 end
 
-function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, Fac <: ChordalFactorization{DIAG, UPLO}}
+function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, Fac <: ChordalFactorization{DIAG}}
+    return Fac{DEFAULT_UPLO}(A, perm, S)
+end
+
+function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return Fac{T}(A, perm, S)
+end
+
+function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T <: Integer, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return Fac{float(T)}(A, perm, S)
+end
+
+function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T <: Integer, R, Fac <: ChordalFactorization{DIAG, UPLO, R}}
+    return copy!(Fac(perm, S), A)
+end
+
+function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T, Fac <: ChordalFactorization{DIAG, UPLO, T}}
     return copy!(Fac(perm, S), A)
 end
 
@@ -273,14 +294,14 @@ function Base.propertynames(::ChordalFactorization)
     return (:L, :U, :D, :P, :S, :d, :Dval, :Lval, :perm, :invp, :info)
 end
 
-function Base.similar(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+function Base.similar(F::ChordalFactorization{DIAG, UPLO}, ::Type{T}=eltype(F)) where {DIAG, UPLO, T}
     if DIAG === :N
         d = F.d
     else
-        d = similar(F.d)
+        d = similar(F.d, T)
     end
 
-    return ChordalFactorization{DIAG, UPLO}(F.S, d, similar(F.Dval), similar(F.Lval), F.perm, F.invp, similar(F.info))
+    return ChordalFactorization{DIAG, UPLO}(F.S, d, similar(F.Dval, T), similar(F.Lval, T), F.perm, F.invp, similar(F.info))
 end
 
 # ===== flatindices =====
@@ -330,5 +351,9 @@ end
 
 function offdblock(F::ChordalFactorization, j::Integer)
     return offdblock(ChordalTriangular(F), j)
+end
+
+function symbolic(F::ChordalFactorization)
+    return symbolic(triangular(F))
 end
 
