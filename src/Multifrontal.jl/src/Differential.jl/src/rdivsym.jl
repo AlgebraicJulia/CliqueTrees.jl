@@ -41,8 +41,9 @@ end
 
 function rdiv_rrule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, y::AbstractMatrix, Δy::AbstractMatrix) where {UPLO}
     Δx = rdiv(Δy, P, L)
-    ΔP = zero(parent(P))
-    selupd!(ΔP, y', Δx, -1, 0)
+    ΔP = similar(parent(P))
+    selupd!(ΔP, y', Δx, -1 / 2, 0)
+    selupd!(ΔP, Δx', y, -1 / 2, 1)
     return ΔP, Δx
 end
 

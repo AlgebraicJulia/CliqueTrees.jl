@@ -38,3 +38,7 @@ function cholesky_frule_impl(H::HermOrSymTri{UPLO}, dH::ChordalTriangular{:N, UP
     dfcholesky!(dL, L; adj=false, inv=false)
     return L, dL
 end
+
+function cholesky_frule_impl(H::HermOrSymTri, ::ZeroTangent)
+    return cholesky(H), ZeroTangent()
+end

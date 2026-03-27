@@ -30,6 +30,14 @@ function flat_rrule_impl(H::HermOrSymTri, y, Δy::AbstractVector)
     return unflatsym(Δy, parent(H).S, parent(H).uplo)
 end
 
+function flat_frule_impl(L::ChordalTriangular{:N}, ::ZeroTangent)
+    return flat(L), ZeroTangent()
+end
+
+function flat_frule_impl(H::HermOrSymTri, ::ZeroTangent)
+    return flat(H), ZeroTangent()
+end
+
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(flat), L::ChordalTriangular{:N})
     return flat_frule_impl(L, dL)
 end

@@ -27,6 +27,14 @@ function tr_rrule_impl(H::HermOrSymTri, y, Δy)
     return tr_rrule_impl(parent(H), y, Δy)
 end
 
+function tr_frule_impl(L::ChordalTriangular{:N}, ::ZeroTangent)
+    return tr(L), ZeroTangent()
+end
+
+function tr_frule_impl(H::HermOrSymTri, ::ZeroTangent)
+    return tr(H), ZeroTangent()
+end
+
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(tr), L::ChordalTriangular{:N})
     return tr_frule_impl(L, dL)
 end

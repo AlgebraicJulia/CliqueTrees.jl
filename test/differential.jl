@@ -6,12 +6,12 @@ using MatrixMarket
 using SuiteSparseMatrixCollection
 using CliqueTrees
 using ChainRules
-using ChainRulesCore: NoTangent, unthunk
+using ChainRulesCore: ProjectTo, NoTangent, ZeroTangent, unthunk
 using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri
 using CliqueTrees.Multifrontal: chordal, symbolic, ndz, nlz
 using CliqueTrees.Multifrontal.Differential
 using CliqueTrees.Multifrontal.Differential: frule, rrule
-using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, soft
+using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, soft, sigmoid
 using CliqueTrees.Multifrontal.Differential: flat, unflattri, unflatsym
 using CliqueTrees.Multifrontal.Differential: ldiv, rdiv
 
@@ -27,9 +27,7 @@ if !@isdefined(readmatrix)
 end
 
 @testset "differentiation (manual)" begin
-    A = SparseMatrixCSC{Float64}(readmatrix("685_bus"))
-
-    rtol = 2e-3
+    M = readmatrix("685_bus")
 
     # Helper to create random tangent for ChordalTriangular
     function randtangent(L::ChordalTriangular)
@@ -39,858 +37,622 @@ end
         return dL
     end
 
-    for UPLO in (:L, :U)
-        perm, S = symbolic(A)
-        H = chordal(A, perm, S, Val(UPLO))
-        L = cholesky(H)
-        n = size(L, 1)
+    # Helper for comparing tangents (handles ZeroTangent)
+    tangent_approx(a, b) = iszero(a) && iszero(b) || a ≈ b
 
-        @testset "UPLO = $UPLO" begin
-            @testset "cholesky" begin
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    L_out, dL = frule((NoTangent(), dH), cholesky, H)
+    for T in (Float64, BigFloat)
+        A = SparseMatrixCSC{T}(M)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    dL_fd = (L2 - L_out) / 1e-7
-                    @test isapprox(dL, dL_fd; rtol=rtol)
+        for UPLO in (:L, :U)
+            P, S = symbolic(A)
+            H = chordal(A, P, S, Val(UPLO))
+            L = cholesky(H)
+            n = size(L, 1)
+
+            @testset "T = $T, UPLO = $UPLO" begin
+                @testset "cholesky" begin
+                    PH = ProjectTo(H) ∘ unthunk
+                    PL = ProjectTo(L) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for ΔL in (randtangent(L), ZeroTangent())
+                            _, dL = frule((NoTangent(), dH), cholesky, H)
+                            _, pullback = rrule(cholesky, H)
+                            _, ΔH = pullback(ΔL)
+
+                            lhs = dot(PL(ΔL), PL(dL))
+                            rhs = dot(PH(ΔH), PH(dH))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    L_out, pullback = rrule(cholesky, H)
-                    ΔL = randtangent(L)
-                    dH = randtangent(L)
-                    _, ΔH = pullback(ΔL)
+                @testset "uncholesky" begin
+                    PH = ProjectTo(H) ∘ unthunk
+                    PL = ProjectTo(L) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for ΔH in (randtangent(L), ZeroTangent())
+                            _, dH = frule((NoTangent(), dL), uncholesky, L)
+                            _, pullback = rrule(uncholesky, L)
+                            _, ΔL = pullback(ΔH)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    dL = (L2 - L_out) / 1e-7
-                    lhs = dot(ΔL, dL)
-                    rhs = dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO))
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "uncholesky" begin
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    H_out, dH = frule((NoTangent(), dL), uncholesky, L)
-
-                    L2 = L + 1e-7 * dL
-                    H2 = uncholesky(L2)
-                    dH_fd = (parent(H2) - parent(H_out)) / 1e-7
-                    @test isapprox(dH, dH_fd; rtol=rtol)
+                            lhs = dot(PH(ΔH), PH(dH))
+                            rhs = dot(PL(ΔL), PL(dL))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    H_out, pullback = rrule(uncholesky, L)
-                    ΔH = randtangent(L)
-                    dL = randtangent(L)
-                    _, ΔL = pullback(ΔH)
+                @testset "L \\ x" begin
+                    x = randn(T, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for Δy in (randn(T, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dL, dx), \, L, x)
+                                _, pullback = rrule(\, L, x)
+                                _, ΔL, Δx = pullback(Δy)
 
-                    L2 = L + 1e-7 * dL
-                    H2 = uncholesky(L2)
-                    dH = (parent(H2) - parent(H_out)) / 1e-7
-                    lhs = dot(Hermitian(ΔH, UPLO), Hermitian(dH, UPLO))
-                    rhs = dot(unthunk(ΔL), dL)
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "L \\ x" begin
-                x = randn(n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(n)
-                    y, dy = frule((NoTangent(), dL, dx), \, L, x)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = L2 \ (x + 1e-7 * dx)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(\, L, x)
-                    Δy = randn(n)
-                    dx = randn(n)
-                    _, ΔL, Δx = pullback(Δy)
+                @testset "L' \\ x" begin
+                    x = randn(T, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for Δy in (randn(T, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dL, dx), \, L', x)
+                                _, pullback = rrule(\, L', x)
+                                _, ΔL, Δx = pullback(Δy)
 
-                    y2 = L \ (x + 1e-7 * dx)
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "L' \\ x" begin
-                x = randn(n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(n)
-                    y, dy = frule((NoTangent(), dL, dx), \, L', x)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = L2' \ (x + 1e-7 * dx)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(\, L', x)
-                    Δy = randn(n)
-                    dx = randn(n)
-                    _, ΔL, Δx = pullback(Δy)
+                @testset "L * x" begin
+                    x = randn(T, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for Δy in (randn(T, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dL, dx), *, L, x)
+                                _, pullback = rrule(*, L, x)
+                                _, ΔL, Δx = pullback(Δy)
 
-                    y2 = L' \ (x + 1e-7 * dx)
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "L * x" begin
-                x = randn(n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(n)
-                    y, dy = frule((NoTangent(), dL, dx), *, L, x)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = L2 * (x + 1e-7 * dx)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, L, x)
-                    Δy = randn(n)
-                    dx = randn(n)
-                    _, ΔL, Δx = pullback(Δy)
+                @testset "L' * x" begin
+                    x = randn(T, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for Δy in (randn(T, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dL, dx), *, L', x)
+                                _, pullback = rrule(*, L', x)
+                                _, ΔL, Δx = pullback(Δy)
 
-                    y2 = L * (x + 1e-7 * dx)
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "L' * x" begin
-                x = randn(n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(n)
-                    y, dy = frule((NoTangent(), dL, dx), *, L', x)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = L2' * (x + 1e-7 * dx)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, L', x)
-                    Δy = randn(n)
-                    dx = randn(n)
-                    _, ΔL, Δx = pullback(Δy)
+                @testset "x / L" begin
+                    x = randn(T, 1, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, 1, n), ZeroTangent())
+                            for Δy in (randn(T, 1, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dx, dL), /, x, L)
+                                _, pullback = rrule(/, x, L)
+                                _, Δx, ΔL = pullback(Δy)
 
-                    y2 = L' * (x + 1e-7 * dx)
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "x / L" begin
-                x = randn(1, n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(1, n)
-                    y, dy = frule((NoTangent(), dx, dL), /, x, L)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = (x + 1e-7 * dx) / L2
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(/, x, L)
-                    Δy = randn(1, n)
-                    dx = randn(1, n)
-                    _, Δx, ΔL = pullback(Δy)
+                @testset "x / L'" begin
+                    x = randn(T, 1, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, 1, n), ZeroTangent())
+                            for Δy in (randn(T, 1, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dx, dL), /, x, L')
+                                _, pullback = rrule(/, x, L')
+                                _, Δx, ΔL = pullback(Δy)
 
-                    y2 = (x + 1e-7 * dx) / L
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "x / L'" begin
-                x = randn(1, n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(1, n)
-                    y, dy = frule((NoTangent(), dx, dL), /, x, L')
-
-                    L2 = L + 1e-7 * dL
-                    y2 = (x + 1e-7 * dx) / L2'
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(/, x, L')
-                    Δy = randn(1, n)
-                    dx = randn(1, n)
-                    _, Δx, ΔL = pullback(Δy)
+                @testset "x * L" begin
+                    x = randn(T, 1, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, 1, n), ZeroTangent())
+                            for Δy in (randn(T, 1, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dx, dL), *, x, L)
+                                _, pullback = rrule(*, x, L)
+                                _, Δx, ΔL = pullback(Δy)
 
-                    y2 = (x + 1e-7 * dx) / L'
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "x * L" begin
-                x = randn(1, n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(1, n)
-                    y, dy = frule((NoTangent(), dx, dL), *, x, L)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = (x + 1e-7 * dx) * L2
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, x, L)
-                    Δy = randn(1, n)
-                    dx = randn(1, n)
-                    _, Δx, ΔL = pullback(Δy)
+                @testset "x * L'" begin
+                    x = randn(T, 1, n)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, 1, n), ZeroTangent())
+                            for Δy in (randn(T, 1, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dx, dL), *, x, L')
+                                _, pullback = rrule(*, x, L')
+                                _, Δx, ΔL = pullback(Δy)
 
-                    y2 = (x + 1e-7 * dx) * L
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "x * L'" begin
-                x = randn(1, n)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    dx = randn(1, n)
-                    y, dy = frule((NoTangent(), dx, dL), *, x, L')
-
-                    L2 = L + 1e-7 * dL
-                    y2 = (x + 1e-7 * dx) * L2'
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, x, L')
-                    Δy = randn(1, n)
-                    dx = randn(1, n)
-                    _, Δx, ΔL = pullback(Δy)
+                @testset "logdet" begin
+                    PL = ProjectTo(L) ∘ unthunk
+                    Py = ProjectTo(one(T)) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for Δy in (randn(T), ZeroTangent())
+                            _, dy = frule((NoTangent(), dL), logdet, L)
+                            _, pullback = rrule(logdet, L)
+                            _, ΔL = pullback(Δy)
 
-                    y2 = (x + 1e-7 * dx) * L'
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "logdet" begin
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    y, dy = frule((NoTangent(), dL), logdet, L)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = logdet(L2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                            lhs = dot(Py(Δy), Py(dy))
+                            rhs = dot(PL(ΔL), PL(dL))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(logdet, L)
-                    Δy = randn()
-                    dL = randtangent(L)
-                    _, ΔL = pullback(Δy)
+                @testset "logdet(H, L)" begin
+                    PH = ProjectTo(H) ∘ unthunk
+                    Py = ProjectTo(one(T)) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for Δy in (randn(T), ZeroTangent())
+                            _, dy = frule((NoTangent(), dH, NoTangent()), logdet, H, L)
+                            _, pullback = rrule(logdet, H, L)
+                            _, ΔH, _ = pullback(Δy)
 
-                    L2 = L + 1e-7 * dL
-                    dy = (logdet(L2) - y) / 1e-7
-                    @test isapprox(Δy * dy, dot(unthunk(ΔL), dL); rtol=rtol)
-                end
-            end
-
-            @testset "logdet(H, L)" begin
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dH, NoTangent()), logdet, H, L)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    y2 = logdet(H2, L2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                            lhs = dot(Py(Δy), Py(dy))
+                            rhs = dot(PH(ΔH), PH(dH))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(logdet, H, L)
-                    Δy = randn()
-                    dH = randtangent(L)
-                    _, ΔH, _ = pullback(Δy)
+                @testset "diag" begin
+                    PL = ProjectTo(L) ∘ unthunk
+                    Py = ProjectTo(randn(T, n)) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for Δy in (randn(T, n), ZeroTangent())
+                            _, dy = frule((NoTangent(), dL), diag, L)
+                            _, pullback = rrule(diag, L)
+                            _, ΔL = pullback(Δy)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    dy = (logdet(H2, L2) - y) / 1e-7
-                    @test isapprox(Δy * dy, dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "diag" begin
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    y, dy = frule((NoTangent(), dL), diag, L)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = diag(L2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                            lhs = dot(Py(Δy), Py(dy))
+                            rhs = dot(PL(ΔL), PL(dL))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(diag, L)
-                    Δy = randn(size(L, 1))
-                    dL = randtangent(L)
-                    _, ΔL = pullback(Δy)
+                @testset "selinv" begin
+                    PL = ProjectTo(L) ∘ unthunk
+                    PH = ProjectTo(H) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for ΔY in (randtangent(L), ZeroTangent())
+                            _, dY = frule((NoTangent(), dL), selinv, L)
+                            _, pullback = rrule(selinv, L)
+                            _, ΔL = pullback(ΔY)
 
-                    L2 = L + 1e-7 * dL
-                    dy = (diag(L2) - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(ΔL), dL); rtol=rtol)
-                end
-            end
-
-            @testset "selinv" begin
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    Y, dY = frule((NoTangent(), dL), selinv, L)
-
-                    L2 = L + 1e-7 * dL
-                    Y2 = selinv(L2)
-                    dY_fd = (parent(Y2) - parent(Y)) / 1e-7
-                    @test isapprox(dY, dY_fd; rtol=rtol)
+                            lhs = dot(PH(ΔY), PH(dY))
+                            rhs = dot(PL(ΔL), PL(dL))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    Y, pullback = rrule(selinv, L)
-                    ΔY = randtangent(L)
-                    dL = randtangent(L)
-                    _, ΔL = pullback(ΔY)
+                @testset "selinv(H, L)" begin
+                    PH = ProjectTo(H) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for ΔY in (randtangent(L), ZeroTangent())
+                            _, dY = frule((NoTangent(), dH, NoTangent()), selinv, H, L)
+                            _, pullback = rrule(selinv, H, L)
+                            _, ΔH, _ = pullback(ΔY)
 
-                    L2 = L + 1e-7 * dL
-                    Y2 = selinv(L2)
-                    dY = (parent(Y2) - parent(Y)) / 1e-7
-                    lhs = dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO))
-                    rhs = dot(unthunk(ΔL), dL)
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "selinv(H, L)" begin
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    Y, dY = frule((NoTangent(), dH, NoTangent()), selinv, H, L)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    Y2 = selinv(H2, L2)
-                    dY_fd = (parent(Y2) - parent(Y)) / 1e-7
-                    @test isapprox(dY, dY_fd; rtol=rtol)
+                            lhs = dot(PH(ΔY), PH(dY))
+                            rhs = dot(PH(ΔH), PH(dH))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    Y, pullback = rrule(selinv, H, L)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, ΔH, _ = pullback(ΔY)
+                @testset "ldiv(H, L, x)" begin
+                    x = randn(T, n)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for Δy in (randn(T, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dH, NoTangent(), dx), ldiv, H, L, x)
+                                _, pullback = rrule(ldiv, H, L, x)
+                                _, ΔH, _, Δx = pullback(Δy)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    Y2 = selinv(H2, L2)
-                    dY = (parent(Y2) - parent(Y)) / 1e-7
-                    lhs = dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO))
-                    rhs = dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO))
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "ldiv(H, L, x)" begin
-                x = randn(n)
-
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    dx = randn(n)
-                    y, dy = frule((NoTangent(), dH, NoTangent(), dx), ldiv, H, L, x)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    y2 = ldiv(H2, L2, x + 1e-7 * dx)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(PH(ΔH), PH(dH)) + dot(Px(Δx), Px(dx))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(ldiv, H, L, x)
-                    Δy = randn(n)
-                    dH = randtangent(L)
-                    dx = randn(n)
-                    _, ΔH, _, Δx = pullback(Δy)
+                @testset "rdiv(x, H, L)" begin
+                    x = randn(T, 1, n)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, 1, n), ZeroTangent())
+                            for Δy in (randn(T, 1, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dx, dH, NoTangent()), rdiv, x, H, L)
+                                _, pullback = rrule(rdiv, x, H, L)
+                                _, Δx, ΔH, _ = pullback(Δy)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    dy_H = (ldiv(H2, L2, x) - y) / 1e-7
-                    dy_x = (ldiv(H, L, x + 1e-7 * dx) - y) / 1e-7
-                    @test isapprox(dot(Δy, dy_H), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                    @test isapprox(dot(Δy, dy_x), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "rdiv(x, H, L)" begin
-                x = randn(1, n)
-
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    dx = randn(1, n)
-                    y, dy = frule((NoTangent(), dx, dH, NoTangent()), rdiv, x, H, L)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    y2 = rdiv(x + 1e-7 * dx, H2, L2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(Px(Δx), Px(dx)) + dot(PH(ΔH), PH(dH))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(rdiv, x, H, L)
-                    Δy = randn(1, n)
-                    dH = randtangent(L)
-                    dx = randn(1, n)
-                    _, Δx, ΔH, _ = pullback(Δy)
+                @testset "soft" begin
+                    L_in = copy(L)
+                    randn!(L_in.Dval)
+                    randn!(L_in.Lval)
+                    PL = ProjectTo(L) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for ΔY in (randtangent(L), ZeroTangent())
+                            _, dY = frule((NoTangent(), dL), soft, L_in)
+                            _, pullback = rrule(soft, L_in)
+                            _, ΔL = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    L2 = cholesky(H2)
-                    dy_H = (rdiv(x, H2, L2) - y) / 1e-7
-                    dy_x = (rdiv(x + 1e-7 * dx, H, L) - y) / 1e-7
-                    @test isapprox(dot(Δy, dy_H), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                    @test isapprox(dot(Δy, dy_x), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "soft" begin
-                L_in = copy(L)
-                randn!(L_in.Dval)
-                randn!(L_in.Lval)
-
-                @testset "frule" begin
-                    dL = randtangent(L)
-                    Y, dY = frule((NoTangent(), dL), soft, L_in)
-
-                    L2 = L_in + 1e-7 * dL
-                    Y2 = soft(L2)
-                    dY_fd = (Y2 - Y) / 1e-7
-                    @test isapprox(dY, dY_fd; rtol=rtol)
+                            lhs = dot(PL(ΔY), PL(dY))
+                            rhs = dot(PL(ΔL), PL(dL))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    Y, pullback = rrule(soft, L_in)
-                    ΔY = randtangent(L)
-                    dL = randtangent(L)
-                    _, ΔL = pullback(ΔY)
+                @testset "H * x" begin
+                    x = randn(T, n)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for Δy in (randn(T, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dH, dx), *, H, x)
+                                _, pullback = rrule(*, H, x)
+                                _, ΔH, Δx = pullback(Δy)
 
-                    L2 = L_in + 1e-7 * dL
-                    Y2 = soft(L2)
-                    dY = (Y2 - Y) / 1e-7
-                    lhs = dot(ΔY, dY)
-                    rhs = dot(unthunk(ΔL), dL)
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "H * x" begin
-                x = randn(n)
-
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    dx = randn(n)
-                    y, dy = frule((NoTangent(), dH, dx), *, H, x)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = H2 * (x + 1e-7 * dx)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(PH(ΔH), PH(dH)) + dot(Px(Δx), Px(dx))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, H, x)
-                    Δy = randn(n)
-                    dx = randn(n)
-                    _, ΔH, Δx = pullback(Δy)
+                @testset "x * H" begin
+                    x = randn(T, 1, n)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, 1, n), ZeroTangent())
+                            for Δy in (randn(T, 1, n), ZeroTangent())
+                                _, dy = frule((NoTangent(), dx, dH), *, x, H)
+                                _, pullback = rrule(*, x, H)
+                                _, Δx, ΔH = pullback(Δy)
 
-                    y2 = H * (x + 1e-7 * dx)
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "x * H" begin
-                x = randn(1, n)
-
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    dx = randn(1, n)
-                    y, dy = frule((NoTangent(), dx, dH), *, x, H)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = (x + 1e-7 * dx) * H2
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Px(Δy), Px(dy))
+                                rhs = dot(Px(Δx), Px(dx)) + dot(PH(ΔH), PH(dH))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, x, H)
-                    Δy = randn(1, n)
-                    dx = randn(1, n)
-                    _, Δx, ΔH = pullback(Δy)
+                @testset "dot(A, B)" begin
+                    A_parent = randtangent(L)
+                    B_parent = randtangent(L)
+                    A_herm = Hermitian(A_parent, UPLO)
+                    B_herm = Hermitian(B_parent, UPLO)
+                    PA = ProjectTo(A_herm) ∘ unthunk
+                    PB = ProjectTo(B_herm) ∘ unthunk
+                    Py = ProjectTo(one(T)) ∘ unthunk
+                    for dA in (randtangent(L), ZeroTangent())
+                        for dB in (randtangent(L), ZeroTangent())
+                            for Δy in (randn(T), ZeroTangent())
+                                _, dy = frule((NoTangent(), dA, dB), dot, A_herm, B_herm)
+                                _, pullback = rrule(dot, A_herm, B_herm)
+                                _, ΔA, ΔB = pullback(Δy)
 
-                    y2 = (x + 1e-7 * dx) * H
-                    dy = (y2 - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(unthunk(Δx), dx); rtol=rtol)
-                end
-            end
-
-            @testset "dot(A, B)" begin
-                A_parent = randtangent(L)
-                B_parent = randtangent(L)
-                A_herm = Hermitian(A_parent, UPLO)
-                B_herm = Hermitian(B_parent, UPLO)
-
-                @testset "frule" begin
-                    dA = randtangent(L)
-                    dB = randtangent(L)
-                    y, dy = frule((NoTangent(), dA, dB), dot, A_herm, B_herm)
-
-                    A2 = A_herm + 1e-7 * Hermitian(dA, UPLO)
-                    B2 = B_herm + 1e-7 * Hermitian(dB, UPLO)
-                    y2 = dot(A2, B2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                lhs = dot(Py(Δy), Py(dy))
+                                rhs = dot(PA(ΔA), PA(dA)) + dot(PB(ΔB), PB(dB))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(dot, A_herm, B_herm)
-                    Δy = randn()
-                    dA = randtangent(L)
-                    _, ΔA, ΔB = pullback(Δy)
+                @testset "dot(x, A, y)" begin
+                    x = randn(T, n)
+                    z = randn(T, n)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Px = ProjectTo(x) ∘ unthunk
+                    Pz = ProjectTo(z) ∘ unthunk
+                    Py = ProjectTo(one(T)) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dx in (randn(T, n), ZeroTangent())
+                            for dz in (randn(T, n), ZeroTangent())
+                                for Δy in (randn(T), ZeroTangent())
+                                    _, dy = frule((NoTangent(), dx, dH, dz), dot, x, H, z)
+                                    _, pullback = rrule(dot, x, H, z)
+                                    _, Δx, ΔH, Δz = pullback(Δy)
 
-                    A2 = A_herm + 1e-7 * Hermitian(dA, UPLO)
-                    dy = (dot(A2, B_herm) - y) / 1e-7
-                    rhs = dot(Hermitian(unthunk(ΔA), UPLO), Hermitian(dA, UPLO))
-                    @test isapprox(Δy * dy, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "dot(x, A, y)" begin
-                x = randn(n)
-                z = randn(n)
-
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    dx = randn(n)
-                    dz = randn(n)
-                    y, dy = frule((NoTangent(), dx, dH, dz), dot, x, H, z)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = dot(x + 1e-7 * dx, H2, z + 1e-7 * dz)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                                    lhs = dot(Py(Δy), Py(dy))
+                                    rhs = dot(Px(Δx), Px(dx)) + dot(PH(ΔH), PH(dH)) + dot(Pz(Δz), Pz(dz))
+                                    @test tangent_approx(lhs, rhs)
+                                end
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(dot, x, H, z)
-                    Δy = randn()
-                    dH = randtangent(L)
-                    dx = randn(n)
-                    dz = randn(n)
-                    _, Δx, ΔH, Δz = pullback(Δy)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dy_H = (dot(x, H2, z) - y) / 1e-7
-                    dy_x = (dot(x + 1e-7 * dx, H, z) - y) / 1e-7
-                    dy_z = (dot(x, H, z + 1e-7 * dz) - y) / 1e-7
-                    @test isapprox(Δy * dy_H, dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                    @test isapprox(Δy * dy_x, dot(unthunk(Δx), dx); rtol=rtol)
-                    @test isapprox(Δy * dy_z, dot(unthunk(Δz), dz); rtol=rtol)
-                end
-            end
-
-            @testset "flat/unflattri" begin
-                @testset "flat frule" begin
-                    dL = randtangent(L)
-                    y, dy = frule((NoTangent(), dL), flat, L)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = flat(L2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
-                end
-
-                @testset "flat rrule" begin
-                    y, pullback = rrule(flat, L)
-                    Δflat = randn(ndz(S) + nlz(S))
-                    dL = randtangent(L)
-                    _, ΔL = pullback(Δflat)
-
-                    L2 = L + 1e-7 * dL
-                    y2 = flat(L2)
-                    dy_flat = (y2 - y) / 1e-7
-                    lhs = dot(Δflat, dy_flat)
-                    rhs = dot(unthunk(ΔL), dL)
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-
-                @testset "unflattri frule" begin
+                @testset "flat" begin
                     flatvec = flat(L)
-                    dflat = randn(length(flatvec))
-                    L_out, dL = frule((NoTangent(), dflat, NoTangent(), NoTangent()), unflattri, flatvec, S, L.uplo)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Pflat = ProjectTo(flatvec) ∘ unthunk
+                    for dL in (randtangent(L), ZeroTangent())
+                        for Δflat in (randn(T, ndz(S) + nlz(S)), ZeroTangent())
+                            _, dy = frule((NoTangent(), dL), flat, L)
+                            _, pullback = rrule(flat, L)
+                            _, ΔL = pullback(Δflat)
 
-                    L2 = unflattri(flatvec + 1e-7 * dflat, S, L.uplo)
-                    dL_fd = (L2 - L_out) / 1e-7
-                    @test isapprox(dL, dL_fd; rtol=rtol)
+                            lhs = dot(Pflat(Δflat), Pflat(dy))
+                            rhs = dot(PL(ΔL), PL(dL))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "unflattri rrule" begin
+                @testset "unflattri" begin
                     flatvec = flat(L)
-                    L_out, pullback = rrule(unflattri, flatvec, S, L.uplo)
-                    ΔL = randtangent(L)
-                    dflat = randn(length(flatvec))
-                    _, Δflat, _, _ = pullback(ΔL)
+                    PL = ProjectTo(L) ∘ unthunk
+                    Pflat = ProjectTo(flatvec) ∘ unthunk
+                    for dflat in (randn(T, length(flatvec)), ZeroTangent())
+                        for ΔL in (randtangent(L), ZeroTangent())
+                            _, dL = frule((NoTangent(), dflat, NoTangent(), NoTangent()), unflattri, flatvec, S, L.uplo)
+                            _, pullback = rrule(unflattri, flatvec, S, L.uplo)
+                            _, Δflat, _, _ = pullback(ΔL)
 
-                    L2 = unflattri(flatvec + 1e-7 * dflat, S, L.uplo)
-                    dL = (L2 - L_out) / 1e-7
-                    lhs = dot(ΔL, dL)
-                    rhs = dot(unthunk(Δflat), dflat)
-                    @test isapprox(lhs, rhs; rtol=rtol)
-                end
-            end
-
-            @testset "tr(H)" begin
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dH), tr, H)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = tr(H2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                            lhs = dot(PL(ΔL), PL(dL))
+                            rhs = dot(Pflat(Δflat), Pflat(dflat))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(tr, H)
-                    Δy = randn()
-                    dH = randtangent(L)
-                    _, ΔH = pullback(Δy)
+                @testset "tr(H)" begin
+                    PH = ProjectTo(H) ∘ unthunk
+                    Py = ProjectTo(one(T)) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for Δy in (randn(T), ZeroTangent())
+                            _, dy = frule((NoTangent(), dH), tr, H)
+                            _, pullback = rrule(tr, H)
+                            _, ΔH = pullback(Δy)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dy = (tr(H2) - y) / 1e-7
-                    @test isapprox(Δy * dy, dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "diag(H)" begin
-                @testset "frule" begin
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dH), diag, H)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = diag(H2)
-                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                            lhs = dot(Py(Δy), Py(dy))
+                            rhs = dot(PH(ΔH), PH(dH))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(diag, H)
-                    Δy = randn(size(H, 1))
-                    dH = randtangent(L)
-                    _, ΔH = pullback(Δy)
+                @testset "diag(H)" begin
+                    PH = ProjectTo(H) ∘ unthunk
+                    Py = ProjectTo(randn(T, n)) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for Δy in (randn(T, n), ZeroTangent())
+                            _, dy = frule((NoTangent(), dH), diag, H)
+                            _, pullback = rrule(diag, H)
+                            _, ΔH = pullback(Δy)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dy = (diag(H2) - y) / 1e-7
-                    @test isapprox(dot(Δy, dy), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "α * H" begin
-                α = 2.5
-
-                @testset "frule" begin
-                    dα = 0.3
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dα, dH), *, α, H)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = (α + 1e-7 * dα) * H2
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                            lhs = dot(Py(Δy), Py(dy))
+                            rhs = dot(PH(ΔH), PH(dH))
+                            @test tangent_approx(lhs, rhs)
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, α, H)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, Δα, ΔH = pullback(ΔY)
+                @testset "α * H" begin
+                    α = T(2.5)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Pα = ProjectTo(α) ∘ unthunk
+                    for dα in (T(0.3), ZeroTangent())
+                        for dH in (randtangent(L), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dα, dH), *, α, H)
+                                _, pullback = rrule(*, α, H)
+                                _, Δα, ΔH = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dY = (parent(α * H2) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "H * α" begin
-                α = 2.5
-
-                @testset "frule" begin
-                    dα = 0.3
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dH, dα), *, H, α)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = H2 * (α + 1e-7 * dα)
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(Pα(Δα), Pα(dα)) + dot(PH(ΔH), PH(dH))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(*, H, α)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, ΔH, Δα = pullback(ΔY)
+                @testset "H * α" begin
+                    α = T(2.5)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Pα = ProjectTo(α) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dα in (T(0.3), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dH, dα), *, H, α)
+                                _, pullback = rrule(*, H, α)
+                                _, ΔH, Δα = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dY = (parent(H2 * α) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "H / α" begin
-                α = 2.5
-
-                @testset "frule" begin
-                    dα = 0.3
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dH, dα), /, H, α)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = H2 / (α + 1e-7 * dα)
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(PH(ΔH), PH(dH)) + dot(Pα(Δα), Pα(dα))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(/, H, α)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, ΔH, Δα = pullback(ΔY)
+                @testset "H / α" begin
+                    α = T(2.5)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Pα = ProjectTo(α) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dα in (T(0.3), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dH, dα), /, H, α)
+                                _, pullback = rrule(/, H, α)
+                                _, ΔH, Δα = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dY = (parent(H2 / α) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "α \\ H" begin
-                α = 2.5
-
-                @testset "frule" begin
-                    dα = 0.3
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dα, dH), \, α, H)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = (α + 1e-7 * dα) \ H2
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(PH(ΔH), PH(dH)) + dot(Pα(Δα), Pα(dα))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(\, α, H)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, Δα, ΔH = pullback(ΔY)
+                @testset "α \\ H" begin
+                    α = T(2.5)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Pα = ProjectTo(α) ∘ unthunk
+                    for dα in (T(0.3), ZeroTangent())
+                        for dH in (randtangent(L), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dα, dH), \, α, H)
+                                _, pullback = rrule(\, α, H)
+                                _, Δα, ΔH = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dY = (parent(α \ H2) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "H + H" begin
-                H2_base = Hermitian(randtangent(L) + 10 * parent(H), UPLO)
-
-                @testset "frule" begin
-                    dH1 = randtangent(L)
-                    dH2 = randtangent(L)
-                    y, dy = frule((NoTangent(), dH1, dH2), +, H, H2_base)
-
-                    H1_pert = H + 1e-7 * Hermitian(dH1, UPLO)
-                    H2_pert = H2_base + 1e-7 * Hermitian(dH2, UPLO)
-                    y2 = H1_pert + H2_pert
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(Pα(Δα), Pα(dα)) + dot(PH(ΔH), PH(dH))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(+, H, H2_base)
-                    ΔY = randtangent(L)
-                    dH1 = randtangent(L)
-                    _, ΔH1, ΔH2 = pullback(ΔY)
+                @testset "H + H" begin
+                    H2_base = Hermitian(randtangent(L) + T(10) * parent(H), UPLO)
+                    PH = ProjectTo(H) ∘ unthunk
+                    PH2 = ProjectTo(H2_base) ∘ unthunk
+                    for dH1 in (randtangent(L), ZeroTangent())
+                        for dH2 in (randtangent(L), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dH1, dH2), +, H, H2_base)
+                                _, pullback = rrule(+, H, H2_base)
+                                _, ΔH1, ΔH2 = pullback(ΔY)
 
-                    H1_pert = H + 1e-7 * Hermitian(dH1, UPLO)
-                    dY = (parent(H1_pert + H2_base) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH1), UPLO), Hermitian(dH1, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "H + αI" begin
-                α = 2.5
-
-                @testset "frule" begin
-                    dα = 0.3
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dH, dα * I), +, H, α * I)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = H2 + (α + 1e-7 * dα) * I
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(PH(ΔH1), PH(dH1)) + dot(PH2(ΔH2), PH2(dH2))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(+, H, α * I)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, ΔH, ΔαI = pullback(ΔY)
+                @testset "H + αI" begin
+                    α = T(2.5)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Pα = ProjectTo(α) ∘ unthunk
+                    for dH in (randtangent(L), ZeroTangent())
+                        for dα in (T(0.3), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dH, dα), +, H, α * I)
+                                _, pullback = rrule(+, H, α * I)
+                                _, ΔH, Δα = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dY = (parent(H2 + α * I) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
-                end
-            end
-
-            @testset "αI + H" begin
-                α = 2.5
-
-                @testset "frule" begin
-                    dα = 0.3
-                    dH = randtangent(L)
-                    y, dy = frule((NoTangent(), dα * I, dH), +, α * I, H)
-
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    y2 = (α + 1e-7 * dα) * I + H2
-                    @test isapprox(parent(dy), (parent(y2) - parent(y)) / 1e-7; rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(PH(ΔH), PH(dH)) + dot(Pα(Δα), Pα(dα))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
 
-                @testset "rrule" begin
-                    y, pullback = rrule(+, α * I, H)
-                    ΔY = randtangent(L)
-                    dH = randtangent(L)
-                    _, ΔαI, ΔH = pullback(ΔY)
+                @testset "αI + H" begin
+                    α = T(2.5)
+                    PH = ProjectTo(H) ∘ unthunk
+                    Pα = ProjectTo(α) ∘ unthunk
+                    for dα in (T(0.3), ZeroTangent())
+                        for dH in (randtangent(L), ZeroTangent())
+                            for ΔY in (randtangent(L), ZeroTangent())
+                                _, dy = frule((NoTangent(), dα, dH), +, α * I, H)
+                                _, pullback = rrule(+, α * I, H)
+                                _, Δα, ΔH = pullback(ΔY)
 
-                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
-                    dY = (parent(α * I + H2) - parent(y)) / 1e-7
-                    @test isapprox(dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO)), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
+                                lhs = dot(PH(ΔY), PH(dy))
+                                rhs = dot(Pα(Δα), Pα(dα)) + dot(PH(ΔH), PH(dH))
+                                @test tangent_approx(lhs, rhs)
+                            end
+                        end
+                    end
                 end
-            end
-        end
-    end
-end # differentiation (manual)
+            end  # @testset "T = $T, UPLO = $UPLO"
+        end  # for UPLO
+    end  # for T
+end  # @testset "differentiation (manual)"

@@ -46,7 +46,7 @@ julia> A = [
            2  3  0  2  7
        ]
 
-julia> perm, S = symbolic(A);
+julia> P, S = symbolic(A);
 
 julia> S
 5×5 ChordalSymbolic{Int64} with 10 stored entries:
@@ -56,7 +56,7 @@ julia> S
   true  false  false   true    ⋅  
  false   true   true   true   true
 
-julia> F = cholesky!(ChordalCholesky(A, perm, S))
+julia> F = cholesky!(ChordalCholesky(A, P, S))
 5×5 FChordalCholesky{:L, Float64, Int64} with 10 stored entries:
  2.0   ⋅    ⋅    ⋅    ⋅ 
  0.0  2.0   ⋅    ⋅    ⋅ 

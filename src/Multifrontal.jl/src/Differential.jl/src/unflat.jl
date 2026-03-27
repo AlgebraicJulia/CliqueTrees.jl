@@ -37,6 +37,14 @@ function unflatsym_rrule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{U
     return fflat(clean!, ΔH)
 end
 
+function unflattri_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, ::ZeroTangent) where {UPLO}
+    return unflattri(x, S, uplo), ZeroTangent()
+end
+
+function unflatsym_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, ::ZeroTangent) where {UPLO}
+    return unflatsym(x, S, uplo), ZeroTangent()
+end
+
 function ChainRulesCore.frule((_, dx, _, _)::Tuple, ::typeof(unflattri), x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}) where {UPLO}
     return unflattri_frule_impl(x, S, uplo, dx)
 end

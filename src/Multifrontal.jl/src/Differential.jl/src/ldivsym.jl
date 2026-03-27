@@ -41,8 +41,9 @@ end
 
 function ldiv_rrule_impl(P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, x::AbstractVector, y::AbstractVector, Δy::AbstractVector) where {UPLO}
     Δx = ldiv(P, L, Δy)
-    ΔP = zero(parent(P))
-    selupd!(ΔP, Δx, y', -1, 0)
+    ΔP = similar(parent(P))
+    selupd!(ΔP, Δx, y', -1 / 2, 0)
+    selupd!(ΔP, y, Δx', -1 / 2, 1)
     return ΔP, Δx
 end
 

@@ -27,6 +27,14 @@ function diag_rrule_impl(H::HermOrSymTri, y, Δy)
     return diag_rrule_impl(parent(H), y, Δy)
 end
 
+function diag_frule_impl(A::ChordalTriangular{:N}, ::ZeroTangent)
+    return diag(A), ZeroTangent()
+end
+
+function diag_frule_impl(H::HermOrSymTri, ::ZeroTangent)
+    return diag(H), ZeroTangent()
+end
+
 function ChainRulesCore.frule((_, dA)::Tuple, ::typeof(diag), A::ChordalTriangular{:N})
     return diag_frule_impl(A, dA)
 end

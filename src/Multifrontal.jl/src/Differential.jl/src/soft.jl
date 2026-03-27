@@ -47,6 +47,10 @@ function soft_rrule_impl(L::ChordalTriangular{:N}, Y::ChordalTriangular{:N}, ΔY
     return ΔL
 end
 
+function soft_frule_impl(L::ChordalTriangular{:N}, ::ZeroTangent)
+    return soft(L), ZeroTangent()
+end
+
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(soft), L::ChordalTriangular{:N})
     return soft_frule_impl(L, dL)
 end

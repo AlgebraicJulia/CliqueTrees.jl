@@ -38,3 +38,7 @@ function uncholesky_frule_impl(L::ChordalTriangular{:N, UPLO}, dL::ChordalTriang
     dfcholesky!(dH, L; adj=false, inv=true)
     return H, dH
 end
+
+function uncholesky_frule_impl(L::ChordalTriangular{:N}, ::ZeroTangent)
+    return uncholesky(L), ZeroTangent()
+end
