@@ -11,8 +11,9 @@ using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri
 using CliqueTrees.Multifrontal: chordal, symbolic, ndz, nlz
 using CliqueTrees.Multifrontal.Differential
 using CliqueTrees.Multifrontal.Differential: frule, rrule
-using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, complete, soft
+using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, soft
 using CliqueTrees.Multifrontal.Differential: flat, unflattri, unflatsym
+using CliqueTrees.Multifrontal.Differential: ldiv, rdiv
 
 if !@isdefined(SSMC)
     const SSMC = ssmc_db()
@@ -319,6 +320,30 @@ end
                 end
             end
 
+            @testset "logdet(H, L)" begin
+                @testset "frule" begin
+                    dH = randtangent(L)
+                    y, dy = frule((NoTangent(), dH, NoTangent()), logdet, H, L)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    y2 = logdet(H2, L2)
+                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                end
+
+                @testset "rrule" begin
+                    y, pullback = rrule(logdet, H, L)
+                    Δy = randn()
+                    dH = randtangent(L)
+                    _, ΔH, _ = pullback(Δy)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    dy = (logdet(H2, L2) - y) / 1e-7
+                    @test isapprox(Δy * dy, dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
+                end
+            end
+
             @testset "diag" begin
                 @testset "frule" begin
                     dL = randtangent(L)
@@ -367,31 +392,91 @@ end
                 end
             end
 
-            @testset "complete" begin
-                Y = selinv(L)
-
+            @testset "selinv(H, L)" begin
                 @testset "frule" begin
-                    dY = randtangent(L)
-                    L_out, dL = frule((NoTangent(), dY), complete, Y)
+                    dH = randtangent(L)
+                    Y, dY = frule((NoTangent(), dH, NoTangent()), selinv, H, L)
 
-                    Y2 = Y + 1e-8 * Hermitian(dY, UPLO)
-                    L2 = complete(Y2)
-                    dL_fd = (L2 - L_out) / 1e-8
-                    @test isapprox(dL, dL_fd; rtol=rtol)
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    Y2 = selinv(H2, L2)
+                    dY_fd = (parent(Y2) - parent(Y)) / 1e-7
+                    @test isapprox(dY, dY_fd; rtol=rtol)
                 end
 
                 @testset "rrule" begin
-                    L_out, pullback = rrule(complete, Y)
-                    ΔL = randtangent(L)
-                    dY = randtangent(L)
-                    _, ΔY = pullback(ΔL)
+                    Y, pullback = rrule(selinv, H, L)
+                    ΔY = randtangent(L)
+                    dH = randtangent(L)
+                    _, ΔH, _ = pullback(ΔY)
 
-                    Y2 = Y + 1e-8 * Hermitian(dY, UPLO)
-                    L2 = complete(Y2)
-                    dL = (L2 - L_out) / 1e-8
-                    lhs = dot(ΔL, dL)
-                    rhs = dot(Hermitian(unthunk(ΔY), UPLO), Hermitian(dY, UPLO))
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    Y2 = selinv(H2, L2)
+                    dY = (parent(Y2) - parent(Y)) / 1e-7
+                    lhs = dot(Hermitian(ΔY, UPLO), Hermitian(dY, UPLO))
+                    rhs = dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO))
                     @test isapprox(lhs, rhs; rtol=rtol)
+                end
+            end
+
+            @testset "ldiv(H, L, x)" begin
+                x = randn(n)
+
+                @testset "frule" begin
+                    dH = randtangent(L)
+                    dx = randn(n)
+                    y, dy = frule((NoTangent(), dH, NoTangent(), dx), ldiv, H, L, x)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    y2 = ldiv(H2, L2, x + 1e-7 * dx)
+                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                end
+
+                @testset "rrule" begin
+                    y, pullback = rrule(ldiv, H, L, x)
+                    Δy = randn(n)
+                    dH = randtangent(L)
+                    dx = randn(n)
+                    _, ΔH, _, Δx = pullback(Δy)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    dy_H = (ldiv(H2, L2, x) - y) / 1e-7
+                    dy_x = (ldiv(H, L, x + 1e-7 * dx) - y) / 1e-7
+                    @test isapprox(dot(Δy, dy_H), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
+                    @test isapprox(dot(Δy, dy_x), dot(unthunk(Δx), dx); rtol=rtol)
+                end
+            end
+
+            @testset "rdiv(x, H, L)" begin
+                x = randn(1, n)
+
+                @testset "frule" begin
+                    dH = randtangent(L)
+                    dx = randn(1, n)
+                    y, dy = frule((NoTangent(), dx, dH, NoTangent()), rdiv, x, H, L)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    y2 = rdiv(x + 1e-7 * dx, H2, L2)
+                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                end
+
+                @testset "rrule" begin
+                    y, pullback = rrule(rdiv, x, H, L)
+                    Δy = randn(1, n)
+                    dH = randtangent(L)
+                    dx = randn(1, n)
+                    _, Δx, ΔH, _ = pullback(Δy)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    L2 = cholesky(H2)
+                    dy_H = (rdiv(x, H2, L2) - y) / 1e-7
+                    dy_x = (rdiv(x + 1e-7 * dx, H, L) - y) / 1e-7
+                    @test isapprox(dot(Δy, dy_H), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
+                    @test isapprox(dot(Δy, dy_x), dot(unthunk(Δx), dx); rtol=rtol)
                 end
             end
 

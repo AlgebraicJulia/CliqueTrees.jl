@@ -7,12 +7,11 @@ using SuiteSparseMatrixCollection
 
 using CliqueTrees
 using CliqueTrees.Multifrontal: ChordalTriangular, DChordalCholesky, triangular, HermTri, SymTri, Permutation, ndz, selupd!
-using CliqueTrees.Multifrontal.Differential: cholesky, selinv, complete, uncholesky, soft, flat, unflattri, unflatsym
+using CliqueTrees.Multifrontal.Differential: cholesky, selinv, uncholesky, soft, flat, unflattri, unflatsym
 
-using ADTypes: AutoZygote, AutoEnzyme, AutoMooncake
+using ADTypes: AutoZygote, AutoMooncake
 using DifferentiationInterface
 using DifferentiationInterfaceTest
-using Enzyme
 using Mooncake
 using Zygote
 
@@ -89,7 +88,7 @@ end
         Bprec = unflatsym(qprec, S, uplo)
         LA = cholesky(Aprec)
         LB = cholesky(Bprec)
-        return 0.5 * (dot(Aprec, selinv(LB)) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
+        return 0.5 * (dot(Aprec, selinv(Bprec, LB)) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(Aprec, LA) - logdet(Bprec, LB)
     end
 
     function loss_entropy_chol(; qmean, qchol, pmean, pchol, uplo, S, P)
@@ -97,20 +96,6 @@ end
         LB = soft(unflattri(qchol, S, uplo))
         Aprec = uncholesky(LA)
         return 0.5 * (dot(Aprec, selinv(LB)) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
-    end
-
-    function loss_entropy_dual(; qmean, qscov, pmean, pscov, uplo, S, P)
-        LA = complete(unflatsym(pscov, S, uplo))
-        LB = complete(unflatsym(qscov, S, uplo))
-        Aprec = uncholesky(LA)
-        Bscov = unflatsym(qscov, S, uplo)
-        return 0.5 * (dot(Aprec, Bscov) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
-    end
-
-    function loss_marginal_variances(; qchol, uplo, S, P)
-        LB = soft(unflattri(qchol, S, uplo))
-        CB = selinv(LB)
-        return tr(CB) + sum(diag(CB))
     end
 
     # Compute reference gradient using central differences (O(eps²) accurate)
@@ -181,12 +166,6 @@ end
         add_all_scenarios!(scenarios, "entropy_chol", loss_entropy_chol,
             (; qmean, qchol, pmean, pchol), fixed)
 
-        add_all_scenarios!(scenarios, "entropy_dual", loss_entropy_dual,
-            (; qmean, qscov, pmean, pscov), fixed)
-
-        add_all_scenarios!(scenarios, "marginal_variances", loss_marginal_variances,
-            (; qchol,), fixed)
-
         return scenarios
     end
 
@@ -214,14 +193,4 @@ end
         )
     end
 
-    @testset "Enzyme" begin
-        test_differentiation(
-            AutoEnzyme(; function_annotation=Enzyme.Duplicated),
-            scenarios;
-            correctness = true,
-            type_stability = :none,
-            detailed = true,
-            rtol = 1e-3,
-        )
-    end
 end

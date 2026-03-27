@@ -18,7 +18,7 @@ end
 function ldiv_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::ZeroTangent) where {UPLO}
     @assert checksymbolic(L, dL)
     Y = L \ X
-    dY = L \ (-dL * Y)
+    dY = L \ (dL * -Y)
     return Y, dY
 end
 

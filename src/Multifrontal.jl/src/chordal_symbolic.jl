@@ -87,7 +87,7 @@ end
 
 function symbolic(graph::AbstractGraph{I}; kw...) where {I <: Integer}
     perm, tree = cliquetree(graph; kw...)
-    return FVector{I}(perm), ChordalSymbolic(tree)
+    return FPermutation(perm), ChordalSymbolic(tree)
 end
 
 function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}

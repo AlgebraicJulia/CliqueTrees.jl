@@ -2,35 +2,19 @@ module MooncakeExt
 
 using CliqueTrees.Multifrontal: ChordalTriangular, DChordalTriangular, FChordalTriangular,
     ChordalSymbolic, HermOrSymTri, HermTri, SymTri, AdjTri, TransTri, Permutation
-using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
-    cholesky_rrule_impl,
-    uncholesky_rrule_impl,
-    selinv_rrule_impl,
-    complete_rrule_impl,
-    dot_rrule_impl,
-    ldiv_rrule_impl,
-    tr_rrule_impl,
-    diag_rrule_impl,
-    logdet_rrule_impl,
-    soft_rrule_impl,
-    add_rrule_impl,
-    adjoint_rrule_impl,
-    transpose_rrule_impl,
-    mul_rrule_impl,
-    rdiv_rrule_impl
-using ChainRulesCore: unthunk
-using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, Hermitian, Symmetric, UniformScaling, I, axpy!
+using CliqueTrees.Multifrontal.Differential: selinv, uncholesky, soft,
+    flat, unflattri, unflatsym, ldiv, rdiv
+using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, UniformScaling, axpy!
 
 import Mooncake
-using Mooncake: @is_primitive, rrule!!, CoDual, primal, tangent,
-    tangent_type, NoRData, NoFData, DefaultCtx, MinimalCtx, fdata, rdata,
-    increment_rdata!!, set_to_zero!!, MutableTangent, Tangent, NoTangent,
-    @zero_adjoint, ReverseMode, increment_and_get_rdata!, RData, MaybeCache
+using Mooncake: @from_chainrules, tangent_type, NoRData, NoFData, DefaultCtx,
+    fdata, rdata, set_to_zero!!, NoTangent, increment_and_get_rdata!, MaybeCache
 
-# ===== uniform_rdata =====
+# ===== to_cr_tangent =====
+# Bridge Mooncake tangents to ChainRules tangents (identity for our types)
 
-function uniform_rdata(Δλ::T) where {T}
-    return RData{@NamedTuple{λ::T}}((λ=Δλ,))
+function Mooncake.to_cr_tangent(t::ChordalTriangular)
+    return t
 end
 
 # ===== tangent_type =====
@@ -43,24 +27,24 @@ function Mooncake.tangent_type(::Type{<:Permutation})
     return NoTangent
 end
 
-function Mooncake.tangent_type(::Type{T}) where {T<:ChordalTriangular}
-    return T
+function Mooncake.tangent_type(::Type{L}) where {L<:ChordalTriangular}
+    return L
 end
 
-function Mooncake.tangent_type(::Type{H}) where {H<:HermTri}
-    return fieldtype(H, :data)
+function Mooncake.tangent_type(::Type{HermTri{UPLO, T, I, Dvl, Lvl}}) where {UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}
 end
 
-function Mooncake.tangent_type(::Type{S}) where {S<:SymTri}
-    return fieldtype(S, :data)
+function Mooncake.tangent_type(::Type{SymTri{UPLO, T, I, Dvl, Lvl}}) where {UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}
 end
 
-function Mooncake.tangent_type(::Type{A}) where {A<:AdjTri}
-    return fieldtype(A, :parent)
+function Mooncake.tangent_type(::Type{AdjTri{DIAG, UPLO, T, I, Dvl, Lvl}}) where {DIAG, UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}
 end
 
-function Mooncake.tangent_type(::Type{T}) where {T<:TransTri}
-    return fieldtype(T, :parent)
+function Mooncake.tangent_type(::Type{TransTri{DIAG, UPLO, T, I, Dvl, Lvl}}) where {DIAG, UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}
 end
 
 # ===== zero_tangent_internal =====
@@ -104,24 +88,24 @@ function Mooncake.fdata_type(::Type{<:Permutation})
     return NoFData
 end
 
-function Mooncake.fdata_type(::Type{T}) where {T<:ChordalTriangular}
-    return T
+function Mooncake.fdata_type(::Type{L}) where {L<:ChordalTriangular}
+    return L
 end
 
-function Mooncake.fdata_type(::Type{H}) where {H<:HermTri}
-    return fieldtype(H, :data)
+function Mooncake.fdata_type(::Type{HermTri{UPLO, T, I, Dvl, Lvl}}) where {UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}
 end
 
-function Mooncake.fdata_type(::Type{S}) where {S<:SymTri}
-    return fieldtype(S, :data)
+function Mooncake.fdata_type(::Type{SymTri{UPLO, T, I, Dvl, Lvl}}) where {UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{:N, UPLO, T, I, Dvl, Lvl}
 end
 
-function Mooncake.fdata_type(::Type{A}) where {A<:AdjTri}
-    return fieldtype(A, :parent)
+function Mooncake.fdata_type(::Type{AdjTri{DIAG, UPLO, T, I, Dvl, Lvl}}) where {DIAG, UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}
 end
 
-function Mooncake.fdata_type(::Type{T}) where {T<:TransTri}
-    return fieldtype(T, :parent)
+function Mooncake.fdata_type(::Type{TransTri{DIAG, UPLO, T, I, Dvl, Lvl}}) where {DIAG, UPLO, T, I, Dvl, Lvl}
+    return ChordalTriangular{DIAG, UPLO, T, I, Dvl, Lvl}
 end
 
 # ===== rdata_type =====
@@ -234,37 +218,151 @@ function Mooncake.set_to_zero!!(t::ChordalTriangular)
     return t
 end
 
-# ===== rrule!! =====
-include("logdet.jl")
-include("trace.jl")
-include("diag.jl")
-include("selinv.jl")
-include("cholesky.jl")
-include("uncholesky.jl")
-include("soft.jl")
-include("complete.jl")
-include("dot.jl")
-include("flat.jl")
-include("unflat.jl")
-include("adjoint.jl")
-include("ldiv.jl")
-include("ldivadj.jl")
-include("lmul.jl")
-include("lmuladj.jl")
-include("rdiv.jl")
-include("rdivadj.jl")
-include("rmul.jl")
-include("rmuladj.jl")
-include("add.jl")
-include("raddnum.jl")
-include("rmulnum.jl")
-include("rdivnum.jl")
-include("lmulsym.jl")
-include("rmulsym.jl")
-include("quad.jl")
-include("lmulprm.jl")
-include("rmulprm.jl")
-include("ldivprm.jl")
-include("rdivprm.jl")
+# ===== @from_chainrules =====
+
+# logdet.jl
+@from_chainrules DefaultCtx Tuple{typeof(logdet), ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(logdet), HermTri, ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(logdet), SymTri, ChordalTriangular{:N}}
+
+# trace.jl
+@from_chainrules DefaultCtx Tuple{typeof(tr), ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(tr), HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(tr), SymTri}
+
+# diag.jl
+@from_chainrules DefaultCtx Tuple{typeof(diag), ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(diag), HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(diag), SymTri}
+
+# selinv.jl
+@from_chainrules DefaultCtx Tuple{typeof(selinv), ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(selinv), HermTri, ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(selinv), SymTri, ChordalTriangular{:N}}
+
+# cholesky.jl
+@from_chainrules DefaultCtx Tuple{typeof(cholesky), HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(cholesky), SymTri}
+
+# uncholesky.jl
+@from_chainrules DefaultCtx Tuple{typeof(uncholesky), ChordalTriangular{:N}}
+
+# soft.jl
+@from_chainrules DefaultCtx Tuple{typeof(soft), ChordalTriangular{:N}}
+
+# dot.jl
+@from_chainrules DefaultCtx Tuple{typeof(dot), HermTri, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(dot), SymTri, SymTri}
+@from_chainrules DefaultCtx Tuple{typeof(dot), ChordalTriangular{:N}, ChordalTriangular{:N}}
+
+# flat.jl
+@from_chainrules DefaultCtx Tuple{typeof(flat), ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(flat), HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(flat), SymTri}
+
+# unflat.jl
+@from_chainrules DefaultCtx Tuple{typeof(unflattri), AbstractVector, ChordalSymbolic, Val}
+@from_chainrules DefaultCtx Tuple{typeof(unflatsym), AbstractVector, ChordalSymbolic, Val}
+
+# adjoint.jl
+@from_chainrules DefaultCtx Tuple{typeof(adjoint), ChordalTriangular}
+@from_chainrules DefaultCtx Tuple{typeof(adjoint), AdjTri}
+@from_chainrules DefaultCtx Tuple{typeof(transpose), ChordalTriangular}
+@from_chainrules DefaultCtx Tuple{typeof(transpose), TransTri}
+
+# add.jl
+@from_chainrules DefaultCtx Tuple{typeof(+), ChordalTriangular{:N}, ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(+), HermTri, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(+), SymTri, SymTri}
+
+# laddnum.jl
+@from_chainrules DefaultCtx Tuple{typeof(+), UniformScaling, ChordalTriangular}
+@from_chainrules DefaultCtx Tuple{typeof(+), UniformScaling, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(+), UniformScaling, SymTri}
+
+# raddnum.jl
+@from_chainrules DefaultCtx Tuple{typeof(+), ChordalTriangular, UniformScaling}
+@from_chainrules DefaultCtx Tuple{typeof(+), HermTri, UniformScaling}
+@from_chainrules DefaultCtx Tuple{typeof(+), SymTri, UniformScaling}
+
+# lmulnum.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), Number, ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(*), Real, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(*), Real, SymTri}
+
+# rmulnum.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), ChordalTriangular{:N}, Number}
+@from_chainrules DefaultCtx Tuple{typeof(*), HermTri, Real}
+@from_chainrules DefaultCtx Tuple{typeof(*), SymTri, Real}
+
+# ldivnum.jl
+@from_chainrules DefaultCtx Tuple{typeof(\), Number, ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(\), Real, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(\), Real, SymTri}
+
+# rdivnum.jl
+@from_chainrules DefaultCtx Tuple{typeof(/), ChordalTriangular{:N}, Number}
+@from_chainrules DefaultCtx Tuple{typeof(/), HermTri, Real}
+@from_chainrules DefaultCtx Tuple{typeof(/), SymTri, Real}
+
+# ldiv.jl
+@from_chainrules DefaultCtx Tuple{typeof(\), ChordalTriangular{:N}, AbstractVecOrMat}
+
+# rdiv.jl
+@from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, ChordalTriangular{:N}}
+
+# ldivadj.jl
+@from_chainrules DefaultCtx Tuple{typeof(\), AdjTri{:N}, AbstractVecOrMat}
+@from_chainrules DefaultCtx Tuple{typeof(\), TransTri{:N}, AbstractVecOrMat}
+
+# rdivadj.jl
+@from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, AdjTri{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, TransTri{:N}}
+
+# ldivsym.jl
+@from_chainrules DefaultCtx Tuple{typeof(ldiv), HermTri, ChordalTriangular{:N}, AbstractVector}
+@from_chainrules DefaultCtx Tuple{typeof(ldiv), SymTri, ChordalTriangular{:N}, AbstractVector}
+
+# rdivsym.jl
+@from_chainrules DefaultCtx Tuple{typeof(rdiv), AbstractMatrix, HermTri, ChordalTriangular{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(rdiv), AbstractMatrix, SymTri, ChordalTriangular{:N}}
+
+# lmul.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), ChordalTriangular{:N}, AbstractVecOrMat}
+
+# rmul.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, ChordalTriangular{:N}}
+
+# lmuladj.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), AdjTri{:N}, AbstractVecOrMat}
+@from_chainrules DefaultCtx Tuple{typeof(*), TransTri{:N}, AbstractVecOrMat}
+
+# rmuladj.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, AdjTri{:N}}
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, TransTri{:N}}
+
+# lmulsym.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), HermTri, AbstractVecOrMat}
+@from_chainrules DefaultCtx Tuple{typeof(*), SymTri, AbstractVecOrMat}
+
+# rmulsym.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, SymTri}
+
+# quad.jl
+@from_chainrules DefaultCtx Tuple{typeof(dot), AbstractVecOrMat, HermTri, AbstractVecOrMat}
+@from_chainrules DefaultCtx Tuple{typeof(dot), AbstractVecOrMat, SymTri, AbstractVecOrMat}
+
+# lmulprm.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), Permutation, AbstractVecOrMat}
+
+# rmulprm.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractVecOrMat, Permutation}
+
+# ldivprm.jl
+@from_chainrules DefaultCtx Tuple{typeof(\), Permutation, AbstractVecOrMat}
+
+# rdivprm.jl
+@from_chainrules DefaultCtx Tuple{typeof(/), AbstractVecOrMat, Permutation}
 
 end

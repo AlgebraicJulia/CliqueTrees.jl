@@ -13,7 +13,7 @@ using ...Multifrontal: cholesky!, complete!, dfcholesky!, fisher!, rmul!, selinv
 using ...Multifrontal: fronts, diagblock, diagind, ndz, nlz, nnz, triangular, checksymbolic
 using ...Multifrontal: DEFAULT_UPLO
 
-export selinv, complete, uncholesky, soft, flat, unflattri, unflatsym
+export selinv, uncholesky, soft, flat, unflattri, unflatsym, ldiv, rdiv
 
 function ChainRulesCore.ProjectTo(X::HermTri)
     return ProjectTo{Hermitian}()
@@ -49,14 +49,15 @@ end
 
 include("utils.jl")
 include("selinv.jl")
-include("complete.jl")
 include("cholesky.jl")
 include("uncholesky.jl")
 include("logdet.jl")
 include("ldiv.jl")
 include("ldivadj.jl")
+include("ldivsym.jl")
 include("rdiv.jl")
 include("rdivadj.jl")
+include("rdivsym.jl")
 include("lmul.jl")
 include("lmuladj.jl")
 include("rmul.jl")

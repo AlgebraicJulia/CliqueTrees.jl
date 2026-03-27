@@ -34,11 +34,13 @@ end
 
 function rdiv_rrule_impl(X::AbstractMatrix, L::ChordalTriangular{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
     ΔX = ΔY / L'
+
     ΔL = @thunk begin
         ΔL = similar(L)
         selupd!(ΔL, Y', ΔX, -1, 0)
         ΔL
     end
+
     return ΔX, ΔL
 end
 

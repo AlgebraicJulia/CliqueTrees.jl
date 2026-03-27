@@ -12,25 +12,47 @@ A permutation matrix.
 struct Permutation{I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}} <: AbstractMatrix{Bool}
     perm::Prm
     invp::Ivp
+
+    function Permutation{I, Prm, Ivp}(perm, invp) where {I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}}
+        @assert length(perm) == length(invp)
+
+        if Prm <: FVector && !(perm isa Prm)
+            perm = Prm(perm)
+        end
+
+        if Ivp <: FVector && !(invp isa Ivp)
+            invp = Ivp(invp)
+        end
+
+        return new{I, Prm, Ivp}(perm, invp)
+    end
+end
+
+const FPermutation{I} = Permutation{I, FVector{I}, FVector{I}}
+const DPermutation{I} = Permutation{I, Vector{I}, Vector{I}}
+const NaturalPermutation{I} = Permutation{I, OneTo{I}, OneTo{I}}
+
+function Permutation(perm::Prm, invp::Ivp) where {I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}}
+    return Permutation{I, Prm, Ivp}(perm, invp)
 end
 
 function Permutation{I, Prm, Ivp}(n::Integer) where {I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}}
     perm = allocate(Prm, n)
     invp = allocate(Ivp, n)
-    return Permutation(perm, invp)
+    return Permutation{I, Prm, Ivp}(perm, invp)
 end
 
 function Permutation{I}(n::Integer) where {I}
     return FPermutation{I}(n)
 end
 
-function (::Type{Prm})(perm::AbstractVector) where {Prm <: Permutation}
-    return Prm(perm, invperm(perm))
+function (::Type{Prm})(perm::AbstractVector{I}) where {I, Prm <: Permutation}
+    return Prm{I}(perm)
 end
 
-const FPermutation{I} = Permutation{I, FVector{I}, FVector{I}}
-const DPermutation{I} = Permutation{I, Vector{I}, Vector{I}}
-const NaturalPermutation{I} = Permutation{I, OneTo{I}, OneTo{I}}
+function (::Type{Prm})(perm::AbstractVector) where {I, Prm <: Permutation{I}}
+    return Prm(perm, invperm(perm))
+end
 
 # ===== show =====
 

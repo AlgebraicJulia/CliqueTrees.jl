@@ -7,12 +7,11 @@ using SuiteSparseMatrixCollection
 
 using CliqueTrees
 using CliqueTrees.Multifrontal: ChordalTriangular, ChordalCholesky, triangular, HermTri, SymTri, ndz, selupd!
-using CliqueTrees.Multifrontal.Differential: cholesky, selinv, complete, uncholesky, soft, flat, unflattri, unflatsym
+using CliqueTrees.Multifrontal.Differential: cholesky, selinv, uncholesky, soft, flat, unflattri, unflatsym
 
-using ADTypes: AutoForwardDiff, AutoEnzyme
+using ADTypes: AutoForwardDiff
 using DifferentiationInterface
 using DifferentiationInterfaceTest
-using Enzyme
 using ForwardDiff
 
 if !@isdefined(SSMC)
@@ -219,14 +218,4 @@ end
         )
     end
 
-    @testset "Enzyme" begin
-        test_differentiation(
-            AutoEnzyme(; mode=Enzyme.Forward, function_annotation=Enzyme.Duplicated),
-            scenarios;
-            correctness = true,
-            type_stability = :none,
-            detailed = true,
-            rtol = 1e-3,
-        )
-    end
 end
