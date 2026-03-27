@@ -6,33 +6,37 @@ end
 
 # ===== frule =====
 
-function logdet_frule_impl(L::ChordalTriangular{:N, UPLO}, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(L, dL)
+function logdet_frule_impl(L::ChordalTriangular{:N}, dL)
     y = logdet(L)
-    dy = zero(promote_eltype(L, dL))
 
-    for f in fronts(L)
-        dD, _ = diagblock(dL, f)
-        D, _ = diagblock(L, f)
+    if dL isa ZeroTangent
+        dy = ZeroTangent()
+    else
+        dy = zero(promote_eltype(L, dL))
 
-        for i in diagind(D)
-            dy += dD[i] / D[i]
+        for f in fronts(L)
+            dD, _ = diagblock(dL, f)
+            D, _ = diagblock(L, f)
+
+            for i in diagind(D)
+                dy += dD[i] / D[i]
+            end
         end
     end
 
     return y, dy
 end
 
-function logdet_frule_impl(L::ChordalTriangular{:N}, dL::ZeroTangent)
-    return logdet(L), ZeroTangent()
-end
+function logdet_frule_impl(A::HermOrSymTri, L::ChordalTriangular{:N}, dA)
+    y = logdet(A, L)
 
-function logdet_frule_impl(A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dA::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return logdet(A, L), dot(selinv(L), Hermitian(dA, UPLO))
-end
+    if dA isa ZeroTangent
+        dy = ZeroTangent()
+    else
+        dy = dot(selinv(L), ProjectTo(A)(dA))
+    end
 
-function logdet_frule_impl(A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dA::ZeroTangent) where {UPLO}
-    return logdet(A, L), ZeroTangent()
+    return y, dy
 end
 
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(logdet), L::ChordalTriangular{:N})
@@ -45,49 +49,43 @@ end
 
 # ===== rrule =====
 
-function logdet_rrule_impl(L::ChordalTriangular{:N}, y::Number, Δy::Number)
-    ΔL = zero(L)
+function logdet_rrule_impl(L::ChordalTriangular{:N}, y::Number, Δy)
+    if Δy isa ZeroTangent
+        ΔL = ZeroTangent()
+    else
+        ΔL = zero(L)
 
-    for f in fronts(L)
-        ΔD, _ = diagblock(ΔL, f)
-        D, _ = diagblock(L, f)
+        for f in fronts(L)
+            ΔD, _ = diagblock(ΔL, f)
+            D, _ = diagblock(L, f)
 
-        for i in diagind(D)
-            ΔD[i] = Δy / D[i]
+            for i in diagind(D)
+                ΔD[i] = Δy / D[i]
+            end
         end
     end
 
     return ΔL
 end
 
-function logdet_rrule_impl(A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, y::Number, Δy::Number) where {UPLO}
-    return Δy * parent(selinv(L))
+function logdet_rrule_impl(A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, y::Number, Δy) where {UPLO}
+    if Δy isa ZeroTangent
+        ΔA = ZeroTangent()
+    else
+        ΔA = Δy * parent(selinv(L))
+    end
+
+    return ΔA
 end
 
 function ChainRulesCore.rrule(::typeof(logdet), L::ChordalTriangular{:N})
     y = logdet(L)
-
-    function pullback(Δy)
-        if Δy isa ZeroTangent
-            return NoTangent(), ZeroTangent()
-        else
-            return NoTangent(), logdet_rrule_impl(L, y, Δy)
-        end
-    end
-
+    pullback(Δy) = (NoTangent(), logdet_rrule_impl(L, y, Δy))
     return y, pullback
 end
 
 function ChainRulesCore.rrule(::typeof(logdet), A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
     y = logdet(A, L)
-
-    function pullback(Δy)
-        if Δy isa ZeroTangent
-            return NoTangent(), ZeroTangent(), NoTangent()
-        else
-            return NoTangent(), logdet_rrule_impl(A, L, y, Δy), NoTangent()
-        end
-    end
-
+    pullback(Δy) = (NoTangent(), logdet_rrule_impl(A, L, y, Δy), NoTangent())
     return y, pullback
 end

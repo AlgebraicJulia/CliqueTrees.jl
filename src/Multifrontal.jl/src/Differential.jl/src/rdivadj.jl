@@ -2,46 +2,16 @@
 
 # ===== frule =====
 
-# AdjTri
-function rdiv_frule_impl(X::AbstractMatrix, A::AdjTri{:N, UPLO}, dX::AbstractMatrix, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
+function rdiv_frule_impl(X::AbstractMatrix, A::AdjOrTransTri{:N}, dX, dL)
     Y = X / A
-    dY = (dX - Y * dL') / A
-    return Y, dY
-end
 
-function rdiv_frule_impl(X::AbstractMatrix, A::AdjTri{:N, UPLO}, dX::ZeroTangent, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X / A
-    dY = (-Y * dL') / A
-    return Y, dY
-end
+    if A isa AdjTri
+        dAt = adjoint(dL)
+    else
+        dAt = transpose(dL)
+    end
 
-# TransTri
-function rdiv_frule_impl(X::AbstractMatrix, A::TransTri{:N, UPLO}, dX::AbstractMatrix, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X / A
-    dY = (dX - Y * transpose(dL)) / A
-    return Y, dY
-end
-
-function rdiv_frule_impl(X::AbstractMatrix, A::TransTri{:N, UPLO}, dX::ZeroTangent, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X / A
-    dY = (-Y * transpose(dL)) / A
-    return Y, dY
-end
-
-# L const
-function rdiv_frule_impl(X::AbstractMatrix, A::AdjOrTransTri, dX::AbstractMatrix, dL::ZeroTangent)
-    Y = X / A
-    dY = dX / A
-    return Y, dY
-end
-
-# Both const
-function rdiv_frule_impl(X::AbstractMatrix, A::AdjOrTransTri, dX::ZeroTangent, dL::ZeroTangent)
-    return X / A, ZeroTangent()
+    return Y, (dX - Y * dAt) / A
 end
 
 function ChainRulesCore.frule((_, dX, dL)::Tuple, ::typeof(/), X::AbstractMatrix, A::AdjTri{:N})
@@ -54,25 +24,22 @@ end
 
 # ===== rrule =====
 
-function rdiv_rrule_impl(X::AbstractMatrix, A::AdjTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
+function rdiv_rrule_impl(X::AbstractMatrix, A::AdjOrTransTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
     L = parent(A)
     ΔX = ΔY / L
-    ΔL = @thunk begin
-        ΔL = similar(L)
-        selupd!(ΔL, ΔX', Y, -1, 0)
-        ΔL
-    end
-    return ΔX, ΔL
-end
 
-function rdiv_rrule_impl(X::AbstractMatrix, A::TransTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
-    L = parent(A)
-    ΔX = ΔY / L
+    if A isa AdjTri
+        ΔXt = adjoint(ΔX)
+    else
+        ΔXt = transpose(ΔX)
+    end
+
     ΔL = @thunk begin
         ΔL = similar(L)
-        selupd!(ΔL, transpose(ΔX), Y, -1, 0)
+        selupd!(ΔL, ΔXt, Y, -1, 0)
         ΔL
     end
+
     return ΔX, ΔL
 end
 

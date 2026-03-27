@@ -7,7 +7,7 @@ using SuiteSparseMatrixCollection
 
 using CliqueTrees
 using CliqueTrees.Multifrontal: ChordalTriangular, ChordalCholesky, triangular, HermTri, SymTri, ndz, selupd!
-using CliqueTrees.Multifrontal.Differential: cholesky, selinv, uncholesky, soft, flat, unflattri, unflatsym
+using CliqueTrees.Multifrontal.Differential: cholesky, selinv, uncholesky, softmax, flat, unflattri, unflatsym
 
 using ADTypes: AutoForwardDiff
 using DifferentiationInterface

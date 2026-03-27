@@ -2,81 +2,10 @@
 
 # ===== frule =====
 
-function dot_frule_impl(X::AbstractVecOrMat, A::HermTri{UPLO}, Y::AbstractVecOrMat, dX::AbstractVecOrMat, dA::ChordalTriangular{:N, UPLO}, dY::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(A, dA)
+function dot_frule_impl(X::AbstractVecOrMat, A::HermOrSymTri, Y::AbstractVecOrMat, dX, dA, dY)
     y = dot(X, A, Y)
-    dy = dot(dX, A, Y) + dot(X, A, dY) + dot(X, Hermitian(dA, UPLO), Y)
+    dy = dot(dX, A, Y) + dot(X, A, dY) + dot(X, ProjectTo(A)(dA), Y)
     return y, dy
-end
-
-function dot_frule_impl(X::AbstractVecOrMat, A::SymTri{UPLO}, Y::AbstractVecOrMat, dX::AbstractVecOrMat, dA::ChordalTriangular{:N, UPLO}, dY::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(A, dA)
-    y = dot(X, A, Y)
-    dy = dot(dX, A, Y) + dot(X, A, dY) + dot(X, Symmetric(dA, UPLO), Y)
-    return y, dy
-end
-
-# X const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermTri{UPLO}, Y::AbstractVecOrMat, dX::ZeroTangent, dA::ChordalTriangular{:N, UPLO}, dY::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(A, dA)
-    y = dot(X, A, Y)
-    dy = dot(X, A, dY) + dot(X, Hermitian(dA, UPLO), Y)
-    return y, dy
-end
-
-function dot_frule_impl(X::AbstractVecOrMat, A::SymTri{UPLO}, Y::AbstractVecOrMat, dX::ZeroTangent, dA::ChordalTriangular{:N, UPLO}, dY::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(A, dA)
-    y = dot(X, A, Y)
-    dy = dot(X, A, dY) + dot(X, Symmetric(dA, UPLO), Y)
-    return y, dy
-end
-
-# A const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermOrSymTri, Y::AbstractVecOrMat, dX::AbstractVecOrMat, dA::ZeroTangent, dY::AbstractVecOrMat)
-    y = dot(X, A, Y)
-    dy = dot(dX, A, Y) + dot(X, A, dY)
-    return y, dy
-end
-
-# Y const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermTri{UPLO}, Y::AbstractVecOrMat, dX::AbstractVecOrMat, dA::ChordalTriangular{:N, UPLO}, dY::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dA)
-    y = dot(X, A, Y)
-    dy = dot(dX, A, Y) + dot(X, Hermitian(dA, UPLO), Y)
-    return y, dy
-end
-
-function dot_frule_impl(X::AbstractVecOrMat, A::SymTri{UPLO}, Y::AbstractVecOrMat, dX::AbstractVecOrMat, dA::ChordalTriangular{:N, UPLO}, dY::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dA)
-    y = dot(X, A, Y)
-    dy = dot(dX, A, Y) + dot(X, Symmetric(dA, UPLO), Y)
-    return y, dy
-end
-
-# X, A const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermOrSymTri, Y::AbstractVecOrMat, dX::ZeroTangent, dA::ZeroTangent, dY::AbstractVecOrMat)
-    return dot(X, A, Y), dot(X, A, dY)
-end
-
-# X, Y const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermTri{UPLO}, Y::AbstractVecOrMat, dX::ZeroTangent, dA::ChordalTriangular{:N, UPLO}, dY::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dA)
-    return dot(X, A, Y), dot(X, Hermitian(dA, UPLO), Y)
-end
-
-function dot_frule_impl(X::AbstractVecOrMat, A::SymTri{UPLO}, Y::AbstractVecOrMat, dX::ZeroTangent, dA::ChordalTriangular{:N, UPLO}, dY::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dA)
-    return dot(X, A, Y), dot(X, Symmetric(dA, UPLO), Y)
-end
-
-# A, Y const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermOrSymTri, Y::AbstractVecOrMat, dX::AbstractVecOrMat, dA::ZeroTangent, dY::ZeroTangent)
-    return dot(X, A, Y), dot(dX, A, Y)
-end
-
-# X, A, Y const
-function dot_frule_impl(X::AbstractVecOrMat, A::HermOrSymTri, Y::AbstractVecOrMat, dX::ZeroTangent, dA::ZeroTangent, dY::ZeroTangent)
-    return dot(X, A, Y), ZeroTangent()
 end
 
 function ChainRulesCore.frule((_, dX, dA, dY)::Tuple, ::typeof(dot), X::AbstractVecOrMat, A::HermTri, Y::AbstractVecOrMat)
@@ -98,27 +27,25 @@ end
 
 # ===== rrule =====
 
-function dot_rrule_impl(X::AbstractVecOrMat, A::HermTri{UPLO}, Y::AbstractVecOrMat, y, AX::AbstractVecOrMat, AY::AbstractVecOrMat, Δy) where {UPLO}
+function dot_rrule_impl(X::AbstractVecOrMat, A::HermOrSymTri, Y::AbstractVecOrMat, y, AX::AbstractVecOrMat, AY::AbstractVecOrMat, Δy)
     ΔX = @thunk Δy * AY
     ΔY = @thunk Δy * AX
-    ΔA = @thunk begin
-        ΔA = similar(parent(A))
-        selupd!(ΔA, X, Y', Δy / 2, 0)
-        selupd!(ΔA, Y, X', Δy / 2, 1)
-        ΔA
-    end
-    return ΔX, ΔA, ΔY
-end
 
-function dot_rrule_impl(X::AbstractVecOrMat, A::SymTri{UPLO}, Y::AbstractVecOrMat, y, AX::AbstractVecOrMat, AY::AbstractVecOrMat, Δy) where {UPLO}
-    ΔX = @thunk Δy * AY
-    ΔY = @thunk Δy * AX
+    if A isa HermTri
+        Xt = adjoint(X)
+        Yt = adjoint(Y)
+    else
+        Xt = transpose(X)
+        Yt = transpose(Y)
+    end
+
     ΔA = @thunk begin
         ΔA = similar(parent(A))
-        selupd!(ΔA, X, transpose(Y), Δy / 2, 0)
-        selupd!(ΔA, Y, transpose(X), Δy / 2, 1)
+        selupd!(ΔA, X, Yt, Δy / 2, 0)
+        selupd!(ΔA, Y, Xt, Δy / 2, 1)
         ΔA
     end
+
     return ΔX, ΔA, ΔY
 end
 

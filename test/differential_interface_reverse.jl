@@ -7,7 +7,7 @@ using SuiteSparseMatrixCollection
 
 using CliqueTrees
 using CliqueTrees.Multifrontal: ChordalTriangular, DChordalCholesky, triangular, HermTri, SymTri, Permutation, ndz, selupd!
-using CliqueTrees.Multifrontal.Differential: cholesky, selinv, uncholesky, soft, flat, unflattri, unflatsym
+using CliqueTrees.Multifrontal.Differential: cholesky, selinv, uncholesky, softmax, flat, unflattri, unflatsym
 
 using ADTypes: AutoZygote, AutoMooncake
 using DifferentiationInterface
@@ -68,7 +68,7 @@ end
     # Test functions - must be scalar-valued for gradient testing
 
     function loss_residual_prec(; x, b, pchol, qprec, uplo, S, P)
-        LP = soft(unflattri(pchol, S, uplo))
+        LP = softmax(unflattri(pchol, S, uplo))
         Q = unflatsym(qprec, S, uplo)
         r = b - P' * (Q * (P * x))
         z = P' * (LP' \ (LP \ (P * r)))
@@ -76,8 +76,8 @@ end
     end
 
     function loss_residual_chol(; x, b, pchol, qchol, uplo, S, P)
-        LP = soft(unflattri(pchol, S, uplo))
-        LQ = soft(unflattri(qchol, S, uplo))
+        LP = softmax(unflattri(pchol, S, uplo))
+        LQ = softmax(unflattri(qchol, S, uplo))
         r = b - P' * (LQ * (LQ' * (P * x)))
         z = P' * (LP' \ (LP \ (P * r)))
         return dot(z, z)
@@ -92,8 +92,8 @@ end
     end
 
     function loss_entropy_chol(; qmean, qchol, pmean, pchol, uplo, S, P)
-        LA = soft(unflattri(pchol, S, uplo))
-        LB = soft(unflattri(qchol, S, uplo))
+        LA = softmax(unflattri(pchol, S, uplo))
+        LB = softmax(unflattri(qchol, S, uplo))
         Aprec = uncholesky(LA)
         return 0.5 * (dot(Aprec, selinv(LB)) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
     end

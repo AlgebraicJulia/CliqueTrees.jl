@@ -2,28 +2,9 @@
 
 # ===== frule =====
 
-function rdiv_frule_impl(X::AbstractMatrix, L::ChordalTriangular{:N, UPLO}, dX::AbstractMatrix, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(L, dL)
+function rdiv_frule_impl(X::AbstractMatrix, L::ChordalTriangular{:N}, dX, dL)
     Y = X / L
-    dY = (dX - Y * dL) / L
-    return Y, dY
-end
-
-function rdiv_frule_impl(X::AbstractMatrix, L::ChordalTriangular{:N, UPLO}, dX::ZeroTangent, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(L, dL)
-    Y = X / L
-    dY = (-Y * dL) / L
-    return Y, dY
-end
-
-function rdiv_frule_impl(X::AbstractMatrix, L::ChordalTriangular{:N, UPLO}, dX::AbstractMatrix, dL::ZeroTangent) where {UPLO}
-    Y = X / L
-    dY = dX / L
-    return Y, dY
-end
-
-function rdiv_frule_impl(X::AbstractMatrix, L::ChordalTriangular, dX::ZeroTangent, dL::ZeroTangent)
-    return X / L, ZeroTangent()
+    return Y, (dX - Y * dL) / L
 end
 
 function ChainRulesCore.frule((_, dX, dL)::Tuple, ::typeof(/), X::AbstractMatrix, L::ChordalTriangular{:N})

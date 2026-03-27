@@ -10,35 +10,30 @@ end
 
 function ChainRulesCore.rrule(::typeof(cholesky), H::HermOrSymTri)
     L = cholesky(H)
-
-    function pullback(ΔL)
-        if ΔL isa ZeroTangent
-            ΔH = ZeroTangent()
-        else
-            ΔH = cholesky_rrule_impl(H, L, ΔL)
-        end
-
-        return NoTangent(), ΔH
-    end
-
+    pullback(ΔL) = (NoTangent(), cholesky_rrule_impl(H, L, ΔL))
     return L, pullback ∘ unthunk
 end
 
-function cholesky_rrule_impl(H::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, L, dL)
-    ΔH = copy(dL)
-    dfcholesky!(ΔH, L; adj=true, inv=false)
+function cholesky_rrule_impl(H::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, ΔL) where {UPLO}
+    if ΔL isa ZeroTangent
+        ΔH = ZeroTangent()
+    else
+        ΔH = copy(ΔL)
+        dfcholesky!(ΔH, L; adj=true, inv=false)
+    end
+
     return ΔH
 end
 
-function cholesky_frule_impl(H::HermOrSymTri{UPLO}, dH::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, dH)
+function cholesky_frule_impl(H::HermOrSymTri, dH)
     L = cholesky(H)
-    dL = copy(dH)
-    dfcholesky!(dL, L; adj=false, inv=false)
-    return L, dL
-end
 
-function cholesky_frule_impl(H::HermOrSymTri, ::ZeroTangent)
-    return cholesky(H), ZeroTangent()
+    if dH isa ZeroTangent
+        dL = ZeroTangent()
+    else
+        dL = copy(dH)
+        dfcholesky!(dL, L; adj=false, inv=false)
+    end
+
+    return L, dL
 end

@@ -2,14 +2,8 @@
 
 # ===== frule =====
 
-function mul_frule_impl(P::Permutation, X::AbstractVecOrMat, dX::AbstractVecOrMat)
-    Y = P * X
-    dY = P * dX
-    return Y, dY
-end
-
-function mul_frule_impl(P::Permutation, X::AbstractVecOrMat, dX::ZeroTangent)
-    return P * X, ZeroTangent()
+function mul_frule_impl(P::Permutation, X::AbstractVecOrMat, dX)
+    return P * X, P * dX
 end
 
 function ChainRulesCore.frule((_, dP, dX)::Tuple, ::typeof(*), P::Permutation, X::AbstractVecOrMat)

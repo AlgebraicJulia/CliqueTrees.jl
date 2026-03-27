@@ -320,8 +320,8 @@ end
 @from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, TransTri{:N}}
 
 # ldivsym.jl
-@from_chainrules DefaultCtx Tuple{typeof(ldiv), HermTri, ChordalTriangular{:N}, AbstractVector}
-@from_chainrules DefaultCtx Tuple{typeof(ldiv), SymTri, ChordalTriangular{:N}, AbstractVector}
+@from_chainrules DefaultCtx Tuple{typeof(ldiv), HermTri, ChordalTriangular{:N}, AbstractVecOrMat}
+@from_chainrules DefaultCtx Tuple{typeof(ldiv), SymTri, ChordalTriangular{:N}, AbstractVecOrMat}
 
 # rdivsym.jl
 @from_chainrules DefaultCtx Tuple{typeof(rdiv), AbstractMatrix, HermTri, ChordalTriangular{:N}}

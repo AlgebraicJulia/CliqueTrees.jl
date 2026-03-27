@@ -2,28 +2,9 @@
 
 # ===== frule =====
 
-function ldiv_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(L, dL)
+function ldiv_frule_impl(L::ChordalTriangular{:N}, X::AbstractVecOrMat, dL, dX)
     Y = L \ X
-    dY = L \ (dX - dL * Y)
-    return Y, dY
-end
-
-function ldiv_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ZeroTangent, dX::AbstractVecOrMat) where {UPLO}
-    Y = L \ X
-    dY = L \ dX
-    return Y, dY
-end
-
-function ldiv_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::ZeroTangent) where {UPLO}
-    @assert checksymbolic(L, dL)
-    Y = L \ X
-    dY = L \ (dL * -Y)
-    return Y, dY
-end
-
-function ldiv_frule_impl(L::ChordalTriangular, X::AbstractVecOrMat, dL::ZeroTangent, dX::ZeroTangent)
-    return L \ X, ZeroTangent()
+    return Y, L \ (dX - dL * Y)
 end
 
 function ChainRulesCore.frule((_, dL, dX)::Tuple, ::typeof(\), L::ChordalTriangular{:N}, X::AbstractVecOrMat)

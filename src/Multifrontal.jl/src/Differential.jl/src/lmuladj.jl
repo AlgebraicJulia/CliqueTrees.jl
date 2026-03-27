@@ -2,46 +2,14 @@
 
 # ===== frule =====
 
-# AdjTri
-function mul_frule_impl(A::AdjTri{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = A * X
-    dY = dL' * X + A * dX
-    return Y, dY
-end
+function mul_frule_impl(A::AdjOrTransTri{:N}, X::AbstractVecOrMat, dL, dX)
+    if A isa AdjTri
+        dAt = adjoint(dL)
+    else
+        dAt = transpose(dL)
+    end
 
-function mul_frule_impl(A::AdjTri{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = A * X
-    dY = dL' * X
-    return Y, dY
-end
-
-# TransTri
-function mul_frule_impl(A::TransTri{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = A * X
-    dY = transpose(dL) * X + A * dX
-    return Y, dY
-end
-
-# L const
-function mul_frule_impl(A::AdjOrTransTri, X::AbstractVecOrMat, dL::ZeroTangent, dX::AbstractVecOrMat)
-    Y = A * X
-    dY = A * dX
-    return Y, dY
-end
-
-function mul_frule_impl(A::TransTri{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = A * X
-    dY = transpose(dL) * X
-    return Y, dY
-end
-
-# Both const
-function mul_frule_impl(A::AdjOrTransTri, X::AbstractVecOrMat, dL::ZeroTangent, dX::ZeroTangent)
-    return A * X, ZeroTangent()
+    return A * X, dAt * X + A * dX
 end
 
 function ChainRulesCore.frule((_, dL, dX)::Tuple, ::typeof(*), A::AdjTri{:N}, X::AbstractVecOrMat)
@@ -54,26 +22,19 @@ end
 
 # ===== rrule =====
 
-function mul_rrule_impl(A::AdjTri{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
+function mul_rrule_impl(A::AdjOrTransTri{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
     L = parent(A)
     ΔX = L * ΔY
 
-    ΔL = @thunk begin
-        ΔL = similar(L)
-        selupd!(ΔL, X, ΔY', 1, 0)
-        ΔL
+    if A isa AdjTri
+        ΔYt = adjoint(ΔY)
+    else
+        ΔYt = transpose(ΔY)
     end
 
-    return ΔL, ΔX
-end
-
-function mul_rrule_impl(A::TransTri{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
-    L = parent(A)
-    ΔX = L * ΔY
-
     ΔL = @thunk begin
         ΔL = similar(L)
-        selupd!(ΔL, X, transpose(ΔY), 1, 0)
+        selupd!(ΔL, X, ΔYt, 1, 0)
         ΔL
     end
 

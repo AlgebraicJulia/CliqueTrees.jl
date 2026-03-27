@@ -2,22 +2,8 @@
 
 # ===== frule =====
 
-function mul_frule_impl(x::Number, A::MaybeHermOrSymTri{UPLO}, dx::Number, dA::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dA)
+function mul_frule_impl(x::Number, A::MaybeHermOrSymTri, dx, dA)
     return x * A, dx * parent(A) + x * dA
-end
-
-function mul_frule_impl(x::Number, A::MaybeHermOrSymTri{UPLO}, dx::ZeroTangent, dA::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dA)
-    return x * A, x * dA
-end
-
-function mul_frule_impl(x::Number, A::MaybeHermOrSymTri, dx::Number, dA::ZeroTangent)
-    return x * A, dx * parent(A)
-end
-
-function mul_frule_impl(x::Number, A::MaybeHermOrSymTri, dx::ZeroTangent, dA::ZeroTangent)
-    return x * A, ZeroTangent()
 end
 
 function ChainRulesCore.frule((_, dx, dL)::Tuple, ::typeof(*), x::Number, L::ChordalTriangular{:N})
@@ -30,25 +16,10 @@ end
 
 # ===== rrule =====
 
-function mul_rrule_impl(x::Number, L::ChordalTriangular{:N, UPLO}, y::ChordalTriangular{:N, UPLO}, Δy::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(L, y, Δy)
-    Δx = @thunk dot(L, Δy)
-    ΔL = @thunk conj(x) * Δy
-    return Δx, ΔL
-end
-
-function mul_rrule_impl(x::Real, H::HermTri{UPLO}, y::HermTri{UPLO}, Δy::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, y, Δy)
-    Δx = @thunk dot(H, Hermitian(Δy, UPLO))
-    ΔH = @thunk x * Δy
-    return Δx, ΔH
-end
-
-function mul_rrule_impl(x::Real, H::SymTri{UPLO}, y::SymTri{UPLO}, Δy::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, y, Δy)
-    Δx = @thunk dot(H, Symmetric(Δy, UPLO))
-    ΔH = @thunk x * Δy
-    return Δx, ΔH
+function mul_rrule_impl(x::Number, A::MaybeHermOrSymTri, y::MaybeHermOrSymTri, Δy::ChordalTriangular{:N})
+    Δx = @thunk dot(A, ProjectTo(A)(Δy))
+    ΔA = @thunk conj(x) * Δy
+    return Δx, ΔA
 end
 
 function mul_rrule(x::Number, A::MaybeHermOrSymTri)

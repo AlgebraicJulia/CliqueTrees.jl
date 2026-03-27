@@ -11,7 +11,7 @@ using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri
 using CliqueTrees.Multifrontal: chordal, symbolic, ndz, nlz
 using CliqueTrees.Multifrontal.Differential
 using CliqueTrees.Multifrontal.Differential: frule, rrule
-using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, soft, sigmoid
+using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, softmax, sigmoid
 using CliqueTrees.Multifrontal.Differential: flat, unflattri, unflatsym
 using CliqueTrees.Multifrontal.Differential: ldiv, rdiv
 
@@ -40,7 +40,7 @@ end
     # Helper for comparing tangents (handles ZeroTangent)
     tangent_approx(a, b) = iszero(a) && iszero(b) || a ≈ b
 
-    for T in (Float64, BigFloat)
+    for T in (Float32, Float64, BigFloat)
         A = SparseMatrixCSC{T}(M)
 
         for UPLO in (:L, :U)
@@ -351,15 +351,15 @@ end
                     end
                 end
 
-                @testset "soft" begin
+                @testset "softmax" begin
                     L_in = copy(L)
                     randn!(L_in.Dval)
                     randn!(L_in.Lval)
                     PL = ProjectTo(L) ∘ unthunk
                     for dL in (randtangent(L), ZeroTangent())
                         for ΔY in (randtangent(L), ZeroTangent())
-                            _, dY = frule((NoTangent(), dL), soft, L_in)
-                            _, pullback = rrule(soft, L_in)
+                            _, dY = frule((NoTangent(), dL), softmax, L_in)
+                            _, pullback = rrule(softmax, L_in)
                             _, ΔL = pullback(ΔY)
 
                             lhs = dot(PL(ΔY), PL(dY))

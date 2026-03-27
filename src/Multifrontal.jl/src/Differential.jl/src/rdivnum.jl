@@ -2,25 +2,9 @@
 
 # ===== frule =====
 
-function rdiv_frule_impl(A::MaybeHermOrSymTri{UPLO}, x::Number, dA::ChordalTriangular{:N, UPLO}, dx::Number) where {UPLO}
-    @assert checksymbolic(A, dA)
+function rdiv_frule_impl(A::MaybeHermOrSymTri, x::Number, dA, dx)
     y = A / x
     return y, (dA - parent(y) * dx) / x
-end
-
-function rdiv_frule_impl(A::MaybeHermOrSymTri{UPLO}, x::Number, dA::ChordalTriangular{:N, UPLO}, dx::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, dA)
-    y = A / x
-    return y, dA / x
-end
-
-function rdiv_frule_impl(A::MaybeHermOrSymTri, x::Number, dA::ZeroTangent, dx::Number)
-    y = A / x
-    return y, -parent(y) * dx / x
-end
-
-function rdiv_frule_impl(A::MaybeHermOrSymTri, x::Number, dA::ZeroTangent, dx::ZeroTangent)
-    return A / x, ZeroTangent()
 end
 
 function ChainRulesCore.frule((_, dL, dx)::Tuple, ::typeof(/), L::ChordalTriangular{:N}, x::Number)
@@ -33,25 +17,10 @@ end
 
 # ===== rrule =====
 
-function rdiv_rrule_impl(L::ChordalTriangular{:N, UPLO}, x::Number, y::ChordalTriangular{:N, UPLO}, Δy::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(L, y, Δy)
-    ΔL = @thunk Δy / conj(x)
-    Δx = @thunk -dot(y, Δy) / conj(x)
-    return ΔL, Δx
-end
-
-function rdiv_rrule_impl(H::HermTri{UPLO}, x::Real, y::HermTri{UPLO}, Δy::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, y, Δy)
-    ΔH = @thunk Δy / x
-    Δx = @thunk -dot(y, Hermitian(Δy, UPLO)) / x
-    return ΔH, Δx
-end
-
-function rdiv_rrule_impl(H::SymTri{UPLO}, x::Real, y::SymTri{UPLO}, Δy::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, y, Δy)
-    ΔH = @thunk Δy / x
-    Δx = @thunk -dot(y, Symmetric(Δy, UPLO)) / x
-    return ΔH, Δx
+function rdiv_rrule_impl(A::MaybeHermOrSymTri, x::Number, y::MaybeHermOrSymTri, Δy::ChordalTriangular{:N})
+    ΔA = @thunk Δy / conj(x)
+    Δx = @thunk -dot(y, ProjectTo(A)(Δy)) / conj(x)
+    return ΔA, Δx
 end
 
 function rdiv_rrule(A::MaybeHermOrSymTri, x::Number)

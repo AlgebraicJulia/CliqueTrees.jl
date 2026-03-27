@@ -2,74 +2,41 @@
 
 # ===== frule =====
 
-function mul_frule_impl(X::AbstractMatrix, H::HermTri{UPLO}, dX::AbstractMatrix, dH::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, dH)
+function mul_frule_impl(X::AbstractMatrix, H::HermOrSymTri, dX, dH)
     Y = X * H
-    dY = dX * H + X * Hermitian(dH, UPLO)
+    dY = dX * H + X * ProjectTo(H)(dH)
     return Y, dY
 end
 
-function mul_frule_impl(X::AbstractMatrix, S::SymTri{UPLO}, dX::AbstractMatrix, dS::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(S, dS)
-    Y = X * S
-    dY = dX * S + X * Symmetric(dS, UPLO)
-    return Y, dY
-end
-
-function mul_frule_impl(X::AbstractMatrix, H::HermTri{UPLO}, dX::ZeroTangent, dH::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, dH)
-    Y = X * H
-    dY = X * Hermitian(dH, UPLO)
-    return Y, dY
-end
-
-function mul_frule_impl(X::AbstractMatrix, S::SymTri{UPLO}, dX::ZeroTangent, dS::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(S, dS)
-    Y = X * S
-    dY = X * Symmetric(dS, UPLO)
-    return Y, dY
-end
-
-function mul_frule_impl(X::AbstractMatrix, H::HermOrSymTri, dX::AbstractMatrix, dH::ZeroTangent)
-    Y = X * H
-    dY = dX * H
-    return Y, dY
-end
-
-function mul_frule_impl(X::AbstractMatrix, H::HermOrSymTri, dX::ZeroTangent, dH::ZeroTangent)
-    return X * H, ZeroTangent()
-end
-
-function ChainRulesCore.frule((_, dX, dH)::Tuple, ::typeof(*), X::AbstractMatrix, H::HermTri{UPLO}) where {UPLO}
+function ChainRulesCore.frule((_, dX, dH)::Tuple, ::typeof(*), X::AbstractMatrix, H::HermTri)
     return mul_frule_impl(X, H, dX, dH)
 end
 
-function ChainRulesCore.frule((_, dX, dS)::Tuple, ::typeof(*), X::AbstractMatrix, S::SymTri{UPLO}) where {UPLO}
+function ChainRulesCore.frule((_, dX, dS)::Tuple, ::typeof(*), X::AbstractMatrix, S::SymTri)
     return mul_frule_impl(X, S, dX, dS)
 end
 
 # ===== rrule =====
 
-function mul_rrule_impl(X::AbstractMatrix, H::HermTri{UPLO}, Y::AbstractMatrix, ΔY::AbstractMatrix) where {UPLO}
+function mul_rrule_impl(X::AbstractMatrix, H::HermOrSymTri, Y::AbstractMatrix, ΔY::AbstractMatrix)
     ΔX = ΔY * H
+
+    if H isa HermTri
+        Xt = adjoint(X)
+        ΔYt = adjoint(ΔY)
+    else
+        Xt = transpose(X)
+        ΔYt = transpose(ΔY)
+    end
+
     ΔH = @thunk begin
         ΔH = similar(parent(H))
-        selupd!(ΔH, X', ΔY, 1 / 2, 0)
-        selupd!(ΔH, ΔY', X, 1 / 2, 1)
+        selupd!(ΔH, Xt, ΔY, 1 / 2, 0)
+        selupd!(ΔH, ΔYt, X, 1 / 2, 1)
         ΔH
     end
-    return ΔX, ΔH
-end
 
-function mul_rrule_impl(X::AbstractMatrix, S::SymTri{UPLO}, Y::AbstractMatrix, ΔY::AbstractMatrix) where {UPLO}
-    ΔX = ΔY * S
-    ΔS = @thunk begin
-        ΔS = similar(parent(S))
-        selupd!(ΔS, transpose(X), ΔY, 1 / 2, 0)
-        selupd!(ΔS, transpose(ΔY), X, 1 / 2, 1)
-        ΔS
-    end
-    return ΔX, ΔS
+    return ΔX, ΔH
 end
 
 function mul_rrule(X::AbstractMatrix, H::HermOrSymTri)

@@ -2,46 +2,14 @@
 
 # ===== frule =====
 
-# AdjTri
-function mul_frule_impl(X::AbstractMatrix, A::AdjTri{:N, UPLO}, dX::AbstractMatrix, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X * A
-    dY = dX * A + X * dL'
-    return Y, dY
-end
+function mul_frule_impl(X::AbstractMatrix, A::AdjOrTransTri{:N}, dX, dL)
+    if A isa AdjTri
+        dAt = adjoint(dL)
+    else
+        dAt = transpose(dL)
+    end
 
-function mul_frule_impl(X::AbstractMatrix, A::AdjTri{:N, UPLO}, dX::ZeroTangent, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X * A
-    dY = X * dL'
-    return Y, dY
-end
-
-# TransTri
-function mul_frule_impl(X::AbstractMatrix, A::TransTri{:N, UPLO}, dX::AbstractMatrix, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X * A
-    dY = dX * A + X * transpose(dL)
-    return Y, dY
-end
-
-function mul_frule_impl(X::AbstractMatrix, A::TransTri{:N, UPLO}, dX::ZeroTangent, dL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dL)
-    Y = X * A
-    dY = X * transpose(dL)
-    return Y, dY
-end
-
-# L const
-function mul_frule_impl(X::AbstractMatrix, A::AdjOrTransTri, dX::AbstractMatrix, dL::ZeroTangent)
-    Y = X * A
-    dY = dX * A
-    return Y, dY
-end
-
-# Both const
-function mul_frule_impl(X::AbstractMatrix, A::AdjOrTransTri, dX::ZeroTangent, dL::ZeroTangent)
-    return X * A, ZeroTangent()
+    return X * A, dX * A + X * dAt
 end
 
 function ChainRulesCore.frule((_, dX, dL)::Tuple, ::typeof(*), X::AbstractMatrix, A::AdjTri{:N})
@@ -54,26 +22,19 @@ end
 
 # ===== rrule =====
 
-function mul_rrule_impl(X::AbstractMatrix, A::AdjTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
+function mul_rrule_impl(X::AbstractMatrix, A::AdjOrTransTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
     L = parent(A)
     ΔX = ΔY * L
 
-    ΔL = @thunk begin
-        ΔL = similar(L)
-        selupd!(ΔL, ΔY', X, 1, 0)
-        ΔL
+    if A isa AdjTri
+        ΔYt = adjoint(ΔY)
+    else
+        ΔYt = transpose(ΔY)
     end
 
-    return ΔX, ΔL
-end
-
-function mul_rrule_impl(X::AbstractMatrix, A::TransTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
-    L = parent(A)
-    ΔX = ΔY * L
-
     ΔL = @thunk begin
         ΔL = similar(L)
-        selupd!(ΔL, transpose(ΔY), X, 1, 0)
+        selupd!(ΔL, ΔYt, X, 1, 0)
         ΔL
     end
 

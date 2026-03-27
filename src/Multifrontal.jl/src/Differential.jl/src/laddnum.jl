@@ -2,44 +2,8 @@
 
 # ===== frule =====
 
-function add_frule_impl(X::UniformScaling, A::MaybeHermOrSymTri{UPLO}, dα::Number, dA::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dA)
-    Y = X + A
-    dY = copy(dA)
-
-    for j in fronts(dY)
-        D, _ = diagblock(dY, j)
-
-        for i in diagind(D)
-            D[i] += dα
-        end
-    end
-
-    return Y, dY
-end
-
-function add_frule_impl(X::UniformScaling, A::MaybeHermOrSymTri{UPLO}, dα::ZeroTangent, dA::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, dA)
-    return X + A, dA
-end
-
-function add_frule_impl(X::UniformScaling, A::MaybeHermOrSymTri{UPLO}, dα::Number, dA::ZeroTangent) where {UPLO}
-    Y = X + A
-    dY = zero(parent(Y))
-
-    for j in fronts(dY)
-        D, _ = diagblock(dY, j)
-
-        for i in diagind(D)
-            D[i] = dα
-        end
-    end
-
-    return Y, dY
-end
-
-function add_frule_impl(X::UniformScaling, A::MaybeHermOrSymTri, dα::ZeroTangent, dA::ZeroTangent)
-    return X + A, ZeroTangent()
+function add_frule_impl(X::UniformScaling, A::MaybeHermOrSymTri, dα, dA)
+    return X + A, dα * I + dA
 end
 
 function ChainRulesCore.frule((_, dα, dL)::Tuple, ::typeof(+), X::UniformScaling, L::ChordalTriangular{:N})

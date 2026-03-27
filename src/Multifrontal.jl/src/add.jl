@@ -1,16 +1,3 @@
-# ================================ convert ================================
-
-# Convert ChordalTriangular to a different element type (for ForwardDiff Dual support)
-function Base.convert(::Type{ChordalTriangular{DIAG, UPLO, R}}, A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, R, T}
-    if R === T
-        return copy(A)
-    else
-        Dval = convert(Vector{R}, A.Dval)
-        Lval = convert(Vector{R}, A.Lval)
-        return ChordalTriangular{DIAG, UPLO}(A.S, Dval, Lval)
-    end
-end
-
 # ================================= axpy! =================================
 
 function LinearAlgebra.axpy!(α::Number, X::ChordalTriangular{DIAG, UPLO}, Y::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}

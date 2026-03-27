@@ -2,28 +2,8 @@
 
 # ===== frule =====
 
-function mul_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::AbstractVecOrMat) where {UPLO}
-    @assert checksymbolic(L, dL)
-    Y = L * X
-    dY = dL * X + L * dX
-    return Y, dY
-end
-
-function mul_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ZeroTangent, dX::AbstractVecOrMat) where {UPLO}
-    Y = L * X
-    dY = L * dX
-    return Y, dY
-end
-
-function mul_frule_impl(L::ChordalTriangular{:N, UPLO}, X::AbstractVecOrMat, dL::ChordalTriangular{:N, UPLO}, dX::ZeroTangent) where {UPLO}
-    @assert checksymbolic(L, dL)
-    Y = L * X
-    dY = dL * X
-    return Y, dY
-end
-
-function mul_frule_impl(L::ChordalTriangular, X::AbstractVecOrMat, dL::ZeroTangent, dX::ZeroTangent)
-    return L * X, ZeroTangent()
+function mul_frule_impl(L::ChordalTriangular{:N}, X::AbstractVecOrMat, dL, dX)
+    return L * X, dL * X + L * dX
 end
 
 function ChainRulesCore.frule((_, dL, dX)::Tuple, ::typeof(*), L::ChordalTriangular{:N}, X::AbstractVecOrMat)
@@ -34,11 +14,13 @@ end
 
 function mul_rrule_impl(L::ChordalTriangular{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
     ΔX = L' * ΔY
+
     ΔL = @thunk begin
         ΔL = similar(L)
         selupd!(ΔL, ΔY, X', 1, 0)
         ΔL
     end
+
     return ΔL, ΔX
 end
 

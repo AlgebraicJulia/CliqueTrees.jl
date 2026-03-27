@@ -18,15 +18,15 @@ function transpose_rrule_impl(L, A, ΔA)
     return ΔA
 end
 
-function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(adjoint), L::Union{AdjTri, ChordalTriangular})
+function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(adjoint), L::Union{AdjTri{:N}, ChordalTriangular{:N}})
     return adjoint_frule_impl(L, dL)
 end
 
-function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(transpose), L::Union{TransTri, ChordalTriangular})
+function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(transpose), L::Union{TransTri{:N}, ChordalTriangular{:N}})
     return transpose_frule_impl(L, dL)
 end
 
-function ChainRulesCore.rrule(::typeof(adjoint), L::Union{AdjTri, ChordalTriangular})
+function ChainRulesCore.rrule(::typeof(adjoint), L::Union{AdjTri{:N}, ChordalTriangular{:N}})
     A = adjoint(L)
 
     function pullback(ΔA)
@@ -40,7 +40,7 @@ function ChainRulesCore.rrule(::typeof(adjoint), L::Union{AdjTri, ChordalTriangu
     return A, pullback
 end
 
-function ChainRulesCore.rrule(::typeof(transpose), L::Union{TransTri, ChordalTriangular})
+function ChainRulesCore.rrule(::typeof(transpose), L::Union{TransTri{:N}, ChordalTriangular{:N}})
     A = transpose(L)
 
     function pullback(ΔA)

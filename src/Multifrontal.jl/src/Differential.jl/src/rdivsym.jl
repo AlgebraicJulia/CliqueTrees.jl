@@ -9,31 +9,19 @@ function rdiv(x::AbstractMatrix, P::HermOrSymTri{:U}, L::ChordalTriangular{:N, :
     return (x / L) / L'
 end
 
+function rdiv(x::ZeroTangent, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
+    return x
+end
+
 # ===== frule =====
 
-function rdiv_frule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dx::AbstractMatrix, dP::ChordalTriangular{:N, UPLO}) where {UPLO}
+function rdiv_frule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dx, dP) where {UPLO}
     y = rdiv(x, P, L)
-    dy = rdiv(dx - y * Hermitian(dP, UPLO), P, L)
+    dy = rdiv(dx - y * ProjectTo(P)(dP), P, L)
     return y, dy
 end
 
-function rdiv_frule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dx::ZeroTangent, dP::ChordalTriangular{:N, UPLO}) where {UPLO}
-    y = rdiv(x, P, L)
-    dy = rdiv(-y * Hermitian(dP, UPLO), P, L)
-    return y, dy
-end
-
-function rdiv_frule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dx::AbstractMatrix, dP::ZeroTangent) where {UPLO}
-    y = rdiv(x, P, L)
-    dy = rdiv(dx, P, L)
-    return y, dy
-end
-
-function rdiv_frule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dx::ZeroTangent, dP::ZeroTangent) where {UPLO}
-    return rdiv(x, P, L), ZeroTangent()
-end
-
-function ChainRulesCore.frule((_, dx, dP, _)::Tuple, ::typeof(rdiv), x::AbstractMatrix, P::HermOrSymTri, L::ChordalTriangular{:N})
+function ChainRulesCore.frule((_, dx, dP, _)::Tuple, ::typeof(rdiv), x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
     return rdiv_frule_impl(x, P, L, dx, dP)
 end
 
@@ -41,9 +29,18 @@ end
 
 function rdiv_rrule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, y::AbstractMatrix, Δy::AbstractMatrix) where {UPLO}
     Δx = rdiv(Δy, P, L)
+
+    if P isa HermTri
+        yt = adjoint(y)
+        Δxt = adjoint(Δx)
+    else
+        yt = transpose(y)
+        Δxt = transpose(Δx)
+    end
+
     ΔP = similar(parent(P))
-    selupd!(ΔP, y', Δx, -1 / 2, 0)
-    selupd!(ΔP, Δx', y, -1 / 2, 1)
+    selupd!(ΔP, yt, Δx, -1 / 2, 0)
+    selupd!(ΔP, Δxt, y, -1 / 2, 1)
     return ΔP, Δx
 end
 

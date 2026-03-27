@@ -13,22 +13,30 @@ using ...Multifrontal: cholesky!, complete!, dfcholesky!, fisher!, rmul!, selinv
 using ...Multifrontal: fronts, diagblock, diagind, ndz, nlz, nnz, triangular, checksymbolic
 using ...Multifrontal: DEFAULT_UPLO
 
-export selinv, uncholesky, soft, flat, unflattri, unflatsym, ldiv, rdiv
+export selinv, uncholesky, softmax, flat, unflattri, unflatsym, ldiv, rdiv
 
 function ChainRulesCore.ProjectTo(X::HermTri)
-    return ProjectTo{Hermitian}()
+    return ProjectTo{HermTri}()
 end
 
 function ChainRulesCore.ProjectTo(X::SymTri)
-    return ProjectTo{Symmetric}()
+    return ProjectTo{SymTri}()
 end
 
-function (::ChainRulesCore.ProjectTo{Hermitian})(dX::ChordalTriangular{:N, UPLO}) where {UPLO}
+function (::ChainRulesCore.ProjectTo{HermTri})(dX::ChordalTriangular{:N, UPLO}) where {UPLO}
     return Hermitian(dX, UPLO)
 end
 
-function (::ChainRulesCore.ProjectTo{Symmetric})(dX::ChordalTriangular{:N, UPLO}) where {UPLO}
+function (::ChainRulesCore.ProjectTo{HermTri})(dX::UniformScaling)
+    return dX
+end
+
+function (::ChainRulesCore.ProjectTo{SymTri})(dX::ChordalTriangular{:N, UPLO}) where {UPLO}
     return Symmetric(dX, UPLO)
+end
+
+function (::ChainRulesCore.ProjectTo{SymTri})(dX::UniformScaling)
+    return dX
 end
 
 function ChainRulesCore.ProjectTo(X::AdjTri)
@@ -39,11 +47,11 @@ function ChainRulesCore.ProjectTo(X::TransTri)
     return ProjectTo{Transpose}()
 end
 
-function (::ChainRulesCore.ProjectTo{Adjoint})(dX::ChordalTriangular)
+function (::ChainRulesCore.ProjectTo{Adjoint})(dX::ChordalTriangular{:N})
     return dX'
 end
 
-function (::ChainRulesCore.ProjectTo{Transpose})(dX::ChordalTriangular)
+function (::ChainRulesCore.ProjectTo{Transpose})(dX::ChordalTriangular{:N})
     return transpose(dX)
 end
 
@@ -64,7 +72,7 @@ include("rmul.jl")
 include("rmuladj.jl")
 include("dot.jl")
 include("quad.jl")
-include("soft.jl")
+include("softmax.jl")
 include("unflat.jl")
 include("flat.jl")
 include("lmulsym.jl")

@@ -8,18 +8,24 @@ function flat(H::HermOrSymTri)
 end
 
 # Kernel functions for flat
-function flat_frule_impl(L::ChordalTriangular{:N}, dL::ChordalTriangular{:N})
-    @assert checksymbolic(L, dL)
-    y = flat(L)
-    dy = flat(dL)
-    return y, dy
+function flat_frule_impl(L::ChordalTriangular{:N}, dL)
+    if dL isa ZeroTangent
+        dy = ZeroTangent()
+    else
+        dy = flat(dL)
+    end
+
+    return flat(L), dy
 end
 
-function flat_frule_impl(H::HermOrSymTri{UPLO}, dH::ChordalTriangular{:N}) where {UPLO}
-    @assert checksymbolic(H, dH)
-    y = flat(H)
-    dy = flat(Hermitian(dH, UPLO))
-    return y, dy
+function flat_frule_impl(H::HermOrSymTri, dH)
+    if dH isa ZeroTangent
+        dy = ZeroTangent()
+    else
+        dy = flat(ProjectTo(H)(dH))
+    end
+
+    return flat(H), dy
 end
 
 function flat_rrule_impl(L::ChordalTriangular{:N}, y, Δy::AbstractVector)
@@ -28,14 +34,6 @@ end
 
 function flat_rrule_impl(H::HermOrSymTri, y, Δy::AbstractVector)
     return unflatsym(Δy, parent(H).S, parent(H).uplo)
-end
-
-function flat_frule_impl(L::ChordalTriangular{:N}, ::ZeroTangent)
-    return flat(L), ZeroTangent()
-end
-
-function flat_frule_impl(H::HermOrSymTri, ::ZeroTangent)
-    return flat(H), ZeroTangent()
 end
 
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(flat), L::ChordalTriangular{:N})

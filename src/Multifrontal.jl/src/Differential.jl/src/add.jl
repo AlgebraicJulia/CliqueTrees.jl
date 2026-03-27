@@ -2,30 +2,15 @@
 
 # ===== frule =====
 
-function add_frule_impl(A::MaybeHermOrSymTri{UPLO}, B::MaybeHermOrSymTri{UPLO}, dA::ChordalTriangular{:N, UPLO}, dB::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, B, dA, dB)
+function add_frule_impl(A::MaybeHermOrSymTri, B::MaybeHermOrSymTri, dA, dB)
     return A + B, dA + dB
 end
 
-function add_frule_impl(A::MaybeHermOrSymTri{UPLO}, B::MaybeHermOrSymTri{UPLO}, dA::ZeroTangent, dB::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(A, B, dB)
-    return A + B, dB
-end
-
-function add_frule_impl(A::MaybeHermOrSymTri{UPLO}, B::MaybeHermOrSymTri{UPLO}, dA::ChordalTriangular{:N, UPLO}, dB::ZeroTangent) where {UPLO}
-    @assert checksymbolic(A, B, dA)
-    return A + B, dA
-end
-
-function add_frule_impl(A::MaybeHermOrSymTri, B::MaybeHermOrSymTri, dA::ZeroTangent, dB::ZeroTangent)
-    return A + B, ZeroTangent()
-end
-
-function ChainRulesCore.frule((_, dA, dB)::Tuple, ::typeof(+), A::ChordalTriangular, B::ChordalTriangular)
+function ChainRulesCore.frule((_, dA, dB)::Tuple, ::typeof(+), A::ChordalTriangular{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
     return add_frule_impl(A, B, dA, dB)
 end
 
-function ChainRulesCore.frule((_, dA, dB)::Tuple, ::typeof(+), A::HermOrSymTri{UPLO}, B::HermOrSymTri{UPLO}) where {UPLO}
+function ChainRulesCore.frule((_, dA, dB)::Tuple, ::typeof(+), A::HermOrSymTri, B::HermOrSymTri)
     return add_frule_impl(A, B, dA, dB)
 end
 

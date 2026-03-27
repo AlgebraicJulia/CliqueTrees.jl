@@ -14,35 +14,33 @@ function unflatsym(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}=Val(DE
 end
 
 # Kernel functions for unflattri
-function unflattri_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, dx::AbstractVector) where {UPLO}
-    L = unflattri(x, S, uplo)
-    dL = unflattri(dx, S, uplo)
-    return L, dL
+function unflattri_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, dx) where {UPLO}
+    if dx isa ZeroTangent
+        dL = ZeroTangent()
+    else
+        dL = unflattri(dx, S, uplo)
+    end
+
+    return unflattri(x, S, uplo), dL
 end
 
 function unflattri_rrule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, L::ChordalTriangular{:N, UPLO}, ΔL::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(L, ΔL)
     return flat(ΔL)
 end
 
 # Kernel functions for unflatsym
-function unflatsym_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, dx::AbstractVector) where {UPLO}
-    H = unflatsym(x, S, uplo)
-    dH = unscale!(unflattri(dx, S, uplo))
-    return H, dH
+function unflatsym_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, dx) where {UPLO}
+    if dx isa ZeroTangent
+        dH = ZeroTangent()
+    else
+        dH = unscale!(unflattri(dx, S, uplo))
+    end
+
+    return unflatsym(x, S, uplo), dH
 end
 
 function unflatsym_rrule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, H::HermOrSymTri{UPLO}, ΔH::ChordalTriangular{:N, UPLO}) where {UPLO}
-    @assert checksymbolic(H, ΔH)
     return fflat(clean!, ΔH)
-end
-
-function unflattri_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, ::ZeroTangent) where {UPLO}
-    return unflattri(x, S, uplo), ZeroTangent()
-end
-
-function unflatsym_frule_impl(x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}, ::ZeroTangent) where {UPLO}
-    return unflatsym(x, S, uplo), ZeroTangent()
 end
 
 function ChainRulesCore.frule((_, dx, _, _)::Tuple, ::typeof(unflattri), x::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}) where {UPLO}
