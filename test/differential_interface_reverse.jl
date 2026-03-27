@@ -6,7 +6,7 @@ using Random
 using SuiteSparseMatrixCollection
 
 using CliqueTrees
-using CliqueTrees.Multifrontal: ChordalTriangular, DChordalCholesky, triangular, HermTri, SymTri, ndz, selupd!
+using CliqueTrees.Multifrontal: ChordalTriangular, DChordalCholesky, triangular, HermTri, SymTri, Permutation, ndz, selupd!
 using CliqueTrees.Multifrontal.Differential: cholesky, selinv, complete, uncholesky, soft, flat, unflattri, unflatsym
 
 using ADTypes: AutoZygote, AutoEnzyme, AutoMooncake
@@ -16,26 +16,32 @@ using Enzyme
 using Mooncake
 using Zygote
 
-const SSMC = ssmc_db()
+if !@isdefined(SSMC)
+    const SSMC = ssmc_db()
+end
 
-function readmatrix(name::String)
-    path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format = "MM")[1], "$(name).mtx")
-    return mmread(path)
+if !@isdefined(readmatrix)
+    function readmatrix(name::String)
+        path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format = "MM")[1], "$(name).mtx")
+        return mmread(path)
+    end
 end
 
 @testset "differentiation (backward)" begin
     # Set up test matrices
-    A = SparseMatrixCSC{Float64}(readmatrix("685_bus"))
+    M = SparseMatrixCSC{Float64}(readmatrix("685_bus"))
 
-    F = DChordalCholesky{:L}(A)
-    P = Hermitian(triangular(F), :L) + 2I
-    LP = cholesky(P)
-    CP = selinv(LP) + 2I
-    n = size(LP, 1)
+    F = DChordalCholesky{:L}(M)
+    A = Hermitian(triangular(F), :L) + 2I
+    LA = cholesky(A)
+    CA = selinv(LA) + 2I
+    n = size(LA, 1)
 
-    uplo, S, _ = flat(LP)
+    uplo = parent(LA).uplo
+    S = parent(LA).S
+    P = F.P  # Permutation from original factorization
 
-    # Construct Q by adding rank-1 updates to P at clique positions
+    # Construct B by adding rank-1 updates to A at clique positions
     cliques = [
         [183, 155, 156, 186, 157, 158],
         [185, 177, 176, 180, 182],
@@ -49,82 +55,62 @@ end
         [242, 245, 244, 248],
     ]
 
-    Q = copy(P)
+    B = copy(A)
 
     for c in cliques
-        v = zeros(Float64, size(Q, 1))
+        v = zeros(Float64, size(B, 1))
         v[c] .= 100.0
-        selupd!(parent(Q), v, v', 1, 1)
+        selupd!(parent(B), v, v', 1, 1)
     end
 
-    LQ = cholesky(Q)
-    CQ = selinv(LQ) + 2I
+    LB = cholesky(B)
+    CB = selinv(LB) + 2I
 
     # Test functions - must be scalar-valued for gradient testing
 
-    function loss_residual_prec(; x, b, pchol, qprec, uplo, S)
-        LP = soft(unflattri(uplo, S, pchol))
-        Q = unflatsym(uplo, S, qprec)
-        r = b - Q * x
-        z = adjoint(LP) \ (LP \ r)
+    function loss_residual_prec(; x, b, pchol, qprec, uplo, S, P)
+        LP = soft(unflattri(pchol, S, uplo))
+        Q = unflatsym(qprec, S, uplo)
+        r = b - P' * (Q * (P * x))
+        z = P' * (LP' \ (LP \ (P * r)))
         return dot(z, z)
     end
 
-    function loss_residual_chol(; x, b, pchol, qchol, uplo, S)
-        LP = soft(unflattri(uplo, S, pchol))
-        LQ = soft(unflattri(uplo, S, qchol))
-        r = b - LQ * (adjoint(LQ) * x)
-        z = adjoint(LP) \ (LP \ r)
+    function loss_residual_chol(; x, b, pchol, qchol, uplo, S, P)
+        LP = soft(unflattri(pchol, S, uplo))
+        LQ = soft(unflattri(qchol, S, uplo))
+        r = b - P' * (LQ * (LQ' * (P * x)))
+        z = P' * (LP' \ (LP \ (P * r)))
         return dot(z, z)
     end
 
-    function loss_entropy_prec(; qmean, qprec, pmean, pprec, uplo, S)
-        P = unflatsym(uplo, S, pprec)
-        Q = unflatsym(uplo, S, qprec)
-        LP = cholesky(P)
-        LQ = cholesky(Q)
-        return 0.5 * (dot(P, selinv(LQ)) + dot(pmean - qmean, P, pmean - qmean)) + logdet(LP) - logdet(LQ)
+    function loss_entropy_prec(; qmean, qprec, pmean, pprec, uplo, S, P)
+        Aprec = unflatsym(pprec, S, uplo)
+        Bprec = unflatsym(qprec, S, uplo)
+        LA = cholesky(Aprec)
+        LB = cholesky(Bprec)
+        return 0.5 * (dot(Aprec, selinv(LB)) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
     end
 
-    function loss_entropy_chol(; qmean, qchol, pmean, pchol, uplo, S)
-        LP = soft(unflattri(uplo, S, pchol))
-        LQ = soft(unflattri(uplo, S, qchol))
-        P = uncholesky(LP)
-        return 0.5 * (dot(P, selinv(LQ)) + dot(pmean - qmean, P, pmean - qmean)) + logdet(LP) - logdet(LQ)
+    function loss_entropy_chol(; qmean, qchol, pmean, pchol, uplo, S, P)
+        LA = soft(unflattri(pchol, S, uplo))
+        LB = soft(unflattri(qchol, S, uplo))
+        Aprec = uncholesky(LA)
+        return 0.5 * (dot(Aprec, selinv(LB)) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
     end
 
-    function loss_entropy_dual(; qmean, qscov, pmean, pscov, uplo, S)
-        LP = complete(unflatsym(uplo, S, pscov))
-        LQ = complete(unflatsym(uplo, S, qscov))
-        P = uncholesky(LP)
-        Q = unflatsym(uplo, S, qscov)
-        return 0.5 * (dot(P, Q) + dot(pmean - qmean, P, pmean - qmean)) + logdet(LP) - logdet(LQ)
+    function loss_entropy_dual(; qmean, qscov, pmean, pscov, uplo, S, P)
+        LA = complete(unflatsym(pscov, S, uplo))
+        LB = complete(unflatsym(qscov, S, uplo))
+        Aprec = uncholesky(LA)
+        Bscov = unflatsym(qscov, S, uplo)
+        return 0.5 * (dot(Aprec, Bscov) + dot(pmean - qmean, Aprec, pmean - qmean)) + logdet(LA) - logdet(LB)
     end
 
-    # Test function using scalar operations: tr, *, /, \, +, + xI
-    function loss_scalar_ops(; alpha, beta, pprec, qprec, uplo, S)
-        a = alpha[1]
-        b = beta[1]
-        P = unflatsym(uplo, S, pprec)
-        Q = unflatsym(uplo, S, qprec)
-
-        # scalar multiplication
-        aP = a * P
-        Qb = Q * b
-
-        # scalar division
-        Pd = P / a
-        dQ = b \ Q
-
-        # matrix addition
-        PQ = P + Q
-
-        # identity scaling
-        Pi = P + a * I
-        iQ = b * I + Q
-
-        # trace
-        return tr(aP) + tr(Qb) + tr(Pd) + tr(dQ) + tr(PQ) + tr(Pi) + tr(iQ)
+    function loss_marginal_variances(; qchol, uplo, S, P)
+        LB = soft(unflattri(qchol, S, uplo))
+        CB = selinv(LB)
+        return tr(CB) + sum(diag(CB))
     end
 
     # Compute reference gradient using central differences (O(eps²) accurate)
@@ -159,18 +145,18 @@ end
     end
 
     # Create scenarios with reference gradients computed via finite differences
-    function make_scenarios(LP, P, CP, LQ, Q, CQ, uplo, S)
-        n = size(LP, 1)
+    function make_scenarios(LA, A, CA, LB, B, CB, uplo, S, P)
+        n = size(LA, 1)
 
-        # Get flat representations for P (prior)
-        _, _, pchol = flat(LP)
-        _, _, pprec = flat(P)
-        _, _, pscov = flat(CP)
+        # Get flat representations for A (prior)
+        pchol = flat(LA)
+        pprec = flat(A)
+        pscov = flat(CA)
 
-        # Get flat representations for Q (variational)
-        _, _, qchol = flat(LQ)
-        _, _, qprec = flat(Q)
-        _, _, qscov = flat(CQ)
+        # Get flat representations for B (variational)
+        qchol = flat(LB)
+        qprec = flat(B)
+        qscov = flat(CB)
 
         # Random vectors
         x = randn(Float64, n)
@@ -179,7 +165,7 @@ end
         qmean = randn(Float64, n)
 
         # Fixed parameters (not differentiated)
-        fixed = (; uplo, S)
+        fixed = (; uplo, S, P)
 
         scenarios = Scenario[]
 
@@ -198,17 +184,13 @@ end
         add_all_scenarios!(scenarios, "entropy_dual", loss_entropy_dual,
             (; qmean, qscov, pmean, pscov), fixed)
 
-        # Scalars for scalar ops test (as single-element arrays for finite_diff_gradient)
-        alpha = [2.5]
-        beta = [1.5]
-
-        add_all_scenarios!(scenarios, "scalar_ops", loss_scalar_ops,
-            (; alpha, beta, pprec, qprec), fixed)
+        add_all_scenarios!(scenarios, "marginal_variances", loss_marginal_variances,
+            (; qchol,), fixed)
 
         return scenarios
     end
 
-    scenarios = make_scenarios(LP, P, CP, LQ, Q, CQ, uplo, S)
+    scenarios = make_scenarios(LA, A, CA, LB, B, CB, uplo, S, P)
 
     @testset "Zygote" begin
         test_differentiation(

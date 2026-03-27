@@ -46,15 +46,15 @@ function Base.:/(A::AdjVec, B::MaybeAdjOrTransTri)
     return adjoint(adjoint(B) \ parent(A))
 end
 
-function Base.:\(α::Number, A::ChordalTriangular)
+function Base.:/(A::ChordalTriangular, α::Number)
     B = similar(A, promote_eltype(A, α))
     copyto!(B, A)
     rdiv!(B, α)
     return B
 end
 
-function Base.:/(A::ChordalTriangular, α::Number)
-    return α \ A
+function Base.:\(α::Number, A::ChordalTriangular)
+    return A / α
 end
 
 function Base.:\(α::Number, A::HermOrSymTri)

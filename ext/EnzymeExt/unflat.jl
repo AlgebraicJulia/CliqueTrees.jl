@@ -2,11 +2,11 @@ function EnzymeRules.forward(
         config::FwdConfigWidth{1},
         func::Const{typeof(unflattri)},
         RT::Type,
-        uplo::Const,
+        x::Duplicated{<:AbstractVector},
         S::Const,
-        x::Duplicated{<:AbstractVector}
+        uplo::Const
     )
-    L, dL = unflattri_frule_impl(uplo.val, S.val, x.val, x.dval)
+    L, dL = unflattri_frule_impl(x.val, S.val, uplo.val, x.dval)
     if needs_primal(config) && needs_shadow(config)
         return Duplicated(L, dL)
     elseif needs_shadow(config)
@@ -22,11 +22,11 @@ function EnzymeRules.augmented_primal(
         config::RevConfigWidth{1},
         func::Const{typeof(unflattri)},
         RT::Type,
-        uplo::Const,
+        x::Annotation{<:AbstractVector},
         S::Const,
-        x::Annotation{<:AbstractVector}
+        uplo::Const
     )
-    L = unflattri(uplo.val, S.val, x.val)
+    L = unflattri(x.val, S.val, uplo.val)
 
     if needs_shadow(config)
         shadow = zero(L)
@@ -34,7 +34,7 @@ function EnzymeRules.augmented_primal(
         shadow = nothing
     end
 
-    _, _, _, ox = overwritten(config)
+    _, ox, _, _ = overwritten(config)
     if ox
         cache = (x.val, L)
     else
@@ -50,15 +50,15 @@ function EnzymeRules.reverse(
         func::Const{typeof(unflattri)},
         dret,
         tape,
-        uplo::Const,
+        x::Annotation{<:AbstractVector},
         S::Const,
-        x::Annotation{<:AbstractVector}
+        uplo::Const
     )
     cache, shadow = tape
 
     if cache === nothing
         xval = x.val
-        L = unflattri(uplo.val, S.val, xval)
+        L = unflattri(xval, S.val, uplo.val)
     else
         xval, L = cache
     end
@@ -70,7 +70,7 @@ function EnzymeRules.reverse(
     end
 
     if x isa Duplicated
-        axpy!(1, unflattri_rrule_impl(uplo.val, S.val, xval, L, ΔL), x.dval)
+        axpy!(1, unflattri_rrule_impl(xval, S.val, uplo.val, L, ΔL), x.dval)
     end
 
     return (nothing, nothing, nothing)
@@ -80,11 +80,11 @@ function EnzymeRules.forward(
         config::FwdConfigWidth{1},
         func::Const{typeof(unflatsym)},
         RT::Type,
-        uplo::Const{Val{UPLO}},
+        x::Duplicated{<:AbstractVector},
         S::Const,
-        x::Duplicated{<:AbstractVector}
+        uplo::Const{Val{UPLO}}
     ) where {UPLO}
-    H, dH = unflatsym_frule_impl(uplo.val, S.val, x.val, x.dval)
+    H, dH = unflatsym_frule_impl(x.val, S.val, uplo.val, x.dval)
     # Enzyme requires shadow to have same type as primal
     if needs_primal(config) && needs_shadow(config)
         return Duplicated(H, Hermitian(dH, UPLO))
@@ -101,11 +101,11 @@ function EnzymeRules.augmented_primal(
         config::RevConfigWidth{1},
         func::Const{typeof(unflatsym)},
         RT::Type,
-        uplo::Const{Val{UPLO}},
+        x::Annotation{<:AbstractVector},
         S::Const,
-        x::Annotation{<:AbstractVector}
+        uplo::Const{Val{UPLO}}
     ) where {UPLO}
-    H = unflatsym(uplo.val, S.val, x.val)
+    H = unflatsym(x.val, S.val, uplo.val)
 
     if needs_shadow(config)
         shadow = zero(H)
@@ -113,7 +113,7 @@ function EnzymeRules.augmented_primal(
         shadow = nothing
     end
 
-    _, _, _, ox = overwritten(config)
+    _, ox, _, _ = overwritten(config)
     if ox
         cache = (x.val, H)
     else
@@ -129,15 +129,15 @@ function EnzymeRules.reverse(
         func::Const{typeof(unflatsym)},
         dret,
         tape,
-        uplo::Const{Val{UPLO}},
+        x::Annotation{<:AbstractVector},
         S::Const,
-        x::Annotation{<:AbstractVector}
+        uplo::Const{Val{UPLO}}
     ) where {UPLO}
     cache, shadow = tape
 
     if cache === nothing
         xval = x.val
-        H = unflatsym(uplo.val, S.val, xval)
+        H = unflatsym(xval, S.val, uplo.val)
     else
         xval, H = cache
     end
@@ -149,7 +149,7 @@ function EnzymeRules.reverse(
     end
 
     if x isa Duplicated
-        axpy!(1, unflatsym_rrule_impl(uplo.val, S.val, xval, H, parent(ΔH)), x.dval)
+        axpy!(1, unflatsym_rrule_impl(xval, S.val, uplo.val, H, parent(ΔH)), x.dval)
     end
 
     return (nothing, nothing, nothing)

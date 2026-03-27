@@ -1,7 +1,7 @@
 module EnzymeExt
 
 using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermOrSymTri,
-    HermTri, SymTri, AdjTri, TransTri, symbolic
+    HermTri, SymTri, AdjTri, TransTri, Permutation, symbolic
 using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
     flat, unflattri, unflatsym,
     cholesky_rrule_impl, cholesky_frule_impl,
@@ -11,6 +11,7 @@ using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
     dot_rrule_impl, dot_frule_impl,
     ldiv_rrule_impl, ldiv_frule_impl,
     tr_rrule_impl, tr_frule_impl,
+    diag_rrule_impl, diag_frule_impl,
     logdet_rrule_impl, logdet_frule_impl,
     soft_rrule_impl, soft_frule_impl,
     rdiv_frule_impl, rdiv_rrule_impl,
@@ -23,7 +24,7 @@ using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
     mul_frule_impl, mul_rrule_impl,
     ldiv_frule_impl, rdiv_frule_impl
 using ChainRulesCore: unthunk, ZeroTangent
-using LinearAlgebra: dot, logdet, tr, cholesky, adjoint, transpose, Hermitian, Symmetric, UniformScaling, I, axpy!
+using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, Hermitian, Symmetric, UniformScaling, I, axpy!
 
 using Enzyme: Const, Active, Duplicated, Annotation
 using Enzyme.EnzymeRules: EnzymeRules,
@@ -31,6 +32,11 @@ using Enzyme.EnzymeRules: EnzymeRules,
 
 # ChordalSymbolic is non-differentiable (structural/symbolic type)
 function EnzymeRules.inactive_type(::Type{<:ChordalSymbolic})
+    return true
+end
+
+# Permutation is non-differentiable (structural type)
+function EnzymeRules.inactive_type(::Type{<:Permutation})
     return true
 end
 
@@ -56,12 +62,10 @@ include("adjoint.jl")
 include("unflat.jl")
 include("flat.jl")
 include("trace.jl")
-include("lmulnum.jl")
+include("diag.jl")
 include("rmulnum.jl")
-include("ldivnum.jl")
 include("rdivnum.jl")
 include("add.jl")
-include("laddnum.jl")
 include("raddnum.jl")
 
 end

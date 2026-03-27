@@ -24,6 +24,7 @@ export DenseCholeskyPivoted, DenseLDLtPivoted
 export DynamicRegularization, GMW81, SE99
 export Permutation, FPermutation
 export symbolic
+export chordal
 export selinv!
 
 const THRESHOLD = 64
@@ -61,5 +62,7 @@ include("krylov.jl")
 include("complete_generic.jl")
 include("cholmod.jl")
 include("Differential.jl/src/Differential.jl")
+
+using .Differential
 
 end # module Multifrontal

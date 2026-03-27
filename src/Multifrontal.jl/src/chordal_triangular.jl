@@ -571,6 +571,14 @@ function sparse_impl(A::ChordalTriangular{DIAG, UPLO, T, I}, ::Val{TRANS}) where
     return S
 end
 
+function SparseArrays.sparse(A::HermTri{UPLO}) where {UPLO}
+    return Hermitian(sparse(parent(A)), UPLO)
+end
+
+function SparseArrays.sparse(A::SymTri{UPLO}) where {UPLO}
+    return Symmetric(sparse(parent(A)), UPLO)
+end
+
 function Base.getindex(A::ChordalTriangular{DIAG, UPLO, T}, v::Integer, w::Integer) where {DIAG, UPLO, T}
     if DIAG !== :U || v != w
         return getflatindex(A, flatindex(A, v, w))
@@ -932,4 +940,14 @@ end
 
 function symbolic(A::AdjOrTransTri)
     return symbolic(parent(A))
+end
+
+function chordal(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic, uplo::Val{UPLO}=Val(DEFAULT_UPLO); check::Bool=true) where {UPLO}
+    F = ChordalCholesky{UPLO}(A, perm, S; check)
+    return Hermitian(triangular(F), UPLO)
+end
+
+function chordal(A::AbstractMatrix, S::ChordalSymbolic{I}, uplo::Val{UPLO}=Val(DEFAULT_UPLO); check::Bool=true) where {I, UPLO}
+    perm = OneTo{I}(ncl(S))
+    return chordal(A, perm, S, uplo; check)
 end

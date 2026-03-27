@@ -1,35 +1,33 @@
 function flat(L::ChordalTriangular{:N})
-    x = fflat(clean!, L)
-    return L.uplo, L.S, x
+    return fflat(clean!, L)
 end
 
 function flat(H::HermOrSymTri)
     L = parent(H)
-    x = fflat(scale! ∘ clean!, L)
-    return L.uplo, L.S, x
+    return fflat(scale! ∘ clean!, L)
 end
 
 # Kernel functions for flat
 function flat_frule_impl(L::ChordalTriangular{:N}, dL::ChordalTriangular{:N})
     @assert checksymbolic(L, dL)
     y = flat(L)
-    _, _, dy = flat(dL)
-    return y, (NoTangent(), NoTangent(), dy)
+    dy = flat(dL)
+    return y, dy
 end
 
 function flat_frule_impl(H::HermOrSymTri{UPLO}, dH::ChordalTriangular{:N}) where {UPLO}
     @assert checksymbolic(H, dH)
     y = flat(H)
-    _, _, dy = flat(Hermitian(dH, UPLO))
-    return y, (NoTangent(), NoTangent(), dy)
+    dy = flat(Hermitian(dH, UPLO))
+    return y, dy
 end
 
 function flat_rrule_impl(L::ChordalTriangular{:N}, y, Δy::AbstractVector)
-    return unflattri(L.uplo, L.S, Δy)
+    return unflattri(Δy, L.S, L.uplo)
 end
 
 function flat_rrule_impl(H::HermOrSymTri, y, Δy::AbstractVector)
-    return unflatsym(parent(H).uplo, parent(H).S, Δy)
+    return unflatsym(Δy, parent(H).S, parent(H).uplo)
 end
 
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(flat), L::ChordalTriangular{:N})
@@ -43,7 +41,7 @@ end
 function ChainRulesCore.rrule(::typeof(flat), L::ChordalTriangular{:N})
     y = flat(L)
 
-    function pullback((_, _, Δy))
+    function pullback(Δy)
         if Δy isa ZeroTangent
             return NoTangent(), ZeroTangent()
         else
@@ -57,7 +55,7 @@ end
 function ChainRulesCore.rrule(::typeof(flat), H::HermOrSymTri{UPLO}) where {UPLO}
     y = flat(H)
 
-    function pullback((_, _, Δy))
+    function pullback(Δy)
         if Δy isa ZeroTangent
             return NoTangent(), ZeroTangent()
         else

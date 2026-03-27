@@ -218,24 +218,29 @@ function (::Type{Fac})(A::HermOrSym; kw...) where {DIAG, UPLO, Fac <: ChordalFac
     return Fac(A, symbolic(A; kw...)...)
 end
 
-function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, Fac <: ChordalFactorization{DIAG}}
-    return Fac{DEFAULT_UPLO}(A, perm, S)
+function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic; check::Bool=true) where {DIAG, Fac <: ChordalFactorization{DIAG}}
+    return Fac{DEFAULT_UPLO}(A, perm, S; check)
 end
 
-function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T, Fac <: ChordalFactorization{DIAG, UPLO}}
-    return Fac{T}(A, perm, S)
+function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic; check::Bool=true) where {DIAG, UPLO, T, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return Fac{T}(A, perm, S; check)
 end
 
-function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T <: Integer, Fac <: ChordalFactorization{DIAG, UPLO}}
-    return Fac{float(T)}(A, perm, S)
+function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic; check::Bool=true) where {DIAG, UPLO, T <: Integer, Fac <: ChordalFactorization{DIAG, UPLO}}
+    return Fac{float(T)}(A, perm, S; check)
 end
 
-function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T <: Integer, R, Fac <: ChordalFactorization{DIAG, UPLO, R}}
-    return copy!(Fac(perm, S), A)
+function (::Type{Fac})(A::AbstractMatrix{T}, perm::AbstractVector, S::ChordalSymbolic; check::Bool=true) where {DIAG, UPLO, T <: Integer, R, Fac <: ChordalFactorization{DIAG, UPLO, R}}
+    return copyto!(Fac(perm, S), A; check)
 end
 
-function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic) where {DIAG, UPLO, T, Fac <: ChordalFactorization{DIAG, UPLO, T}}
-    return copy!(Fac(perm, S), A)
+function (::Type{Fac})(A::AbstractMatrix, perm::AbstractVector, S::ChordalSymbolic; check::Bool=true) where {DIAG, UPLO, T, Fac <: ChordalFactorization{DIAG, UPLO, T}}
+    return copyto!(Fac(perm, S), A; check)
+end
+
+function (::Type{Fac})(A::AbstractMatrix, S::ChordalSymbolic{I}; check::Bool=true) where {DIAG, I, Fac <: ChordalFactorization{DIAG}}
+    perm = OneTo{I}(ncl(S))
+    return Fac(A, perm, S; check)
 end
 
 function NaturalFactorization(F::ChordalFactorization{DIAG, UPLO, T, I}) where {DIAG, UPLO, T, I}

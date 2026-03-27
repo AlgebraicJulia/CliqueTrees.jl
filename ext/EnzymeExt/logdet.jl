@@ -1,3 +1,5 @@
+# ===== forward =====
+
 function EnzymeRules.forward(
         config::FwdConfigWidth{1},
         func::Const{typeof(logdet)},
@@ -13,6 +15,35 @@ function EnzymeRules.forward(
         return y
     else
         return
+    end
+end
+
+function EnzymeRules.forward(
+        config::FwdConfigWidth{1},
+        func::Const{typeof(logdet)},
+        RT::Type,
+        L::Const{<:ChordalTriangular{:N}}
+    )
+    y = logdet(L.val)
+    if needs_primal(config)
+        return y
+    else
+        return
+    end
+end
+
+# ===== augmented_primal =====
+
+function EnzymeRules.augmented_primal(
+        config::RevConfigWidth{1},
+        func::Const{typeof(logdet)},
+        ::Type{<:Const},
+        L::Annotation{<:ChordalTriangular{:N}}
+    )
+    if needs_primal(config)
+        return AugmentedReturn(logdet(L.val), nothing, nothing)
+    else
+        return AugmentedReturn(nothing, nothing, nothing)
     end
 end
 
@@ -40,6 +71,18 @@ function EnzymeRules.augmented_primal(
     return AugmentedReturn(primal, nothing, cache)
 end
 
+# ===== reverse =====
+
+function EnzymeRules.reverse(
+        config::RevConfigWidth{1},
+        func::Const{typeof(logdet)},
+        ::Type{<:Const},
+        tape,
+        L::Annotation{<:ChordalTriangular{:N}}
+    )
+    return (nothing,)
+end
+
 function EnzymeRules.reverse(
         config::RevConfigWidth{1},
         func::Const{typeof(logdet)},
@@ -47,7 +90,7 @@ function EnzymeRules.reverse(
         tape,
         L::Annotation{<:ChordalTriangular{:N}}
     )
-    if tape === nothing
+    if isnothing(tape)
         Lval = L.val
         y = logdet(Lval)
     else

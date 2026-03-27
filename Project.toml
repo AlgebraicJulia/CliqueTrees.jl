@@ -56,11 +56,11 @@ Krylov = "0.10"
 Laplacians = "1.1"
 LinearAlgebra = "1"
 Metis = "1"
-Mooncake = "0.4"
+Mooncake = "0.4, 0.5"
 Random = "1"
 SparseArrays = "1"
 TreeWidthSolver = "0.3"
-Zygote = "0.7"
+Zygote = "0.6, 0.7"
 julia = "1.10"
 
 [extras]
@@ -73,6 +73,3 @@ Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 Laplacians = "6f8e5838-0efe-5de0-80a3-5fb4f8dbb1de"
 Metis = "2679e427-3c69-5b7f-982b-ece356f1e94b"
 TreeWidthSolver = "7d267fc5-9ace-409f-a54c-cd2374872a55"
-
-[targets]
-test = ["ChainRules"]

@@ -109,7 +109,6 @@ isperfect
 Multifrontal.ChordalSymbolic
 Multifrontal.ChordalCholesky
 Multifrontal.ChordalLDLt
-Multifrontal.ChordalTriangular
 Multifrontal.Permutation
 Multifrontal.AbstractRegularization
 Multifrontal.DynamicRegularization

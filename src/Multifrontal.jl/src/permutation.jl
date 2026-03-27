@@ -24,6 +24,10 @@ function Permutation{I}(n::Integer) where {I}
     return FPermutation{I}(n)
 end
 
+function (::Type{Prm})(perm::AbstractVector) where {Prm <: Permutation}
+    return Prm(perm, invperm(perm))
+end
+
 const FPermutation{I} = Permutation{I, FVector{I}, FVector{I}}
 const DPermutation{I} = Permutation{I, Vector{I}, Vector{I}}
 const NaturalPermutation{I} = Permutation{I, OneTo{I}, OneTo{I}}

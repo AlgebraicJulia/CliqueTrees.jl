@@ -1,7 +1,7 @@
 module MooncakeExt
 
 using CliqueTrees.Multifrontal: ChordalTriangular, DChordalTriangular, FChordalTriangular,
-    ChordalSymbolic, HermOrSymTri, HermTri, SymTri, AdjTri, TransTri
+    ChordalSymbolic, HermOrSymTri, HermTri, SymTri, AdjTri, TransTri, Permutation
 using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
     cholesky_rrule_impl,
     uncholesky_rrule_impl,
@@ -10,6 +10,7 @@ using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
     dot_rrule_impl,
     ldiv_rrule_impl,
     tr_rrule_impl,
+    diag_rrule_impl,
     logdet_rrule_impl,
     soft_rrule_impl,
     add_rrule_impl,
@@ -18,7 +19,7 @@ using CliqueTrees.Multifrontal.Differential: selinv, complete, uncholesky, soft,
     mul_rrule_impl,
     rdiv_rrule_impl
 using ChainRulesCore: unthunk
-using LinearAlgebra: dot, logdet, tr, cholesky, adjoint, transpose, Hermitian, Symmetric, UniformScaling, I, axpy!
+using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, Hermitian, Symmetric, UniformScaling, I, axpy!
 
 import Mooncake
 using Mooncake: @is_primitive, rrule!!, CoDual, primal, tangent,
@@ -35,6 +36,10 @@ end
 # ===== tangent_type =====
 
 function Mooncake.tangent_type(::Type{<:ChordalSymbolic})
+    return NoTangent
+end
+
+function Mooncake.tangent_type(::Type{<:Permutation})
     return NoTangent
 end
 
@@ -65,6 +70,10 @@ function Mooncake.zero_tangent_internal(::ChordalSymbolic, ::MaybeCache)
     return NoTangent()
 end
 
+function Mooncake.zero_tangent_internal(::Permutation, ::MaybeCache)
+    return NoTangent()
+end
+
 function Mooncake.zero_tangent_internal(x::ChordalTriangular, ::MaybeCache)
     return zero(x)
 end
@@ -88,6 +97,10 @@ end
 # ===== fdata_type =====
 
 function Mooncake.fdata_type(::Type{<:ChordalSymbolic})
+    return NoFData
+end
+
+function Mooncake.fdata_type(::Type{<:Permutation})
     return NoFData
 end
 
@@ -117,6 +130,10 @@ function Mooncake.rdata_type(::Type{<:ChordalSymbolic})
     return NoRData
 end
 
+function Mooncake.rdata_type(::Type{<:Permutation})
+    return NoRData
+end
+
 function Mooncake.rdata_type(::Type{<:ChordalTriangular})
     return NoRData
 end
@@ -143,6 +160,10 @@ function Mooncake.fdata(::ChordalSymbolic)
     return NoFData()
 end
 
+function Mooncake.fdata(::Permutation)
+    return NoFData()
+end
+
 function Mooncake.fdata(t::ChordalTriangular)
     return t
 end
@@ -166,6 +187,10 @@ end
 # ===== rdata =====
 
 function Mooncake.rdata(::ChordalSymbolic)
+    return NoRData()
+end
+
+function Mooncake.rdata(::Permutation)
     return NoRData()
 end
 
@@ -212,6 +237,7 @@ end
 # ===== rrule!! =====
 include("logdet.jl")
 include("trace.jl")
+include("diag.jl")
 include("selinv.jl")
 include("cholesky.jl")
 include("uncholesky.jl")
@@ -230,14 +256,15 @@ include("rdivadj.jl")
 include("rmul.jl")
 include("rmuladj.jl")
 include("add.jl")
-include("laddnum.jl")
 include("raddnum.jl")
-include("lmulnum.jl")
 include("rmulnum.jl")
-include("ldivnum.jl")
 include("rdivnum.jl")
 include("lmulsym.jl")
 include("rmulsym.jl")
 include("quad.jl")
+include("lmulprm.jl")
+include("rmulprm.jl")
+include("ldivprm.jl")
+include("rdivprm.jl")
 
 end

@@ -15,11 +15,15 @@ using DifferentiationInterfaceTest
 using Enzyme
 using ForwardDiff
 
-const SSMC = ssmc_db()
+if !@isdefined(SSMC)
+    const SSMC = ssmc_db()
+end
 
-function readmatrix(name::String)
-    path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format = "MM")[1], "$(name).mtx")
-    return mmread(path)
+if !@isdefined(readmatrix)
+    function readmatrix(name::String)
+        path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format = "MM")[1], "$(name).mtx")
+        return mmread(path)
+    end
 end
 
 @testset "differentiation (forward)" begin
@@ -31,8 +35,9 @@ end
     LP = cholesky(P)
     n = size(LP, 1)
 
-    uplo, S, _ = flat(LP)
-    _, _, pprec = flat(P)
+    uplo = parent(LP).uplo
+    S = parent(LP).S
+    pprec = flat(P)
 
     # Build a second precision matrix Q
     Q = copy(P)
@@ -49,7 +54,7 @@ end
         v[c] .= 50.0
         selupd!(parent(Q), v, v', 1, 1)
     end
-    _, _, qprec = flat(Q)
+    qprec = flat(Q)
 
     # Random vectors for quadratic forms
     x = randn(Float64, n)
@@ -63,7 +68,7 @@ end
     # Regularization sensitivity: d/dλ logdet(P + λI)
     # Useful for: tuning regularization, computing degrees of freedom
     function logdet_regularization(λ::Real; pprec, uplo, S)
-        P = unflatsym(uplo, S, pprec)
+        P = unflatsym(pprec, S, uplo)
         Pλ = P + λ * I
         Lλ = cholesky(Pλ)
         return logdet(Lλ)
@@ -73,7 +78,7 @@ end
     # where Σ = (P + λI)^{-1}
     function entropy_regularization(λ::Real; pprec, uplo, S)
         n = size(S, 1)
-        P = unflatsym(uplo, S, pprec)
+        P = unflatsym(pprec, S, uplo)
         Pλ = P + λ * I
         Lλ = cholesky(Pλ)
         # H = (n/2)(1 + log(2π)) - (1/2)logdet(P)
@@ -84,8 +89,8 @@ end
     # KL = (1/2)[tr(Q^{-1} P_t) - n + logdet(Q) - logdet(P_t)]
     function kl_interpolation(t::Real; pprec, qprec, uplo, S)
         n = size(S, 1)
-        P = unflatsym(uplo, S, pprec)
-        Q = unflatsym(uplo, S, qprec)
+        P = unflatsym(pprec, S, uplo)
+        Q = unflatsym(qprec, S, uplo)
         Pt = (1 - t) * P + t * Q
         LPt = cholesky(Pt)
         LQ = cholesky(Q)
@@ -96,7 +101,7 @@ end
     # Mahalanobis distance sensitivity: d/dt x'(P + tI)^{-1}x
     # Useful for: outlier detection thresholds, confidence regions
     function mahalanobis_regularization(λ::Real; x, pprec, uplo, S)
-        P = unflatsym(uplo, S, pprec)
+        P = unflatsym(pprec, S, uplo)
         Pλ = P + λ * I
         Lλ = cholesky(Pλ)
         Σλ = selinv(Lλ)
@@ -105,8 +110,8 @@ end
 
     # Quadratic form interpolation: x'[(1-t)P + tQ]y
     function quadform_interpolation(t::Real; x, y, pprec, qprec, uplo, S)
-        P = unflatsym(uplo, S, pprec)
-        Q = unflatsym(uplo, S, qprec)
+        P = unflatsym(pprec, S, uplo)
+        Q = unflatsym(qprec, S, uplo)
         Pt = (1 - t) * P + t * Q
         return dot(x, Pt, y)
     end
@@ -114,7 +119,7 @@ end
     # Trace of covariance along regularization: tr((P + λI)^{-1})
     # This equals sum of marginal variances
     function marginal_variance_sum(λ::Real; pprec, uplo, S)
-        P = unflatsym(uplo, S, pprec)
+        P = unflatsym(pprec, S, uplo)
         Pλ = P + λ * I
         Lλ = cholesky(Pλ)
         Σλ = selinv(Lλ)

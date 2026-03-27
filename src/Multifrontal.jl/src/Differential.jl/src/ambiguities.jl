@@ -15,3 +15,41 @@ for T1 in ChordalTypes
         end
     end
 end
+
+# Permutation × ChordalTypes disambiguations
+for T in ChordalTypes
+    # P * L
+    @eval function ChainRulesCore.frule(_::Tuple, ::typeof(*), ::Permutation, ::$T)
+        error()
+    end
+
+    @eval function ChainRulesCore.rrule(::typeof(*), ::Permutation, ::$T)
+        error()
+    end
+
+    @eval function ChainRulesCore.rrule(::typeof(*), ::Permutation, ::$T{<:Any, <:RealOrComplex})
+        error()
+    end
+
+    # L * P
+    @eval function ChainRulesCore.frule(_::Tuple, ::typeof(*), ::$T, ::Permutation)
+        error()
+    end
+
+    @eval function ChainRulesCore.rrule(::typeof(*), ::$T, ::Permutation)
+        error()
+    end
+
+    @eval function ChainRulesCore.rrule(::typeof(*), ::$T{<:Any, <:RealOrComplex}, ::Permutation)
+        error()
+    end
+end
+
+# P * P
+function ChainRulesCore.frule(_::Tuple, ::typeof(*), ::Permutation, ::Permutation)
+    error()
+end
+
+function ChainRulesCore.rrule(::typeof(*), ::Permutation, ::Permutation)
+    error()
+end

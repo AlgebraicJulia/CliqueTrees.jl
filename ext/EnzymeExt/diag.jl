@@ -1,10 +1,12 @@
+# diag(L) where L is ChordalTriangular
+
 function EnzymeRules.forward(
         config::FwdConfigWidth{1},
-        func::Const{typeof(flat)},
+        func::Const{typeof(diag)},
         RT::Type,
         L::Duplicated{<:ChordalTriangular{:N}}
     )
-    y, dy = flat_frule_impl(L.val, L.dval)
+    y, dy = diag_frule_impl(L.val, L.dval)
     if needs_primal(config) && needs_shadow(config)
         return Duplicated(y, dy)
     elseif needs_shadow(config)
@@ -18,11 +20,11 @@ end
 
 function EnzymeRules.augmented_primal(
         config::RevConfigWidth{1},
-        func::Const{typeof(flat)},
+        func::Const{typeof(diag)},
         RT::Type,
         L::Annotation{<:ChordalTriangular{:N}}
     )
-    y = flat(L.val)
+    y = diag(L.val)
 
     if needs_shadow(config)
         shadow = zero(y)
@@ -43,7 +45,7 @@ end
 
 function EnzymeRules.reverse(
         config::RevConfigWidth{1},
-        func::Const{typeof(flat)},
+        func::Const{typeof(diag)},
         dret,
         tape,
         L::Annotation{<:ChordalTriangular{:N}}
@@ -52,7 +54,7 @@ function EnzymeRules.reverse(
 
     if cache === nothing
         Lval = L.val
-        y = flat(Lval)
+        y = diag(Lval)
     else
         Lval, y = cache
     end
@@ -64,19 +66,21 @@ function EnzymeRules.reverse(
     end
 
     if L isa Duplicated
-        axpy!(1, flat_rrule_impl(Lval, y, Δy), L.dval)
+        axpy!(1, diag_rrule_impl(Lval, y, Δy), L.dval)
     end
 
     return (nothing,)
 end
 
+# diag(H) where H is HermOrSymTri
+
 function EnzymeRules.forward(
         config::FwdConfigWidth{1},
-        func::Const{typeof(flat)},
+        func::Const{typeof(diag)},
         RT::Type,
-        H::Duplicated{<:HermOrSymTri{UPLO}}
-    ) where {UPLO}
-    y, dy = flat_frule_impl(H.val, parent(H.dval))
+        H::Duplicated{<:HermOrSymTri}
+    )
+    y, dy = diag_frule_impl(H.val, parent(H.dval))
     if needs_primal(config) && needs_shadow(config)
         return Duplicated(y, dy)
     elseif needs_shadow(config)
@@ -90,11 +94,11 @@ end
 
 function EnzymeRules.augmented_primal(
         config::RevConfigWidth{1},
-        func::Const{typeof(flat)},
+        func::Const{typeof(diag)},
         RT::Type,
-        H::Annotation{<:HermOrSymTri{UPLO}}
-    ) where {UPLO}
-    y = flat(H.val)
+        H::Annotation{<:HermOrSymTri}
+    )
+    y = diag(H.val)
 
     if needs_shadow(config)
         shadow = zero(y)
@@ -115,16 +119,16 @@ end
 
 function EnzymeRules.reverse(
         config::RevConfigWidth{1},
-        func::Const{typeof(flat)},
+        func::Const{typeof(diag)},
         dret,
         tape,
-        H::Annotation{<:HermOrSymTri{UPLO}}
-    ) where {UPLO}
+        H::Annotation{<:HermOrSymTri}
+    )
     cache, shadow = tape
 
     if cache === nothing
         Hval = H.val
-        y = flat(Hval)
+        y = diag(Hval)
     else
         Hval, y = cache
     end
@@ -136,7 +140,7 @@ function EnzymeRules.reverse(
     end
 
     if H isa Duplicated
-        axpy!(1, parent(flat_rrule_impl(Hval, y, Δy)), parent(H.dval))
+        axpy!(1, diag_rrule_impl(Hval, y, Δy), parent(H.dval))
     end
 
     return (nothing,)

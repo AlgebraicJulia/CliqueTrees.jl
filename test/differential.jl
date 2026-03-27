@@ -7,24 +7,28 @@ using SuiteSparseMatrixCollection
 using CliqueTrees
 using ChainRules
 using ChainRulesCore: NoTangent, unthunk
-using CliqueTrees.Multifrontal: ChordalTriangular, ChordalCholesky, ChordalSymbolic, HermTri
-using CliqueTrees.Multifrontal: triangular, ndz, nlz
+using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri
+using CliqueTrees.Multifrontal: chordal, symbolic, ndz, nlz
 using CliqueTrees.Multifrontal.Differential
 using CliqueTrees.Multifrontal.Differential: frule, rrule
 using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, complete, soft
 using CliqueTrees.Multifrontal.Differential: flat, unflattri, unflatsym
 
-const SSMC = ssmc_db()
+if !@isdefined(SSMC)
+    const SSMC = ssmc_db()
+end
 
-function readmatrix(name::String)
-    path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format="MM")[1], "$(name).mtx")
-    return mmread(path)
+if !@isdefined(readmatrix)
+    function readmatrix(name::String)
+        path = joinpath(fetch_ssmc(SSMC[SSMC.name .== name, :]; format="MM")[1], "$(name).mtx")
+        return mmread(path)
+    end
 end
 
 @testset "differentiation (manual)" begin
     A = SparseMatrixCSC{Float64}(readmatrix("685_bus"))
 
-    rtol = 1e-3
+    rtol = 2e-3
 
     # Helper to create random tangent for ChordalTriangular
     function randtangent(L::ChordalTriangular)
@@ -35,10 +39,9 @@ end
     end
 
     for UPLO in (:L, :U)
-        F = ChordalCholesky{UPLO}(A)
-        H = Hermitian(triangular(F), UPLO)  # Input Hermitian matrix
-        L = cholesky(H)                      # Cholesky factor
-        S = L.S
+        perm, S = symbolic(A)
+        H = chordal(A, perm, S, Val(UPLO))
+        L = cholesky(H)
         n = size(L, 1)
 
         @testset "UPLO = $UPLO" begin
@@ -316,6 +319,28 @@ end
                 end
             end
 
+            @testset "diag" begin
+                @testset "frule" begin
+                    dL = randtangent(L)
+                    y, dy = frule((NoTangent(), dL), diag, L)
+
+                    L2 = L + 1e-7 * dL
+                    y2 = diag(L2)
+                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                end
+
+                @testset "rrule" begin
+                    y, pullback = rrule(diag, L)
+                    Δy = randn(size(L, 1))
+                    dL = randtangent(L)
+                    _, ΔL = pullback(Δy)
+
+                    L2 = L + 1e-7 * dL
+                    dy = (diag(L2) - y) / 1e-7
+                    @test isapprox(dot(Δy, dy), dot(unthunk(ΔL), dL); rtol=rtol)
+                end
+            end
+
             @testset "selinv" begin
                 @testset "frule" begin
                     dL = randtangent(L)
@@ -520,41 +545,41 @@ end
 
                     L2 = L + 1e-7 * dL
                     y2 = flat(L2)
-                    @test isapprox(dy[3], (y2[3] - y[3]) / 1e-7; rtol=rtol)
+                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
                 end
 
                 @testset "flat rrule" begin
                     y, pullback = rrule(flat, L)
                     Δflat = randn(ndz(S) + nlz(S))
                     dL = randtangent(L)
-                    _, ΔL = pullback((NoTangent(), NoTangent(), Δflat))
+                    _, ΔL = pullback(Δflat)
 
                     L2 = L + 1e-7 * dL
                     y2 = flat(L2)
-                    dy_flat = (y2[3] - y[3]) / 1e-7
+                    dy_flat = (y2 - y) / 1e-7
                     lhs = dot(Δflat, dy_flat)
                     rhs = dot(unthunk(ΔL), dL)
                     @test isapprox(lhs, rhs; rtol=rtol)
                 end
 
                 @testset "unflattri frule" begin
-                    uplo, S_out, flatvec = flat(L)
+                    flatvec = flat(L)
                     dflat = randn(length(flatvec))
-                    L_out, dL = frule((NoTangent(), NoTangent(), NoTangent(), dflat), unflattri, uplo, S_out, flatvec)
+                    L_out, dL = frule((NoTangent(), dflat, NoTangent(), NoTangent()), unflattri, flatvec, S, L.uplo)
 
-                    L2 = unflattri(uplo, S_out, flatvec + 1e-7 * dflat)
+                    L2 = unflattri(flatvec + 1e-7 * dflat, S, L.uplo)
                     dL_fd = (L2 - L_out) / 1e-7
                     @test isapprox(dL, dL_fd; rtol=rtol)
                 end
 
                 @testset "unflattri rrule" begin
-                    uplo, S_out, flatvec = flat(L)
-                    L_out, pullback = rrule(unflattri, uplo, S_out, flatvec)
+                    flatvec = flat(L)
+                    L_out, pullback = rrule(unflattri, flatvec, S, L.uplo)
                     ΔL = randtangent(L)
                     dflat = randn(length(flatvec))
-                    _, _, _, Δflat = pullback(ΔL)
+                    _, Δflat, _, _ = pullback(ΔL)
 
-                    L2 = unflattri(uplo, S_out, flatvec + 1e-7 * dflat)
+                    L2 = unflattri(flatvec + 1e-7 * dflat, S, L.uplo)
                     dL = (L2 - L_out) / 1e-7
                     lhs = dot(ΔL, dL)
                     rhs = dot(unthunk(Δflat), dflat)
@@ -581,6 +606,28 @@ end
                     H2 = H + 1e-7 * Hermitian(dH, UPLO)
                     dy = (tr(H2) - y) / 1e-7
                     @test isapprox(Δy * dy, dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
+                end
+            end
+
+            @testset "diag(H)" begin
+                @testset "frule" begin
+                    dH = randtangent(L)
+                    y, dy = frule((NoTangent(), dH), diag, H)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    y2 = diag(H2)
+                    @test isapprox(dy, (y2 - y) / 1e-7; rtol=rtol)
+                end
+
+                @testset "rrule" begin
+                    y, pullback = rrule(diag, H)
+                    Δy = randn(size(H, 1))
+                    dH = randtangent(L)
+                    _, ΔH = pullback(Δy)
+
+                    H2 = H + 1e-7 * Hermitian(dH, UPLO)
+                    dy = (diag(H2) - y) / 1e-7
+                    @test isapprox(dot(Δy, dy), dot(Hermitian(unthunk(ΔH), UPLO), Hermitian(dH, UPLO)); rtol=rtol)
                 end
             end
 

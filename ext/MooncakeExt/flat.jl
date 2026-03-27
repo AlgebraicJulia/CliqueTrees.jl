@@ -1,2 +1,2 @@
-# flat(L) and flat(H) - these are complex due to tuple outputs
-# For now, rely on Mooncake's fallback
+# flat(L) and flat(H) - returns a vector
+# Relies on Mooncake's fallback with ChainRules rrule
