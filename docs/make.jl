@@ -6,7 +6,7 @@ makedocs(;
     format = Documenter.HTML(),
     sitename = "CliqueTrees.jl",
     checkdocs = :none,
-    pages = ["CliqueTrees.jl" => "index.md", "Library Reference" => "api.md"],
+    pages = ["CliqueTrees.jl" => "index.md", "Multifrontal.jl" => "multifrontal.md", "Library Reference" => "api.md"],
 )
 
 deploydocs(;

@@ -40,19 +40,27 @@ function (::ChainRulesCore.ProjectTo{SymTri})(dX::UniformScaling)
 end
 
 function ChainRulesCore.ProjectTo(X::AdjTri)
-    return ProjectTo{Adjoint}()
+    return ProjectTo{AdjTri}()
 end
 
 function ChainRulesCore.ProjectTo(X::TransTri)
-    return ProjectTo{Transpose}()
+    return ProjectTo{TransTri}()
 end
 
-function (::ChainRulesCore.ProjectTo{Adjoint})(dX::ChordalTriangular{:N})
+function (::ChainRulesCore.ProjectTo{AdjTri})(dX::ChordalTriangular{:N})
     return dX'
 end
 
-function (::ChainRulesCore.ProjectTo{Transpose})(dX::ChordalTriangular{:N})
+function (::ChainRulesCore.ProjectTo{AdjTri})(dX::UniformScaling)
+    return dX
+end
+
+function (::ChainRulesCore.ProjectTo{TransTri})(dX::ChordalTriangular{:N})
     return transpose(dX)
+end
+
+function (::ChainRulesCore.ProjectTo{TransTri})(dX::UniformScaling)
+    return dX
 end
 
 include("utils.jl")

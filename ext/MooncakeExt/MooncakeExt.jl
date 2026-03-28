@@ -2,7 +2,7 @@ module MooncakeExt
 
 using CliqueTrees.Multifrontal: ChordalTriangular, DChordalTriangular, FChordalTriangular,
     ChordalSymbolic, HermOrSymTri, HermTri, SymTri, AdjTri, TransTri, Permutation
-using CliqueTrees.Multifrontal.Differential: selinv, uncholesky, soft,
+using CliqueTrees.Multifrontal.Differential: selinv, uncholesky, softmax,
     flat, unflattri, unflatsym, ldiv, rdiv
 using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, UniformScaling, axpy!
 
@@ -247,8 +247,8 @@ end
 # uncholesky.jl
 @from_chainrules DefaultCtx Tuple{typeof(uncholesky), ChordalTriangular{:N}}
 
-# soft.jl
-@from_chainrules DefaultCtx Tuple{typeof(soft), ChordalTriangular{:N}}
+# softmax.jl
+@from_chainrules DefaultCtx Tuple{typeof(softmax), ChordalTriangular{:N}}
 
 # dot.jl
 @from_chainrules DefaultCtx Tuple{typeof(dot), HermTri, HermTri}
