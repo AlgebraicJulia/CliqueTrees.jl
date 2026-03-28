@@ -29,6 +29,30 @@ function LinearAlgebra.axpy!(α::Number, X::SymTri{UPLO, T}, Y::SymTri{UPLO, T})
     return Y
 end
 
+function LinearAlgebra.axpy!(α, J::UniformScaling, A::ChordalTriangular{:N})
+    @inbounds for f in fronts(A)
+        D, _ = diagblock(A, f)
+
+        for i in diagind(D)
+            D[i] += α * J.λ
+        end
+    end
+
+    return A
+end
+
+function LinearAlgebra.axpy!(α, J::Diagonal, A::ChordalTriangular{:N})
+    @inbounds for f in fronts(A)
+        D, res = diagblock(A, f)
+
+        for (i, j) in enumerate(diagind(D))
+            D[j] += α * J.diag[res[i]]
+        end
+    end
+
+    return A
+end
+
 # =================================== + ===================================
 
 function Base.:+(A::ChordalTriangular{:N, UPLO, T}, B::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
@@ -43,30 +67,22 @@ function Base.:+(A::SymTri{UPLO}, B::SymTri{UPLO}) where {UPLO}
     return Symmetric(parent(A) + parent(B), UPLO)
 end
 
-function Base.:+(A::AdjTri{:N, UPLO}, B::AdjTri{:N, UPLO}) where {UPLO}
+function Base.:+(A::AdjTri{:N, UPLO}, B::AdjTri{:N, UPLO}) where UPLO
     return adjoint(parent(A) + parent(B))
 end
 
-function Base.:+(A::TransTri{:N, UPLO}, B::TransTri{:N, UPLO}) where {UPLO}
+function Base.:+(A::TransTri{:N, UPLO}, B::TransTri{:N, UPLO}) where UPLO
     return transpose(parent(A) + parent(B))
 end
 
-function Base.:+(A::ChordalTriangular{:N, UPLO}, J::UniformScaling) where {UPLO}
+function Base.:+(A::ChordalTriangular{:N}, J::UniformScaling)
     B = similar(A, promote_eltype(A, J))
     copyto!(B, A)
-
-    @inbounds for j in fronts(B)
-        D, _ = diagblock(B, j)
-
-        for i in diagind(D)
-            D[i] += J.λ
-        end
-    end
-
+    axpy!(true, J, B)
     return B
 end
 
-function Base.:+(J::UniformScaling, A::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
+function Base.:+(J::UniformScaling, A::ChordalTriangular{:N})
     return A + J
 end
 
@@ -79,11 +95,11 @@ function Base.:+(A::HermTri{UPLO}, J::UniformScaling{<:Complex}) where {UPLO}
     return Hermitian(parent(A) + real(J.λ) * I, UPLO)
 end
 
-function Base.:+(J::UniformScaling, A::HermTri{UPLO}) where {UPLO}
+function Base.:+(J::UniformScaling, A::HermTri)
     return A + J
 end
 
-function Base.:+(J::UniformScaling{<:Complex}, A::HermTri{UPLO}) where {UPLO}
+function Base.:+(J::UniformScaling{<:Complex}, A::HermTri)
     return A + J
 end
 
@@ -91,8 +107,51 @@ function Base.:+(A::SymTri{UPLO}, J::UniformScaling) where {UPLO}
     return Symmetric(parent(A) + J, UPLO)
 end
 
-function Base.:+(J::UniformScaling, A::SymTri{UPLO}) where {UPLO}
+function Base.:+(J::UniformScaling, A::SymTri)
     return A + J
+end
+
+function Base.:+(A::ChordalTriangular{:N}, J::Diagonal)
+    B = similar(A, promote_eltype(A, J))
+    copyto!(B, A)
+    axpy!(true, J, B)
+    return B
+end
+
+function Base.:+(J::Diagonal, A::ChordalTriangular{:N})
+    return A + J
+end
+
+function Base.:+(A::HermTri{UPLO}, D::Diagonal) where {UPLO}
+    return Hermitian(parent(A) + D, UPLO)
+end
+
+function Base.:+(A::HermTri{UPLO}, D::Diagonal{<:Real}) where {UPLO}
+    return Hermitian(parent(A) + D, UPLO)
+end
+
+function Base.:+(D::Diagonal, A::HermTri)
+    return A + D
+end
+
+function Base.:+(D::Diagonal{<:Real}, A::HermTri)
+    return A + D
+end
+
+function Base.:+(A::SymTri{UPLO}, D::Diagonal) where {UPLO}
+    return Symmetric(parent(A) + D, UPLO)
+end
+
+function Base.:+(A::SymTri{UPLO}, D::Diagonal{<:Number}) where {UPLO}
+    return Symmetric(parent(A) + D, UPLO)
+end
+
+function Base.:+(D::Diagonal, A::SymTri)
+    return A + D
+end
+
+function Base.:+(D::Diagonal{<:Number}, A::SymTri)
+    return A + D
 end
 
 # =================================== - ===================================
@@ -125,12 +184,80 @@ function Base.:-(A::SymTri{UPLO}, B::SymTri{UPLO}) where {UPLO}
     return Symmetric(parent(A) - parent(B), UPLO)
 end
 
-function Base.:-(A::AdjTri{:N, UPLO}, B::AdjTri{:N, UPLO}) where {UPLO}
+function Base.:-(A::AdjTri{:N, UPLO}, B::AdjTri{:N, UPLO}) where UPLO
     return adjoint(parent(A) - parent(B))
 end
 
-function Base.:-(A::TransTri{:N, UPLO}, B::TransTri{:N, UPLO}) where {UPLO}
+function Base.:-(A::TransTri{:N, UPLO}, B::TransTri{:N, UPLO}) where UPLO
     return transpose(parent(A) - parent(B))
+end
+
+function Base.:-(A::ChordalTriangular{:N}, J::UniformScaling)
+    return A + (-J)
+end
+
+function Base.:-(A::HermTri, J::UniformScaling)
+    return A + (-J)
+end
+
+function Base.:-(A::SymTri, J::UniformScaling)
+    return A + (-J)
+end
+
+function Base.:-(A::ChordalTriangular{:N}, D::Diagonal)
+    return A + (-D)
+end
+
+function Base.:-(A::HermTri, D::Diagonal)
+    return A + (-D)
+end
+
+function Base.:-(A::HermTri, D::Diagonal{<:Real})
+    return A + (-D)
+end
+
+function Base.:-(A::SymTri, D::Diagonal)
+    return A + (-D)
+end
+
+function Base.:-(A::SymTri, D::Diagonal{<:Number})
+    return A + (-D)
+end
+
+function Base.:-(J::UniformScaling, A::ChordalTriangular{:N})
+    return J + (-A)
+end
+
+function Base.:-(J::UniformScaling, A::HermTri)
+    return J + (-A)
+end
+
+function Base.:-(J::UniformScaling{<:Complex}, A::HermTri)
+    return J + (-A)
+end
+
+function Base.:-(J::UniformScaling, A::SymTri)
+    return J + (-A)
+end
+
+function Base.:-(D::Diagonal, A::ChordalTriangular{:N})
+    return D + (-A)
+end
+
+function Base.:-(D::Diagonal, A::HermTri)
+    return D + (-A)
+end
+
+function Base.:-(D::Diagonal{<:Real}, A::HermTri)
+    return D + (-A)
+end
+
+function Base.:-(D::Diagonal, A::SymTri)
+    return D + (-A)
+end
+
+function Base.:-(D::Diagonal{<:Number}, A::SymTri)
+    return D + (-A)
 end
 
 # ================================== zero ==================================

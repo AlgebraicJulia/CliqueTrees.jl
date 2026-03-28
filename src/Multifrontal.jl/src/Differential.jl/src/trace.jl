@@ -16,15 +16,7 @@ function tr_rrule_impl(A::MaybeHermOrSymTri, y, Δy)
     if Δy isa ZeroTangent
         ΔA = ZeroTangent()
     else
-        ΔA = zero(parent(A))
-
-        for j in fronts(ΔA)
-            D, _ = diagblock(ΔA, j)
-
-            for i in diagind(D)
-                D[i] = Δy
-            end
-        end
+        ΔA = Δy * I
     end
 
     return ΔA

@@ -1,7 +1,5 @@
-const ChordalTypes = (ChordalTriangular{:N}, AdjTri{:N}, TransTri{:N}, HermTri, SymTri)
-
-for T1 in ChordalTypes
-    for T2 in ChordalTypes
+for T1 in CHORDAL_TYPES
+    for T2 in CHORDAL_TYPES
         @eval function ChainRulesCore.frule(_::Tuple, ::typeof(*), ::$T1, ::$T2)
             error()
         end
@@ -16,8 +14,8 @@ for T1 in ChordalTypes
     end
 end
 
-# Permutation × ChordalTypes disambiguations
-for T in ChordalTypes
+# Permutation × CHORDAL_TYPES disambiguations
+for T in CHORDAL_TYPES
     # P * L
     @eval function ChainRulesCore.frule(_::Tuple, ::typeof(*), ::Permutation, ::$T)
         error()

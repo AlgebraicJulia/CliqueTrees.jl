@@ -1,10 +1,12 @@
 module MooncakeExt
 
 using CliqueTrees.Multifrontal: ChordalTriangular, DChordalTriangular, FChordalTriangular,
-    ChordalSymbolic, HermOrSymTri, HermTri, SymTri, AdjTri, TransTri, Permutation
+    ChordalSymbolic, HermOrSymTri, HermTri, SymTri, AdjTri, TransTri, Permutation,
+    chordal, cong
 using CliqueTrees.Multifrontal.Differential: selinv, uncholesky, softmax,
     flat, unflattri, unflatsym, ldiv, rdiv
-using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, UniformScaling, axpy!
+using LinearAlgebra: HermOrSym
+using LinearAlgebra: dot, logdet, tr, diag, cholesky, adjoint, transpose, Diagonal, UniformScaling, axpy!
 
 import Mooncake
 using Mooncake: @from_chainrules, tangent_type, NoRData, NoFData, DefaultCtx,
@@ -274,16 +276,21 @@ end
 @from_chainrules DefaultCtx Tuple{typeof(+), ChordalTriangular{:N}, ChordalTriangular{:N}}
 @from_chainrules DefaultCtx Tuple{typeof(+), HermTri, HermTri}
 @from_chainrules DefaultCtx Tuple{typeof(+), SymTri, SymTri}
-
-# laddnum.jl
 @from_chainrules DefaultCtx Tuple{typeof(+), UniformScaling, ChordalTriangular}
 @from_chainrules DefaultCtx Tuple{typeof(+), UniformScaling, HermTri}
 @from_chainrules DefaultCtx Tuple{typeof(+), UniformScaling, SymTri}
-
-# raddnum.jl
 @from_chainrules DefaultCtx Tuple{typeof(+), ChordalTriangular, UniformScaling}
 @from_chainrules DefaultCtx Tuple{typeof(+), HermTri, UniformScaling}
 @from_chainrules DefaultCtx Tuple{typeof(+), SymTri, UniformScaling}
+@from_chainrules DefaultCtx Tuple{typeof(+), Diagonal, ChordalTriangular}
+@from_chainrules DefaultCtx Tuple{typeof(+), Diagonal, HermTri}
+@from_chainrules DefaultCtx Tuple{typeof(+), Diagonal, SymTri}
+@from_chainrules DefaultCtx Tuple{typeof(+), ChordalTriangular, Diagonal}
+@from_chainrules DefaultCtx Tuple{typeof(+), HermTri, Diagonal}
+@from_chainrules DefaultCtx Tuple{typeof(+), SymTri, Diagonal}
+@from_chainrules DefaultCtx Tuple{typeof(-), ChordalTriangular, Diagonal}
+@from_chainrules DefaultCtx Tuple{typeof(-), HermTri, Diagonal}
+@from_chainrules DefaultCtx Tuple{typeof(-), SymTri, Diagonal}
 
 # lmulnum.jl
 @from_chainrules DefaultCtx Tuple{typeof(*), Number, ChordalTriangular{:N}}
@@ -307,15 +314,11 @@ end
 
 # ldiv.jl
 @from_chainrules DefaultCtx Tuple{typeof(\), ChordalTriangular{:N}, AbstractVecOrMat}
-
-# rdiv.jl
-@from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, ChordalTriangular{:N}}
-
-# ldivadj.jl
 @from_chainrules DefaultCtx Tuple{typeof(\), AdjTri{:N}, AbstractVecOrMat}
 @from_chainrules DefaultCtx Tuple{typeof(\), TransTri{:N}, AbstractVecOrMat}
 
-# rdivadj.jl
+# rdiv.jl
+@from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, ChordalTriangular{:N}}
 @from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, AdjTri{:N}}
 @from_chainrules DefaultCtx Tuple{typeof(/), AbstractMatrix, TransTri{:N}}
 
@@ -329,15 +332,11 @@ end
 
 # lmul.jl
 @from_chainrules DefaultCtx Tuple{typeof(*), ChordalTriangular{:N}, AbstractVecOrMat}
-
-# rmul.jl
-@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, ChordalTriangular{:N}}
-
-# lmuladj.jl
 @from_chainrules DefaultCtx Tuple{typeof(*), AdjTri{:N}, AbstractVecOrMat}
 @from_chainrules DefaultCtx Tuple{typeof(*), TransTri{:N}, AbstractVecOrMat}
 
-# rmuladj.jl
+# rmul.jl
+@from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, ChordalTriangular{:N}}
 @from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, AdjTri{:N}}
 @from_chainrules DefaultCtx Tuple{typeof(*), AbstractMatrix, TransTri{:N}}
 
@@ -364,5 +363,12 @@ end
 
 # rdivprm.jl
 @from_chainrules DefaultCtx Tuple{typeof(/), AbstractVecOrMat, Permutation}
+
+# chordal.jl
+@from_chainrules DefaultCtx Tuple{typeof(chordal), HermOrSym, Permutation, ChordalSymbolic, Val}
+@from_chainrules DefaultCtx Tuple{typeof(chordal), HermOrSym, Permutation, ChordalSymbolic}
+
+# cong.jl
+@from_chainrules DefaultCtx Tuple{typeof(cong), AbstractMatrix, Permutation}
 
 end

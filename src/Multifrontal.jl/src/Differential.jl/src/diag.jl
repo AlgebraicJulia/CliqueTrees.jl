@@ -16,15 +16,7 @@ function diag_rrule_impl(A::MaybeHermOrSymTri, y, Δy)
     if Δy isa ZeroTangent
         ΔA = ZeroTangent()
     else
-        ΔA = zero(parent(A))
-
-        for f in fronts(ΔA)
-            D, res = diagblock(ΔA, f)
-
-            for (i, j) in enumerate(diagind(D))
-                D[j] = Δy[res[i]]
-            end
-        end
+        ΔA = Diagonal(Δy)
     end
 
     return ΔA

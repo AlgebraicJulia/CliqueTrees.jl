@@ -1,49 +1,38 @@
-# Kernel functions for X * L
+# Kernel functions for X * L, X * L', X * transpose(L)
 
-# ===== frule =====
+# ===== frule_impl =====
 
-function mul_frule_impl(X::AbstractMatrix, L::ChordalTriangular{:N}, dX, dL)
-    return X * L, dX * L + X * dL
+function mul_frule_impl(X::AbstractMatrix, A::MaybeAdjOrTransTri{:N}, dX, dL)
+    return X * A, dX * A + X * ProjectTo(A)(dL)
 end
 
-function ChainRulesCore.frule((_, dX, dL)::Tuple, ::typeof(*), X::AbstractMatrix, L::ChordalTriangular{:N})
-    return mul_frule_impl(X, L, dX, dL)
-end
+# ===== rrule_impl =====
 
-# ===== rrule =====
-
-function mul_rrule_impl(X::AbstractMatrix, L::ChordalTriangular{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
-    ΔX = ΔY * L'
+function mul_rrule_impl(X::AbstractMatrix, A::MaybeAdjOrTransTri{:N}, Y::AbstractMatrix, ΔY::AbstractMatrix)
+    ΔX = ΔY * A'
 
     ΔL = @thunk begin
-        ΔL = similar(L)
-        selupd!(ΔL, X', ΔY, 1, 0)
-        ΔL
+        ΔA = ProjectTo(A)(similar(parent(A)))
+        selupd!(ΔA, X', ΔY, 1, 0)
+        parent(ΔA)
     end
 
     return ΔX, ΔL
 end
 
-function mul_rrule(X::AbstractMatrix, L::ChordalTriangular{:N})
-    Y = X * L
+# ===== frule / rrule =====
 
-    function pullback(ΔY)
-        if ΔY isa ZeroTangent
-            return NoTangent(), ZeroTangent(), ZeroTangent()
-        else
-            ΔX, ΔL = mul_rrule_impl(X, L, Y, ΔY)
-            return NoTangent(), ΔX, ΔL
-        end
+for T in (ChordalTriangular{:N}, AdjTri{:N}, TransTri{:N})
+    @eval function ChainRulesCore.frule((_, dX, dL)::Tuple, ::typeof(*), X::AbstractMatrix, A::$T)
+        return mul_frule_impl(X, A, dX, dL)
     end
 
-    return Y, pullback ∘ unthunk
-end
+    @eval function ChainRulesCore.rrule(::typeof(*), X::AbstractMatrix, A::$T)
+        return mul_rrule(X, A)
+    end
 
-function ChainRulesCore.rrule(::typeof(*), X::AbstractMatrix, L::ChordalTriangular{:N})
-    return mul_rrule(X, L)
-end
-
-# type ambiguity with ChainRules
-function ChainRulesCore.rrule(::typeof(*), X::AbstractMatrix{<:RealOrComplex}, L::ChordalTriangular{:N, <:Any, <:RealOrComplex})
-    return mul_rrule(X, L)
+    # type ambiguity with ChainRules
+    @eval function ChainRulesCore.rrule(::typeof(*), X::AbstractMatrix{<:RealOrComplex}, A::$T{<:Any, <:RealOrComplex})
+        return mul_rrule(X, A)
+    end
 end

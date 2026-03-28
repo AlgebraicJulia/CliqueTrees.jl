@@ -421,6 +421,32 @@ function LinearAlgebra.dot(A::HermOrSymTri{UPLO, T}, B::HermOrSymTri{UPLO, T}) w
     return out
 end
 
+function LinearAlgebra.dot(A::ChordalTriangular, J::Diagonal)
+    out = zero(promote_eltype(A, J))
+
+    @inbounds for f in fronts(A)
+        D, res = diagblock(A, f)
+
+        for (i, j) in enumerate(diagind(D))
+            out += conj(D[j]) * J.diag[res[i]]
+        end
+    end
+
+    return out
+end
+
+function LinearAlgebra.dot(J::Diagonal, A::ChordalTriangular)
+    return dot(A, J)
+end
+
+function LinearAlgebra.dot(A::HermOrSymTri, D::Diagonal)
+    return dot(parent(A), D)
+end
+
+function LinearAlgebra.dot(D::Diagonal, A::HermOrSymTri)
+    return dot(D, parent(A))
+end
+
 function dist2(A::AbstractVecOrMat{TA}, B::AbstractVecOrMat{TB}) where {TA, TB}
     out = zero(real(promote_type(TA, TB)))
 
@@ -725,6 +751,16 @@ function selupd!(C::ChordalTriangular, A::AbstractVecOrMat, B::AbstractMatrix, �
     AP, tA = unwrap(A)
     BP, tB = unwrap(B)
     return selupd_impl!(C, AP, BP, α, β, tA, tB)
+end
+
+function selupd!(C::AdjTri, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
+    selupd!(parent(C), B', A', α, β)
+    return C
+end
+
+function selupd!(C::TransTri, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
+    selupd!(parent(C), transpose(B), transpose(A), α, β)
+    return C
 end
 
 function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, A::AbstractMatrix, B::AbstractMatrix, α, β, tA::Val{TA}, tB::Val{TB}) where {DIAG, UPLO, T, TA, TB}

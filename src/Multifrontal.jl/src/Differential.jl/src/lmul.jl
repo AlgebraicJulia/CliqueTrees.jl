@@ -1,37 +1,35 @@
-# Kernel functions for L * X
+# Kernel functions for L * X, L' * X, transpose(L) * X
 
-# ===== frule =====
+# ===== frule_impl =====
 
-function mul_frule_impl(L::ChordalTriangular{:N}, X::AbstractVecOrMat, dL, dX)
-    return L * X, dL * X + L * dX
+function mul_frule_impl(A::MaybeAdjOrTransTri{:N}, X::AbstractVecOrMat, dL, dX)
+    return A * X, ProjectTo(A)(dL) * X + A * dX
 end
 
-function ChainRulesCore.frule((_, dL, dX)::Tuple, ::typeof(*), L::ChordalTriangular{:N}, X::AbstractVecOrMat)
-    return mul_frule_impl(L, X, dL, dX)
-end
+# ===== rrule_impl =====
 
-# ===== rrule =====
-
-function mul_rrule_impl(L::ChordalTriangular{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
-    ΔX = L' * ΔY
+function mul_rrule_impl(A::MaybeAdjOrTransTri{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
+    ΔX = A' * ΔY
 
     ΔL = @thunk begin
-        ΔL = similar(L)
-        selupd!(ΔL, ΔY, X', 1, 0)
-        ΔL
+        ΔA = ProjectTo(A)(similar(parent(A)))
+        selupd!(ΔA, ΔY, X', 1, 0)
+        parent(ΔA)
     end
 
     return ΔL, ΔX
 end
 
-function mul_rrule(L::ChordalTriangular{:N}, X::AbstractVecOrMat)
-    Y = L * X
+# ===== rrule helper =====
+
+function mul_rrule(A, X)
+    Y = A * X
 
     function pullback(ΔY)
         if ΔY isa ZeroTangent
             return NoTangent(), ZeroTangent(), ZeroTangent()
         else
-            ΔL, ΔX = mul_rrule_impl(L, X, Y, ΔY)
+            ΔL, ΔX = mul_rrule_impl(A, X, Y, ΔY)
             return NoTangent(), ΔL, ΔX
         end
     end
@@ -39,11 +37,19 @@ function mul_rrule(L::ChordalTriangular{:N}, X::AbstractVecOrMat)
     return Y, pullback ∘ unthunk
 end
 
-function ChainRulesCore.rrule(::typeof(*), L::ChordalTriangular{:N}, X::AbstractVecOrMat)
-    return mul_rrule(L, X)
-end
+# ===== frule / rrule =====
 
-# type ambiguity with ChainRules
-function ChainRulesCore.rrule(::typeof(*), L::ChordalTriangular{:N, <:Any, <:RealOrComplex}, X::AbstractVecOrMat{<:RealOrComplex})
-    return mul_rrule(L, X)
+for T in (ChordalTriangular{:N}, AdjTri{:N}, TransTri{:N})
+    @eval function ChainRulesCore.frule((_, dL, dX)::Tuple, ::typeof(*), A::$T, X::AbstractVecOrMat)
+        return mul_frule_impl(A, X, dL, dX)
+    end
+
+    @eval function ChainRulesCore.rrule(::typeof(*), A::$T, X::AbstractVecOrMat)
+        return mul_rrule(A, X)
+    end
+
+    # type ambiguity with ChainRules
+    @eval function ChainRulesCore.rrule(::typeof(*), A::$T{<:Any, <:RealOrComplex}, X::AbstractVecOrMat{<:RealOrComplex})
+        return mul_rrule(A, X)
+    end
 end

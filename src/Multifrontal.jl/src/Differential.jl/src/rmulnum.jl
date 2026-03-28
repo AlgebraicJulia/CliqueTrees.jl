@@ -22,21 +22,6 @@ function mul_rrule_impl(A::MaybeHermOrSymTri, x::Number, y::MaybeHermOrSymTri, �
     return ΔA, Δx
 end
 
-function mul_rrule(A::MaybeHermOrSymTri, x::Number)
-    y = A * x
-
-    function pullback(Δy)
-        if Δy isa ZeroTangent
-            return NoTangent(), ZeroTangent(), ZeroTangent()
-        else
-            ΔA, Δx = mul_rrule_impl(A, x, y, Δy)
-            return NoTangent(), ΔA, Δx
-        end
-    end
-
-    return y, pullback ∘ unthunk
-end
-
 function ChainRulesCore.rrule(::typeof(*), L::ChordalTriangular{:N}, x::Number)
     return mul_rrule(L, x)
 end

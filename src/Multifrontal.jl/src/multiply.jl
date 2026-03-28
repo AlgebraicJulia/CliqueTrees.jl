@@ -52,6 +52,10 @@ function cong(A::Symmetric{T}, B::Permutation) where {T <: Real}
     return Symmetric(sympermute(parent(A), B.perm, A.uplo, A.uplo), Symbol(A.uplo))
 end
 
+function cong(A::Diagonal, B::Permutation)
+    return Diagonal(B \ A.diag)
+end
+
 # ================================== * ==================================
 
 # --- Permutation ---
@@ -68,6 +72,11 @@ end
 
 function Base.:*(A::SparseMatrixCSC, B::Permutation)
     return colpermute(A, B.invp)
+end
+
+function Base.:*(A::Permutation, B::Diagonal)
+    C = Diagonal(similar(B.diag, promote_eltype(A, B)))
+    return mul!(C, A, B)
 end
 
 # --- AbstractFactorization ---
@@ -306,6 +315,12 @@ end
 function LinearAlgebra.mul!(C::AbstractMatrix, A::AbstractMatrix, B::Permutation)
     @boundscheck size(C, 2) == size(A, 2) == size(B, 1) || throw(DimensionMismatch())
     return copyscatterrec!(C, A, B.perm, Val(:R))
+end
+
+function LinearAlgebra.mul!(C::Diagonal, A::Permutation, B::Diagonal)
+    @boundscheck length(C.diag) == length(B.diag) == size(A, 1) || throw(DimensionMismatch())
+    copyscatterrec!(C.diag, B.diag, A.invp)
+    return C
 end
 
 # ambiguity

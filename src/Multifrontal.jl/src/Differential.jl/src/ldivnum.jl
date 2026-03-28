@@ -23,21 +23,6 @@ function ldiv_rrule_impl(x::Number, A::MaybeHermOrSymTri, y::MaybeHermOrSymTri, 
     return Δx, ΔA
 end
 
-function ldiv_rrule(x::Number, A::MaybeHermOrSymTri)
-    y = x \ A
-
-    function pullback(Δy)
-        if Δy isa ZeroTangent
-            return NoTangent(), ZeroTangent(), ZeroTangent()
-        else
-            Δx, ΔA = ldiv_rrule_impl(x, A, y, Δy)
-            return NoTangent(), Δx, ΔA
-        end
-    end
-
-    return y, pullback ∘ unthunk
-end
-
 function ChainRulesCore.rrule(::typeof(\), x::Number, L::ChordalTriangular{:N})
     return ldiv_rrule(x, L)
 end
