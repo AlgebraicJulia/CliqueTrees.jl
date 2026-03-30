@@ -3,19 +3,19 @@
 
 # Kernel functions for adjoint and transpose
 function adjoint_frule_impl(L, dL)
-    return adjoint(L), dL
+    return adjoint(L), adjoint(dL)
 end
 
 function transpose_frule_impl(L, dL)
-    return transpose(L), dL
+    return transpose(L), transpose(dL)
 end
 
 function adjoint_rrule_impl(L, A, ΔA)
-    return ΔA
+    return ProjectTo(L)(adjoint(ΔA))
 end
 
 function transpose_rrule_impl(L, A, ΔA)
-    return ΔA
+    return ProjectTo(L)(transpose(ΔA))
 end
 
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(adjoint), L::Union{AdjTri{:N}, ChordalTriangular{:N}})
@@ -30,11 +30,7 @@ function ChainRulesCore.rrule(::typeof(adjoint), L::Union{AdjTri{:N}, ChordalTri
     A = adjoint(L)
 
     function pullback(ΔA)
-        if ΔA isa ZeroTangent
-            return NoTangent(), ZeroTangent()
-        else
-            return NoTangent(), adjoint_rrule_impl(L, A, ΔA)
-        end
+        return NoTangent(), adjoint_rrule_impl(L, A, ΔA)
     end
 
     return A, pullback
@@ -44,11 +40,7 @@ function ChainRulesCore.rrule(::typeof(transpose), L::Union{TransTri{:N}, Chorda
     A = transpose(L)
 
     function pullback(ΔA)
-        if ΔA isa ZeroTangent
-            return NoTangent(), ZeroTangent()
-        else
-            return NoTangent(), transpose_rrule_impl(L, A, ΔA)
-        end
+        return NoTangent(), transpose_rrule_impl(L, A, ΔA)
     end
 
     return A, pullback

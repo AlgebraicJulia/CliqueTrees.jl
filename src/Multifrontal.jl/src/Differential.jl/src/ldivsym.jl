@@ -1,62 +1,51 @@
-# 3-arg ldiv: P \ x using precomputed Cholesky L
-# Gradients flow through P and x, not L
+# ldivsym: A \ X using precomputed Cholesky L and Permutation P
+# Gradients flow through A and X, not L or P
 
-function ldiv(P::HermOrSymTri{:L}, L::ChordalTriangular{:N, :L}, x::AbstractVecOrMat)
-    return L' \ (L \ x)
+function ldivsym(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N, :L}, P::Permutation, X)
+    return P \ (L' \ (L \ (P * X)))
 end
 
-function ldiv(P::HermOrSymTri{:U}, L::ChordalTriangular{:N, :U}, x::AbstractVecOrMat)
-    return L \ (L' \ x)
-end
-
-function ldiv(P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, x::ZeroTangent) where {UPLO}
-    return x
+function ldivsym(A::MaybeHermOrSymSparse, U::ChordalTriangular{:N, :U}, P::Permutation, X)
+    return P \ (U \ (U' \ (P * X)))
 end
 
 # ===== frule =====
 
-function ldiv_frule_impl(P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, x::AbstractVecOrMat, dP, dx) where {UPLO}
-    y = ldiv(P, L, x)
-    dy = ldiv(P, L, dx - ProjectTo(P)(dP) * y)
-    return y, dy
+function ldivsym_frule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, X::StridedVecOrMat, dA, dX)
+    Y = ldivsym(A, L, P, X)
+    dY = ldivsym(A, L, P, dX - dA * Y)
+    return Y, dY
 end
 
-function ChainRulesCore.frule((_, dP, _, dx)::Tuple, ::typeof(ldiv), P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, x::AbstractVecOrMat) where {UPLO}
-    return ldiv_frule_impl(P, L, x, dP, dx)
+function ChainRulesCore.frule((_, dA, _, _, dX)::Tuple, ::typeof(ldivsym), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, X::StridedVecOrMat)
+    return ldivsym_frule_impl(A, L, P, X, dA, dX)
 end
 
 # ===== rrule =====
 
-function ldiv_rrule_impl(P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, x::AbstractVecOrMat, y::AbstractVector, Δy::AbstractVector) where {UPLO}
-    Δx = ldiv(P, L, Δy)
+function ldivsym_rrule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, X::StridedVecOrMat, Y::StridedVector, ΔY)
+    ΔX = ldivsym(A, L, P, ΔY)
 
-    if P isa HermTri
-        yt = adjoint(y)
-        Δxt = adjoint(Δx)
+    if ΔY isa ZeroTangent
+        ΔA = ZeroTangent()
     else
-        yt = transpose(y)
-        Δxt = transpose(Δx)
+        ΔA = @thunk begin
+            ΔA = similar(A)
+            selupd!(ΔA, ΔX, Y, -1 / 2, 0)
+            ΔA
+        end
     end
 
-    ΔP = similar(parent(P))
-    selupd!(ΔP, Δx, yt, -1 / 2, 0)
-    selupd!(ΔP, y, Δxt, -1 / 2, 1)
-    return ΔP, Δx
+    return ΔA, ΔX
 end
 
-function ChainRulesCore.rrule(::typeof(ldiv), P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, x::AbstractVecOrMat) where {UPLO}
-    y = ldiv(P, L, x)
+function ChainRulesCore.rrule(::typeof(ldivsym), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, X::StridedVecOrMat)
+    Y = ldivsym(A, L, P, X)
 
-    function pullback(Δy)
-        if Δy isa ZeroTangent
-            ΔP = ZeroTangent()
-            Δx = ZeroTangent()
-        else
-            ΔP, Δx = ldiv_rrule_impl(P, L, x, y, Δy)
-        end
-
-        return NoTangent(), ΔP, NoTangent(), Δx
+    function pullback(ΔY)
+        ΔA, ΔX = ldivsym_rrule_impl(A, L, P, X, Y, ΔY)
+        return NoTangent(), ΔA, NoTangent(), NoTangent(), ΔX
     end
 
-    return y, pullback ∘ unthunk
+    return Y, pullback ∘ unthunk
 end

@@ -114,6 +114,22 @@ using CliqueTrees.Multifrontal: flatindices, setflatindex!, triangular, selinv!,
     end
 end
 
+@testset "cholesky (cholmod)" begin
+    matrices = ("685_bus", "Trefethen_500", "bcsstk26", "bcsstk13", "mhd1280b")
+
+    for name in matrices
+        M = readmatrix(name); n = size(M, 2)
+        F0 = cholesky(M)
+
+        b = rand(n)
+        B = rand(n, 4)
+
+        F = ChordalCholesky(F0)
+        @test isapprox(b, M * (F \ b); rtol=1e-6, atol=1e-14)
+        @test isapprox(B, M * (F \ B); rtol=1e-6, atol=1e-14)
+    end
+end
+
 @testset "cholesky (dense)" begin
     for UPLO in (:L, :U), pivot in (NoPivot(), RowMaximum())
         for n in (10, 50, 100)

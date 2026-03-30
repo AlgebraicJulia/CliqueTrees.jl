@@ -5,6 +5,8 @@ function diag_frule_impl(A::MaybeHermOrSymTri, dA)
 
     if dA isa ZeroTangent
         dy = ZeroTangent()
+    elseif dA isa UniformScaling
+        dy = Fill(dA.λ, size(A, 1))
     else
         dy = diag(dA)
     end

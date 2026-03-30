@@ -5,15 +5,13 @@ using Random: randn!
 using MatrixMarket
 using SuiteSparseMatrixCollection
 using CliqueTrees
-using ChainRules
-using ChainRulesCore: ProjectTo, NoTangent, ZeroTangent, unthunk
+using ChainRulesCore: NoTangent, ZeroTangent, unthunk
 using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri
-using CliqueTrees.Multifrontal: chordal, cong, symbolic, ndz, nlz
+using CliqueTrees.Multifrontal: chordal, symbolic, ndz, nlz
 using CliqueTrees.Multifrontal.Differential
 using CliqueTrees.Multifrontal.Differential: frule, rrule
-using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv, softmax, sigmoid
-using CliqueTrees.Multifrontal.Differential: flat, unflattri, unflatsym
-using CliqueTrees.Multifrontal.Differential: ldiv, rdiv
+using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv
+using CliqueTrees.Multifrontal.Differential: ldivsym, rdivsym
 
 if !@isdefined(SSMC)
     const SSMC = ssmc_db()
@@ -26,12 +24,29 @@ if !@isdefined(readmatrix)
     end
 end
 
-function udot(a, b)
+# Helper for inner products that handles unthunking and UniformScaling
+# When both args are UniformScaling, we need the dimension n for correct Frobenius inner product
+function _mydot(a::UniformScaling, b::UniformScaling, n::Int)
+    # ⟨λI, μI⟩ = λ * μ * n for n×n matrices
+    return a.λ * b.λ * n
+end
+
+function _mydot(a, b, ::Int)
     return dot(a, b)
 end
 
-function udot(a::UniformScaling, b::UniformScaling)
-    return a.λ * b.λ
+function mydot(a, b, n::Int)
+    return _mydot(unthunk(a), unthunk(b), n)
+end
+
+# Without dimension - only works correctly when at least one arg is not UniformScaling
+function mydot(a, b)
+    au = unthunk(a)
+    bu = unthunk(b)
+    if au isa UniformScaling && bu isa UniformScaling
+        error("mydot(UniformScaling, UniformScaling) requires dimension n - use mydot(a, b, n)")
+    end
+    return dot(au, bu)
 end
 
 @testset "differentiation (manual)" begin
@@ -45,20 +60,57 @@ end
         return dL
     end
 
-    # Helper to create random tangent for SparseMatrixCSC
+    # Helper to create random tangent for SparseMatrixCSC (must be symmetric)
     function randtangent(A::SparseMatrixCSC)
         dA = copy(A)
         randn!(dA.nzval)
-        return dA
-    end
-
-    # Helper to create random tangent for Hermitian sparse matrix
-    function randtangent(A::Hermitian{<:Any, <:SparseMatrixCSC})
-        return Hermitian(randtangent(parent(A)), Symbol(A.uplo))
+        # Symmetrize: dA = (dA + dA') / 2
+        return (dA + dA') / 2
     end
 
     function randtangent(D::Diagonal)
         return Diagonal(randn(eltype(D), size(D, 1)))
+    end
+
+    function randtangent(::UniformScaling{T}) where T
+        return randn(T) * I
+    end
+
+    # Helper to generate all tangent types to test for a given primal
+    function tangents(L::ChordalTriangular)
+        T = eltype(L)
+        n = size(L, 1)
+        return (randtangent(L), Diagonal(randn(T, n)), randn(T) * I, ZeroTangent())
+    end
+
+    # For Hermitian, tangents must also be Hermitian (in the tangent space)
+    function tangents(H::HermTri)
+        L = parent(H)
+        T = eltype(L)
+        n = size(L, 1)
+        uplo = Symbol(H.uplo)
+        return (Hermitian(randtangent(L), uplo), Diagonal(randn(T, n)), randn(T) * I, ZeroTangent())
+    end
+
+    function tangents(x::AbstractArray{T}) where T
+        return (randn(T, size(x)...), ZeroTangent())
+    end
+
+    function tangents(x::T) where T<:Number
+        return (randn(T), ZeroTangent())
+    end
+
+    function tangents(::UniformScaling{T}) where T
+        return (randn(T) * I, ZeroTangent())
+    end
+
+    function tangents(D::Diagonal)
+        return (randtangent(D), ZeroTangent())
+    end
+
+    # Tangents for plain SparseMatrixCSC (symmetric tangents)
+    function tangents(A::SparseMatrixCSC)
+        return (randtangent(A), ZeroTangent())
     end
 
     # Helper for comparing tangents (handles ZeroTangent)
@@ -71,37 +123,36 @@ end
             P, S = symbolic(A)
             H = chordal(A, P, S, Val(UPLO))
             L = cholesky(H)
-            B = Hermitian(A, UPLO)
             n = size(L, 1)
 
             @testset "T = $T, UPLO = $UPLO" begin
                 @testset "cholesky" begin
-                    PH = ProjectTo(H) ∘ unthunk
-                    PL = ProjectTo(L) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for ΔL in (randtangent(L), ZeroTangent())
+                    # Input: H (Hermitian), Output: L (ChordalTriangular)
+                    # dH must be in tangent space of H (Hermitian)
+                    for dH in tangents(H)
+                        for ΔL in tangents(L)
                             _, dL = frule((NoTangent(), dH), cholesky, H)
                             _, pullback = rrule(cholesky, H)
                             _, ΔH = pullback(ΔL)
 
-                            lhs = dot(PL(ΔL), PL(dL))
-                            rhs = dot(PH(ΔH), PH(dH))
+                            lhs = mydot(ΔL, dL)
+                            rhs = mydot(ΔH, dH)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
                 @testset "uncholesky" begin
-                    PH = ProjectTo(H) ∘ unthunk
-                    PL = ProjectTo(L) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for ΔH in (randtangent(L), ZeroTangent())
+                    # Input: L (ChordalTriangular), Output: H (Hermitian)
+                    # ΔH must be in cotangent space of H (Hermitian)
+                    for dL in tangents(L)
+                        for ΔH in tangents(H)
                             _, dH = frule((NoTangent(), dL), uncholesky, L)
                             _, pullback = rrule(uncholesky, L)
                             _, ΔL = pullback(ΔH)
 
-                            lhs = dot(PH(ΔH), PH(dH))
-                            rhs = dot(PL(ΔL), PL(dL))
+                            lhs = mydot(ΔH, dH)
+                            rhs = mydot(ΔL, dL)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
@@ -109,17 +160,15 @@ end
 
                 @testset "L \\ x" begin
                     x = randn(T, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for Δy in (randn(T, n), ZeroTangent())
+                    for dL in tangents(L)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
                                 _, dy = frule((NoTangent(), dL, dx), \, L, x)
                                 _, pullback = rrule(\, L, x)
                                 _, ΔL, Δx = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔL, dL) + mydot(Δx, dx)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -128,17 +177,17 @@ end
 
                 @testset "L' \\ x" begin
                     x = randn(T, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for Δy in (randn(T, n), ZeroTangent())
-                                _, dy = frule((NoTangent(), dL, dx), \, L', x)
+                    # Tangent for L' is dL' where dL is tangent of L
+                    for dL in tangents(L)
+                        dL_adj = dL isa ZeroTangent ? dL : dL'
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
+                                _, dy = frule((NoTangent(), dL_adj, dx), \, L', x)
                                 _, pullback = rrule(\, L', x)
-                                _, ΔL, Δx = pullback(Δy)
+                                _, ΔL_adj, Δx = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔL_adj, dL_adj) + mydot(Δx, dx)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -147,17 +196,15 @@ end
 
                 @testset "L * x" begin
                     x = randn(T, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for Δy in (randn(T, n), ZeroTangent())
+                    for dL in tangents(L)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
                                 _, dy = frule((NoTangent(), dL, dx), *, L, x)
                                 _, pullback = rrule(*, L, x)
                                 _, ΔL, Δx = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔL, dL) + mydot(Δx, dx)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -166,17 +213,17 @@ end
 
                 @testset "L' * x" begin
                     x = randn(T, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for Δy in (randn(T, n), ZeroTangent())
-                                _, dy = frule((NoTangent(), dL, dx), *, L', x)
+                    # Tangent for L' is dL' where dL is tangent of L
+                    for dL in tangents(L)
+                        dL_adj = dL isa ZeroTangent ? dL : dL'
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
+                                _, dy = frule((NoTangent(), dL_adj, dx), *, L', x)
                                 _, pullback = rrule(*, L', x)
-                                _, ΔL, Δx = pullback(Δy)
+                                _, ΔL_adj, Δx = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(PL(ΔL), PL(dL)) + dot(Px(Δx), Px(dx))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔL_adj, dL_adj) + mydot(Δx, dx)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -185,17 +232,15 @@ end
 
                 @testset "x / L" begin
                     x = randn(T, 1, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, 1, n), ZeroTangent())
-                            for Δy in (randn(T, 1, n), ZeroTangent())
+                    for dL in tangents(L)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
                                 _, dy = frule((NoTangent(), dx, dL), /, x, L)
                                 _, pullback = rrule(/, x, L)
                                 _, Δx, ΔL = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(Δx, dx) + mydot(ΔL, dL)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -204,17 +249,17 @@ end
 
                 @testset "x / L'" begin
                     x = randn(T, 1, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, 1, n), ZeroTangent())
-                            for Δy in (randn(T, 1, n), ZeroTangent())
-                                _, dy = frule((NoTangent(), dx, dL), /, x, L')
+                    # Tangent for L' is dL' where dL is tangent of L
+                    for dL in tangents(L)
+                        dL_adj = dL isa ZeroTangent ? dL : dL'
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
+                                _, dy = frule((NoTangent(), dx, dL_adj), /, x, L')
                                 _, pullback = rrule(/, x, L')
-                                _, Δx, ΔL = pullback(Δy)
+                                _, Δx, ΔL_adj = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(Δx, dx) + mydot(ΔL_adj, dL_adj)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -223,17 +268,15 @@ end
 
                 @testset "x * L" begin
                     x = randn(T, 1, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, 1, n), ZeroTangent())
-                            for Δy in (randn(T, 1, n), ZeroTangent())
+                    for dL in tangents(L)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
                                 _, dy = frule((NoTangent(), dx, dL), *, x, L)
                                 _, pullback = rrule(*, x, L)
                                 _, Δx, ΔL = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(Δx, dx) + mydot(ΔL, dL)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -242,17 +285,17 @@ end
 
                 @testset "x * L'" begin
                     x = randn(T, 1, n)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, 1, n), ZeroTangent())
-                            for Δy in (randn(T, 1, n), ZeroTangent())
-                                _, dy = frule((NoTangent(), dx, dL), *, x, L')
+                    # Tangent for L' is dL' where dL is tangent of L
+                    for dL in tangents(L)
+                        dL_adj = dL isa ZeroTangent ? dL : dL'
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
+                                _, dy = frule((NoTangent(), dx, dL_adj), *, x, L')
                                 _, pullback = rrule(*, x, L')
-                                _, Δx, ΔL = pullback(Δy)
+                                _, Δx, ΔL_adj = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(Px(Δx), Px(dx)) + dot(PL(ΔL), PL(dL))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(Δx, dx) + mydot(ΔL_adj, dL_adj)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -260,153 +303,127 @@ end
                 end
 
                 @testset "logdet" begin
-                    PL = ProjectTo(L) ∘ unthunk
-                    Py = ProjectTo(one(T)) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for Δy in (randn(T), ZeroTangent())
+                    for dL in tangents(L)
+                        for Δy in tangents(one(T))
                             _, dy = frule((NoTangent(), dL), logdet, L)
                             _, pullback = rrule(logdet, L)
                             _, ΔL = pullback(Δy)
 
-                            lhs = dot(Py(Δy), Py(dy))
-                            rhs = dot(PL(ΔL), PL(dL))
+                            lhs = mydot(Δy, dy)
+                            rhs = mydot(ΔL, dL)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
-                @testset "logdet(H, L)" begin
-                    PH = ProjectTo(H) ∘ unthunk
-                    Py = ProjectTo(one(T)) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for Δy in (randn(T), ZeroTangent())
-                            _, dy = frule((NoTangent(), dH, NoTangent()), logdet, H, L)
-                            _, pullback = rrule(logdet, H, L)
-                            _, ΔH, _ = pullback(Δy)
+                @testset "logdet(A::SparseMatrixCSC, L, P)" begin
+                    # Input: A (plain SparseMatrixCSC)
+                    for dA in tangents(A)
+                        for Δy in tangents(one(T))
+                            _, dy = frule((NoTangent(), dA, NoTangent(), NoTangent()), logdet, A, L, P)
+                            _, pullback = rrule(logdet, A, L, P)
+                            _, ΔA, _, _ = pullback(Δy)
 
-                            lhs = dot(Py(Δy), Py(dy))
-                            rhs = dot(PH(ΔH), PH(dH))
+                            lhs = mydot(Δy, dy)
+                            rhs = mydot(ΔA, dA)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
                 @testset "diag" begin
-                    PL = ProjectTo(L) ∘ unthunk
-                    Py = ProjectTo(randn(T, n)) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for Δy in (randn(T, n), ZeroTangent())
+                    y = randn(T, n)
+                    for dL in tangents(L)
+                        for Δy in tangents(y)
                             _, dy = frule((NoTangent(), dL), diag, L)
                             _, pullback = rrule(diag, L)
                             _, ΔL = pullback(Δy)
 
-                            lhs = dot(Py(Δy), Py(dy))
-                            rhs = dot(PL(ΔL), PL(dL))
+                            lhs = mydot(Δy, dy)
+                            rhs = mydot(ΔL, dL)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
                 @testset "selinv" begin
-                    PL = ProjectTo(L) ∘ unthunk
-                    PH = ProjectTo(H) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for ΔY in (randtangent(L), ZeroTangent())
+                    # Input: L (ChordalTriangular), Output: Y (Hermitian)
+                    # ΔY must be in cotangent space of Y (Hermitian)
+                    for dL in tangents(L)
+                        for ΔY in tangents(H)
                             _, dY = frule((NoTangent(), dL), selinv, L)
                             _, pullback = rrule(selinv, L)
                             _, ΔL = pullback(ΔY)
 
-                            lhs = dot(PH(ΔY), PH(dY))
-                            rhs = dot(PL(ΔL), PL(dL))
+                            lhs = mydot(ΔY, dY)
+                            rhs = mydot(ΔL, dL)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
-                @testset "selinv(H, L)" begin
-                    PH = ProjectTo(H) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for ΔY in (randtangent(L), ZeroTangent())
-                            _, dY = frule((NoTangent(), dH, NoTangent()), selinv, H, L)
-                            _, pullback = rrule(selinv, H, L)
-                            _, ΔH, _ = pullback(ΔY)
+                @testset "selinv(A::SparseMatrixCSC, L, P)" begin
+                    # Input: A (plain SparseMatrixCSC), Output: Y (SparseMatrixCSC)
+                    for dA in tangents(A)
+                        for ΔY in tangents(A)
+                            _, dY = frule((NoTangent(), dA, NoTangent(), NoTangent()), selinv, A, L, P)
+                            _, pullback = rrule(selinv, A, L, P)
+                            _, ΔA, _, _ = pullback(ΔY)
 
-                            lhs = dot(PH(ΔY), PH(dY))
-                            rhs = dot(PH(ΔH), PH(dH))
+                            lhs = mydot(ΔY, dY)
+                            rhs = mydot(ΔA, dA)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
-                @testset "ldiv(H, L, x)" begin
+
+                @testset "ldivsym(A::SparseMatrixCSC, L, P, x)" begin
                     x = randn(T, n)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for Δy in (randn(T, n), ZeroTangent())
-                                _, dy = frule((NoTangent(), dH, NoTangent(), dx), ldiv, H, L, x)
-                                _, pullback = rrule(ldiv, H, L, x)
-                                _, ΔH, _, Δx = pullback(Δy)
+                    for dA in tangents(A)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
+                                _, dy = frule((NoTangent(), dA, NoTangent(), NoTangent(), dx), ldivsym, A, L, P, x)
+                                _, pullback = rrule(ldivsym, A, L, P, x)
+                                _, ΔA, _, _, Δx = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + dot(Px(Δx), Px(dx))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔA, dA) + mydot(Δx, dx)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
                     end
                 end
 
-                @testset "rdiv(x, H, L)" begin
+                @testset "rdivsym(x, A::SparseMatrixCSC, L, P)" begin
                     x = randn(T, 1, n)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, 1, n), ZeroTangent())
-                            for Δy in (randn(T, 1, n), ZeroTangent())
-                                _, dy = frule((NoTangent(), dx, dH, NoTangent()), rdiv, x, H, L)
-                                _, pullback = rrule(rdiv, x, H, L)
-                                _, Δx, ΔH, _ = pullback(Δy)
+                    for dA in tangents(A)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
+                                _, dy = frule((NoTangent(), dx, dA, NoTangent(), NoTangent()), rdivsym, x, A, L, P)
+                                _, pullback = rrule(rdivsym, x, A, L, P)
+                                _, Δx, ΔA, _, _ = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(Px(Δx), Px(dx)) + dot(PH(ΔH), PH(dH))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(Δx, dx) + mydot(ΔA, dA)
                                 @test tangent_approx(lhs, rhs)
                             end
-                        end
-                    end
-                end
-
-                @testset "softmax" begin
-                    L_in = copy(L)
-                    randn!(L_in.Dval)
-                    randn!(L_in.Lval)
-                    PL = ProjectTo(L) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for ΔY in (randtangent(L), ZeroTangent())
-                            _, dY = frule((NoTangent(), dL), softmax, L_in)
-                            _, pullback = rrule(softmax, L_in)
-                            _, ΔL = pullback(ΔY)
-
-                            lhs = dot(PL(ΔY), PL(dY))
-                            rhs = dot(PL(ΔL), PL(dL))
-                            @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
                 @testset "H * x" begin
                     x = randn(T, n)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for Δy in (randn(T, n), ZeroTangent())
+                    # Input: H (Hermitian), so dH must be in tangents(H)
+                    for dH in tangents(H)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
                                 _, dy = frule((NoTangent(), dH, dx), *, H, x)
                                 _, pullback = rrule(*, H, x)
                                 _, ΔH, Δx = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + dot(Px(Δx), Px(dx))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔH, dH) + mydot(Δx, dx)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -415,17 +432,16 @@ end
 
                 @testset "x * H" begin
                     x = randn(T, 1, n)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, 1, n), ZeroTangent())
-                            for Δy in (randn(T, 1, n), ZeroTangent())
+                    # Input: H (Hermitian), so dH must be in tangents(H)
+                    for dH in tangents(H)
+                        for dx in tangents(x)
+                            for Δy in tangents(x)
                                 _, dy = frule((NoTangent(), dx, dH), *, x, H)
                                 _, pullback = rrule(*, x, H)
                                 _, Δx, ΔH = pullback(Δy)
 
-                                lhs = dot(Px(Δy), Px(dy))
-                                rhs = dot(Px(Δx), Px(dx)) + dot(PH(ΔH), PH(dH))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(Δx, dx) + mydot(ΔH, dH)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -437,18 +453,16 @@ end
                     B_parent = randtangent(L)
                     A_herm = Hermitian(A_parent, UPLO)
                     B_herm = Hermitian(B_parent, UPLO)
-                    PA = ProjectTo(A_herm) ∘ unthunk
-                    PB = ProjectTo(B_herm) ∘ unthunk
-                    Py = ProjectTo(one(T)) ∘ unthunk
-                    for dA in (randtangent(L), ZeroTangent())
-                        for dB in (randtangent(L), ZeroTangent())
-                            for Δy in (randn(T), ZeroTangent())
+                    # Input: A_herm, B_herm (Hermitian), so dA, dB must be in tangents(H)
+                    for dA in tangents(H)
+                        for dB in tangents(H)
+                            for Δy in tangents(one(T))
                                 _, dy = frule((NoTangent(), dA, dB), dot, A_herm, B_herm)
                                 _, pullback = rrule(dot, A_herm, B_herm)
                                 _, ΔA, ΔB = pullback(Δy)
 
-                                lhs = dot(Py(Δy), Py(dy))
-                                rhs = dot(PA(ΔA), PA(dA)) + dot(PB(ΔB), PB(dB))
+                                lhs = mydot(Δy, dy)
+                                rhs = mydot(ΔA, dA) + mydot(ΔB, dB)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -458,20 +472,17 @@ end
                 @testset "dot(x, A, y)" begin
                     x = randn(T, n)
                     z = randn(T, n)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Px = ProjectTo(x) ∘ unthunk
-                    Pz = ProjectTo(z) ∘ unthunk
-                    Py = ProjectTo(one(T)) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dx in (randn(T, n), ZeroTangent())
-                            for dz in (randn(T, n), ZeroTangent())
-                                for Δy in (randn(T), ZeroTangent())
+                    # Input: H (Hermitian), so dH must be in tangents(H)
+                    for dH in tangents(H)
+                        for dx in tangents(x)
+                            for dz in tangents(z)
+                                for Δy in tangents(one(T))
                                     _, dy = frule((NoTangent(), dx, dH, dz), dot, x, H, z)
                                     _, pullback = rrule(dot, x, H, z)
                                     _, Δx, ΔH, Δz = pullback(Δy)
 
-                                    lhs = dot(Py(Δy), Py(dy))
-                                    rhs = dot(Px(Δx), Px(dx)) + dot(PH(ΔH), PH(dH)) + dot(Pz(Δz), Pz(dz))
+                                    lhs = mydot(Δy, dy)
+                                    rhs = mydot(Δx, dx) + mydot(ΔH, dH) + mydot(Δz, dz)
                                     @test tangent_approx(lhs, rhs)
                                 end
                             end
@@ -479,99 +490,48 @@ end
                     end
                 end
 
-                @testset "flat" begin
-                    flatvec = flat(L)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Pflat = ProjectTo(flatvec) ∘ unthunk
-                    for dL in (randtangent(L), ZeroTangent())
-                        for Δflat in (randn(T, ndz(S) + nlz(S)), ZeroTangent())
-                            _, dy = frule((NoTangent(), dL), flat, L)
-                            _, pullback = rrule(flat, L)
-                            _, ΔL = pullback(Δflat)
-
-                            lhs = dot(Pflat(Δflat), Pflat(dy))
-                            rhs = dot(PL(ΔL), PL(dL))
-                            @test tangent_approx(lhs, rhs)
-                        end
-                    end
-                end
-
-                @testset "unflattri" begin
-                    flatvec = flat(L)
-                    PL = ProjectTo(L) ∘ unthunk
-                    Pflat = ProjectTo(flatvec) ∘ unthunk
-                    for dflat in (randn(T, length(flatvec)), ZeroTangent())
-                        for ΔL in (randtangent(L), ZeroTangent())
-                            _, dL = frule((NoTangent(), dflat, NoTangent(), NoTangent()), unflattri, flatvec, S, L.uplo)
-                            _, pullback = rrule(unflattri, flatvec, S, L.uplo)
-                            _, Δflat, _, _ = pullback(ΔL)
-
-                            lhs = dot(PL(ΔL), PL(dL))
-                            rhs = dot(Pflat(Δflat), Pflat(dflat))
-                            @test tangent_approx(lhs, rhs)
-                        end
-                    end
-                end
-
                 @testset "chordal" begin
-                    PA = ProjectTo(B) ∘ unthunk
-                    PH = ProjectTo(H) ∘ unthunk
-                    for dA in (randtangent(B), ZeroTangent())
-                        for ΔH in (randtangent(L), ZeroTangent())
-                            _, dH = frule((NoTangent(), dA, NoTangent(), NoTangent(), NoTangent()), chordal, B, P, S, Val(UPLO))
-                            _, pullback = rrule(chordal, B, P, S, Val(UPLO))
+                    # Output: H (Hermitian), so ΔH must be in tangents(H) - need dimension for UniformScaling
+                    for dA in (randtangent(A), ZeroTangent())
+                        for ΔH in tangents(H)
+                            _, dH = frule((NoTangent(), dA, NoTangent(), NoTangent(), NoTangent()), chordal, A, P, S, Val(UPLO))
+                            _, pullback = rrule(chordal, A, P, S, Val(UPLO))
                             _, ΔA, _, _, _ = pullback(ΔH)
 
-                            lhs = dot(PH(ΔH), PH(dH))
-                            rhs = dot(PA(ΔA), PA(dA))
-                            @test tangent_approx(lhs, rhs)
-                        end
-                    end
-                end
-
-                @testset "cong" begin
-                    PA = unthunk
-                    PH = ProjectTo(H) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for ΔA in (randtangent(B), ZeroTangent())
-                            _, dA = frule((NoTangent(), dH, NoTangent()), cong, H, P)
-                            _, pullback = rrule(cong, H, P)
-                            _, ΔH, _ = pullback(ΔA)
-
-                            lhs = dot(PA(ΔA), PA(dA))
-                            rhs = dot(PH(ΔH), PH(dH))
+                            lhs = mydot(ΔH, dH, n)
+                            rhs = mydot(ΔA, dA)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
                 @testset "tr(H)" begin
-                    PH = ProjectTo(H) ∘ unthunk
-                    Py = ProjectTo(one(T)) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for Δy in (randn(T), ZeroTangent())
+                    # Input: H (Hermitian), so dH must be in tangents(H)
+                    # ΔH is UniformScaling, so need dimension for mydot
+                    for dH in tangents(H)
+                        for Δy in tangents(one(T))
                             _, dy = frule((NoTangent(), dH), tr, H)
                             _, pullback = rrule(tr, H)
                             _, ΔH = pullback(Δy)
 
-                            lhs = dot(Py(Δy), Py(dy))
-                            rhs = dot(PH(ΔH), PH(dH))
+                            lhs = mydot(Δy, dy)
+                            rhs = mydot(ΔH, dH, n)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
                 end
 
                 @testset "diag(H)" begin
-                    PH = ProjectTo(H) ∘ unthunk
-                    Py = ProjectTo(randn(T, n)) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for Δy in (randn(T, n), ZeroTangent())
+                    y = randn(T, n)
+                    # Input: H (Hermitian), so dH must be in tangents(H)
+                    for dH in tangents(H)
+                        for Δy in tangents(y)
                             _, dy = frule((NoTangent(), dH), diag, H)
                             _, pullback = rrule(diag, H)
                             _, ΔH = pullback(Δy)
 
-                            lhs = dot(Py(Δy), Py(dy))
-                            rhs = dot(PH(ΔH), PH(dH))
+                            lhs = mydot(Δy, dy)
+                            rhs = mydot(ΔH, dH)
                             @test tangent_approx(lhs, rhs)
                         end
                     end
@@ -579,17 +539,16 @@ end
 
                 @testset "α * H" begin
                     α = T(2.5)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Pα = ProjectTo(α) ∘ unthunk
-                    for dα in (T(0.3), ZeroTangent())
-                        for dH in (randtangent(L), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dα in tangents(α)
+                        for dH in tangents(H)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dα, dH), *, α, H)
                                 _, pullback = rrule(*, α, H)
                                 _, Δα, ΔH = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(Pα(Δα), Pα(dα)) + dot(PH(ΔH), PH(dH))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(Δα, dα) + mydot(ΔH, dH, n)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -598,17 +557,16 @@ end
 
                 @testset "H * α" begin
                     α = T(2.5)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Pα = ProjectTo(α) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dα in (T(0.3), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dH in tangents(H)
+                        for dα in tangents(α)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dH, dα), *, H, α)
                                 _, pullback = rrule(*, H, α)
                                 _, ΔH, Δα = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + dot(Pα(Δα), Pα(dα))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔH, dH, n) + mydot(Δα, dα)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -617,17 +575,16 @@ end
 
                 @testset "H / α" begin
                     α = T(2.5)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Pα = ProjectTo(α) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dα in (T(0.3), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dH in tangents(H)
+                        for dα in tangents(α)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dH, dα), /, H, α)
                                 _, pullback = rrule(/, H, α)
                                 _, ΔH, Δα = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + dot(Pα(Δα), Pα(dα))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔH, dH, n) + mydot(Δα, dα)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -636,17 +593,16 @@ end
 
                 @testset "α \\ H" begin
                     α = T(2.5)
-                    PH = ProjectTo(H) ∘ unthunk
-                    Pα = ProjectTo(α) ∘ unthunk
-                    for dα in (T(0.3), ZeroTangent())
-                        for dH in (randtangent(L), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dα in tangents(α)
+                        for dH in tangents(H)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dα, dH), \, α, H)
                                 _, pullback = rrule(\, α, H)
                                 _, Δα, ΔH = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(Pα(Δα), Pα(dα)) + dot(PH(ΔH), PH(dH))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(Δα, dα) + mydot(ΔH, dH, n)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -655,17 +611,16 @@ end
 
                 @testset "H + H" begin
                     H2_base = Hermitian(randtangent(L) + T(10) * parent(H), UPLO)
-                    PH = ProjectTo(H) ∘ unthunk
-                    PH2 = ProjectTo(H2_base) ∘ unthunk
-                    for dH1 in (randtangent(L), ZeroTangent())
-                        for dH2 in (randtangent(L), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dH1 in tangents(H)
+                        for dH2 in tangents(H)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dH1, dH2), +, H, H2_base)
                                 _, pullback = rrule(+, H, H2_base)
                                 _, ΔH1, ΔH2 = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PH(ΔH1), PH(dH1)) + dot(PH2(ΔH2), PH2(dH2))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔH1, dH1, n) + mydot(ΔH2, dH2, n)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -674,17 +629,16 @@ end
 
                 @testset "H + αI" begin
                     α = T(2.5) * I
-                    PH = ProjectTo(H) ∘ unthunk
-                    Pα = ProjectTo(α) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dα in (T(0.3) * I, ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dH in tangents(H)
+                        for dα in tangents(α)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dH, dα), +, H, α)
                                 _, pullback = rrule(+, H, α)
                                 _, ΔH, Δα = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + udot(Pα(Δα), Pα(dα))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔH, dH, n) + mydot(Δα, dα, n)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -693,17 +647,16 @@ end
 
                 @testset "αI + H" begin
                     α = T(2.5) * I
-                    PH = ProjectTo(H) ∘ unthunk
-                    Pα = ProjectTo(α) ∘ unthunk
-                    for dα in (T(0.3) * I, ZeroTangent())
-                        for dH in (randtangent(L), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dα in tangents(α)
+                        for dH in tangents(H)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dα, dH), +, α, H)
                                 _, pullback = rrule(+, α, H)
                                 _, Δα, ΔH = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = udot(Pα(Δα), Pα(dα)) + dot(PH(ΔH), PH(dH))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(Δα, dα, n) + mydot(ΔH, dH, n)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -712,17 +665,16 @@ end
 
                 @testset "H + D" begin
                     D = Diagonal(randn(T, n))
-                    PH = ProjectTo(H) ∘ unthunk
-                    PD = ProjectTo(D) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dD in (randtangent(D), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dH in tangents(H)
+                        for dD in tangents(D)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dH, dD), +, H, D)
                                 _, pullback = rrule(+, H, D)
                                 _, ΔH, ΔD = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + dot(PD(ΔD), PD(dD))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔH, dH, n) + mydot(ΔD, dD)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -731,17 +683,16 @@ end
 
                 @testset "D + H" begin
                     D = Diagonal(randn(T, n))
-                    PH = ProjectTo(H) ∘ unthunk
-                    PD = ProjectTo(D) ∘ unthunk
-                    for dD in (randtangent(D), ZeroTangent())
-                        for dH in (randtangent(L), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dD in tangents(D)
+                        for dH in tangents(H)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dD, dH), +, D, H)
                                 _, pullback = rrule(+, D, H)
                                 _, ΔD, ΔH = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PD(ΔD), PD(dD)) + dot(PH(ΔH), PH(dH))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔD, dD) + mydot(ΔH, dH, n)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end
@@ -750,17 +701,16 @@ end
 
                 @testset "H - D" begin
                     D = Diagonal(randn(T, n))
-                    PH = ProjectTo(H) ∘ unthunk
-                    PD = ProjectTo(D) ∘ unthunk
-                    for dH in (randtangent(L), ZeroTangent())
-                        for dD in (randtangent(D), ZeroTangent())
-                            for ΔY in (randtangent(L), ZeroTangent())
+                    # Input/output: H (Hermitian) - need dimension for UniformScaling
+                    for dH in tangents(H)
+                        for dD in tangents(D)
+                            for ΔY in tangents(H)
                                 _, dy = frule((NoTangent(), dH, dD), -, H, D)
                                 _, pullback = rrule(-, H, D)
                                 _, ΔH, ΔD = pullback(ΔY)
 
-                                lhs = dot(PH(ΔY), PH(dy))
-                                rhs = dot(PH(ΔH), PH(dH)) + dot(PD(ΔD), PD(dD))
+                                lhs = mydot(ΔY, dy, n)
+                                rhs = mydot(ΔH, dH, n) + mydot(ΔD, dD)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end

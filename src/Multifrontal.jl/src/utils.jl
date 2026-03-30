@@ -740,3 +740,115 @@ end
 function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}
     return Arr(n)
 end
+
+# syr2k-style: C = β*C + α*(X*Y' + Y*X') for sparse Hermitian
+function selupd!(C::HermSparse, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
+    selupd!(parent(C), C.uplo, X, adjoint(Y), α, β)
+    selupd!(parent(C), C.uplo, Y, adjoint(X), α, 1)
+    return C
+end
+
+# syr2k-style: C = β*C + α*(X*Y' + Y*X') for sparse Symmetric
+function selupd!(C::SymSparse, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
+    selupd!(parent(C), C.uplo, X, transpose(Y), α, β)
+    selupd!(parent(C), C.uplo, Y, transpose(X), α, 1)
+    return C
+end
+
+# syr2k-style: C = β*C + α*(X*Y' + Y*X') for plain SparseMatrixCSC
+function selupd!(C::SparseMatrixCSC, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
+    selupd!(C, 'N', X, adjoint(Y), α, β)
+    selupd!(C, 'N', Y, adjoint(X), α, 1)
+    return C
+end
+
+# Mid-level: unwrap and dispatch to impl
+function selupd!(C::SparseMatrixCSC, uplo::Char, A::AbstractVecOrMat, B::AbstractVecOrMat, α, β)
+    AP, tA = unwrap(A)
+    BP, tB = unwrap(B)
+    return selupd_impl!(C, uplo, AP, BP, α, β, tA, tB)
+end
+
+function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractVector, B::AbstractVector, α, β, ::Val{TA}, ::Val{TB}) where {TA, TB}
+    @assert size(C, 1) == size(C, 2) == length(A) == length(B)
+
+    @inbounds for j in axes(C, 2)
+        if TB === :C
+            Bj = conj(B[j])
+        else
+            Bj = B[j]
+        end
+
+        for p in nzrange(C, j)
+            i = rowvals(C)[p]
+
+            if uplo == 'N' || (uplo == 'L' && i >= j) || (uplo == 'U' && i <= j)
+                if TA === :C
+                    Ai = conj(A[i])
+                else
+                    Ai = A[i]
+                end
+
+                if iszero(β)
+                    nonzeros(C)[p] = α * Ai * Bj
+                else
+                    nonzeros(C)[p] = β * nonzeros(C)[p] + α * Ai * Bj
+                end
+            end
+        end
+    end
+
+    return C
+end
+
+function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractMatrix, B::AbstractMatrix, α, β, tA::Val{TA}, tB::Val{TB}) where {TA, TB}
+    @assert size(C, 1) == size(C, 2)
+
+    if TA === :N && TB === :N
+        @assert size(A, 1) == size(C, 1)
+        @assert size(B, 2) == size(C, 1)
+        @assert size(A, 2) == size(B, 1)
+    elseif TA === :N && TB !== :N
+        @assert size(A, 1) == size(C, 1)
+        @assert size(B, 1) == size(C, 1)
+        @assert size(A, 2) == size(B, 2)
+    elseif TA !== :N && TB === :N
+        @assert size(A, 2) == size(C, 1)
+        @assert size(B, 2) == size(C, 1)
+        @assert size(A, 1) == size(B, 1)
+    else
+        @assert size(A, 2) == size(C, 1)
+        @assert size(B, 1) == size(C, 1)
+        @assert size(A, 1) == size(B, 2)
+    end
+
+    if TA === :N
+        rng = axes(A, 2)
+    else
+        rng = axes(A, 1)
+    end
+
+    if iszero(β)
+        fill!(nonzeros(C), β)
+    else
+        rmul!(nonzeros(C), β)
+    end
+
+    for k in rng
+        if TA === :N
+            Ak = view(A, :, k)
+        else
+            Ak = view(A, k, :)
+        end
+
+        if TB === :N
+            Bk = view(B, k, :)
+        else
+            Bk = view(B, :, k)
+        end
+
+        selupd_impl!(C, uplo, Ak, Bk, α, 1, tA, tB)
+    end
+
+    return C
+end

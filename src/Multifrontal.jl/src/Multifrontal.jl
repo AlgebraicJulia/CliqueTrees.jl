@@ -32,13 +32,16 @@ const DEFAULT_UPLO = :L
 const TransVec = Transpose{<:Any, <:AbstractVector}
 const AdjVec = Adjoint{<:Any, <:AbstractVector}
 const IOnes{T} = Ones{T, 1, Tuple{OneTo{Int}}}
+const HermSparse{T, I} = Hermitian{T, SparseMatrixCSC{T, I}}
+const SymSparse{T, I} = Symmetric{T, SparseMatrixCSC{T, I}}
+const HermOrSymSparse{T, I} = Union{HermSparse{T, I}, SymSparse{T, I}}
+const MaybeHermOrSymSparse{T, I} = Union{HermOrSymSparse{T, I}, SparseMatrixCSC{T, I}}
 
 include("permutation.jl")
 include("chordal_symbolic.jl")
 include("abstract_factorization.jl")
 include("chordal_factorization.jl")
 include("chordal_triangular.jl")
-include("broadcast.jl")
 include("regularization.jl")
 include("cholesky.jl")
 include("cholesky_pivoted.jl")
@@ -60,7 +63,9 @@ include("cholesky_differential.jl")
 include("lowrank.jl")
 include("krylov.jl")
 include("complete_generic.jl")
-include("cholmod.jl")
+if Base.USE_GPL_LIBS
+    include("cholmod.jl")
+end
 include("Differential.jl/src/Differential.jl")
 
 using .Differential

@@ -1,6 +1,6 @@
 # Kernel functions for logdet
 
-function LinearAlgebra.logdet(A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
+function LinearAlgebra.logdet(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     return 2 * logdet(L)
 end
 
@@ -15,11 +15,22 @@ function logdet_frule_impl(L::ChordalTriangular{:N}, dL)
         dy = zero(promote_eltype(L, dL))
 
         for f in fronts(L)
-            dD, _ = diagblock(dL, f)
-            D, _ = diagblock(L, f)
+            D, res = diagblock(L, f)
 
-            for i in diagind(D)
-                dy += dD[i] / D[i]
+            if dL isa UniformScaling
+                for i in diagind(D)
+                    dy += dL.λ / D[i]
+                end
+            elseif dL isa Diagonal
+                for (j, i) in enumerate(diagind(D))
+                    dy += dL.diag[res[j]] / D[i]
+                end
+            else
+                dD, _ = diagblock(dL, f)
+
+                for i in diagind(D)
+                    dy += dD[i] / D[i]
+                end
             end
         end
     end
@@ -27,13 +38,13 @@ function logdet_frule_impl(L::ChordalTriangular{:N}, dL)
     return y, dy
 end
 
-function logdet_frule_impl(A::HermOrSymTri, L::ChordalTriangular{:N}, dA)
-    y = logdet(A, L)
+function logdet_frule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dA)
+    y = logdet(A, L, P)
 
     if dA isa ZeroTangent
         dy = ZeroTangent()
     else
-        dy = dot(selinv(L), ProjectTo(A)(dA))
+        dy = dot(selinv(A, L, P), dA)
     end
 
     return y, dy
@@ -43,8 +54,8 @@ function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(logdet), L::ChordalTriang
     return logdet_frule_impl(L, dL)
 end
 
-function ChainRulesCore.frule((_, dA, _)::Tuple, ::typeof(logdet), A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return logdet_frule_impl(A, L, dA)
+function ChainRulesCore.frule((_, dA, _, _)::Tuple, ::typeof(logdet), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+    return logdet_frule_impl(A, L, P, dA)
 end
 
 # ===== rrule =====
@@ -68,11 +79,11 @@ function logdet_rrule_impl(L::ChordalTriangular{:N}, y::Number, Δy)
     return ΔL
 end
 
-function logdet_rrule_impl(A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, y::Number, Δy) where {UPLO}
+function logdet_rrule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, y::Number, Δy)
     if Δy isa ZeroTangent
         ΔA = ZeroTangent()
     else
-        ΔA = Δy * parent(selinv(L))
+        ΔA = Δy * selinv(A, L, P)
     end
 
     return ΔA
@@ -84,8 +95,8 @@ function ChainRulesCore.rrule(::typeof(logdet), L::ChordalTriangular{:N})
     return y, pullback
 end
 
-function ChainRulesCore.rrule(::typeof(logdet), A::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
-    y = logdet(A, L)
-    pullback(Δy) = (NoTangent(), logdet_rrule_impl(A, L, y, Δy), NoTangent())
+function ChainRulesCore.rrule(::typeof(logdet), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+    y = logdet(A, L, P)
+    pullback(Δy) = (NoTangent(), logdet_rrule_impl(A, L, P, y, Δy), NoTangent(), NoTangent())
     return y, pullback
 end

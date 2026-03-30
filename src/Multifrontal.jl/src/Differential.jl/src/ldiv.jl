@@ -1,56 +1,68 @@
-# Kernel functions for L \ X, L' \ X, transpose(L) \ X
+# Kernel functions for L \ X, L' \ X, transpose(L) \ X, x \ A, P \ X
 
 # ===== frule_impl =====
 
-function ldiv_frule_impl(A::MaybeAdjOrTransTri{:N}, X::AbstractVecOrMat, dL, dX)
+function ldiv_frule_impl(A, X, dA, dX)
     Y = A \ X
-    return Y, A \ (dX - ProjectTo(A)(dL) * Y)
+    return Y, A \ (dX - dA * Y)
 end
 
 # ===== rrule_impl =====
 
-function ldiv_rrule_impl(A::MaybeAdjOrTransTri{:N}, X::AbstractVecOrMat, Y::AbstractVecOrMat, ΔY::AbstractVecOrMat)
+function ldiv_rrule_impl(A::MaybeAdjOrTransTri{:N}, X::StridedVecOrMat, Y::StridedVecOrMat, ΔY::StridedVecOrMat)
     ΔX = A' \ ΔY
 
     ΔL = @thunk begin
-        ΔA = ProjectTo(A)(similar(parent(A)))
+        ΔA = fwrap(similar, A)
         selupd!(ΔA, ΔX, Y', -1, 0)
-        parent(ΔA)
+        ΔA
     end
 
     return ΔL, ΔX
 end
 
-# ===== rrule helper =====
+function ldiv_rrule_impl(x::Number, A::MaybeHermOrSymTri, y::MaybeHermOrSymTri, Δy)
+    Δx = @thunk -dot(y, Δy) / conj(x)
+    ΔA = @thunk conj(x) \ Δy
+    return Δx, ΔA
+end
 
-function ldiv_rrule(A, X)
-    Y = A \ X
-
-    function pullback(ΔY)
-        if ΔY isa ZeroTangent
-            return NoTangent(), ZeroTangent(), ZeroTangent()
-        else
-            ΔL, ΔX = ldiv_rrule_impl(A, X, Y, ΔY)
-            return NoTangent(), ΔL, ΔX
-        end
-    end
-
-    return Y, pullback ∘ unthunk
+function ldiv_rrule_impl(P::Permutation, X::StridedVecOrMat, Y::StridedVecOrMat, ΔY)
+    return NoTangent(), P * ΔY
 end
 
 # ===== frule / rrule =====
 
+# A \ X
+
 for T in (ChordalTriangular{:N}, AdjTri{:N}, TransTri{:N})
-    @eval function ChainRulesCore.frule((_, dL, dX)::Tuple, ::typeof(\), A::$T, X::AbstractVecOrMat)
-        return ldiv_frule_impl(A, X, dL, dX)
+    @eval function ChainRulesCore.frule((_, dA, dX)::Tuple, ::typeof(\), A::$T, X::StridedVecOrMat)
+        return ldiv_frule_impl(A, X, dA, dX)
     end
 
-    @eval function ChainRulesCore.rrule(::typeof(\), A::$T, X::AbstractVecOrMat)
+    @eval function ChainRulesCore.rrule(::typeof(\), A::$T, X::StridedVecOrMat)
         return ldiv_rrule(A, X)
+    end
+end
+
+# x \ A (scalar)
+
+for T in (ChordalTriangular{:N}, HermTri, SymTri)
+    @eval function ChainRulesCore.frule((_, dx, dA)::Tuple, ::typeof(\), x::Number, A::$T)
+        return ldiv_frule_impl(x, A, dx, dA)
     end
 
-    # type ambiguity with ChainRules
-    @eval function ChainRulesCore.rrule(::typeof(\), A::$T{<:Any, <:Real}, X::AbstractVecOrMat{<:Real})
-        return ldiv_rrule(A, X)
+    @eval function ChainRulesCore.rrule(::typeof(\), x::Number, A::$T)
+        return ldiv_rrule(x, A)
     end
+end
+
+# P \ X (Permutation)
+
+function ChainRulesCore.frule((_, dP, dX)::Tuple, ::typeof(\), P::Permutation, X::StridedVecOrMat)
+    return ldiv_frule_impl(P, X, dP, dX)
+end
+
+function ChainRulesCore.rrule(::typeof(\), P::Permutation, X::StridedVecOrMat)
+    return ldiv_rrule(P, X)
 end

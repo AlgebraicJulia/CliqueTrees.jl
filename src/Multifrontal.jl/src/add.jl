@@ -53,6 +53,26 @@ function LinearAlgebra.axpy!(α, J::Diagonal, A::ChordalTriangular{:N})
     return A
 end
 
+function LinearAlgebra.axpy!(α, J::UniformScaling, A::HermOrSymTri)
+    axpy!(α, J, parent(A))
+    return A
+end
+
+function LinearAlgebra.axpy!(α, J::UniformScaling, A::AdjOrTransTri{:N})
+    axpy!(α, J, parent(A))
+    return A
+end
+
+function LinearAlgebra.axpy!(α, J::Diagonal, A::HermOrSymTri)
+    axpy!(α, J, parent(A))
+    return A
+end
+
+function LinearAlgebra.axpy!(α, J::Diagonal, A::AdjOrTransTri{:N})
+    axpy!(α, J, parent(A))
+    return A
+end
+
 # =================================== + ===================================
 
 function Base.:+(A::ChordalTriangular{:N, UPLO, T}, B::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}

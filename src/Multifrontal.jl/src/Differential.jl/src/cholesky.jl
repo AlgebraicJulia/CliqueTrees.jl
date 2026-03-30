@@ -14,12 +14,12 @@ function ChainRulesCore.rrule(::typeof(cholesky), H::HermOrSymTri)
     return L, pullback ∘ unthunk
 end
 
-function cholesky_rrule_impl(H::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, ΔL) where {UPLO}
+function cholesky_rrule_impl(H::HermOrSymTri, L::ChordalTriangular{:N}, ΔL)
     if ΔL isa ZeroTangent
         ΔH = ZeroTangent()
     else
-        ΔH = copy(ΔL)
-        dfcholesky!(ΔH, L; adj=true, inv=false)
+        ΔH = copylike(H, ΔL)
+        dfcholesky!(parent(ΔH), L; adj=true, inv=false)
     end
 
     return ΔH
@@ -31,7 +31,7 @@ function cholesky_frule_impl(H::HermOrSymTri, dH)
     if dH isa ZeroTangent
         dL = ZeroTangent()
     else
-        dL = copy(dH)
+        dL = copylike(L, dH)
         dfcholesky!(dL, L; adj=false, inv=false)
     end
 

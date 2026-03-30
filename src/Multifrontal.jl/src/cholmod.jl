@@ -1,7 +1,11 @@
 using SparseArrays.CHOLMOD: Factor
 using SparseArrays.LibSuiteSparse: cholmod_factor_struct
 
-function ChordalCholesky{UPLO}(F::Factor{T, I}) where {UPLO, T, I}
+function ChordalCholesky(F::Factor)
+    return ChordalCholesky{:L}(F)
+end
+
+function ChordalCholesky{:L}(F::Factor{T, I}) where {T, I}
     fstruct = unsafe_load(F.ptr)
     ncol = convert(I, fstruct.n)
     perm0 = unsafe_wrap(Array, Ptr{I}(fstruct.Perm), ncol)
@@ -12,7 +16,7 @@ function ChordalCholesky{UPLO}(F::Factor{T, I}) where {UPLO, T, I}
         bagtgt0 = unsafe_wrap(Array, Ptr{I}(fstruct.i), xsize)
         blkval0 = unsafe_wrap(Array, Ptr{T}(fstruct.x), xsize)
 
-        S, perm = cholmod_symb_node(ncol, perm0, blkptr0, bagtgt0)
+        P, S = cholmod_symb_node(ncol, perm0, blkptr0, bagtgt0)
     else
         nfrt = convert(I, fstruct.nsuper)
         ssize = convert(I, fstruct.ssize)
@@ -24,16 +28,12 @@ function ChordalCholesky{UPLO}(F::Factor{T, I}) where {UPLO, T, I}
         blkptr0 = unsafe_wrap(Array, Ptr{I}(fstruct.px), nfrt + one(I))
         blkval0 = unsafe_wrap(Array, Ptr{T}(fstruct.x), xsize)
 
-        S, perm = cholmod_symb_supn(ncol, nfrt, perm0, resptr0, bagptr0, bagtgt0)
+        P, S = cholmod_symb_supn(ncol, nfrt, perm0, resptr0, bagptr0, bagtgt0)
     end
 
-    CF = ChordalCholesky{UPLO, T}(perm, S)
+    CF = ChordalCholesky{:L, T}(P, S)
 
     return cholmod_copy!(CF, blkptr0, blkval0)
-end
-
-function ChordalCholesky(F::Factor{T, I}) where {T, I}
-    return ChordalCholesky{:L}(F)
 end
 
 function cholmod_symb_supn(
@@ -85,7 +85,7 @@ function cholmod_symb_supn(
         perm[j] = perm0[j] + one(I)
     end
 
-    return S, perm
+    return Permutation(perm), S
 end
 
 function cholmod_symb_node(
@@ -144,14 +144,14 @@ function cholmod_symb_node(
         perm[j] = perm0[j] + one(I)
     end
 
-    return S, perm
+    return Permutation(perm), S
 end
 
 function cholmod_copy!(
-        CF::ChordalCholesky{UPLO, T, I},
+        CF::ChordalCholesky{:L, T, I},
         blkptr0::AbstractVector{I},
         blkval0::AbstractVector{T},
-    ) where {UPLO, T, I}
+    ) where {T, I}
     nfrt = nfr(CF)
 
     for j in oneto(nfrt)

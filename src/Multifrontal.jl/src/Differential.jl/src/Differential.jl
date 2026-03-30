@@ -2,107 +2,127 @@ module Differential
 
 using Base: promote_eltype
 using ChainRulesCore
-using ChainRulesCore: ProjectTo, NoTangent, ZeroTangent, unthunk, @thunk
+using ChainRulesCore: ProjectTo, NoTangent, ZeroTangent, unthunk, @thunk, add!!
+using FillArrays: Fill
 using LinearAlgebra
-using LinearAlgebra: dot, tr, diag, Diagonal, RealOrComplex, UniformScaling, HermOrSym, axpy!
+using LinearAlgebra: dot, tr, diag, Diagonal, UniformScaling, HermOrSym, axpy!
+
+using SparseArrays: SparseMatrixCSC
 
 using ...Multifrontal
-using ...Multifrontal: HermOrSymTri, MaybeHermOrSymTri, ChordalCholesky, ChordalTriangular, ChordalSymbolic, Permutation
+using ...Multifrontal: HermOrSymTri, MaybeHermOrSymTri, MaybeHermOrSymSparse, HermSparse, SymSparse, ChordalCholesky, ChordalTriangular, ChordalSymbolic, Permutation
 using ...Multifrontal: AdjTri, TransTri, AdjOrTransTri, MaybeAdjOrTransTri, HermTri, SymTri
 using ...Multifrontal: cholesky!, complete!, dfcholesky!, fisher!, rmul!, selinv!, selupd!, uncholesky!
 using ...Multifrontal: fronts, diagblock, diagind, ndz, nlz, nnz, triangular, checksymbolic
-using ...Multifrontal: DEFAULT_UPLO, chordal, cong
+using ...Multifrontal: DEFAULT_UPLO, chordal, cong, project
 
-export selinv, uncholesky, softmax, flat, unflattri, unflatsym, ldiv, rdiv
+export selinv, uncholesky, ldivsym, rdivsym
 
 const CHORDAL_TYPES = (ChordalTriangular{:N}, HermTri, SymTri, AdjTri{:N}, TransTri{:N})
 
-function ChainRulesCore.ProjectTo(X::ChordalTriangular{:N})
-    return ProjectTo{ChordalTriangular{:N}}()
+function Multifrontal.project(A, ::ZeroTangent)
+    return ZeroTangent()
 end
 
-function ChainRulesCore.ProjectTo(X::HermTri)
-    return ProjectTo{HermTri}()
+function Multifrontal.project(A, ::ZeroTangent, P::Permutation)
+    return ZeroTangent()
 end
 
-function ChainRulesCore.ProjectTo(X::SymTri)
-    return ProjectTo{SymTri}()
+for T in CHORDAL_TYPES
+    @eval function ChainRulesCore.ProjectTo(::$T)
+        return ProjectTo{$T}()
+    end
+
+    @eval function (::ChainRulesCore.ProjectTo{$T})(dX::$T)
+        return dX
+    end
+
+    @eval function (::ChainRulesCore.ProjectTo{$T})(dX::Diagonal)
+        return dX
+    end
+
+    @eval function (::ChainRulesCore.ProjectTo{$T})(dX::UniformScaling)
+        return dX
+    end
+
+    @eval function (P::ChainRulesCore.ProjectTo{UniformScaling})(dX::$T)
+        return UniformScaling(P.λ(tr(dX)))
+    end
+
+    @eval function (P::ChainRulesCore.ProjectTo{Diagonal})(dX::$T)
+        return Diagonal(P.diag(diag(dX)))
+    end
+
+    @eval function ChainRulesCore.add!!(X::$T, Y::$T)
+        return axpy!(true, Y, X)
+    end
+
+    @eval function ChainRulesCore.add!!(X::$T, Y::Diagonal)
+        return axpy!(true, Y, X)
+    end
+
+    @eval function ChainRulesCore.add!!(X::$T, Y::UniformScaling)
+        return axpy!(true, Y, X)
+    end
+
+    @eval function Base.:\(::$T, ::ZeroTangent)
+        return ZeroTangent()
+    end
 end
 
-function (::ChainRulesCore.ProjectTo{ChordalTriangular{:N}})(dX::ChordalTriangular{:N})
-    return dX
+# Generic frule/rrule helpers for *, \, /
+
+function mul_frule_impl(A, B, dA, dB)
+    return A * B, dA * B + A * dB
 end
 
-function (::ChainRulesCore.ProjectTo{ChordalTriangular{:N}})(dX::UniformScaling)
-    return dX
+function mul_rrule_impl(X::StridedMatrix, A::StridedMatrix, Y::StridedMatrix, ΔY)
+    error()
 end
 
-function (::ChainRulesCore.ProjectTo{ChordalTriangular{:N}})(dX::Diagonal)
-    return dX
+function mul_rrule(A, X)
+    Y = A * X
+
+    function pullback(ΔY)
+        if ΔY isa ZeroTangent
+            return NoTangent(), ZeroTangent(), ZeroTangent()
+        else
+            ΔA, ΔX = mul_rrule_impl(A, X, Y, ΔY)
+            return NoTangent(), ΔA, ΔX
+        end
+    end
+
+    return Y, pullback ∘ unthunk
 end
 
-function (::ChainRulesCore.ProjectTo{HermTri})(dX::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return Hermitian(dX, UPLO)
+function ldiv_rrule(A, X)
+    Y = A \ X
+
+    function pullback(ΔY)
+        if ΔY isa ZeroTangent
+            return NoTangent(), ZeroTangent(), ZeroTangent()
+        else
+            ΔA, ΔX = ldiv_rrule_impl(A, X, Y, ΔY)
+            return NoTangent(), ΔA, ΔX
+        end
+    end
+
+    return Y, pullback ∘ unthunk
 end
 
-function (::ChainRulesCore.ProjectTo{HermTri})(dX::HermTri)
-    return dX
-end
+function rdiv_rrule(X, A)
+    Y = X / A
 
-function (::ChainRulesCore.ProjectTo{HermTri})(dX::UniformScaling)
-    return dX
-end
+    function pullback(ΔY)
+        if ΔY isa ZeroTangent
+            return NoTangent(), ZeroTangent(), ZeroTangent()
+        else
+            ΔX, ΔA = rdiv_rrule_impl(X, A, Y, ΔY)
+            return NoTangent(), ΔX, ΔA
+        end
+    end
 
-function (::ChainRulesCore.ProjectTo{HermTri})(dX::Diagonal)
-    return dX
-end
-
-function (::ChainRulesCore.ProjectTo{SymTri})(dX::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return Symmetric(dX, UPLO)
-end
-
-function (::ChainRulesCore.ProjectTo{SymTri})(dX::SymTri)
-    return dX
-end
-
-function (::ChainRulesCore.ProjectTo{SymTri})(dX::UniformScaling)
-    return dX
-end
-
-function (::ChainRulesCore.ProjectTo{SymTri})(dX::Diagonal)
-    return dX
-end
-
-function ChainRulesCore.ProjectTo(X::AdjTri)
-    return ProjectTo{AdjTri}()
-end
-
-function ChainRulesCore.ProjectTo(X::TransTri)
-    return ProjectTo{TransTri}()
-end
-
-function (::ChainRulesCore.ProjectTo{AdjTri})(dX::AbstractMatrix)
-    return adjoint(dX)
-end
-
-function (::ChainRulesCore.ProjectTo{AdjTri})(dX::UniformScaling)
-    return dX
-end
-
-function (::ChainRulesCore.ProjectTo{TransTri})(dX::AbstractMatrix)
-    return transpose(dX)
-end
-
-function (::ChainRulesCore.ProjectTo{TransTri})(dX::UniformScaling)
-    return dX
-end
-
-function (P::ChainRulesCore.ProjectTo{UniformScaling})(dX::ChordalTriangular)
-    return UniformScaling(P.λ(tr(dX)))
-end
-
-function (P::ChainRulesCore.ProjectTo{Diagonal})(dX::ChordalTriangular)
-    return Diagonal(P.diag(diag(dX)))
+    return Y, pullback ∘ unthunk
 end
 
 include("utils.jl")
@@ -118,25 +138,10 @@ include("lmul.jl")
 include("rmul.jl")
 include("dot.jl")
 include("quad.jl")
-include("softmax.jl")
-include("unflat.jl")
-include("flat.jl")
-include("lmulsym.jl")
-include("rmulsym.jl")
 include("adjoint.jl")
 include("trace.jl")
 include("diag.jl")
-include("lmulnum.jl")
-include("rmulnum.jl")
-include("ldivnum.jl")
-include("rdivnum.jl")
 include("add.jl")
-include("ambiguities.jl")
-include("lmulprm.jl")
-include("rmulprm.jl")
-include("ldivprm.jl")
-include("rdivprm.jl")
 include("chordal.jl")
-include("cong.jl")
 
 end

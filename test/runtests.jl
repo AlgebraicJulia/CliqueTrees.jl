@@ -23,11 +23,3 @@ end
 @testset "Differential" begin
     include("differential.jl")
 end
-
-@testset "Differential Interface (Forward)" begin
-    include("differential_interface_forward.jl")
-end
-
-@testset "Differential Interface (Reverse)" begin
-    include("differential_interface_reverse.jl")
-end

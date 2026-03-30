@@ -203,6 +203,44 @@ function copy_impl!(A::ChordalTriangular, B::ChordalTriangular, ::Val{TRANS}) wh
     return A
 end
 
+function Base.copyto!(A::ChordalTriangular, B::Diagonal)
+    fill!(A, 0)
+
+    @inbounds for f in fronts(A)
+        D, res = diagblock(A, f)
+
+        for (i, j) in enumerate(diagind(D))
+            D[j] = B.diag[res[i]]
+        end
+    end
+
+    return A
+end
+
+function Base.copyto!(A::ChordalTriangular, B::UniformScaling)
+    fill!(A, 0)
+
+    @inbounds for f in fronts(A)
+        D, _ = diagblock(A, f)
+
+        for j in diagind(D)
+            D[j] = B.λ
+        end
+    end
+
+    return A
+end
+
+function Base.copyto!(A::HermOrSymTri, B::Diagonal)
+    copyto!(parent(A), B)
+    return A
+end
+
+function Base.copyto!(A::HermOrSymTri, B::UniformScaling)
+    copyto!(parent(A), B)
+    return A
+end
+
 # ===== Abstract Matrix Interface =====
 
 function SparseArrays.nnz(A::ChordalTriangular)
@@ -747,6 +785,24 @@ function Base.fill!(A::ChordalTriangular, x)
     return A
 end
 
+function Base.fill!(A::AdjOrTransTri, x)
+    if A isa Adjoint
+        x = conj(x)
+    end
+
+    fill!(parent(A), x)
+    return A
+end
+
+function Base.fill!(A::HermOrSymTri, x)
+    if A isa Hermitian && x isa Complex
+        @assert isreal(x)
+    end
+
+    fill!(parent(A), x)
+    return A
+end
+
 function selupd!(C::ChordalTriangular, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
     AP, tA = unwrap(A)
     BP, tB = unwrap(B)
@@ -760,6 +816,19 @@ end
 
 function selupd!(C::TransTri, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
     selupd!(parent(C), transpose(B), transpose(A), α, β)
+    return C
+end
+
+# syr2k-style: C = β*C + α*(X*Y' + Y*X')
+function selupd!(C::HermTri, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
+    selupd!(parent(C), X, adjoint(Y), α, β)
+    selupd!(parent(C), Y, adjoint(X), α, 1)
+    return C
+end
+
+function selupd!(C::SymTri, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
+    selupd!(parent(C), X, transpose(Y), α, β)
+    selupd!(parent(C), Y, transpose(X), α, 1)
     return C
 end
 
@@ -863,6 +932,10 @@ function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, a::AbstractVector, b:
     end
 
     return C
+end
+
+function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, a::AbstractVector, b::AbstractVector, α, β, ::Val{:N}, ::Val{:T}) where {DIAG, UPLO, T<:Real}
+    return selupd_impl!(C, a, b, α, β, Val(:N), Val(:C))
 end
 
 function LinearAlgebra.cond(F::MaybeAdjOrTransTri, p::Real=2)
@@ -986,4 +1059,163 @@ end
 function chordal(A::AbstractMatrix, S::ChordalSymbolic{I}, uplo::Val{UPLO}=Val(DEFAULT_UPLO); check::Bool=true) where {I, UPLO}
     P = NaturalPermutation{I}(ncl(S))
     return chordal(A, P, S, uplo; check)
+end
+
+function chordal(X::UniformScaling, P::Permutation, S::ChordalSymbolic, uplo::Val=Val(DEFAULT_UPLO); check::Bool=true)
+    return X
+end
+
+function chordal(X::Diagonal, P::Permutation, S::ChordalSymbolic, uplo::Val=Val(DEFAULT_UPLO); check::Bool=true)
+    return cong(X, P')
+end
+
+# Two-argument project functions (no permutation)
+# These treat UniformScaling as a diagonal matrix with repeated values
+
+function project(A::HermOrSymTri, B::Union{HermOrSymTri, Diagonal, UniformScaling})
+    return B
+end
+
+function project(A::HermOrSymSparse, B::HermOrSymTri{UPLO, T, I}) where {UPLO, T, I}
+    return project(A, B, NaturalPermutation{I}(size(A, 1)))
+end
+
+function project(A::HermOrSymSparse, B::Union{HermOrSymSparse, Diagonal, UniformScaling})
+    return B
+end
+
+function project(A::SparseMatrixCSC, B::Union{SparseMatrixCSC, Diagonal, UniformScaling})
+    return B
+end
+
+function project(A::SparseMatrixCSC, B::HermTri{UPLO}, P::Permutation) where {UPLO}
+    return sparse(project(Hermitian(A, UPLO), B, P))
+end
+
+function project(A::SparseMatrixCSC, B::SymTri{UPLO}, P::Permutation) where {UPLO}
+    return sparse(project(Symmetric(A, UPLO), B, P))
+end
+
+function project(A::UniformScaling, B::AbstractMatrix)
+    return (tr(B) / size(B, 1)) * I
+end
+
+function project(A::UniformScaling, B::UniformScaling)
+    return B
+end
+
+function project(A::Diagonal, B::AbstractMatrix)
+    return Diagonal(diag(B))
+end
+
+function project(A::Diagonal, B::Union{Diagonal, UniformScaling})
+    return B
+end
+
+# Three-argument project functions (with permutation)
+
+function project(A::HermOrSymSparse, B::HermOrSymTri, P::Permutation)
+    PB = sympermute(parent(A), P.invp, A.uplo, B.uplo)
+    project!(PB, parent(B))
+    PA = sympermute(PB,        P.perm, B.uplo, A.uplo)
+
+    if A isa Hermitian
+        return Hermitian(PA, Symbol(A.uplo))
+    else
+        return Symmetric(PA, Symbol(A.uplo))
+    end
+end
+
+function project(A::AbstractMatrix, B::Diagonal, P::Permutation)
+    return cong(B, P)
+end
+
+function project(A::Diagonal, B::Diagonal, P::Permutation)
+    return cong(B, P)
+end
+
+function project(A::Union{AbstractMatrix, UniformScaling}, B::UniformScaling, P::Permutation)
+    return project(A, B)
+end
+
+function project(A::UniformScaling, B::AbstractMatrix, P::Permutation)
+    return project(A, B)
+end
+
+function project(A::Diagonal, B::AbstractMatrix, P::Permutation)
+    return project(A, project(A, B), P)
+end
+
+function project!(A::SparseMatrixCSC, B::ChordalTriangular)
+    return project_impl!(A, B)
+end
+
+function project_impl!(A::SparseMatrixCSC, B::ChordalTriangular{DIAG, :L, T, I}) where {DIAG, T, I}
+    @inbounds for i in fronts(B)
+        D, res = diagblock(B, i)
+        L, sep = offdblock(B, i)
+
+        rlo = first(res)
+        rhi = last(res) + one(I)
+
+        if !isempty(sep)
+            slo = first(sep)
+            shi = last(sep) + one(I)
+        end
+
+        for j in eachindex(res)
+            k = one(I)
+
+            for p in nzrange(A, res[j])
+                row = rowvals(A)[p]
+
+                if row < rhi
+                    row < rlo && continue
+                    nonzeros(A)[p] = parent(D)[row - rlo + one(I), j]
+                elseif !isempty(sep)
+                    row < slo && continue
+                    row >= shi && break
+
+                    while sep[k] < row
+                        k += one(I)
+                    end
+
+                    nonzeros(A)[p] = L[k, j]
+                    k += one(I)
+                end
+            end
+        end
+    end
+
+    return A
+end
+
+function project_impl!(A::SparseMatrixCSC, B::ChordalTriangular{DIAG, :U, T, I}) where {DIAG, T, I}
+    @inbounds for i in fronts(B)
+        D, res = diagblock(B, i)
+        L, sep = offdblock(B, i)
+
+        rlo = first(res)
+        rhi = last(res) + one(I)
+
+        for j in eachindex(res)
+            for p in nzrange(A, res[j])
+                row = rowvals(A)[p]
+                row < rlo && continue
+                row >= rhi && break
+                nonzeros(A)[p] = parent(D)[row - rlo + one(I), j]
+            end
+        end
+
+        for j in eachindex(sep)
+            for p in nzrange(A, sep[j])
+                row = rowvals(A)[p]
+                row < rlo && continue
+                row >= rhi && break
+                nonzeros(A)[p] = L[row - rlo + one(I), j]
+            end
+        end
+    end
+
+    return A
 end

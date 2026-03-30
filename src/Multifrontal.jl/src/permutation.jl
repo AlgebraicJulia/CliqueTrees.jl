@@ -32,7 +32,11 @@ const FPermutation{I} = Permutation{I, FVector{I}, FVector{I}}
 const DPermutation{I} = Permutation{I, Vector{I}, Vector{I}}
 const NaturalPermutation{I} = Permutation{I, OneTo{I}, OneTo{I}}
 
-function Permutation(perm::Prm, invp::Ivp) where {I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}}
+function Permutation(perm::AbstractVector{I}, invp::AbstractVector{I}) where {I}
+    return Permutation{I}(perm, invp)
+end
+
+function Permutation{I}(perm::Prm, invp::Ivp) where {I, Prm <: AbstractVector{I}, Ivp <: AbstractVector{I}}
     return Permutation{I, Prm, Ivp}(perm, invp)
 end
 

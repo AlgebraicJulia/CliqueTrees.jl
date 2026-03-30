@@ -1,95 +1,58 @@
-function softplus(x::T) where {T}
-    if x >= zero(T)
-        return x + log1p(exp(-x))
-    else
-        return log1p(exp(x))
-    end
+# wraptri: wrap B in the same wrapper type as A
+function wraptri(::ChordalTriangular{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
+    return B
 end
 
-function sigmoid(x::T) where {T}
-    if x >= zero(T)
-        return inv(one(T) + exp(-x))
-    else
-        e = exp(x)
-        return e / (one(T) + e)
-    end
+function wraptri(::HermTri{UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
+    return Hermitian(B, UPLO)
 end
 
-function triview(::Val{DIAG}, ::Val{UPLO}, S::ChordalSymbolic, x::AbstractVector) where {DIAG, UPLO}
-    nd = ndz(S)
-    nl = nlz(S)
-    Dval = view(x,      1:nd)
-    Lval = view(x, nd + 1:nd + nl)
-    return ChordalTriangular{DIAG, UPLO}(S, Dval, Lval)
+function wraptri(::SymTri{UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
+    return Symmetric(B, UPLO)
 end
 
-function fflat(f, L::ChordalTriangular)
-    x = vcat(L.Dval, L.Lval)
-    X = triview(L.diag, L.uplo, L.S, x)
-    f(X)
-    return x
+function wraptri(::AdjTri{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
+    return adjoint(B)
 end
 
-function fflat(f, H::HermOrSymTri)
-    return fflat(f, parent(H))
+function wraptri(::TransTri{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
+    return transpose(B)
 end
 
-function clean!(L::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
-    @inbounds for f in fronts(L.S)
-        D, _ = diagblock(L, f)
-
-        if UPLO === :L
-            tril!(parent(D))
-        else
-            triu!(parent(D))
-        end
-    end
-
-    return L
+function copylike(A::ChordalTriangular, B::ChordalTriangular)
+    return copy(B)
 end
 
-function scale!(L::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
-    @inbounds for f in fronts(L.S)
-        D, _ = diagblock(L, f)
-
-        if UPLO === :L
-            for j in axes(D, 1)
-                for i in j + 1:size(D, 1)
-                    D[i, j] *= 2
-                end
-            end
-        else
-            for j in axes(D, 1)
-                for i in 1:j - 1
-                    D[i, j] *= 2
-                end
-            end
-        end
-    end
-
-    rmul!(L.Lval, 2)
-    return L
+function copylike(A::ChordalTriangular, B::HermOrSymTri)
+    return copy(parent(B))
 end
 
-function unscale!(L::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
-    @inbounds for f in fronts(L.S)
-        D, _ = diagblock(L, f)
-
-        if UPLO === :L
-            for j in axes(D, 1)
-                for i in j + 1:size(D, 1)
-                    D[i, j] /= 2
-                end
-            end
-        else
-            for j in axes(D, 1)
-                for i in 1:j - 1
-                    D[i, j] /= 2
-                end
-            end
-        end
-    end
-
-    rdiv!(L.Lval, 2)
-    return L
+function copylike(A::ChordalTriangular, B::Union{UniformScaling, Diagonal})
+    return copyto!(similar(A), B)
 end
+
+function copylike(A::HermOrSymTri, B::ChordalTriangular)
+    return wraptri(A, copy(B))
+end
+
+function copylike(A::HermOrSymTri, B::HermOrSymTri)
+    return wraptri(A, copy(parent(B)))
+end
+
+function copylike(A::HermOrSymTri, B::Union{UniformScaling, Diagonal})
+    return copyto!(similar(A), B)
+end
+
+# fwrap: unwrap, apply f, rewrap
+function fwrap(f, A)
+    return f(A)
+end
+
+function fwrap(f, A::Adjoint)
+    return adjoint(fwrap(f, parent(A)))
+end
+
+function fwrap(f, A::Transpose)
+    return transpose(fwrap(f, parent(A)))
+end
+

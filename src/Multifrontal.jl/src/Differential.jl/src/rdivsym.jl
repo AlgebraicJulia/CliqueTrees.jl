@@ -1,62 +1,51 @@
-# 3-arg rdiv: x / P using precomputed Cholesky L
-# Gradients flow through P and x, not L
+# rdivsym: X / A using precomputed Cholesky L and Permutation P
+# Gradients flow through A and X, not L or P
 
-function rdiv(x::AbstractMatrix, P::HermOrSymTri{:L}, L::ChordalTriangular{:N, :L})
-    return (x / L') / L
+function rdivsym(X, A::MaybeHermOrSymSparse, L::ChordalTriangular{:N, :L}, P::Permutation)
+    return ((X / P) / L' / L) * P
 end
 
-function rdiv(x::AbstractMatrix, P::HermOrSymTri{:U}, L::ChordalTriangular{:N, :U})
-    return (x / L) / L'
-end
-
-function rdiv(x::ZeroTangent, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return x
+function rdivsym(X, A::MaybeHermOrSymSparse, U::ChordalTriangular{:N, :U}, P::Permutation)
+    return ((X / P) / U / U') * P
 end
 
 # ===== frule =====
 
-function rdiv_frule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, dx, dP) where {UPLO}
-    y = rdiv(x, P, L)
-    dy = rdiv(dx - y * ProjectTo(P)(dP), P, L)
-    return y, dy
+function rdivsym_frule_impl(X::StridedMatrix, A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dX, dA)
+    Y = rdivsym(X, A, L, P)
+    dY = rdivsym(dX - Y * dA, A, L, P)
+    return Y, dY
 end
 
-function ChainRulesCore.frule((_, dx, dP, _)::Tuple, ::typeof(rdiv), x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return rdiv_frule_impl(x, P, L, dx, dP)
+function ChainRulesCore.frule((_, dX, dA, _, _)::Tuple, ::typeof(rdivsym), X::StridedMatrix, A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+    return rdivsym_frule_impl(X, A, L, P, dX, dA)
 end
 
 # ===== rrule =====
 
-function rdiv_rrule_impl(x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}, y::AbstractMatrix, Δy::AbstractMatrix) where {UPLO}
-    Δx = rdiv(Δy, P, L)
+function rdivsym_rrule_impl(X::StridedMatrix, A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, Y::StridedMatrix, ΔY)
+    ΔX = rdivsym(ΔY, A, L, P)
 
-    if P isa HermTri
-        yt = adjoint(y)
-        Δxt = adjoint(Δx)
+    if ΔY isa ZeroTangent
+        ΔA = ZeroTangent()
     else
-        yt = transpose(y)
-        Δxt = transpose(Δx)
+        ΔA = @thunk begin
+            ΔA = similar(A)
+            selupd!(ΔA, Y', ΔX', -1 / 2, 0)
+            ΔA
+        end
     end
 
-    ΔP = similar(parent(P))
-    selupd!(ΔP, yt, Δx, -1 / 2, 0)
-    selupd!(ΔP, Δxt, y, -1 / 2, 1)
-    return ΔP, Δx
+    return ΔA, ΔX
 end
 
-function ChainRulesCore.rrule(::typeof(rdiv), x::AbstractMatrix, P::HermOrSymTri{UPLO}, L::ChordalTriangular{:N, UPLO}) where {UPLO}
-    y = rdiv(x, P, L)
+function ChainRulesCore.rrule(::typeof(rdivsym), X::StridedMatrix, A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+    Y = rdivsym(X, A, L, P)
 
-    function pullback(Δy)
-        if Δy isa ZeroTangent
-            ΔP = ZeroTangent()
-            Δx = ZeroTangent()
-        else
-            ΔP, Δx = rdiv_rrule_impl(x, P, L, y, Δy)
-        end
-
-        return NoTangent(), Δx, ΔP, NoTangent()
+    function pullback(ΔY)
+        ΔA, ΔX = rdivsym_rrule_impl(X, A, L, P, Y, ΔY)
+        return NoTangent(), ΔX, ΔA, NoTangent(), NoTangent()
     end
 
-    return y, pullback ∘ unthunk
+    return Y, pullback ∘ unthunk
 end

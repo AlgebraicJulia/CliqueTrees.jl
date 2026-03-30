@@ -1,25 +1,23 @@
 # Kernel functions for tr
 
+function ttr(A::AbstractMatrix, n::Int)
+    return tr(A)
+end
+
+function ttr(A::ZeroTangent, n::Int)
+    return ZeroTangent()
+end
+
+function ttr(A::UniformScaling, n::Int)
+    return A.λ * n
+end
+
 function tr_frule_impl(A::MaybeHermOrSymTri, dA)
-    y = tr(A)
-
-    if dA isa ZeroTangent
-        dy = ZeroTangent()
-    else
-        dy = tr(dA)
-    end
-
-    return y, dy
+    return tr(A), ttr(dA, size(A, 1))
 end
 
 function tr_rrule_impl(A::MaybeHermOrSymTri, y, Δy)
-    if Δy isa ZeroTangent
-        ΔA = ZeroTangent()
-    else
-        ΔA = Δy * I
-    end
-
-    return ΔA
+    return Δy * I
 end
 
 function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(tr), L::ChordalTriangular{:N})
