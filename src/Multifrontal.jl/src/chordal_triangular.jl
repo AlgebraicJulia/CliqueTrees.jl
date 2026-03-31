@@ -819,16 +819,15 @@ function selupd!(C::TransTri, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
     return C
 end
 
-# syr2k-style: C = β*C + α*(X*Y' + Y*X')
 function selupd!(C::HermTri, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(parent(C), X, adjoint(Y), α, β)
-    selupd!(parent(C), Y, adjoint(X), α, 1)
+    selupd!(parent(C), X, adjoint(Y),      α,  β)
+    selupd!(parent(C), Y, adjoint(X), conj(α), 1)
     return C
 end
 
 function selupd!(C::SymTri, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(parent(C), X, transpose(Y), α, β)
-    selupd!(parent(C), Y, transpose(X), α, 1)
+    selupd!(parent(C), X, transpose(Y), α, β) # TODO: conj(X)
+    selupd!(parent(C), Y, transpose(X), α, 1) # TODO: conj(Y)
     return C
 end
 
@@ -1082,18 +1081,6 @@ end
 
 function project(A::HermOrSymSparse, B::Union{HermOrSymSparse, Diagonal, UniformScaling})
     return B
-end
-
-function project(A::SparseMatrixCSC, B::Union{SparseMatrixCSC, Diagonal, UniformScaling})
-    return B
-end
-
-function project(A::SparseMatrixCSC, B::HermTri{UPLO}, P::Permutation) where {UPLO}
-    return sparse(project(Hermitian(A, UPLO), B, P))
-end
-
-function project(A::SparseMatrixCSC, B::SymTri{UPLO}, P::Permutation) where {UPLO}
-    return sparse(project(Symmetric(A, UPLO), B, P))
 end
 
 function project(A::UniformScaling, B::AbstractMatrix)

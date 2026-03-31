@@ -48,7 +48,7 @@ end
 
 # A * X
 
-for T in (ChordalTriangular{:N}, AdjTri{:N}, TransTri{:N}, HermSparse, SymSparse, SparseMatrixCSC, HermTri, SymTri)
+for T in (ChordalTriangular{:N}, AdjTri{:N}, TransTri{:N}, HermTri, SymTri)
     @eval function ChainRulesCore.frule((_, dA, dX)::Tuple, ::typeof(*), A::$T, X::StridedVecOrMat)
         return mul_frule_impl(A, X, dA, dX)
     end
@@ -60,7 +60,7 @@ end
 
 # x * A (scalar)
 
-for T in (ChordalTriangular{:N}, HermTri, SymTri, HermSparse, SymSparse, SparseMatrixCSC)
+for T in (ChordalTriangular{:N}, HermTri, SymTri)
     @eval function ChainRulesCore.frule((_, dx, dA)::Tuple, ::typeof(*), x::Number, A::$T)
         return mul_frule_impl(x, A, dx, dA)
     end

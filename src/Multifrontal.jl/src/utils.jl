@@ -741,39 +741,55 @@ function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}
     return Arr(n)
 end
 
-# syr2k-style: C = β*C + α*(X*Y' + Y*X') for sparse Hermitian
-function selupd!(C::HermSparse, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(parent(C), C.uplo, X, adjoint(Y), α, β)
-    selupd!(parent(C), C.uplo, Y, adjoint(X), α, 1)
+# Unwrap adjoint/transpose for selupd, returning (parent, transpose_flag, conjugate_flag)
+function unwrap2(A)
+    if A isa Adjoint
+        B = parent(A)
+
+        if B isa Transpose
+            return (parent(B), Val(:N), Val(:C))
+        else
+            return (B,         Val(:T), Val(:C))
+        end
+    elseif A isa Transpose
+        B = parent(A)
+
+        if B isa Adjoint
+            return (parent(B), Val(:N), Val(:C))
+        else
+            return (B,         Val(:T), Val(:N))
+        end
+    else
+        return (A, Val(:N), Val(:N))
+    end
+end
+
+# SELected UPDate: C ← α A Bᴴ + conj(α) B Aᴴ + β C for sparse Hermitian
+function selupd!(C::Hermitian{T, SparseMatrixCSC{T, I}}, A::AbstractVecOrMat, B::AbstractVecOrMat, α, β) where {T, I}
+    selupd!(parent(C), C.uplo, A, adjoint(B),      α,  β)
+    selupd!(parent(C), C.uplo, B, adjoint(A), conj(α), 1)
     return C
 end
 
-# syr2k-style: C = β*C + α*(X*Y' + Y*X') for sparse Symmetric
-function selupd!(C::SymSparse, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(parent(C), C.uplo, X, transpose(Y), α, β)
-    selupd!(parent(C), C.uplo, Y, transpose(X), α, 1)
+# SELected UPDate: C ← α A Bᴴ + α conj(B) Aᵀ + β C for sparse Symmetric
+function selupd!(C::Symmetric{T, SparseMatrixCSC{T, I}}, A::AbstractVecOrMat, B::AbstractVecOrMat, α, β) where {T, I}
+    selupd!(parent(C), C.uplo, A,                     adjoint(B),   α, β)
+    selupd!(parent(C), C.uplo, adjoint(transpose(B)), transpose(A), α, 1)
     return C
 end
 
-# syr2k-style: C = β*C + α*(X*Y' + Y*X') for plain SparseMatrixCSC
-function selupd!(C::SparseMatrixCSC, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(C, 'N', X, adjoint(Y), α, β)
-    selupd!(C, 'N', Y, adjoint(X), α, 1)
-    return C
-end
-
-# Mid-level: unwrap and dispatch to impl
+# SELected UPDate: C ← α A B + β C for SparseMatrixCSC
 function selupd!(C::SparseMatrixCSC, uplo::Char, A::AbstractVecOrMat, B::AbstractVecOrMat, α, β)
-    AP, tA = unwrap(A)
-    BP, tB = unwrap(B)
-    return selupd_impl!(C, uplo, AP, BP, α, β, tA, tB)
+    AP, tA, cA = unwrap2(A)
+    BP, tB, cB = unwrap2(B)
+    return selupd_impl!(C, uplo, AP, BP, α, β, tA, cA, tB, cB)
 end
 
-function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractVector, B::AbstractVector, α, β, ::Val{TA}, ::Val{TB}) where {TA, TB}
+function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractVector, B::AbstractVector, α, β, ::Val{tA}, ::Val{cA}, ::Val{tB}, ::Val{cB}) where {tA, cA, tB, cB}
     @assert size(C, 1) == size(C, 2) == length(A) == length(B)
 
     @inbounds for j in axes(C, 2)
-        if TB === :C
+        if cB === :C
             Bj = conj(B[j])
         else
             Bj = B[j]
@@ -782,8 +798,8 @@ function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractVector, B::Abst
         for p in nzrange(C, j)
             i = rowvals(C)[p]
 
-            if uplo == 'N' || (uplo == 'L' && i >= j) || (uplo == 'U' && i <= j)
-                if TA === :C
+            if (uplo == 'L' && i >= j) || (uplo == 'U' && i <= j)
+                if cA === :C
                     Ai = conj(A[i])
                 else
                     Ai = A[i]
@@ -801,7 +817,7 @@ function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractVector, B::Abst
     return C
 end
 
-function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractMatrix, B::AbstractMatrix, α, β, tA::Val{TA}, tB::Val{TB}) where {TA, TB}
+function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractMatrix, B::AbstractMatrix, α, β, tA::Val{TA}, cA::Val{CA}, tB::Val{TB}, cB::Val{CB}) where {TA, CA, TB, CB}
     @assert size(C, 1) == size(C, 2)
 
     if TA === :N && TB === :N
@@ -847,7 +863,7 @@ function selupd_impl!(C::SparseMatrixCSC, uplo::Char, A::AbstractMatrix, B::Abst
             Bk = view(B, :, k)
         end
 
-        selupd_impl!(C, uplo, Ak, Bk, α, 1, tA, tB)
+        selupd_impl!(C, uplo, Ak, Bk, α, 1, tA, cA, tB, cB)
     end
 
     return C

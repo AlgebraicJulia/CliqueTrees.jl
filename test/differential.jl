@@ -6,12 +6,12 @@ using MatrixMarket
 using SuiteSparseMatrixCollection
 using CliqueTrees
 using ChainRulesCore: NoTangent, ZeroTangent, unthunk
-using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri
+using CliqueTrees.Multifrontal: ChordalTriangular, ChordalSymbolic, HermTri, HermOrSymSparse
 using CliqueTrees.Multifrontal: chordal, symbolic, ndz, nlz
 using CliqueTrees.Multifrontal.Differential
 using CliqueTrees.Multifrontal.Differential: frule, rrule
 using CliqueTrees.Multifrontal.Differential: cholesky, uncholesky, selinv
-using CliqueTrees.Multifrontal.Differential: ldivsym, rdivsym
+using CliqueTrees.Multifrontal.Differential: ldivsym
 
 if !@isdefined(SSMC)
     const SSMC = ssmc_db()
@@ -60,12 +60,11 @@ end
         return dL
     end
 
-    # Helper to create random tangent for SparseMatrixCSC (must be symmetric)
-    function randtangent(A::SparseMatrixCSC)
+    # Helper to create random tangent for HermOrSymSparse
+    function randtangent(A::HermOrSymSparse)
         dA = copy(A)
-        randn!(dA.nzval)
-        # Symmetrize: dA = (dA + dA') / 2
-        return (dA + dA') / 2
+        randn!(nonzeros(parent(dA)))
+        return dA
     end
 
     function randtangent(D::Diagonal)
@@ -108,8 +107,8 @@ end
         return (randtangent(D), ZeroTangent())
     end
 
-    # Tangents for plain SparseMatrixCSC (symmetric tangents)
-    function tangents(A::SparseMatrixCSC)
+    # Tangents for HermOrSymSparse
+    function tangents(A::HermOrSymSparse)
         return (randtangent(A), ZeroTangent())
     end
 
@@ -117,9 +116,8 @@ end
     tangent_approx(a, b) = iszero(a) && iszero(b) || a ≈ b
 
     for T in (Float32, Float64, BigFloat)
-        A = SparseMatrixCSC{T}(M)
-
         for UPLO in (:L, :U)
+            A = Hermitian(SparseMatrixCSC{T}(M), UPLO)
             P, S = symbolic(A)
             H = chordal(A, P, S, Val(UPLO))
             L = cholesky(H)
@@ -316,8 +314,7 @@ end
                     end
                 end
 
-                @testset "logdet(A::SparseMatrixCSC, L, P)" begin
-                    # Input: A (plain SparseMatrixCSC)
+                @testset "logdet(A::HermOrSymSparse, L, P)" begin
                     for dA in tangents(A)
                         for Δy in tangents(one(T))
                             _, dy = frule((NoTangent(), dA, NoTangent(), NoTangent()), logdet, A, L, P)
@@ -362,8 +359,7 @@ end
                     end
                 end
 
-                @testset "selinv(A::SparseMatrixCSC, L, P)" begin
-                    # Input: A (plain SparseMatrixCSC), Output: Y (SparseMatrixCSC)
+                @testset "selinv(A::HermOrSymSparse, L, P)" begin
                     for dA in tangents(A)
                         for ΔY in tangents(A)
                             _, dY = frule((NoTangent(), dA, NoTangent(), NoTangent()), selinv, A, L, P)
@@ -378,7 +374,7 @@ end
                 end
 
 
-                @testset "ldivsym(A::SparseMatrixCSC, L, P, x)" begin
+                @testset "ldivsym(A::HermOrSymSparse, L, P, x)" begin
                     x = randn(T, n)
                     for dA in tangents(A)
                         for dx in tangents(x)
@@ -389,23 +385,6 @@ end
 
                                 lhs = mydot(Δy, dy)
                                 rhs = mydot(ΔA, dA) + mydot(Δx, dx)
-                                @test tangent_approx(lhs, rhs)
-                            end
-                        end
-                    end
-                end
-
-                @testset "rdivsym(x, A::SparseMatrixCSC, L, P)" begin
-                    x = randn(T, 1, n)
-                    for dA in tangents(A)
-                        for dx in tangents(x)
-                            for Δy in tangents(x)
-                                _, dy = frule((NoTangent(), dx, dA, NoTangent(), NoTangent()), rdivsym, x, A, L, P)
-                                _, pullback = rrule(rdivsym, x, A, L, P)
-                                _, Δx, ΔA, _, _ = pullback(Δy)
-
-                                lhs = mydot(Δy, dy)
-                                rhs = mydot(Δx, dx) + mydot(ΔA, dA)
                                 @test tangent_approx(lhs, rhs)
                             end
                         end

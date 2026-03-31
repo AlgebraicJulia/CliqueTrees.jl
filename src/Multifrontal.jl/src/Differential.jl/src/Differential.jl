@@ -2,21 +2,20 @@ module Differential
 
 using Base: promote_eltype
 using ChainRulesCore
-using ChainRulesCore: ProjectTo, NoTangent, ZeroTangent, unthunk, @thunk, add!!
+using ChainRulesCore: ProjectTo, NoTangent, ZeroTangent, unthunk, @thunk, add!!, project_type
 using FillArrays: Fill
 using LinearAlgebra
 using LinearAlgebra: dot, tr, diag, Diagonal, UniformScaling, HermOrSym, axpy!
-
 using SparseArrays: SparseMatrixCSC
 
 using ...Multifrontal
-using ...Multifrontal: HermOrSymTri, MaybeHermOrSymTri, MaybeHermOrSymSparse, HermSparse, SymSparse, ChordalCholesky, ChordalTriangular, ChordalSymbolic, Permutation
+using ...Multifrontal: HermOrSymTri, MaybeHermOrSymTri, HermOrSymSparse, ChordalCholesky, ChordalTriangular, ChordalSymbolic, Permutation
 using ...Multifrontal: AdjTri, TransTri, AdjOrTransTri, MaybeAdjOrTransTri, HermTri, SymTri
 using ...Multifrontal: cholesky!, complete!, dfcholesky!, fisher!, rmul!, selinv!, selupd!, uncholesky!
 using ...Multifrontal: fronts, diagblock, diagind, ndz, nlz, nnz, triangular, checksymbolic
-using ...Multifrontal: DEFAULT_UPLO, chordal, cong, project
+using ...Multifrontal: DEFAULT_UPLO, chordal, cong, project, project!
 
-export selinv, uncholesky, ldivsym, rdivsym
+export selinv, uncholesky, ldivsym
 
 const CHORDAL_TYPES = (ChordalTriangular{:N}, HermTri, SymTri, AdjTri{:N}, TransTri{:N})
 
@@ -133,7 +132,6 @@ include("logdet.jl")
 include("ldiv.jl")
 include("ldivsym.jl")
 include("rdiv.jl")
-include("rdivsym.jl")
 include("lmul.jl")
 include("rmul.jl")
 include("dot.jl")

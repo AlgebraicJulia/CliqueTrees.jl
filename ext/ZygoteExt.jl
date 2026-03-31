@@ -10,31 +10,37 @@ using Zygote
 
 Zygote.@adjoint function \(A::ChordalTriangular{:N}, x::AbstractVecOrMat)
     y = A \ x
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         ΔA, Δx = ldiv_rrule_impl(A, x, y, Δy)
         return (unthunk(ΔA), Δx)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function \(A::AdjTri{:N}, x::AbstractVecOrMat)
     y = A \ x
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         ΔA, Δx = ldiv_rrule_impl(A, x, y, Δy)
         return (unthunk(ΔA), Δx)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function \(A::TransTri{:N}, x::AbstractVecOrMat)
     y = A \ x
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         ΔA, Δx = ldiv_rrule_impl(A, x, y, Δy)
         return (unthunk(ΔA), Δx)
     end
+
     return y, pullback
 end
 
@@ -42,28 +48,34 @@ end
 
 Zygote.@adjoint function tr(A::ChordalTriangular{:N})
     y = tr(A)
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing,)
         return (tr_rrule_impl(A, y, Δy),)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function tr(A::HermTri)
     y = tr(A)
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing,)
         return (tr_rrule_impl(A, y, Δy),)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function tr(A::SymTri)
     y = tr(A)
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing,)
         return (tr_rrule_impl(A, y, Δy),)
     end
+
     return y, pullback
 end
 
@@ -71,41 +83,49 @@ end
 
 Zygote.@adjoint function \(P::Permutation, x::AbstractVecOrMat)
     y = P \ x
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         _, Δx = ldiv_rrule_impl(P, x, y, Δy)
         return (nothing, Δx)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function /(x::AbstractVecOrMat, P::Permutation)
     y = x / P
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         Δx, _ = rdiv_rrule_impl(x, P, y, Δy)
         return (Δx, nothing)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function *(P::Permutation, x::AbstractVecOrMat)
     y = P * x
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         _, Δx = mul_rrule_impl(P, x, y, Δy)
         return (nothing, Δx)
     end
+
     return y, pullback
 end
 
 Zygote.@adjoint function *(x::AbstractVecOrMat, P::Permutation)
     y = x * P
+
     function pullback(Δy)
         isnothing(Δy) && return (nothing, nothing)
         Δx, _ = mul_rrule_impl(x, P, y, Δy)
         return (Δx, nothing)
     end
+
     return y, pullback
 end
 

@@ -1,6 +1,6 @@
 # Kernel functions for logdet
 
-function LinearAlgebra.logdet(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+function LinearAlgebra.logdet(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     return 2 * logdet(L)
 end
 
@@ -38,7 +38,7 @@ function logdet_frule_impl(L::ChordalTriangular{:N}, dL)
     return y, dy
 end
 
-function logdet_frule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dA)
+function logdet_frule_impl(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dA)
     y = logdet(A, L, P)
 
     if dA isa ZeroTangent
@@ -54,7 +54,7 @@ function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(logdet), L::ChordalTriang
     return logdet_frule_impl(L, dL)
 end
 
-function ChainRulesCore.frule((_, dA, _, _)::Tuple, ::typeof(logdet), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+function ChainRulesCore.frule((_, dA, _, _)::Tuple, ::typeof(logdet), A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     return logdet_frule_impl(A, L, P, dA)
 end
 
@@ -79,7 +79,7 @@ function logdet_rrule_impl(L::ChordalTriangular{:N}, y::Number, Δy)
     return ΔL
 end
 
-function logdet_rrule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, y::Number, Δy)
+function logdet_rrule_impl(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, y::Number, Δy)
     if Δy isa ZeroTangent
         ΔA = ZeroTangent()
     else
@@ -95,7 +95,7 @@ function ChainRulesCore.rrule(::typeof(logdet), L::ChordalTriangular{:N})
     return y, pullback
 end
 
-function ChainRulesCore.rrule(::typeof(logdet), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+function ChainRulesCore.rrule(::typeof(logdet), A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     y = logdet(A, L, P)
     pullback(Δy) = (NoTangent(), logdet_rrule_impl(A, L, P, y, Δy), NoTangent(), NoTangent())
     return y, pullback

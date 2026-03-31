@@ -9,6 +9,7 @@ using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasC
 using Random
 using Random: rand!
 using SparseArrays
+using SparseArrays: getcolptr
 
 import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
@@ -32,10 +33,7 @@ const DEFAULT_UPLO = :L
 const TransVec = Transpose{<:Any, <:AbstractVector}
 const AdjVec = Adjoint{<:Any, <:AbstractVector}
 const IOnes{T} = Ones{T, 1, Tuple{OneTo{Int}}}
-const HermSparse{T, I} = Hermitian{T, SparseMatrixCSC{T, I}}
-const SymSparse{T, I} = Symmetric{T, SparseMatrixCSC{T, I}}
-const HermOrSymSparse{T, I} = Union{HermSparse{T, I}, SymSparse{T, I}}
-const MaybeHermOrSymSparse{T, I} = Union{HermOrSymSparse{T, I}, SparseMatrixCSC{T, I}}
+const HermOrSymSparse{T, I} = Union{Hermitian{T, SparseMatrixCSC{T, I}}, Symmetric{T, SparseMatrixCSC{T, I}}}
 
 include("permutation.jl")
 include("chordal_symbolic.jl")

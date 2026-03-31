@@ -6,7 +6,7 @@ function selinv(L::ChordalTriangular{:N, UPLO}) where {UPLO}
     return Hermitian(Y, UPLO)
 end
 
-function selinv(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+function selinv(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     H = selinv(L)
     return project(A, H, P)
 end
@@ -28,7 +28,7 @@ function selinv_frule_impl(L::ChordalTriangular{:N, UPLO}, dL) where {UPLO}
     return H, dH
 end
 
-function selinv_frule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dA)
+function selinv_frule_impl(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dA)
     H = selinv(L)
 
     if dA isa ZeroTangent
@@ -46,7 +46,7 @@ function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(selinv), L::ChordalTriang
     return selinv_frule_impl(L, dL)
 end
 
-function ChainRulesCore.frule((_, dA, _, _)::Tuple, ::typeof(selinv), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+function ChainRulesCore.frule((_, dA, _, _)::Tuple, ::typeof(selinv), A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     return selinv_frule_impl(A, L, P, dA)
 end
 
@@ -65,7 +65,7 @@ function selinv_rrule_impl(L::ChordalTriangular{:N}, H::HermOrSymTri, ΔH)
     return ΔL
 end
 
-function selinv_rrule_impl(A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, H::HermOrSymTri, ΔH)
+function selinv_rrule_impl(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, H::HermOrSymTri, ΔH)
     if ΔH isa ZeroTangent
         ΔA = ZeroTangent()
     else
@@ -83,7 +83,7 @@ function ChainRulesCore.rrule(::typeof(selinv), L::ChordalTriangular{:N})
     return H, pullback ∘ unthunk
 end
 
-function ChainRulesCore.rrule(::typeof(selinv), A::MaybeHermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
+function ChainRulesCore.rrule(::typeof(selinv), A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
     H = selinv(L)
     pullback(ΔH) = (NoTangent(), selinv_rrule_impl(A, L, P, H, ΔH), NoTangent(), NoTangent())
     return project(A, H, P), pullback ∘ unthunk

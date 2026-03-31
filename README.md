@@ -42,6 +42,7 @@ If you have a question about the library, feel free to open an [issue](https://g
 - [EinExprs.jl](https://github.com/bsc-quantic/EinExprs.jl)
 - [GaussianMarkovRandomFields.jl](https://github.com/timweiland/GaussianMarkovRandomFields.jl)
 - [IncrementalInference.jl](https://github.com/JuliaRobotics/IncrementalInference.jl)
+- [MathOptInterface.jl](https://github.com/jump-dev/MathOptInterface.jl)
 - [OMEinsumContractionOrders.jl](https://github.com/TensorBFS/OMEinsumContractionOrders.jl)
 - [Scruff.jl](https://github.com/charles-river-analytics/Scruff.jl)
 - [SparseMatrixColorings.jl](https://github.com/gdalle/SparseMatrixColorings.jl)

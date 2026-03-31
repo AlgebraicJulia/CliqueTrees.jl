@@ -1,6 +1,6 @@
 # ===== frule =====
 
-function dot_frule_impl(X::StridedVecOrMat, A, Y::StridedVecOrMat, dX, dA, dY)
+function dot_frule_impl(X::StridedVecOrMat, A::HermOrSym, Y::StridedVecOrMat, dX, dA, dY)
     y = dot(X, A, Y)
     dy = dot(dX, A, Y) + dot(X, A, dY) + dot(X, dA, Y)
     return y, dy
@@ -8,7 +8,7 @@ end
 
 # ===== rrule =====
 
-function dot_rrule_impl(X::StridedVecOrMat, A, Y::StridedVecOrMat, y, AX::StridedVecOrMat, AY::StridedVecOrMat, Δy)
+function dot_rrule_impl(X::StridedVecOrMat, A::HermOrSym, Y::StridedVecOrMat, y, AX::StridedVecOrMat, AY::StridedVecOrMat, Δy)
     ΔX = @thunk Δy * AY
     ΔY = @thunk Δy * AX
 
@@ -21,7 +21,7 @@ function dot_rrule_impl(X::StridedVecOrMat, A, Y::StridedVecOrMat, y, AX::Stride
     return ΔX, ΔA, ΔY
 end
 
-function dot_rrule(X::StridedVecOrMat, A, Y::StridedVecOrMat)
+function dot_rrule(X::StridedVecOrMat, A::HermOrSym, Y::StridedVecOrMat)
     AY = A * Y
     AX = A * X
     y = dot(X, AY)
@@ -40,7 +40,7 @@ end
 
 # ===== dispatches =====
 
-for T in (HermTri, SymTri, HermSparse, SymSparse, SparseMatrixCSC)
+for T in (HermTri, SymTri)
     @eval function ChainRulesCore.frule((_, dX, dA, dY)::Tuple, ::typeof(dot), X::StridedVecOrMat, A::$T, Y::StridedVecOrMat)
         return dot_frule_impl(X, A, Y, dX, dA, dY)
     end
