@@ -6,7 +6,7 @@ using SparseArrays: SparseMatrixCSC, rowvals, nonzeros
 
 using ...Multifrontal
 using ...Multifrontal: HermOrSymTri, HermOrSymSparse, HermSparse, SymSparse, ChordalCholesky, ChordalTriangular, Permutation
-using ...Multifrontal: fisher!, selinv!, selupd!, triangular, project, diagblock, fronts
+using ...Multifrontal: fisher!, selinv!, triangular, project, diagblock, fronts
 
 export selinv, selaxpy!, symdot
 
