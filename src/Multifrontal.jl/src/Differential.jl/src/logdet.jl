@@ -1,102 +1,59 @@
-# Kernel functions for logdet
+function LinearAlgebra.logdet(A::SparseMatrixCSC, F::ChordalCholesky)
+    return logdet(Hermitian(A), F)
+end
 
-function LinearAlgebra.logdet(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
-    return 2 * logdet(L)
+function LinearAlgebra.logdet(A::HermOrSymSparse, F::ChordalCholesky)
+    return logdet(F)
 end
 
 # ===== frule =====
 
-function logdet_frule_impl(L::ChordalTriangular{:N}, dL)
-    y = logdet(L)
-
-    if dL isa ZeroTangent
-        dy = ZeroTangent()
-    else
-        dy = zero(promote_eltype(L, dL))
-
-        for f in fronts(L)
-            D, res = diagblock(L, f)
-
-            if dL isa UniformScaling
-                for i in diagind(D)
-                    dy += dL.λ / D[i]
-                end
-            elseif dL isa Diagonal
-                for (j, i) in enumerate(diagind(D))
-                    dy += dL.diag[res[j]] / D[i]
-                end
-            else
-                dD, _ = diagblock(dL, f)
-
-                for i in diagind(D)
-                    dy += dD[i] / D[i]
-                end
-            end
-        end
-    end
-
+function logdet_frule_impl(A::HermOrSymSparse, F::ChordalCholesky, dA::HermOrSymSparse)
+     y = logdet(A, F)
+    dy = symdot(selinv(A, F), dA)
     return y, dy
 end
 
-function logdet_frule_impl(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, dA)
-    y = logdet(A, L, P)
-
-    if dA isa ZeroTangent
-        dy = ZeroTangent()
-    else
-        dy = dot(selinv(A, L, P), dA)
+function logdet_rrule_frule_impl!(ΣA::HermOrSymSparse, dΣA::HermOrSymSparse, A::HermOrSymSparse, dA::HermOrSymSparse, F::ChordalCholesky, Δy::Number, dΔy::Number)
+    if !iszero(Δy)
+        B, dB = selinv_frule_impl(A, F, dA)
+        scldia!(B, 1 / 2)
+        scldia!(dB, 1 / 2)
+        selaxpy!(2Δy,  B,  ΣA)
+        selaxpy!(2dΔy, B, dΣA)
+        selaxpy!(2Δy, dB, dΣA)
+    elseif !iszero(dΔy)
+        B = selinv(A, F)
+        scldia!(B, 1 / 2)
+        selaxpy!(2dΔy, B, dΣA)
     end
 
-    return y, dy
-end
-
-function ChainRulesCore.frule((_, dL)::Tuple, ::typeof(logdet), L::ChordalTriangular{:N})
-    return logdet_frule_impl(L, dL)
-end
-
-function ChainRulesCore.frule((_, dA, _, _)::Tuple, ::typeof(logdet), A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
-    return logdet_frule_impl(A, L, P, dA)
+    return ΣA, dΣA
 end
 
 # ===== rrule =====
 
-function logdet_rrule_impl(L::ChordalTriangular{:N}, y::Number, Δy)
-    if Δy isa ZeroTangent
-        ΔL = ZeroTangent()
-    else
-        ΔL = zero(L)
-
-        for f in fronts(L)
-            ΔD, _ = diagblock(ΔL, f)
-            D, _ = diagblock(L, f)
-
-            for i in diagind(D)
-                ΔD[i] = Δy / D[i]
-            end
-        end
+Base.@noinline function logdet_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSparse, F::ChordalCholesky, y::Number, Δy::Number)
+    if !iszero(Δy)
+        B = selinv(A, F)
+        scldia!(B, 1/2)
+        selaxpy!(2Δy, B, ΣA)
     end
 
-    return ΔL
+    return ΣA
 end
 
-function logdet_rrule_impl(A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation, y::Number, Δy)
-    if Δy isa ZeroTangent
-        ΔA = ZeroTangent()
-    else
-        ΔA = Δy * selinv(A, L, P)
+function logdet_rrule_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSparse, F::ChordalCholesky, Δy::Number, ΔΣA::HermOrSymSparse)
+    B = selinv(A, F)
+
+    if !iszero(Δy)
+         cB = copyto!(similar(F),   B)
+        cΔB = copyto!(similar(F), ΔΣA)
+         dA = scldia!(project(A, fisher!(cΔB, F, cB; inv=false)), 1 / 2)
+        selaxpy!(-2Δy, dA, ΣA)
     end
 
-    return ΔA
-end
-
-function ChainRulesCore.rrule(::typeof(logdet), L::ChordalTriangular{:N})
-    y = logdet(L)
-    pullback(Δy) = (NoTangent(), logdet_rrule_impl(L, y, Δy))
-    return y, pullback
-end
-
-function ChainRulesCore.rrule(::typeof(logdet), A::HermOrSymSparse, L::ChordalTriangular{:N}, P::Permutation)
-    y = logdet(A, L, P)
-    pullback(Δy) = (NoTangent(), logdet_rrule_impl(A, L, P, y, Δy), NoTangent(), NoTangent())
-    return y, pullback
+    scldia!(B, 1 / 2)
+    ΣΔy = 2dot(parent(B), parent(ΔΣA))
+    return ΣA, ΣΔy
 end

@@ -6,6 +6,20 @@ const NaturalFactorization{DIAG, UPLO, T, I} = AbstractFactorization{DIAG, UPLO,
 
 # ===== Base methods =====
 
+function Base.:(==)(F::AbstractFactorization, G::AbstractFactorization)
+    return false
+end
+
+function Base.:(==)(F::AbstractFactorization{DIAG, UPLO}, G::AbstractFactorization{DIAG, UPLO}) where {DIAG, UPLO}
+    out = F.P === G.P && triangular(F) == triangular(G)
+
+    if DIAG === :U
+        out = out && F.D == G.D
+    end
+
+    return out
+end
+
 function Base.getproperty(F::AbstractFactorization{DIAG, UPLO}, s::Symbol) where {DIAG, UPLO}
     if s === :P
         return Permutation(getfield(F, :perm), getfield(F, :invp))

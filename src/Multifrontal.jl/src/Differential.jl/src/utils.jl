@@ -1,58 +1,128 @@
-# wraptri: wrap B in the same wrapper type as A
-function wraptri(::ChordalTriangular{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return B
+function scldia!(A::ChordalTriangular, α)
+    @inbounds for j in fronts(A)
+        D, _ = diagblock(A, j)
+
+        for i in diagind(D)
+            D[i] *= α
+        end
+    end
+
+    return A
 end
 
-function wraptri(::HermTri{UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return Hermitian(B, UPLO)
+function scldia!(A::SparseMatrixCSC, α)
+    for i in diagind(A)
+        A[i] *= α
+    end
+
+    return A
 end
 
-function wraptri(::SymTri{UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return Symmetric(B, UPLO)
+function scldia!(A::HermOrSym, α)
+    scldia!(parent(A), α)
+    return A
 end
 
-function wraptri(::AdjTri{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return adjoint(B)
+function scldia!(F::ChordalCholesky, α)
+    scldia!(triangular(F), α)
+    return F
 end
 
-function wraptri(::TransTri{:N, UPLO}, B::ChordalTriangular{:N, UPLO}) where {UPLO}
-    return transpose(B)
+function selaxpby!(A::SparseMatrixCSC{TA, IA}, B::SparseMatrixCSC{TB, IB}, α, β, uplo::Char) where {TA, IA, TB, IB}
+    @inbounds for j in axes(A, 2)
+        pa, pastop = A.colptr[j], A.colptr[j + 1] - one(IA)
+        pb, pbstop = B.colptr[j], B.colptr[j + 1] - one(IB)
+
+        while pa <= pastop && pb <= pbstop
+            ia, ib = rowvals(A)[pa], rowvals(B)[pb]
+
+            if ia == ib
+                if (uplo == 'L' && ia >= j) || (uplo == 'U' && ia <= j)
+                    if iszero(β)
+                        nonzeros(A)[pa] = α * nonzeros(B)[pb]
+                    else
+                        nonzeros(A)[pa] = α * nonzeros(B)[pb] + β * nonzeros(A)[pa]
+                    end
+                end
+
+                pa += one(IA)
+                pb += one(IB)
+            elseif ia < ib
+                pa += one(IA)
+            else
+                pb += one(IB)
+            end
+        end
+    end
+
+    return A
 end
 
-function copylike(A::ChordalTriangular, B::ChordalTriangular)
-    return copy(B)
+function selaxpby!(α, B::HermOrSymSparse, β, A::HermOrSymSparse)
+    selaxpby!(parent(A), parent(B), α, β, A.uplo)
+    return A
 end
 
-function copylike(A::ChordalTriangular, B::HermOrSymTri)
-    return copy(parent(B))
+function selaxpy!(α, B::HermOrSymSparse, A::HermOrSymSparse)
+    return selaxpby!(α, B, true, A)
 end
 
-function copylike(A::ChordalTriangular, B::Union{UniformScaling, Diagonal})
-    return copyto!(similar(A), B)
+function selaxpy!(α, B::HermOrSymTri, P::Permutation, A::HermOrSymSparse)
+    return selaxpy!(α, project(A, B, P), A)
 end
 
-function copylike(A::HermOrSymTri, B::ChordalTriangular)
-    return wraptri(A, copy(B))
+function symdot(A::HermSparse, B::HermSparse)
+    @assert A.uplo == B.uplo
+    return symdot_impl(parent(A), parent(B), Val(:C), A.uplo)
 end
 
-function copylike(A::HermOrSymTri, B::HermOrSymTri)
-    return wraptri(A, copy(parent(B)))
+function symdot(A::SymSparse, B::SymSparse)
+    @assert A.uplo == B.uplo
+    return symdot_impl(parent(A), parent(B), Val(:N), A.uplo)
 end
 
-function copylike(A::HermOrSymTri, B::Union{UniformScaling, Diagonal})
-    return copyto!(similar(A), B)
-end
+function symdot_impl(A::SparseMatrixCSC{TA, IA}, B::SparseMatrixCSC{TB, IB}, tA::Val{T}, uplo::Char) where {TA, IA, TB, IB, T}
+    if T === :C
+        out = real(zero(TA) * zero(TB))
+    else
+        out = zero(TA) * zero(TB)
+    end
 
-# fwrap: unwrap, apply f, rewrap
-function fwrap(f, A)
-    return f(A)
-end
+    @inbounds for j in axes(A, 2)
+        pa, pastop = A.colptr[j], A.colptr[j + 1] - one(IA)
+        pb, pbstop = B.colptr[j], B.colptr[j + 1] - one(IB)
 
-function fwrap(f, A::Adjoint)
-    return adjoint(fwrap(f, parent(A)))
-end
+        while pa <= pastop && pb <= pbstop
+            ia, ib = rowvals(A)[pa], rowvals(B)[pb]
+            Aij = nonzeros(A)[pa]
+            Bij = nonzeros(B)[pb]
 
-function fwrap(f, A::Transpose)
-    return transpose(fwrap(f, parent(A)))
-end
+            if ia == ib
+                if (uplo == 'L' && ia >= j) || (uplo == 'U' && ia <= j)
+                    if ia == j
+                        if T === :C
+                            out += real(Aij) * real(Bij)
+                        else
+                            out += Aij * Bij
+                        end
+                    else
+                        if T === :C
+                            out += 2 * real(conj(Aij) * Bij)
+                        else
+                            out += 2 * Aij * Bij
+                        end
+                    end
+                end
 
+                pa += one(IA)
+                pb += one(IB)
+            elseif ia < ib
+                pa += one(IA)
+            else
+                pb += one(IB)
+            end
+        end
+    end
+
+    return out
+end

@@ -58,6 +58,10 @@ function (::Type{Prm})(perm::AbstractVector) where {I, Prm <: Permutation{I}}
     return Prm(perm, invperm(perm))
 end
 
+function Base.:(==)(P::Permutation, Q::Permutation)
+    return P.perm == Q.perm && P.invp == Q.invp
+end
+
 # ===== show =====
 
 for Prm in (:FPermutation, :DPermutation, :NaturalPermutation)

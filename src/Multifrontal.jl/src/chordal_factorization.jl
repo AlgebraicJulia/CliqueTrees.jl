@@ -247,6 +247,14 @@ function triangular(F::ChordalFactorization, ::Val{DIAG}=F.diag) where {DIAG}
     return ChordalTriangular{DIAG}(F)
 end
 
+function project(A::Hermitian, F::ChordalCholesky{UPLO}) where {UPLO}
+    return project(A, Hermitian(triangular(F), UPLO), F.P)
+end
+
+function project(A::Symmetric, F::ChordalCholesky{UPLO}) where {UPLO}
+    return project(A, Symmetric(triangular(F), UPLO), F.P)
+end
+
 # ===== Base methods =====
 
 for Fac in (:FChordalCholesky, :FChordalLDLt)

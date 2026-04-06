@@ -82,6 +82,14 @@ function ChordalTriangular(F::ChordalFactorization{DIAG, UPLO}) where {DIAG, UPL
     return ChordalTriangular{DIAG, UPLO}(F)
 end
 
+function Base.:(==)(A::ChordalTriangular, B::ChordalTriangular)
+    return false
+end
+
+function Base.:(==)(A::ChordalTriangular{DIAG, UPLO}, B::ChordalTriangular{DIAG, UPLO}) where {DIAG, UPLO}
+    return A.S === B.S && A.Dval == B.Dval && A.Lval == B.Lval
+end
+
 function Base.getproperty(A::ChordalTriangular{DIAG, UPLO}, s::Symbol) where {DIAG, UPLO}
     if s === :uplo
         return Val(UPLO)
@@ -803,140 +811,6 @@ function Base.fill!(A::HermOrSymTri, x)
     return A
 end
 
-function selupd!(C::ChordalTriangular, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
-    AP, tA = unwrap(A)
-    BP, tB = unwrap(B)
-    return selupd_impl!(C, AP, BP, α, β, tA, tB)
-end
-
-function selupd!(C::AdjTri, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
-    selupd!(parent(C), B', A', α, β)
-    return C
-end
-
-function selupd!(C::TransTri, A::AbstractVecOrMat, B::AbstractMatrix, α, β)
-    selupd!(parent(C), transpose(B), transpose(A), α, β)
-    return C
-end
-
-function selupd!(C::HermTri, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(parent(C), X, adjoint(Y),      α,  β)
-    selupd!(parent(C), Y, adjoint(X), conj(α), 1)
-    return C
-end
-
-function selupd!(C::SymTri, X::AbstractVecOrMat, Y::AbstractVecOrMat, α, β)
-    selupd!(parent(C), X, transpose(Y), α, β) # TODO: conj(X)
-    selupd!(parent(C), Y, transpose(X), α, 1) # TODO: conj(Y)
-    return C
-end
-
-function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, A::AbstractMatrix, B::AbstractMatrix, α, β, tA::Val{TA}, tB::Val{TB}) where {DIAG, UPLO, T, TA, TB}
-    if TA === :N
-        @assert size(A, 1) == ncl(C)
-        k = size(A, 2)
-    else
-        @assert size(A, 2) == ncl(C)
-        k = size(A, 1)
-    end
-
-    if TB === :N
-        @assert size(B, 1) == k
-        @assert size(B, 2) == ncl(C)
-    else
-        @assert size(B, 2) == k
-        @assert size(B, 1) == ncl(C)
-    end
-
-    Wval = FVector{T}(undef, C.S.nFval * k)
-
-    @inbounds for f in fronts(C)
-        D₁, res = diagblock(C, f)
-        L₂, sep = offdblock(C, f)
-        na = length(sep)
-
-        if TA === :N
-            A₁ = view(A, res, :)
-        else
-            A₁ = view(A, :, res)
-        end
-
-        if TB === :N
-            B₁ = view(B, :, res)
-        else
-            B₁ = view(B, res, :)
-        end
-
-        gemmt!(C.uplo, tA, tB, α, A₁, B₁, β, parent(D₁))
-
-        if ispositive(na)
-            if UPLO === :L
-                if TA === :N
-                    W₂ = reshape(view(Wval, 1:na * k), na, k)
-                    copygatherrec!(W₂, A, sep, Val(:L))
-                    gemm!(tA, tB, α, W₂, B₁, β, L₂)
-                else
-                    W₂ = reshape(view(Wval, 1:k * na), k, na)
-                    copygatherrec!(W₂, A, sep, Val(:R))
-                    gemm!(tA, tB, α, W₂, B₁, β, L₂)
-                end
-            else
-                if TB === :N
-                    W₂ = reshape(view(Wval, 1:k * na), k, na)
-                    copygatherrec!(W₂, B, sep, Val(:R))
-                    gemm!(tA, tB, α, A₁, W₂, β, L₂)
-                else
-                    W₂ = reshape(view(Wval, 1:na * k), na, k)
-                    copygatherrec!(W₂, B, sep, Val(:L))
-                    gemm!(tA, tB, α, A₁, W₂, β, L₂)
-                end
-            end
-        end
-    end
-
-    return C
-end
-
-function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, a::AbstractVector, b::AbstractVector, α, β, ::Val{:N}, ::Val{:C}) where {DIAG, UPLO, T}
-    @assert length(a) == length(b) == ncl(C)
-
-    Wval = FVector{T}(undef, C.S.nFval)
-
-    if iszero(β)
-        fill!(C, zero(T))
-    else
-        rmul!(C, β)
-    end
-
-    @inbounds for f in fronts(C)
-        D₁, res = diagblock(C, f)
-        L₂, sep = offdblock(C, f)
-        na = length(sep)
-
-        a₁ = view(a, res)
-        b₁ = view(b, res)
-        ger!(α, a₁, b₁, parent(D₁))
-
-        if ispositive(na)
-            w₂ = view(Wval, 1:na)
-
-            if UPLO === :L
-                copygatherrec!(w₂, a, sep)
-                ger!(α, w₂, b₁, L₂)
-            else
-                copygatherrec!(w₂, b, sep)
-                ger!(α, a₁, w₂, L₂)
-            end
-        end
-    end
-
-    return C
-end
-
-function selupd_impl!(C::ChordalTriangular{DIAG, UPLO, T}, a::AbstractVector, b::AbstractVector, α, β, ::Val{:N}, ::Val{:T}) where {DIAG, UPLO, T<:Real}
-    return selupd_impl!(C, a, b, α, β, Val(:N), Val(:C))
-end
-
 function LinearAlgebra.cond(F::MaybeAdjOrTransTri, p::Real=2)
     if p == 1
         condest1(F)
@@ -1050,57 +924,6 @@ function symbolic(A::AdjOrTransTri)
     return symbolic(parent(A))
 end
 
-function chordal(A::AbstractMatrix, P::Permutation, S::ChordalSymbolic, uplo::Val{UPLO}=Val(DEFAULT_UPLO); check::Bool=true) where {UPLO}
-    F = ChordalCholesky{UPLO}(A, P, S; check)
-    return Hermitian(triangular(F), UPLO)
-end
-
-function chordal(A::AbstractMatrix, S::ChordalSymbolic{I}, uplo::Val{UPLO}=Val(DEFAULT_UPLO); check::Bool=true) where {I, UPLO}
-    P = NaturalPermutation{I}(ncl(S))
-    return chordal(A, P, S, uplo; check)
-end
-
-function chordal(X::UniformScaling, P::Permutation, S::ChordalSymbolic, uplo::Val=Val(DEFAULT_UPLO); check::Bool=true)
-    return X
-end
-
-function chordal(X::Diagonal, P::Permutation, S::ChordalSymbolic, uplo::Val=Val(DEFAULT_UPLO); check::Bool=true)
-    return cong(X, P')
-end
-
-# Two-argument project functions (no permutation)
-# These treat UniformScaling as a diagonal matrix with repeated values
-
-function project(A::HermOrSymTri, B::Union{HermOrSymTri, Diagonal, UniformScaling})
-    return B
-end
-
-function project(A::HermOrSymSparse, B::HermOrSymTri{UPLO, T, I}) where {UPLO, T, I}
-    return project(A, B, NaturalPermutation{I}(size(A, 1)))
-end
-
-function project(A::HermOrSymSparse, B::Union{HermOrSymSparse, Diagonal, UniformScaling})
-    return B
-end
-
-function project(A::UniformScaling, B::AbstractMatrix)
-    return (tr(B) / size(B, 1)) * I
-end
-
-function project(A::UniformScaling, B::UniformScaling)
-    return B
-end
-
-function project(A::Diagonal, B::AbstractMatrix)
-    return Diagonal(diag(B))
-end
-
-function project(A::Diagonal, B::Union{Diagonal, UniformScaling})
-    return B
-end
-
-# Three-argument project functions (with permutation)
-
 function project(A::HermOrSymSparse, B::HermOrSymTri, P::Permutation)
     PB = sympermute(parent(A), P.invp, A.uplo, B.uplo)
     project!(PB, parent(B))
@@ -1111,26 +934,6 @@ function project(A::HermOrSymSparse, B::HermOrSymTri, P::Permutation)
     else
         return Symmetric(PA, Symbol(A.uplo))
     end
-end
-
-function project(A::AbstractMatrix, B::Diagonal, P::Permutation)
-    return cong(B, P)
-end
-
-function project(A::Diagonal, B::Diagonal, P::Permutation)
-    return cong(B, P)
-end
-
-function project(A::Union{AbstractMatrix, UniformScaling}, B::UniformScaling, P::Permutation)
-    return project(A, B)
-end
-
-function project(A::UniformScaling, B::AbstractMatrix, P::Permutation)
-    return project(A, B)
-end
-
-function project(A::Diagonal, B::AbstractMatrix, P::Permutation)
-    return project(A, project(A, B), P)
 end
 
 function project!(A::SparseMatrixCSC, B::ChordalTriangular)

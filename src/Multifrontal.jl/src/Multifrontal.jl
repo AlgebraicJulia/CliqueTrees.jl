@@ -25,7 +25,6 @@ export DenseCholeskyPivoted, DenseLDLtPivoted
 export DynamicRegularization, GMW81, SE99
 export Permutation, FPermutation
 export symbolic
-export chordal
 export selinv!
 
 const THRESHOLD = 64
@@ -33,7 +32,11 @@ const DEFAULT_UPLO = :L
 const TransVec = Transpose{<:Any, <:AbstractVector}
 const AdjVec = Adjoint{<:Any, <:AbstractVector}
 const IOnes{T} = Ones{T, 1, Tuple{OneTo{Int}}}
-const HermOrSymSparse{T, I} = Union{Hermitian{T, SparseMatrixCSC{T, I}}, Symmetric{T, SparseMatrixCSC{T, I}}}
+
+const HermSparse{T, I} = Hermitian{T, SparseMatrixCSC{T, I}}
+const SymSparse{T, I} = Symmetric{T, SparseMatrixCSC{T, I}}
+const HermOrSymSparse{T, I} = Union{HermSparse{T, I}, SymSparse{T, I}}
+const MaybeHermOrSymSparse{T, I} = Union{SparseMatrixCSC{T, I}, HermOrSymSparse{T, I}}
 
 include("permutation.jl")
 include("chordal_symbolic.jl")
@@ -61,9 +64,11 @@ include("cholesky_differential.jl")
 include("lowrank.jl")
 include("krylov.jl")
 include("complete_generic.jl")
+
 if Base.USE_GPL_LIBS
     include("cholmod.jl")
 end
+
 include("Differential.jl/src/Differential.jl")
 
 using .Differential
