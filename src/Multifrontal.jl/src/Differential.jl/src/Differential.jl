@@ -1,8 +1,9 @@
 module Differential
 
 using LinearAlgebra
-using LinearAlgebra: lmul!, axpy!, Hermitian, HermOrSym
+using LinearAlgebra: lmul!, axpy!, ldiv!, rdiv!, Hermitian, HermOrSym
 using SparseArrays: SparseMatrixCSC, rowvals, nonzeros
+using Base: AbstractVecOrMat
 
 using ...Multifrontal
 using ...Multifrontal: HermOrSymTri, HermOrSymSparse, HermSparse, SymSparse, ChordalCholesky, ChordalTriangular, Permutation
@@ -13,5 +14,6 @@ export selinv, selaxpy!, symdot
 include("utils.jl")
 include("selinv.jl")
 include("logdet.jl")
+include("divide.jl")
 
 end

@@ -65,8 +65,7 @@ function Mooncake.rrule!!(
     logdet_rrule_impl!(ΣA, A, primal(cdF), primal(cdy), Δy)
 
     function pullback!!(ΔΣA)
-        selaxpy!(1, ΔΣA, dΣA)
-        _, ΣΔy = logdet_rrule_rrule_impl!(dA, A, primal(cdF), Δy, ΔΣA)
+        _, _, ΣΔy = logdet_rrule_rrule_impl!(dΣA, dA, A, primal(cdF), Δy, ΔΣA)
         return NoRData(), NoRData(), NoRData(), NoRData(), NoRData(), ΣΔy
     end
 

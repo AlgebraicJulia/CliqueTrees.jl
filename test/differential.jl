@@ -71,6 +71,21 @@ end
                 B = randn(T, n)
                 @test testadjoint((Q, B) -> (X = ldivwith(Q, F, B); dot(X, X)), Q, B)
             end
+
+            @testset "F \\ x vector" begin
+                x = randn(T, n)
+                @test testadjoint(x -> (y = F \ x; dot(y, y)), x)
+            end
+
+            @testset "F \\ X matrix" begin
+                X = randn(T, n, 3)
+                @test testadjoint(X -> (Y = F \ X; dot(Y, Y)), X)
+            end
+
+            @testset "X / F matrix" begin
+                X = randn(T, 3, n)
+                @test testadjoint(X -> (Y = X / F; dot(Y, Y)), X)
+            end
         end
     end
 end

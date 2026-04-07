@@ -43,7 +43,8 @@ Base.@noinline function logdet_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSpa
     return ΣA
 end
 
-function logdet_rrule_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSparse, F::ChordalCholesky, Δy::Number, ΔΣA::HermOrSymSparse)
+function logdet_rrule_rrule_impl!(ΣΣA::HermOrSymSparse, ΣA::HermOrSymSparse, A::HermOrSymSparse, F::ChordalCholesky, Δy::Number, ΔΣA::HermOrSymSparse)
+    selaxpy!(1, ΔΣA, ΣΣA)
     B = selinv(A, F)
 
     if !iszero(Δy)
@@ -55,5 +56,5 @@ function logdet_rrule_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSparse, F::C
 
     scldia!(B, 1 / 2)
     ΣΔy = 2dot(parent(B), parent(ΔΣA))
-    return ΣA, ΣΔy
+    return ΣΣA, ΣA, ΣΔy
 end
