@@ -143,11 +143,13 @@ function inertiadiag(D::Diagonal{T}; atol::Real=zero(real(T)), rtol::Real=zero(r
     return (np, nn, nz)
 end
 
-function LinearAlgebra.inertia(F::AbstractFactorization{DIAG}; kw...) where {DIAG}
-    if DIAG === :N
-        return (ncl(F), 0, 0)
-    else
-        return inertiadiag(F.D; kw...)
+@static if VERSION >= v"1.11"
+    function LinearAlgebra.inertia(F::AbstractFactorization{DIAG}; kw...) where {DIAG}
+        if DIAG === :N
+            return (ncl(F), 0, 0)
+        else
+            return inertiadiag(F.D; kw...)
+        end
     end
 end
 

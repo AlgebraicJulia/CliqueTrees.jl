@@ -1,6 +1,6 @@
 # CliqueTrees.jl
 
-CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [clique trees](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs. Additionally, you can use the submodule `CliqueTrees.Multifrontal` to compute Cholesky and LDLt factorizations of sparse matrices.
+CliqueTrees.jl implements *clique trees* in Julia. You can use it to construct [clique trees](https://en.wikipedia.org/wiki/Tree_decomposition) and [chordal completions](https://en.wikipedia.org/wiki/Chordal_completion) of graphs. Additionally, you can use the submodule [Multifrontal.jl](@ref) to compute Cholesky and LDLt factorizations of sparse matrices.
 
 ## Getting Help
 
@@ -147,7 +147,7 @@ algorithms.
 
 An important application of clique trees is sparse matrix factorization. The multifrontal Cholesky factorization algorithm
 uses a clique tree to schedule computations, performing a dense matrix factorization at each subgraph. This algorithm is
-implemented in the submodule `CliqueTrees.Multifrontal`.
+implemented in the submodule [Multifrontal.jl](@ref).
 
 ```julia-repl
 julia> using CliqueTrees.Multifrontal, LinearAlgebra

@@ -12,7 +12,7 @@ sparse matrices, whereas supernodal algorithms are faster on everything else.
 
 ### Cholesky Factorization
 
-A Cholesky factorization represents a positive-definite matrix
+A Cholesky factorization represents a symmetric positive-definite matrix
 $A$ as a product
 
 ```math
@@ -59,7 +59,7 @@ julia> F \ b
 ```
 
 Alternatively, you can access each part of the factorization as a field:
-`F.P` and `F.L`.
+`F.L` and `F.P`.
 
 ```julia-repl
 julia> F.P \ (F.L' \ (F.L \ (F.P' \ b)))
@@ -71,12 +71,101 @@ julia> F.P \ (F.L' \ (F.L \ (F.P' \ b)))
  0.0
 ```
 
+### LDLt Factorization
+
+An LDLt factorization represents a symmetric quasi-definite matrix $A$ as a product
+
+```math
+A = P^\mathsf{T} L D L^\mathsf{T} P
+```
+
+where $D$ is diagonal, $L$ is unit lower triangular, and $P$ is a permutation.
+In order to compute an LDLt factorization using Multifrontal.jl, construct
+a `ChordalLDLt` object and call the function `ldlt!`.
+
+```julia-repl
+julia> using CliqueTrees.Multifrontal, LinearAlgebra
+
+julia> A = [
+          -4 -2  0  0  2
+          -2 -5  0  0  3
+           0  0  4  2  0
+           0  0  2  5  2
+           2  3  0  2  7
+       ];
+
+julia> F = ldlt!(ChordalLDLt(A))
+5×5 FChordalLDLt{:L, Float64, Int64} with 12 stored entries:
+ 1.0    ⋅     ⋅    ⋅    ⋅ 
+ 0.0   1.0    ⋅    ⋅    ⋅ 
+ 0.0   0.5   1.0   ⋅    ⋅ 
+ 0.5   0.0   0.0  1.0   ⋅ 
+ 0.0  -0.5  -0.5  0.5  1.0
+
+ 4.0    ⋅     ⋅    ⋅    ⋅ 
+  ⋅   -4.0    ⋅    ⋅    ⋅ 
+  ⋅     ⋅   -4.0   ⋅    ⋅ 
+  ⋅     ⋅     ⋅   4.0   ⋅ 
+  ⋅     ⋅     ⋅    ⋅   8.0
+```
+
+`ChordalLDLt` objects behave like factorizations in LinearAlgebra.jl.
+You can solve linear systems using `/` and `\`.
+
+```julia-repl
+julia> b = [-4, -2, 0, 0, 2];
+
+julia> F \ b
+5-element Vector{Float64}:
+  1.0
+ -0.0
+  0.0
+  0.0
+  0.0
+```
+
+Alternatively, you can access each part of the factorization as a field:
+`F.D`, `F.L`, and `F.P`.
+
+```julia-repl
+julia> F.P \ (F.L' \ (F.D \ (F.L \ (F.P' \ b))))
+5-element Vector{Float64}:
+  1.0
+ -0.0
+  0.0
+  0.0
+  0.0
+```
+
+The diagonal elements of $D$ are called *pivots*. Sometimes, it is possible to
+know the sign of each pivot before performing the factorization. This data
+can be provided to the factorization algorithm using the keyword argument `signs`.
+
+```julia-repl
+julia> F = ldlt!(ChordalLDLt(A); signs=[-1, -1, 1, 1, 1])
+5×5 FChordalLDLt{:L, Float64, Int64} with 12 stored entries:
+ 1.0    ⋅     ⋅    ⋅    ⋅ 
+ 0.0   1.0    ⋅    ⋅    ⋅ 
+ 0.0   0.5   1.0   ⋅    ⋅ 
+ 0.5   0.0   0.0  1.0   ⋅ 
+ 0.0  -0.5  -0.5  0.5  1.0
+
+ 4.0    ⋅     ⋅    ⋅    ⋅ 
+  ⋅   -4.0    ⋅    ⋅    ⋅ 
+  ⋅     ⋅   -4.0   ⋅    ⋅ 
+  ⋅     ⋅     ⋅   4.0   ⋅ 
+  ⋅     ⋅     ⋅    ⋅   8.0
+```
+
+### Benchmarks
+
 Here are runtimes for the matrix [oilpan](https://sparse.tamu.edu/GHS_psdef/oilpan),
 which has 73,752 columns and 2,148,558 nonzero entries.
 
-| library              | time (ms) |
-| -------------------- | --------- |
-| CHOLMOD              | 126       |
-| Multifrontal.jl      | 127       |
-| QDLDL.jl             | 580       |
-| LDLFactorizations.jl | 586       |
+| library                    | time (ms) |
+| -------------------------- | --------- |
+| CHOLMOD                    | 113       |
+| Multifrontal.jl (LDLt)     | 126       |
+| Multifrontal.jl (Cholesky) | 139       |
+| QDLDL.jl                   | 582       |
+| LDLFactorizations.jl       | 587       |
