@@ -18,13 +18,11 @@ include("./Utilities.jl/src/Utilities.jl")
 include("./AMFLib.jl/src/AMFLib.jl")
 include("./MLFLib.jl/src/MLFLib.jl")
 include("./MMDLib.jl/src/MMDLib.jl")
-include("./PIDBTLib.jl/src/PIDBTLib.jl")
 
 using .Utilities
 using .AMFLib
 using .MLFLib
 using .MMDLib
-using .PIDBTLib
 
 const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
 
@@ -125,7 +123,10 @@ include("deprecated/ldlt_facts.jl")
 include("deprecated/lin_works.jl")
 include("io.jl")
 
-# Multifrontal submodule
-include("Multifrontal.jl/src/Multifrontal.jl")
+# Submodules
+include("./PIDBTLib.jl/src/PIDBTLib.jl")
+include("./Multifrontal.jl/src/Multifrontal.jl")
+
+using .PIDBTLib
 
 end

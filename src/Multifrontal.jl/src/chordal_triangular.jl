@@ -239,6 +239,11 @@ function Base.copyto!(A::ChordalTriangular, B::UniformScaling)
     return A
 end
 
+function Base.copyto!(A::HermOrSymTri, B::HermOrSymTri)
+    copyto!(parent(A), parent(B))
+    return A
+end
+
 function Base.copyto!(A::HermOrSymTri, B::Diagonal)
     copyto!(parent(A), B)
     return A

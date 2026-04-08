@@ -5,6 +5,8 @@ using Random
 using Random: SamplerType
 import Graphs
 
+using ..CliqueTrees: AbstractLinkedList, SinglyLinkedList, DoublyLinkedList, ispositive
+
 export pidbt
 
 const AbstractScalar{T} = AbstractArray{T, 0}
@@ -12,9 +14,6 @@ const Scalar{T} = Array{T, 0}
 
 # Packed set types
 include("packed_sets/abstract_packed_set.jl")
-
-# Linked list types
-include("linked_lists/abstract_linked_lists.jl")
 
 # DAG pool
 include("dags.jl")

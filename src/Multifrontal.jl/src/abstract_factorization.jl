@@ -117,6 +117,40 @@ function LinearAlgebra.isposdef(F::AbstractFactorization{DIAG}) where {DIAG}
     end
 end
 
+function inertiadiag(D::Diagonal{T}; atol::Real=zero(real(T)), rtol::Real=zero(real(T))) where {T}
+    R = real(T)
+
+    if R <: AbstractFloat && !ispositive(rtol) && !ispositive(atol)
+        tol = size(D, 1) * eps(R)
+    else
+        tol = convert(R, max(atol, rtol * maximum(abs, D.diag)))
+    end
+
+    np = nn = nz = 0
+
+    for i in axes(D, 1)
+        Dii = D.diag[i]
+
+        if real(Dii) > tol
+            np += 1
+        elseif real(Dii) < -tol
+            nn += 1
+        else
+            nz += 1
+        end
+    end
+
+    return (np, nn, nz)
+end
+
+function LinearAlgebra.inertia(F::AbstractFactorization{DIAG}; kw...) where {DIAG}
+    if DIAG === :N
+        return (ncl(F), 0, 0)
+    else
+        return inertiadiag(F.D; kw...)
+    end
+end
+
 function LinearAlgebra.det(F::AbstractFactorization{DIAG}) where {DIAG}
     if DIAG === :N
         return det(F.L)^2
