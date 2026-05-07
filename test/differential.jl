@@ -34,9 +34,8 @@ function randtangent(A::Union{Hermitian, Symmetric})
     return dA
 end
 
-function testadjoint(f, args...; rtol=1e-4)
+function testgradient(f, args...; rtol=1e-4)
     config = Config(friendly_tangents=true)
-
     fwd_cache = prepare_derivative_cache(f, args...; config)
     rev_cache = prepare_gradient_cache(f, args...; config)
 
@@ -49,7 +48,7 @@ function testadjoint(f, args...; rtol=1e-4)
     return isapprox(dy, sum(real ∘ splat(dot), zip(gradients, tangents)); rtol)
 end
 
-@testset "Mooncake AD rules" begin
+@testset "Mooncake" begin
     for T in (Float64,)
         @testset "$T" begin
             n = 50
@@ -60,31 +59,31 @@ end
             F = cholesky!(ChordalCholesky(Symmetric(Q)))
 
             @testset "logdet(Q, F)" begin
-                @test testadjoint(Q -> logdet(Q, F), Q)
+                @test testgradient(Q -> logdet(Q, F), Q)
             end
 
             @testset "dot(selinv, selinv)" begin
-                @test testadjoint(Q -> (Σ = selinv(Q, F); dot(Σ, Σ)), Q)
+                @test testgradient(Q -> (Σ = selinv(Q, F); dot(Σ, Σ)), Q)
             end
 
             @testset "ldivwith(Q, F, B)" begin
                 B = randn(T, n)
-                @test testadjoint((Q, B) -> (X = ldivwith(Q, F, B); dot(X, X)), Q, B)
+                @test testgradient((Q, B) -> (X = ldivwith(Q, F, B); dot(X, X)), Q, B)
             end
 
             @testset "F \\ x vector" begin
                 x = randn(T, n)
-                @test testadjoint(x -> (y = F \ x; dot(y, y)), x)
+                @test testgradient(x -> (y = F \ x; dot(y, y)), x)
             end
 
             @testset "F \\ X matrix" begin
                 X = randn(T, n, 3)
-                @test testadjoint(X -> (Y = F \ X; dot(Y, Y)), X)
+                @test testgradient(X -> (Y = F \ X; dot(Y, Y)), X)
             end
 
             @testset "X / F matrix" begin
                 X = randn(T, 3, n)
-                @test testadjoint(X -> (Y = X / F; dot(Y, Y)), X)
+                @test testgradient(X -> (Y = X / F; dot(Y, Y)), X)
             end
         end
     end

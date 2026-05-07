@@ -176,14 +176,14 @@ function Base.copyto!(A::MaybeAdjOrTransTri, B::MaybeAdjOrTransTri)
     return A
 end
 
-function copy_impl!(A::ChordalTriangular, B::ChordalTriangular, ::Val{TA}, ::Val{TB}) where {TA, TB}
+function copy_impl!(A::ChordalTriangular, B::ChordalTriangular, tA::Val{TA}, tB::Val{TB}) where {TA, TB}
     if TA === TB
         copyto!(A.Dval, B.Dval)
         copyto!(A.Lval, B.Lval)
     elseif TA === :N
-        copy_impl!(A, B, TB)
+        copy_impl!(A, B, tB)
     elseif TB === :N
-        copy_impl!(A, B, TA)
+        copy_impl!(A, B, tA)
     else
         conj!(copyto!(A.Dval, B.Dval))
         conj!(copyto!(A.Lval, B.Lval))
@@ -240,6 +240,12 @@ function Base.copyto!(A::ChordalTriangular, B::UniformScaling)
 end
 
 function Base.copyto!(A::HermOrSymTri, B::HermOrSymTri)
+    copyto!(parent(A), parent(B))
+    return A
+end
+
+function Base.copyto!(A::HermOrSymTri, B::HermOrSymSparse)
+    @assert char(parent(A).uplo) == B.uplo
     copyto!(parent(A), parent(B))
     return A
 end
@@ -441,35 +447,166 @@ function LinearAlgebra.diag(A::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UP
     return out
 end
 
-function LinearAlgebra.dot(A::ChordalTriangular{DIAG, UPLO, T}, B::ChordalTriangular{DIAG, UPLO, T}) where {DIAG, UPLO, T}
+function symdot(A::AbstractMatrix, B::AbstractMatrix)
+    return dot_impl(A, B, Val(true))
+end
+
+function symdot(A::SparseMatrixCSC, B::ChordalTriangular)
+    return symdot(B, A)
+end
+
+function LinearAlgebra.dot(A::ChordalTriangular, B::SparseMatrixCSC)
+    return dot_impl(parent(A), parent(B), Val(false)) 
+end
+
+function LinearAlgebra.dot(A::SparseMatrixCSC, B::ChordalTriangular)
+    return dot(B, A)
+end
+
+function LinearAlgebra.dot(A::HermOrSymTri, B::Union{HermOrSymSparse, HermOrSymTri})
+    @assert A.uplo == B.uplo
+    return symdot(parent(A), parent(B))
+end
+
+function LinearAlgebra.dot(A::HermOrSymSparse, B::HermOrSymTri)
+    return dot(B, A)
+end
+
+function dot_impl(A::ChordalTriangular{DIAG, UPLO, T}, B::ChordalTriangular{DIAG, UPLO, T}, ::Val{SYM}) where {DIAG, UPLO, T, SYM}
     @assert checksymbolic(A, B)
-    out = zero(T)
+
+    if SYM
+        out = zero(real(T))
+    else
+        out = zero(T)
+    end
 
     @inbounds for j in fronts(A)
         DA, _ = diagblock(A, j)
         DB, _ = diagblock(B, j)
-        out += dot(DA, DB)
+
+        if SYM
+            SA = sym(A.uplo, parent(DA))
+            SB = sym(B.uplo, parent(DB))
+            out += dot(SA, SB)
+        else
+            out += dot(DA, DB)
+        end
     end
 
-    out += dot(A.Lval, B.Lval)
+    if SYM
+        out += twice(real(dot(A.Lval, B.Lval)))
+    else
+        out += dot(A.Lval, B.Lval)
+    end
+
     return out
 end
 
-function LinearAlgebra.dot(A::HermOrSymTri{UPLO, T}, B::HermOrSymTri{UPLO, T}) where {UPLO, T}
-    @assert checksymtri(A) && checksymtri(B)
-    @assert checksymbolic(A, B)
-    out = zero(real(T))
-    PA = parent(A)
-    PB = parent(B)
+function dot_impl(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC{T}, sym::Val{SYM}) where {DIAG, T, I, SYM}
+    out = zero(T)
 
-    @inbounds for j in fronts(PA)
-        DA, _ = diagblock(PA, j)
-        DB, _ = diagblock(PB, j)
-        out += dot(Hermitian(parent(DA), UPLO), Hermitian(parent(DB), UPLO))
+    @inbounds for f in fronts(A)
+        D, res = diagblock(A, f)
+        L, sep = offdblock(A, f)
+
+        rlo = first(res)
+        rhi = last(res)
+
+        if !isempty(sep)
+            slo = first(sep)
+            shi = last(sep)
+        end
+
+        for jloc in eachindex(res)
+            j = res[jloc]
+            k = one(I)
+
+            for p in nzrange(B, j)
+                i = rowvals(B)[p]
+
+                if i <= rhi
+                    i < rlo && continue
+
+                    Δ = D[i - rlo + one(I), jloc] * nonzeros(B)[p]
+
+                    if SYM && i != j
+                        Δ += conj(Δ)
+                    end
+
+                    out += Δ
+                elseif !isempty(sep)
+                    i < slo && continue
+                    i > shi && break
+
+                    while sep[k] < i
+                        k += one(I)
+                    end
+
+                    Δ = L[k, jloc] * nonzeros(B)[p]
+
+                    if SYM
+                        Δ += conj(Δ)
+                    end
+
+                    out += Δ
+                    k += one(I)
+                end
+            end
+        end
     end
 
-    out += twice(real(dot(PA.Lval, PB.Lval)))
-    return out
+    return real(out)
+end
+
+function dot_impl(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC{T}, sym::Val{SYM}) where {DIAG, T, I, SYM}
+    out = zero(T)
+
+    @inbounds for f in fronts(A)
+        D, res = diagblock(A, f)
+        L, sep = offdblock(A, f)
+
+        rlo = first(res)
+        rhi = last(res)
+
+        for jloc in eachindex(res)
+            j = res[jloc]
+
+            for p in nzrange(B, j)
+                i = rowvals(B)[p]
+                i < rlo && continue
+                i > rhi && break
+
+                Δ = D[i - rlo + one(I), jloc] * nonzeros(B)[p]
+
+                if SYM && i != j
+                    Δ += conj(Δ)
+                end
+
+                out += Δ
+            end
+        end
+
+        for jloc in eachindex(sep)
+            j = sep[jloc]
+
+            for p in nzrange(B, j)
+                i = rowvals(B)[p]
+                i < rlo && continue
+                i > rhi && break
+
+                Δ = L[i - rlo + one(I), jloc] * nonzeros(B)[p]
+
+                if SYM
+                    Δ += conj(Δ)
+                end
+
+                out += Δ
+            end
+        end
+    end
+
+    return real(out)
 end
 
 function LinearAlgebra.dot(A::ChordalTriangular, J::Diagonal)
@@ -721,11 +858,11 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) 
         L, sep = offdblock(A, i)
 
         rlo = first(res)
-        rhi = last(res) + one(I)
+        rhi = last(res)
 
         if !isempty(sep)
             slo = first(sep)
-            shi = last(sep) + one(I)
+            shi = last(sep)
         end
 
         for j in eachindex(res)
@@ -734,12 +871,12 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) 
             for p in nzrange(B, res[j])
                 row = rowvals(B)[p]
 
-                if row < rhi
+                if row <= rhi
                     row < rlo && continue
                     parent(D)[row - rlo + one(I), j] = nonzeros(B)[p]
                 elseif !isempty(sep)
                     row < slo && continue
-                    row >= shi && break
+                    row > shi && break
 
                     while sep[k] < row
                         k += one(I)
@@ -764,13 +901,13 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) 
         L, sep = offdblock(A, i)
 
         rlo = first(res)
-        rhi = last(res) + one(I)
+        rhi = last(res)
 
         for j in eachindex(res)
             for p in nzrange(B, res[j])
                 row = rowvals(B)[p]
                 row < rlo && continue
-                row >= rhi && break
+                row > rhi && break
                 parent(D)[row - rlo + one(I), j] = nonzeros(B)[p]
             end
         end
@@ -779,7 +916,7 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) 
             for p in nzrange(B, sep[j])
                 row = rowvals(B)[p]
                 row < rlo && continue
-                row >= rhi && break
+                row > rhi && break
                 L[row - rlo + one(I), j] = nonzeros(B)[p]
             end
         end
@@ -931,7 +1068,7 @@ end
 
 function project(A::HermOrSymSparse, B::HermOrSymTri, P::Permutation)
     PB = sympermute(parent(A), P.invp, A.uplo, B.uplo)
-    project!(PB, parent(B))
+    selaxpby!(true, parent(B), false, PB)
     PA = sympermute(PB,        P.perm, B.uplo, A.uplo)
 
     if A isa Hermitian
@@ -939,78 +1076,4 @@ function project(A::HermOrSymSparse, B::HermOrSymTri, P::Permutation)
     else
         return Symmetric(PA, Symbol(A.uplo))
     end
-end
-
-function project!(A::SparseMatrixCSC, B::ChordalTriangular)
-    return project_impl!(A, B)
-end
-
-function project_impl!(A::SparseMatrixCSC, B::ChordalTriangular{DIAG, :L, T, I}) where {DIAG, T, I}
-    @inbounds for i in fronts(B)
-        D, res = diagblock(B, i)
-        L, sep = offdblock(B, i)
-
-        rlo = first(res)
-        rhi = last(res) + one(I)
-
-        if !isempty(sep)
-            slo = first(sep)
-            shi = last(sep) + one(I)
-        end
-
-        for j in eachindex(res)
-            k = one(I)
-
-            for p in nzrange(A, res[j])
-                row = rowvals(A)[p]
-
-                if row < rhi
-                    row < rlo && continue
-                    nonzeros(A)[p] = parent(D)[row - rlo + one(I), j]
-                elseif !isempty(sep)
-                    row < slo && continue
-                    row >= shi && break
-
-                    while sep[k] < row
-                        k += one(I)
-                    end
-
-                    nonzeros(A)[p] = L[k, j]
-                    k += one(I)
-                end
-            end
-        end
-    end
-
-    return A
-end
-
-function project_impl!(A::SparseMatrixCSC, B::ChordalTriangular{DIAG, :U, T, I}) where {DIAG, T, I}
-    @inbounds for i in fronts(B)
-        D, res = diagblock(B, i)
-        L, sep = offdblock(B, i)
-
-        rlo = first(res)
-        rhi = last(res) + one(I)
-
-        for j in eachindex(res)
-            for p in nzrange(A, res[j])
-                row = rowvals(A)[p]
-                row < rlo && continue
-                row >= rhi && break
-                nonzeros(A)[p] = parent(D)[row - rlo + one(I), j]
-            end
-        end
-
-        for j in eachindex(sep)
-            for p in nzrange(A, sep[j])
-                row = rowvals(A)[p]
-                row < rlo && continue
-                row >= rhi && break
-                nonzeros(A)[p] = L[row - rlo + one(I), j]
-            end
-        end
-    end
-
-    return A
 end

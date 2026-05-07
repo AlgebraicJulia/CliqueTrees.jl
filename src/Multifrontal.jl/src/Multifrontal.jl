@@ -2,10 +2,11 @@ module Multifrontal
 
 using AbstractTrees
 using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, isstored, promote_eltype
+using Base.Threads: @threads, maxthreadid, nthreads, threadid
 using FillArrays: Ones, Zeros, AbstractFill, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasComplex, Factorization, LAPACK, BLAS, PivotingStrategy, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm, AbstractTriangular
+using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasComplex, Factorization, LAPACK, BLAS, PivotingStrategy, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm, AbstractTriangular, axpby!
 using Random
 using Random: rand!
 using SparseArrays
@@ -14,7 +15,7 @@ using SparseArrays: getcolptr
 import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
     ..eltypedegree, ..etype, ..residual, ..half, ..ispositive, ..isnegative, ..two, ..twice,
-    ..cliquetree, ..residuals, ..separators, ..childindices
+    ..cliquetree, ..residuals, ..separators, ..childindices, ..AbstractScalar, ..DEFAULT_ELIMINATION_ALGORITHM
 
 export ChordalSymbolic
 export ChordalCholesky, FChordalCholesky
@@ -26,6 +27,7 @@ export DynamicRegularization, GMW81, SE99
 export Permutation, FPermutation
 export symbolic
 export selinv!
+export amari!
 
 const THRESHOLD = 64
 const DEFAULT_UPLO = :L
@@ -56,15 +58,15 @@ include("multiply.jl")
 include("add.jl")
 include("selinv.jl")
 include("complete.jl")
+include("complete_dense.jl")
 include("uncholesky.jl")
 include("dense/dense.jl")
 include("fisherroot.jl")
 include("fisher.jl")
-include("cholesky_differential.jl")
+include("amari.jl")
 include("lowrank.jl")
 include("krylov.jl")
 include("complete_generic.jl")
-
 if Base.USE_GPL_LIBS
     include("cholmod.jl")
 end

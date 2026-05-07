@@ -221,34 +221,36 @@ function acsd(weights::AbstractVector, graph::AbstractGraph{V}, alg::MinimalAlgo
     return acsd_complete!(pointer, target, head, next, mark, graph, order, tree)
 end
 
-function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, min::MinimalAlgorithm) where {V}
+function acsd(weights::AbstractVector, graph::AbstractGraph, alg::MinimalAlgorithm, rest::MinimalAlgorithm...) 
+    return acsd(weights, acsd(weights, graph, alg), rest...)
+end
+
+function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple) where {V}
     n = nv(graph)
 
-    if n < two(V)
-        order = collect(oneto(n))
-        index = collect(oneto(n))
-    else
-        cmpgraph = acsd(weights, graph, min)
-        order, tree = atomtree(cmpgraph, min); index = invperm(order)
+    if n > one(V)
+        cmpgraph = acsd(weights, graph, mins...)
+        order, tree = atomtree(cmpgraph, MinimalChordal())
+        index = invperm(order)
 
-        if length(tree) < 2
-            order, index = permutation(weights, cmpgraph, alg)
-        else
+        if length(tree) > 1
             pmtweights = weights[order]
             pmtgraph = permute(cmpgraph, order, index)
-            pmtindex = safeseparators(pmtweights, pmtgraph, tree, alg, min)
+            pmtindex = safeseparators(pmtweights, pmtgraph, tree, alg, mins)
 
             for v in vertices(graph)
                 i = index[v] = pmtindex[index[v]]
                 order[i] = v
             end
+
+            return order, index
         end
     end
 
-    return order, index
+    return permutation(weights, graph, alg)
 end
 
-function safeseparators(weights::AbstractVector{W}, graph::AbstractGraph{V}, tree::CliqueTree{V, E}, alg::EliminationAlgorithm, min::MinimalAlgorithm) where {W, V, E}
+function safeseparators(weights::AbstractVector{W}, graph::AbstractGraph{V}, tree::CliqueTree{V, E}, alg::EliminationAlgorithm, mins::Tuple) where {W, V, E}
     n = nv(graph); m = de(graph)
     
     index = FVector{V}(undef, n)
@@ -309,7 +311,7 @@ function safeseparators(weights::AbstractVector{W}, graph::AbstractGraph{V}, tre
 
         nn = ii; mm = pp - one(E)
         subgraph = BipartiteGraph(nn, nn, mm, subptr, subtgt)
-        suborder, subindex = permutation(subwgt, subgraph, Compression(SafeSeparators(alg, min)))
+        suborder, subindex = permutation(subwgt, subgraph, Compression(SafeSeparators(alg, mins)))
         subupper = sympermute!_impl!(uppptr, upptgt, subgraph, subindex, Forward)
         sublower = BipartiteGraph(nn, nn, de(subupper), subptr, subtgt)
         subclique = view(subindex, stop - strt + two(V):nn)

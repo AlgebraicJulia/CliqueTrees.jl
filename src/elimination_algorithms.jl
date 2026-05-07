@@ -650,13 +650,13 @@ Apple an elimination algorithm to the atoms of an almost-clique separator decomp
   - Bodlaender, Hans L., and Arie MCA Koster. "Safe separators for treewidth." *Discrete Mathematics* 306.3 (2006): 337-350.
   - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." arXiv preprint arXiv:2108.07551 (2021).
 """
-struct SafeSeparators{A <: EliminationAlgorithm, M <: MinimalAlgorithm} <: EliminationAlgorithm
+struct SafeSeparators{A <: EliminationAlgorithm, M <: Tuple} <: EliminationAlgorithm
     alg::A
     min::M
 end
 
-function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM)
-    return SafeSeparators(alg, DEFAULT_MINIMAL_ALGORITHM)
+function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, min::MinimalAlgorithm=DEFAULT_MINIMAL_ALGORITHM)
+    return SafeSeparators(alg, (min,))
 end
 
 """

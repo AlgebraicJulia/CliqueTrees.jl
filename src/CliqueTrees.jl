@@ -115,12 +115,6 @@ include("mcs_etree.jl")
 include("acsd.jl")
 include("pr3.jl")
 include("pr4.jl")
-include("deprecated/symb_facts.jl")
-include("deprecated/chol_works.jl")
-include("deprecated/ldlt_works.jl")
-include("deprecated/chol_facts.jl")
-include("deprecated/ldlt_facts.jl")
-include("deprecated/lin_works.jl")
 include("io.jl")
 
 # Submodules

@@ -28,49 +28,6 @@ function scldia!(F::ChordalCholesky, α)
     return F
 end
 
-function selaxpby!(A::SparseMatrixCSC{TA, IA}, B::SparseMatrixCSC{TB, IB}, α, β, uplo::Char) where {TA, IA, TB, IB}
-    @inbounds for j in axes(A, 2)
-        pa, pastop = A.colptr[j], A.colptr[j + 1] - one(IA)
-        pb, pbstop = B.colptr[j], B.colptr[j + 1] - one(IB)
-
-        while pa <= pastop && pb <= pbstop
-            ia, ib = rowvals(A)[pa], rowvals(B)[pb]
-
-            if ia == ib
-                if (uplo == 'L' && ia >= j) || (uplo == 'U' && ia <= j)
-                    if iszero(β)
-                        nonzeros(A)[pa] = α * nonzeros(B)[pb]
-                    else
-                        nonzeros(A)[pa] = α * nonzeros(B)[pb] + β * nonzeros(A)[pa]
-                    end
-                end
-
-                pa += one(IA)
-                pb += one(IB)
-            elseif ia < ib
-                pa += one(IA)
-            else
-                pb += one(IB)
-            end
-        end
-    end
-
-    return A
-end
-
-function selaxpby!(α, B::HermOrSymSparse, β, A::HermOrSymSparse)
-    selaxpby!(parent(A), parent(B), α, β, A.uplo)
-    return A
-end
-
-function selaxpy!(α, B::HermOrSymSparse, A::HermOrSymSparse)
-    return selaxpby!(α, B, true, A)
-end
-
-function selaxpy!(α, B::HermOrSymTri, P::Permutation, A::HermOrSymSparse)
-    return selaxpy!(α, project(A, B, P), A)
-end
-
 function symdot(A::HermSparse, B::HermSparse)
     @assert A.uplo == B.uplo
     return symdot_impl(parent(A), parent(B), Val(:C), A.uplo)

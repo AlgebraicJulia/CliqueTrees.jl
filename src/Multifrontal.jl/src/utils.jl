@@ -97,7 +97,7 @@ function symmetric(graph::AbstractGraph{V}, uplo::Char) where {V}
 end
 
 function sympermute(A::AbstractMatrix, invp::AbstractVector, src::Char, tgt::Char)
-    return sympermute!(Matrix(A), A, invp, src, tgt)
+    return sympermute!(similar(A), A, invp, src, tgt)
 end
 
 function sympermute(A::ChordalTriangular, invp::AbstractVector, src::Char, tgt::Char)
@@ -302,6 +302,24 @@ function zerotri!(A::AbstractMatrix, uplo::Val)
     return zerotri!(A, axes(A, 1), uplo)
 end
 
+function iszerotri(A::AbstractMatrix, ::Val{UPLO}) where {UPLO}
+    n = size(A, 1)
+
+    @inbounds for j in axes(A, 2)
+        if UPLO === :L
+            rng = j:n
+        else
+            rng = 1:j
+        end
+
+        for i in rng
+            !iszero(A[i, j]) && return false
+        end
+    end
+
+    return true
+end
+
 function zerorec!(A::AbstractVector{T}, ind::AbstractVector, ::Val{:L}) where {T}
     @inbounds for i in eachindex(ind)
         A[ind[i]] = zero(T)
@@ -376,7 +394,7 @@ function symmtri!(A::AbstractMatrix{T}, ::Val{:L}) where {T}
     n = size(A, 1)
 
     @inbounds for j in axes(A, 2)
-        for i in 1:j-1
+        for i in 1:j - 1
             A[i, j] = conj(A[j, i])
         end
     end
@@ -388,8 +406,21 @@ function symmtri!(A::AbstractMatrix{T}, ::Val{:U}) where {T}
     n = size(A, 1)
 
     @inbounds for j in axes(A, 2)
-        for i in j+1:n
+        for i in j + 1:n
             A[i, j] = conj(A[j, i])
+        end
+    end
+
+    return A
+end
+
+function symsym!(A::AbstractMatrix)
+    @inbounds for j in axes(A, 2)
+        for i in 1:j - 1
+            Aij = A[i, j]
+            Aji = A[j, i]
+            A[i, j] = (Aij + conj(Aji)) / 2
+            A[j, i] = (Aji + conj(Aij)) / 2
         end
     end
 
@@ -741,3 +772,14 @@ function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}
     return Arr(n)
 end
 
+function checkinfo(info, ::Val{DIAG}) where {DIAG}
+    if isnegative(info)
+        throw(ArgumentError(info))
+    elseif DIAG === :N && ispositive(info)
+        throw(PosDefException(info))
+    elseif DIAG === :U && ispositive(info)
+        throw(SingularException(info))
+    end
+
+    return
+end

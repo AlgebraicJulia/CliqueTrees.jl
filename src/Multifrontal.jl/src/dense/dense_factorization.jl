@@ -6,7 +6,7 @@ struct DenseFactorization{
         Dia <: AbstractVector{T},
         Prm <: AbstractVector{Int},
         Ivp <: AbstractVector{Int},
-        Ifo,
+        Ifo <: AbstractScalar{Int},
     } <: AbstractFactorization{DIAG, UPLO, T, Int, Prm, Ivp}
     M::Mat
     d::Dia
@@ -15,7 +15,7 @@ struct DenseFactorization{
     info::Ifo
 end
 
-const NaturalDenseFactorization{DIAG, UPLO, T, Mat, Dia} = DenseFactorization{DIAG, UPLO, T, Mat, Dia, OneTo{Int}, OneTo{Int}, FScalar{Int}}
+const NaturalDenseFactorization{DIAG, UPLO, T, Mat, Dia, Ifo} = DenseFactorization{DIAG, UPLO, T, Mat, Dia, OneTo{Int}, OneTo{Int}, Ifo}
 const DenseCholeskyPivoted = DenseFactorization{:N}
 const DenseLDLtPivoted = DenseFactorization{:U}
 const DenseCholesky = NaturalDenseFactorization{:N}
@@ -26,6 +26,7 @@ const FDenseCholesky{UPLO, T} = DenseCholesky{
     T,
     FMatrix{T},
     IOnes{T},
+    FScalar{Int},
 }
 
 const FDenseLDLt{UPLO, T} = DenseLDLt{
@@ -33,6 +34,7 @@ const FDenseLDLt{UPLO, T} = DenseLDLt{
     T,
     FMatrix{T},
     FVector{T},
+    FScalar{Int},
 }
 
 const FDenseCholeskyPivoted{UPLO, T} = DenseCholeskyPivoted{
@@ -60,6 +62,7 @@ const DDenseCholesky{UPLO, T} = DenseCholesky{
     T,
     Matrix{T},
     IOnes{T},
+    Scalar{Int},
 }
 
 const DDenseLDLt{UPLO, T} = DenseLDLt{
@@ -67,6 +70,7 @@ const DDenseLDLt{UPLO, T} = DenseLDLt{
     T,
     Matrix{T},
     Vector{T},
+    Scalar{Int},
 }
 
 const DDenseCholeskyPivoted{UPLO, T} = DenseCholeskyPivoted{
@@ -91,37 +95,7 @@ const DDenseLDLtPivoted{UPLO, T} = DenseLDLtPivoted{
 
 # ===== NaturalFactorization =====
 
-function DenseFactorization{DIAG, UPLO}(
-        M::Mat,
-        d::Dia,
-        perm::Prm,
-        invp::Ivp,
-        info::Ifo,
-    ) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}, Dia <: AbstractVector{T}, Prm <: AbstractVector{Int}, Ivp <: AbstractVector{Int}, Ifo}
-    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(M, d, perm, invp, info)
-end
-
-function DenseFactorization{DIAG}(A::AbstractMatrix) where {DIAG}
-    return DenseFactorization{DIAG, DEFAULT_UPLO}(A)
-end
-
-function NaturalDenseFactorization{DIAG}(A::AbstractMatrix) where {DIAG}
-    return NaturalDenseFactorization{DIAG, DEFAULT_UPLO}(A)
-end
-
-function (::Type{Fac})(A::HermOrSym) where {DIAG, UPLO, Fac <: DenseFactorization{DIAG, UPLO}}
-    @assert A.uplo === char(Val(UPLO))
-    return Fac(parent(A))
-end
-
-function (::Type{Fac})(A::HermOrSym) where {DIAG, UPLO, Fac <: NaturalDenseFactorization{DIAG, UPLO}}
-    @assert A.uplo === char(Val(UPLO))
-    return Fac(parent(A))
-end
-
-function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
-        A::HermOrSym,
-    ) where {
+function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(A::AbstractMatrix) where {
         DIAG,
         UPLO,
         T,
@@ -129,24 +103,15 @@ function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
         Dia <: AbstractVector{T},
         Prm <: AbstractVector{Int},
         Ivp <: AbstractVector{Int},
-        Ifo,
+        Ifo <: AbstractScalar{Int},
     }
-    @assert A.uplo === char(Val(UPLO))
-    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(parent(A))
-end
 
-function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
-        A::AbstractMatrix,
-    ) where {
-        DIAG,
-        UPLO,
-        T,
-        Mat <: AbstractMatrix{T},
-        Dia <: AbstractVector{T},
-        Prm <: AbstractVector{Int},
-        Ivp <: AbstractVector{Int},
-        Ifo,
-    }
+    if A isa HermOrSym
+        B = parent(A)
+    else
+        B = A
+    end
+
     n = size(A, 1)
     d = allocate(Dia, n)
     perm = allocate(Prm, n)
@@ -161,38 +126,89 @@ function DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(
         invp .= 1:n
     end
 
-    return DenseFactorization{DIAG, UPLO}(A, d, perm, invp, info)
+    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(B, d, perm, invp, info)
 end
 
-function DenseFactorization{DIAG, UPLO}(A::HermOrSym) where {DIAG, UPLO}
-    @assert A.uplo === char(Val(UPLO))
-    return DenseFactorization{DIAG, UPLO}(parent(A))
+function DenseFactorization{DIAG, UPLO}(
+        M::Mat,
+        d::Dia,
+        perm::Prm,
+        invp::Ivp,
+        info::Ifo,
+    ) where {
+        DIAG,
+        UPLO,
+        T,
+        Mat <: AbstractMatrix{T},
+        Dia <: AbstractVector{T},
+        Prm <: AbstractVector{Int},
+        Ivp <: AbstractVector{Int},
+        Ifo <: AbstractScalar{Int},
+    }
+    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, Prm, Ivp, Ifo}(M, d, perm, invp, info)
 end
 
-function DenseFactorization{DIAG, UPLO}(A::Mat) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}}
+function (::Type{Fac})(n::Integer) where {DIAG, UPLO, T, Fac <: Union{DenseFactorization{DIAG, UPLO, T}, NaturalDenseFactorization{DIAG, UPLO, T}}}
+    M = FMatrix{T}(undef, n, n)
+    return Fac(M)
+end
+
+function (::Type{Fac})(n::Integer) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}, Fac <: Union{DenseFactorization{DIAG, UPLO, T, Mat}, NaturalDenseFactorization{DIAG, UPLO, T, Mat}}}
+    M = allocate(Mat, n, n)
+    return Fac(M)
+end
+
+function DenseFactorization{DIAG}(A::AbstractMatrix) where {DIAG}
+    return DenseFactorization{DIAG, DEFAULT_UPLO}(A)
+end
+
+function NaturalDenseFactorization{DIAG}(A::AbstractMatrix) where {DIAG}
+    return NaturalDenseFactorization{DIAG, DEFAULT_UPLO}(A)
+end
+
+function DenseFactorization{DIAG, UPLO}(A::AbstractMatrix{T}) where {DIAG, UPLO, T}
+    return DenseFactorization{DIAG, UPLO, T}(A)
+end
+
+function NaturalDenseFactorization{DIAG, UPLO}(A::AbstractMatrix{T}) where {DIAG, UPLO, T}
+    return NaturalDenseFactorization{DIAG, UPLO, T}(A)
+end
+
+function DenseFactorization{DIAG, UPLO, T}(A::Mat) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}}
     if DIAG === :N
         Dia = IOnes{T}
     else
         Dia = FVector{T}
     end
 
-    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, FVector{Int}, FVector{Int}, FScalar{Int}}(A)
-end
+    if A isa HermOrSym
+        Pnt = typeof(parent(A))
+    else
+        Pnt = Mat
+    end
 
-function NaturalDenseFactorization{DIAG, UPLO}(A::HermOrSym) where {DIAG, UPLO}
-    @assert A.uplo === char(Val(UPLO))
-    return NaturalDenseFactorization{DIAG, UPLO}(parent(A))
-end
+    Prm = FVector{Int}
+    Ivp = FVector{Int}
+    Ifo = FScalar{Int}
+    return DenseFactorization{DIAG, UPLO, T, Pnt, Dia, Prm, Ivp, Ifo}(A)
+end 
 
-function NaturalDenseFactorization{DIAG, UPLO}(A::Mat) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}}
+function NaturalDenseFactorization{DIAG, UPLO, T}(A::Mat) where {DIAG, UPLO, T, Mat <: AbstractMatrix{T}}
     if DIAG === :N
         Dia = IOnes{T}
     else
         Dia = FVector{T}
+    end 
+ 
+    if A isa HermOrSym
+        Pnt = typeof(parent(A))
+    else
+        Pnt = Mat
     end
-
-    return DenseFactorization{DIAG, UPLO, T, Mat, Dia, OneTo{Int}, OneTo{Int}, FScalar{Int}}(A)
-end
+   
+    Ifo = FScalar{Int}
+    return NaturalDenseFactorization{DIAG, UPLO, T, Pnt, Dia, Ifo}(A)
+end 
 
 function NaturalFactorization(F::DenseFactorization{DIAG, UPLO}) where {DIAG, UPLO}
     perm = invp = OneTo{Int}(size(F, 1))

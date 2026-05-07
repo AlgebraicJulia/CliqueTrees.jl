@@ -162,10 +162,10 @@ julia> A = [
 
 julia> F = cholesky!(ChordalCholesky(A))
 5×5 FChordalCholesky{:L, Float64, Int64} with 10 stored entries:
- 2.0   ⋅    ⋅    ⋅    ⋅ 
- 0.0  2.0   ⋅    ⋅    ⋅ 
- 0.0  1.0  2.0   ⋅    ⋅ 
- 1.0  0.0  0.0  2.0   ⋅ 
+ 2.0   ⋅    ⋅    ⋅    ⋅
+ 0.0  2.0   ⋅    ⋅    ⋅
+ 0.0  1.0  2.0   ⋅    ⋅
+ 1.0  0.0  0.0  2.0   ⋅
  0.0  1.0  1.0  1.0  2.0
 ```
 
@@ -174,16 +174,16 @@ The multifrontal LDLt factorization algorithm is implemented as well. It can be 
 ```julia-repl
 julia> F = ldlt!(ChordalLDLt(A))
 5×5 FChordalLDLt{:L, Float64, Int64} with 10 stored entries:
- 1.0   ⋅    ⋅    ⋅    ⋅ 
- 0.0  1.0   ⋅    ⋅    ⋅ 
- 0.0  0.5  1.0   ⋅    ⋅ 
- 0.5  0.0  0.0  1.0   ⋅ 
+ 1.0   ⋅    ⋅    ⋅    ⋅
+ 0.0  1.0   ⋅    ⋅    ⋅
+ 0.0  0.5  1.0   ⋅    ⋅
+ 0.5  0.0  0.0  1.0   ⋅
  0.0  0.5  0.5  0.5  1.0
 
- 4.0   ⋅    ⋅    ⋅    ⋅ 
-  ⋅   4.0   ⋅    ⋅    ⋅ 
-  ⋅    ⋅   4.0   ⋅    ⋅ 
-  ⋅    ⋅    ⋅   4.0   ⋅ 
+ 4.0   ⋅    ⋅    ⋅    ⋅
+  ⋅   4.0   ⋅    ⋅    ⋅
+  ⋅    ⋅   4.0   ⋅    ⋅
+  ⋅    ⋅    ⋅   4.0   ⋅
   ⋅    ⋅    ⋅    ⋅   4.0
 ```
 

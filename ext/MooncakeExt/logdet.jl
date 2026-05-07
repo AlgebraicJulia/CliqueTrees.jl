@@ -49,25 +49,3 @@ function Mooncake.frule!!(
 
     return cdΣA
 end
-
-function Mooncake.rrule!!(
-        ::CoDual{typeof(logdet_rrule_impl!)},
-        cdΣA::CoDual{<:HermOrSymSparse},
-        cdA::CoDual{<:HermOrSymSparse},
-        cdF::CoDual{<:ChordalCholesky},
-        cdy::CoDual{<:Number},
-        cdΔy::CoDual{<:Number},
-    )
-    ΣA, dΣA = primaltangent(cdΣA)
-     A,  dA = primaltangent(cdA)
-    Δy = primal(cdΔy)
-
-    logdet_rrule_impl!(ΣA, A, primal(cdF), primal(cdy), Δy)
-
-    function pullback!!(ΔΣA)
-        _, _, ΣΔy = logdet_rrule_rrule_impl!(dΣA, dA, A, primal(cdF), Δy, ΔΣA)
-        return NoRData(), NoRData(), NoRData(), NoRData(), NoRData(), ΣΔy
-    end
-
-    return cdΣA, pullback!!
-end

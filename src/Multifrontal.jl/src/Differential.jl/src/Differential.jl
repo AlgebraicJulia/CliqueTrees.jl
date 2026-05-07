@@ -7,9 +7,9 @@ using Base: AbstractVecOrMat
 
 using ...Multifrontal
 using ...Multifrontal: HermOrSymTri, HermOrSymSparse, HermSparse, SymSparse, ChordalCholesky, ChordalTriangular, Permutation
-using ...Multifrontal: fisher!, selinv!, triangular, project, diagblock, fronts
+using ...Multifrontal: fisher!, selinv!, triangular, project, diagblock, fronts, selaxpy!
 
-export selinv, selaxpy!, symdot
+export selinv, symdot
 
 include("utils.jl")
 include("selinv.jl")

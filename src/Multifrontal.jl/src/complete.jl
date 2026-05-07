@@ -1,19 +1,43 @@
-function complete!(F::AbstractCholesky; check::Bool=true)
+function complete!(
+        F::AbstractCholesky{UPLO, T};
+        check::Bool=true,
+    ) where {UPLO, T}
     info = complete!(triangular(F); check)
     F.info[] = info
     return F
 end
 
-function complete!(L::ChordalTriangular{:N, UPLO, T, I}; check::Bool=true) where {UPLO, T, I <: Integer}
+function complete!(
+        L::ChordalTriangular{:N, UPLO, T, I};
+        check::Bool=true,
+    ) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, L.S.nMptr)
     Mval = FVector{T}(undef, L.S.nMval)
     Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
 
-    info = complete_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, Fval, L.S.res, L.S.rel, L.S.chd, L.uplo)
+    info = complete_impl!(Mptr, Mval, Fval, L)
 
-    if ispositive(info) && check
-        throw(PosDefException(info))
-    end
+    check && checkinfo(info, L.diag)
+
+    return info
+end
+
+#
+# Convenience wrapper that unpacks ChordalTriangular types.
+#
+function complete_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{:N, UPLO, T, I},
+    ) where {UPLO, T, I <: Integer}
+    info = complete_impl!(
+        Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        L.uplo)
 
     return info
 end
@@ -30,7 +54,7 @@ function complete_impl!(
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+    ) where {UPLO, T, I <: Integer}
 
     ns = zero(I); Mptr[one(I)] = one(I)
 
@@ -56,7 +80,7 @@ function complete_loop!(
         ns::I,
         j::I,
         uplo::Val{UPLO},
-    ) where {T, I <: Integer, UPLO}
+    ) where {UPLO, T, I <: Integer}
     #
     # nn is the size of the residual at node j
     #
@@ -178,19 +202,20 @@ function complete_loop!(
     revtri!(D₁₁, uplo)
     info = potrf!(loup, D₁₁)
     ispositive(info) && return ns, info
-    trtri!(loup, Val(:N), D₁₁)
     revtri!(D₁₁, loup)
 
     if ispositive(na)
         #
-        #     L₂₁ ← L₂₁ D₁₁
+        #     L₂₁ ← L₂₁ D₁₁⁻¹
         #
         if UPLO === :L
-            trmm!(Val(:R), Val(:L), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
+            trsm!(Val(:R), Val(:L), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
         else
-            trmm!(Val(:L), Val(:U), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
+            trsm!(Val(:L), Val(:U), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
         end
     end
+
+    trtri!(uplo, Val(:N), D₁₁)
 
     for i in neighbors(chd, j)
         #

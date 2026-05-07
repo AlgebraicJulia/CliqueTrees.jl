@@ -163,8 +163,12 @@ for (pstrf, T, R) in
     end
 end
 
-function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, D::AbstractVector{T}, P::AbstractVector{BlasInt}, ::AbstractVector{T}, ::NoRegularization, tol::Real, ::Val{:N}) where {T <: BlasFloat}
+function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, P::AbstractVector{BlasInt}, tol::Real) where {T <: BlasFloat}
     return pstrf!(char(uplo), A, P, reinterpret(real(T), W), tol)
+end
+
+function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, D::AbstractVector{T}, P::AbstractVector{BlasInt}, ::AbstractVector{T}, ::NoRegularization, tol::Real, ::Val{:N}) where {T <: BlasFloat}
+    return pstrf!(uplo, W, A, P, tol)
 end
 
 function pstrf!(uplo::Val{UPLO}, W::AbstractVector{T}, A::AbstractMatrix{T}, D::AbstractVector{T}, P::AbstractVector, S::AbstractVector{T}, R::GMW81, tol::Real, diag::Val{DIAG}) where {T, UPLO, DIAG}

@@ -35,18 +35,40 @@ julia> F = selinv!(cholesky!(ChordalCholesky(A)))
   - `F`: factorized positive definite matrix
 
 """
-function selinv!(F::ChordalCholesky)
+function selinv!(F::ChordalCholesky{UPLO, T}) where {UPLO, T}
     F.info[] = selinv!(triangular(F))
     return F
 end
 
-function selinv!(L::ChordalTriangular{:N, UPLO, T, I}) where {UPLO, T, I <: Integer}
+function selinv!(
+        L::ChordalTriangular{:N, UPLO, T, I},
+    ) where {UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, L.S.nMptr)
     Mval = FVector{T}(undef, L.S.nMval)
     Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
 
-    selinv_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, Fval, L.S.res, L.S.rel, L.S.chd, Val(UPLO))
-    return zero(I)
+    info = selinv_impl!(Mptr, Mval, Fval, L)
+    return info
+end
+
+#
+# Convenience wrapper that unpacks ChordalTriangular types.
+#
+function selinv_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{:N, UPLO, T, I},
+    ) where {UPLO, T, I <: Integer}
+    info = selinv_impl!(
+        Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        L.uplo)
+
+    return info
 end
 
 function selinv_impl!(
@@ -68,7 +90,7 @@ function selinv_impl!(
         ns = selinv_loop!(Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, uplo)
     end
 
-    return
+    return zero(I)
 end
 
 function selinv_loop!(
@@ -141,10 +163,6 @@ function selinv_loop!(
     #     F₁₁ ← 0
     #
     zerorec!(F₁₁)
-    #
-    #     D₁₁ ← D₁₁⁻¹
-    #
-    trtri!(uplo, Val(:N), D₁₁)
 
     if ispositive(na)
         #
@@ -158,12 +176,12 @@ function selinv_loop!(
         #
         copytri!(F₂₂, M₂₂, uplo)
         #
-        #     L₂₁ ← L₂₁ D₁₁
+        #     L₂₁ ← L₂₁ D₁₁⁻¹
         #
         if UPLO === :L
-            trmm!(Val(:R), Val(:L), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
+            trsm!(Val(:R), Val(:L), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
         else
-            trmm!(Val(:L), Val(:U), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
+            trsm!(Val(:L), Val(:U), Val(:N), Val(:N), one(T), D₁₁, L₂₁)
         end
         #
         #     F₂₁ ← -M₂₂ L₂₁
@@ -182,6 +200,10 @@ function selinv_loop!(
             trrk!(Val(:U), Val(:N), -one(real(T)), F₂₁, L₂₁, one(real(T)), F₁₁)
         end
     end
+    #
+    #     D₁₁ ← D₁₁⁻¹
+    #
+    trtri!(uplo, Val(:N), D₁₁)
     #
     #     F₁₁ ← F₁₁ + D₁₁ᴴ D₁₁
     #

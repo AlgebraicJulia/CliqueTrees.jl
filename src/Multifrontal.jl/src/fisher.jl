@@ -1,10 +1,10 @@
 function fisher!(
-        Y::AbstractCholesky,
-        F::AbstractCholesky,
-        S::AbstractCholesky;
+        Y::AbstractCholesky{UPLO, T},
+        F::AbstractCholesky{UPLO, T},
+        S::AbstractCholesky{UPLO, T};
         inv::Bool=false,
         check::Bool=true,
-    )
+    ) where {UPLO, T}
     info = fisher!(triangular(Y), triangular(F), triangular(S); inv, check)
     Y.info[] = info
     return Y
@@ -23,93 +23,74 @@ function fisher!(
     Uptr = FVector{I}(undef, F.S.nMptr)
     Uval = FVector{T}(undef, F.S.nMval)
     Fval = FVector{T}(undef, F.S.nFval * F.S.nFval)
-    Wval = FVector{T}(undef, F.S.nFval * F.S.nFval)
 
     if inv
-        info = fisher_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(true))
+        info = fisher_impl!(Uptr, Uval, Fval, F, S, Y, Val(true))
     else
-        info = fisher_impl!(Uptr, Uval, Fval, Wval, F.S.Dptr, F.Dval, F.S.Lptr, F.Lval, S.S.Dptr, S.Dval, S.S.Lptr, S.Lval, Y.S.Dptr, Y.Dval, Y.S.Lptr, Y.Lval, F.S.res, F.S.rel, F.S.chd, Val(UPLO), Val(false))
+        info = fisher_impl!(Uptr, Uval, Fval, F, S, Y, Val(false))
     end
 
-    if ispositive(info) && check
-        throw(PosDefException(info))
+    check && checkinfo(info, F.diag)
+
+    return info
+end
+
+#
+# inv=false: fisherroot_fwd! → fisher_scale! → fisherroot_bwd!
+# inv=true:  fisherroot_bwd! → fisher_scale! → fisherroot_fwd!
+#
+function fisher_impl!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{:N, UPLO, T, I},
+        S::ChordalTriangular{:N, UPLO, T, I},
+        Y::ChordalTriangular{:N, UPLO, T, I},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, INV}
+    if INV
+        fisherroot_bwd!(Uptr, Uval, Fval, L, Y, inv)
+    else
+        fisherroot_fwd!(Uptr, Uval, Fval, L, Y, inv)
+    end
+
+    info = fisher_scale!(Uptr, Uval, Fval, L, S, Y, inv)
+    ispositive(info) && return info
+
+    if INV
+        fisherroot_fwd!(Uptr, Uval, Fval, L, Y, inv)
+    else
+        fisherroot_bwd!(Uptr, Uval, Fval, L, Y, inv)
     end
 
     return info
 end
 
-#
-# inv=false: fisherhessian
-#
-#     fisherroot_fwd! → fisher_scale!(inv=false) → fisherroot_bwd!
-#
-function fisher_impl!(
-        Uptr, Uval, Fval, Wval,
-        LDptr, LDval, LLptr, LLval,
-        SDptr, SDval, SLptr, SLval,
-        YDptr, YDval, YLptr, YLval,
-        res, rel, chd,
-        uplo, ::Val{false},
-    )
-    fisherroot_fwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
-    info = fisher_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
-    ispositive(info) && return info
-    fisherroot_bwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(false))
-    return info
-end
 
-#
-# inv=true: fisherhessinv
-#
-#     fisherroot_bwd!(inv=true) → fisher_scale!(inv=true) → fisherroot_fwd!(inv=true)
-#
-function fisher_impl!(
-        Uptr, Uval, Fval, Wval,
-        LDptr, LDval, LLptr, LLval,
-        SDptr, SDval, SLptr, SLval,
-        YDptr, YDval, YLptr, YLval,
-        res, rel, chd,
-        uplo, ::Val{true},
-    )
-    fisherroot_bwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
-    info = fisher_scale!(Uptr, Uval, Fval, LDptr, LDval, LLptr, LLval, SDptr, SDval, SLptr, SLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
-    ispositive(info) && return info
-    fisherroot_fwd!(Uptr, Uval, Fval, Wval, LDptr, LDval, LLptr, LLval, YDptr, YDval, YLptr, YLval, res, rel, chd, uplo, Val(true))
-    return info
-end
+# fisher_scale!
+# =============
+
 
 function fisher_scale!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
         Fval::AbstractVector{T},
-        LDptr::AbstractVector{I},
-        LDval::AbstractVector{T},
-        LLptr::AbstractVector{I},
-        LLval::AbstractVector{T},
-        SDptr::AbstractVector{I},
-        SDval::AbstractVector{T},
-        SLptr::AbstractVector{I},
-        SLval::AbstractVector{T},
-        YDptr::AbstractVector{I},
-        YDval::AbstractVector{T},
-        YLptr::AbstractVector{I},
-        YLval::AbstractVector{T},
-        res::AbstractGraph{I},
-        rel::AbstractGraph{I},
-        chd::AbstractGraph{I},
-        uplo::Val{UPLO},
+        L::ChordalTriangular{:N, UPLO, T, I},
+        S::ChordalTriangular{:N, UPLO, T, I},
+        Y::ChordalTriangular{:N, UPLO, T, I},
         inv::Val{INV},
     ) where {UPLO, T, I <: Integer, INV}
 
     ns = zero(I); Uptr[one(I)] = one(I)
 
-    for j in reverse(vertices(res))
+    for j in reverse(vertices(L.S.res))
         ns, info = fisher_scale_loop!(
             Uptr, Uval, Fval,
-            LDptr, LDval, LLptr, LLval,
-            SDptr, SDval, SLptr, SLval,
-            YDptr, YDval, YLptr, YLval,
-            res, rel, chd, ns, j, uplo, inv
+            L.S.Dptr, L.S.Lptr,
+            L.Dval, L.Lval,
+            S.Dval, S.Lval,
+            Y.Dval, Y.Lval,
+            L.S.res, L.S.rel, L.S.chd, ns, j, L.uplo, inv
         )
         ispositive(info) && return info
     end
@@ -121,17 +102,13 @@ function fisher_scale_loop!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
         Fval::AbstractVector{T},
-        LDptr::AbstractVector{I},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
         LDval::AbstractVector{T},
-        LLptr::AbstractVector{I},
         LLval::AbstractVector{T},
-        SDptr::AbstractVector{I},
         SDval::AbstractVector{T},
-        SLptr::AbstractVector{I},
         SLval::AbstractVector{T},
-        YDptr::AbstractVector{I},
         YDval::AbstractVector{T},
-        YLptr::AbstractVector{I},
         YLval::AbstractVector{T},
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
@@ -177,20 +154,23 @@ function fisher_scale_loop!(
         F₂₁ = view(F, oneto(nn), nn + one(I):nj)
     end
     #
+    # Dp and Lp are indices into the diagonal and off-diagonal blocks
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    #
     # S is the selected inverse at node j
     #
     #          res(j)
     #     S = [ S₁₁  ] res(j)
     #         [ S₂₁  ] sep(j)
     #
-    SDp = SDptr[j]
-    SLp = SLptr[j]
-    S₁₁ = reshape(view(SDval, SDp:SDp + nn * nn - one(I)), nn, nn)
+    S₁₁ = reshape(view(SDval, Dp:Dp + nn * nn - one(I)), nn, nn)
 
     if UPLO === :L
-        S₂₁ = reshape(view(SLval, SLp:SLp + nn * na - one(I)), na, nn)
+        S₂₁ = reshape(view(SLval, Lp:Lp + nn * na - one(I)), na, nn)
     else
-        S₂₁ = reshape(view(SLval, SLp:SLp + nn * na - one(I)), nn, na)
+        S₂₁ = reshape(view(SLval, Lp:Lp + nn * na - one(I)), nn, na)
     end
     #
     # Y is the direction matrix at node j
@@ -199,14 +179,12 @@ function fisher_scale_loop!(
     #     Y = [ Y₁₁  ] res(j)
     #         [ Y₂₁  ] sep(j)
     #
-    YDp = YDptr[j]
-    YLp = YLptr[j]
-    Y₁₁ = reshape(view(YDval, YDp:YDp + nn * nn - one(I)), nn, nn)
+    Y₁₁ = reshape(view(YDval, Dp:Dp + nn * nn - one(I)), nn, nn)
 
     if UPLO === :L
-        Y₂₁ = reshape(view(YLval, YLp:YLp + nn * na - one(I)), na, nn)
+        Y₂₁ = reshape(view(YLval, Lp:Lp + nn * na - one(I)), na, nn)
     else
-        Y₂₁ = reshape(view(YLval, YLp:YLp + nn * na - one(I)), nn, na)
+        Y₂₁ = reshape(view(YLval, Lp:Lp + nn * na - one(I)), nn, na)
     end
     #
     # L is the Cholesky factor at node j
@@ -215,101 +193,45 @@ function fisher_scale_loop!(
     #     L = [ L₁₁  ] res(j)
     #         [ L₂₁  ] sep(j)
     #
-    LDp = LDptr[j]
-    LLp = LLptr[j]
-    L₁₁ = reshape(view(LDval, LDp:LDp + nn * nn - one(I)), nn, nn)
+    L₁₁ = reshape(view(LDval, Dp:Dp + nn * nn - one(I)), nn, nn)
 
     if UPLO === :L
-        L₂₁ = reshape(view(LLval, LLp:LLp + nn * na - one(I)), na, nn)
+        L₂₁ = reshape(view(LLval, Lp:Lp + nn * na - one(I)), na, nn)
     else
-        L₂₁ = reshape(view(LLval, LLp:LLp + nn * na - one(I)), nn, na)
+        L₂₁ = reshape(view(LLval, Lp:Lp + nn * na - one(I)), nn, na)
     end
 
     if UPLO === :L
-        sdR, sdL = Val(:R), Val(:L)
+        sdL = Val(:L)
     else
-        sdR, sdL = Val(:L), Val(:R)
+        sdL = Val(:R)
     end
     #
-    #     Y₁₁ ← Y₁₁ + Y₁₁ᴴ
-    #
-    symmtri!(Y₁₁, uplo)
-
-    if INV
-        #
-        # hessinv: Y₁₁ ← D₁₁ (sym Y₁₁) D₁₁
-        #
-        #     Y₁₁ ← Y₁₁ L₁₁
-        #     Y₁₁ ← L₁₁ᴴ Y₁₁
-        #     Y₁₁ ← Y₁₁ L₁₁ᴴ
-        #     Y₁₁ ← L₁₁ Y₁₁
-        #
-        trmm!(sdR, uplo, Val(:N), Val(:N), one(T), L₁₁, Y₁₁)
-        trmm!(sdL, uplo, Val(:C), Val(:N), one(T), L₁₁, Y₁₁)
-        trmm!(sdR, uplo, Val(:C), Val(:N), one(T), L₁₁, Y₁₁)
-        trmm!(sdL, uplo, Val(:N), Val(:N), one(T), L₁₁, Y₁₁)
-    else
-        #
-        # hessian: Y₁₁ ← D₁₁⁻¹ (sym Y₁₁) D₁₁⁻¹
-        #
-        #     Y₁₁ ← Y₁₁ L₁₁⁻ᴴ
-        #     Y₁₁ ← L₁₁⁻¹ Y₁₁
-        #     Y₁₁ ← Y₁₁ L₁₁⁻¹
-        #     Y₁₁ ← L₁₁⁻ᴴ Y₁₁
-        #
-        trsm!(sdR, uplo, Val(:C), Val(:N), one(T), L₁₁, Y₁₁)
-        trsm!(sdL, uplo, Val(:N), Val(:N), one(T), L₁₁, Y₁₁)
-        trsm!(sdR, uplo, Val(:N), Val(:N), one(T), L₁₁, Y₁₁)
-        trsm!(sdL, uplo, Val(:C), Val(:N), one(T), L₁₁, Y₁₁)
-    end
-    #
-    # V₂₂ is the update matrix from the parent of node j
+    # S₂₂ is the update matrix from the parent of node j
     #
     if ispositive(na)
         strt = Uptr[ns]
-        V₂₂ = reshape(view(Uval, strt:strt + na * na - one(I)), na, na)
+        S₂₂ = reshape(view(Uval, strt:strt + na * na - one(I)), na, na)
         ns -= one(I)
         #
-        #     F₂₂ ← V₂₂
+        #     F₂₂ ← S₂₂
         #
-        copytri!(F₂₂, V₂₂, uplo)
-
+        copytri!(F₂₂, S₂₂, uplo)
+        #
+        #     Y₂₁ ← S₂₂ Y₂₁  or  Y₂₁ ← S₂₂⁻¹ Y₂₁
+        #
         if INV
             #
-            #     V₂₂ ← chol(V₂₂)
+            #     S₂₂ ← chol(S₂₂)
             #
-            info = potrf!(uplo, V₂₂)
+            info = potrf!(uplo, S₂₂)
             ispositive(info) && return ns, info
-            #
-            # hessinv: Y₂₁ ← V₂₂⁻¹ Y₂₁ D₁₁
-            #
-            #     Y₂₁ ← Y₂₁ L₁₁
-            #     Y₂₁ ← R₂₂⁻¹ Y₂₁
-            #     Y₂₁ ← Y₂₁ L₁₁ᴴ
-            #     Y₂₁ ← R₂₂⁻ᴴ Y₂₁
-            #
-            trmm!(sdR, uplo, Val(:N), Val(:N), one(T), L₁₁, Y₂₁)
-            trsm!(sdL, uplo, Val(:N), Val(:N), one(T), V₂₂, Y₂₁)
-            trmm!(sdR, uplo, Val(:C), Val(:N), one(T), L₁₁, Y₂₁)
-            trsm!(sdL, uplo, Val(:C), Val(:N), one(T), V₂₂, Y₂₁)
+
+            trsm!(sdL, uplo, Val(:N), Val(:N), one(T), S₂₂, Y₂₁)
+            trsm!(sdL, uplo, Val(:C), Val(:N), one(T), S₂₂, Y₂₁)
         else
-            #
-            # hessian: Y₂₁ ← V₂₂ Y₂₁ D₁₁⁻¹
-            #
-            #     Y₂₁ ← V₂₂ Y₂₁
-            #     Y₂₁ ← Y₂₁ L₁₁⁻ᴴ
-            #     Y₂₁ ← Y₂₁ L₁₁⁻¹
-            #
             copyrec!(F₂₁, Y₂₁)
-
-            if UPLO === :L
-                symm!(Val(:L), uplo, one(T), V₂₂, F₂₁, zero(T), Y₂₁)
-            else
-                symm!(Val(:R), uplo, one(T), V₂₂, F₂₁, zero(T), Y₂₁)
-            end
-
-            trsm!(sdR, uplo, Val(:C), Val(:N), one(T), L₁₁, Y₂₁)
-            trsm!(sdR, uplo, Val(:N), Val(:N), one(T), L₁₁, Y₂₁)
+            symm!(sdL, uplo, one(T), S₂₂, F₂₁, zero(T), Y₂₁)
         end
     end
     #

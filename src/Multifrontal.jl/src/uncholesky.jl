@@ -1,31 +1,79 @@
-function uncholesky!(F::AbstractCholesky)
+function uncholesky!(
+        F::AbstractCholesky{UPLO, T},
+    ) where {UPLO, T}
     F.info[] = unfactorize!(triangular(F), F.d)
     return F
 end
 
-function uncholesky!(L::ChordalTriangular{:N, UPLO, T}) where {UPLO, T}
+function uncholesky!(
+        L::ChordalTriangular{:N, UPLO, T, I},
+    ) where {UPLO, T, I <: Integer}
     d = Ones{T}(ncl(L))
     return unfactorize!(L, d)
 end
 
-function unldlt!(F::AbstractLDLt)
+function unldlt!(
+        F::AbstractLDLt{UPLO, T},
+    ) where {UPLO, T}
     F.info[] = unfactorize!(triangular(F), F.d)
     return F
 end
 
-function unfactorize!(F::AbstractFactorization)
+function unfactorize!(
+        F::AbstractFactorization{DIAG, UPLO, T},
+    ) where {DIAG, UPLO, T}
     F.info[] = unfactorize!(triangular(F), F.d)
     return F
 end
 
-function unfactorize!(L::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector) where {DIAG, UPLO, T, I <: Integer}
+function unfactorize!(
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector{T},
+    ) where {DIAG, UPLO, T, I <: Integer}
     Mptr = FVector{I}(undef, L.S.nMptr)
     Mval = FVector{T}(undef, L.S.nMval)
     Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
     Wval = FVector{T}(undef, L.S.nFval * L.S.nFval)
 
-    unchol_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, d, Fval, Wval, L.S.res, L.S.rel, L.S.chd, L.uplo, L.diag)
-    return zero(I)
+    info = unchol_impl!(Mptr, Mval, Fval, Wval, L, d)
+    return info
+end
+
+#
+# Convenience wrapper that unpacks ChordalTriangular types (with d vector for LDLt).
+#
+function unchol_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Wval::AbstractVector{T},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector{T},
+    ) where {DIAG, UPLO, T, I <: Integer}
+    info = unchol_impl!(
+        Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        d, Fval, Wval,
+        L.S.res, L.S.rel, L.S.chd,
+        L.uplo, L.diag)
+
+    return info
+end
+
+#
+# Convenience wrapper for Cholesky (creates d = Ones internally).
+#
+function unchol_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Wval::AbstractVector{T},
+        L::ChordalTriangular{:N, UPLO, T, I},
+    ) where {UPLO, T, I <: Integer}
+    d = Ones{T}(ncl(L))
+    info = unchol_impl!(Mptr, Mval, Fval, Wval, L, d)
+    return info
 end
 
 function unchol_impl!(
@@ -51,7 +99,7 @@ function unchol_impl!(
         ns = unchol_loop!(Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval, Wval, res, rel, chd, ns, j, uplo, diag)
     end
 
-    return
+    return zero(I)
 end
 
 function unchol_loop!(

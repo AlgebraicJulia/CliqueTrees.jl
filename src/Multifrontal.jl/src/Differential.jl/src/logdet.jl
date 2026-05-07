@@ -17,11 +17,11 @@ end
 function logdet_rrule_frule_impl!(ΣA::HermOrSymSparse, dΣA::HermOrSymSparse, A::HermOrSymSparse, dA::HermOrSymSparse, F::ChordalCholesky, Δy::Number, dΔy::Number)
     if !iszero(Δy)
         B, dB = selinv_frule_impl(A, F, dA)
-        scldia!(B, 1 / 2)
+        scldia!( B, 1 / 2)
         scldia!(dB, 1 / 2)
-        selaxpy!(2Δy,  B,  ΣA)
-        selaxpy!(2dΔy, B, dΣA)
-        selaxpy!(2Δy, dB, dΣA)
+        selaxpy!( 2Δy,  B,  ΣA)
+        selaxpy!(2dΔy,  B, dΣA)
+        selaxpy!( 2Δy, dB, dΣA)
     elseif !iszero(dΔy)
         B = selinv(A, F)
         scldia!(B, 1 / 2)
@@ -41,20 +41,4 @@ Base.@noinline function logdet_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSpa
     end
 
     return ΣA
-end
-
-function logdet_rrule_rrule_impl!(ΣΣA::HermOrSymSparse, ΣA::HermOrSymSparse, A::HermOrSymSparse, F::ChordalCholesky, Δy::Number, ΔΣA::HermOrSymSparse)
-    selaxpy!(1, ΔΣA, ΣΣA)
-    B = selinv(A, F)
-
-    if !iszero(Δy)
-         cB = copyto!(similar(F),   B)
-        cΔB = copyto!(similar(F), ΔΣA)
-         dA = scldia!(project(A, fisher!(cΔB, F, cB; inv=false)), 1 / 2)
-        selaxpy!(-2Δy, dA, ΣA)
-    end
-
-    scldia!(B, 1 / 2)
-    ΣΔy = 2dot(parent(B), parent(ΔΣA))
-    return ΣΣA, ΣA, ΣΔy
 end

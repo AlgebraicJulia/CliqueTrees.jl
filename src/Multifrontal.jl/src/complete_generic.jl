@@ -5,7 +5,6 @@ struct CMPLHessian{UPLO, T, I}
     Mptr::FVector{I}
     Mval::FVector{T}
     Fval::FVector{T}
-    Wval::FVector{T}
     fill::FVector{I}
     frow::FVector{I}
     fcol::FVector{I}
@@ -27,12 +26,7 @@ function LinearAlgebra.mul!(c::AbstractVector{T}, H::CMPLHessian{UPLO, T, I}, b:
         setflatindex!(H.C, b[i] / 2, H.fill[i])
     end
 
-    info = fisher_impl!(
-        H.Mptr, H.Mval, H.Fval, H.Wval,
-        H.A.S.Dptr, H.B.Dval, H.A.S.Lptr, H.B.Lval,
-        H.A.S.Dptr, H.A.Dval, H.A.S.Lptr, H.A.Lval,
-        H.A.S.Dptr, H.C.Dval, H.A.S.Lptr, H.C.Lval,
-        H.A.S.res, H.A.S.rel, H.A.S.chd, H.B.uplo, Val(true))
+    info = fisher_impl!(H.Mptr, H.Mval, H.Fval, H.B, H.A, H.C, Val(true))
 
     ispositive(info) && throw(PosDefException(info))
 
@@ -89,7 +83,7 @@ function complete!(
     grad = FVector{T}(undef, length(fill))
     prec = FVector{T}(undef, length(fill))
     workspace = cgworkspace(T, length(fill))
-    H = CMPLHessian(L, B, C, Mptr, Mval, Fval, Wval, fill, frow, fcol, prec)
+    H = CMPLHessian(L, B, C, Mptr, Mval, Fval, fill, frow, fcol, prec)
 
     complete_gen_impl!(workspace, L, B, C, H, Mptr, Mval, Fval, Wval, fill, dual, grad,
         convert(Int, cgmaxiter), convert(Int, maxiter), convert(T, alpha), convert(T, beta), convert(T, tol))
@@ -171,9 +165,7 @@ function complete_gen_impl!(
         #
         copyto!(B, A)
 
-        info = complete_impl!(
-            Mptr, Mval, A.S.Dptr, B.Dval, A.S.Lptr, B.Lval, Fval,
-            A.S.res, A.S.rel, A.S.chd, B.uplo)
+        info = complete_impl!(Mptr, Mval, Fval, B)
 
         ispositive(info) && throw(PosDefException(info))
         #
@@ -181,9 +173,7 @@ function complete_gen_impl!(
         #
         copyto!(C, B)
 
-        unchol_impl!(
-            Mptr, Mval, A.S.Dptr, C.Dval, A.S.Lptr, C.Lval, d, Fval, Wval,
-            A.S.res, A.S.rel, A.S.chd, C.uplo, C.diag)
+        unchol_impl!(Mptr, Mval, Fval, Wval, C, d)
 
         complete_gen_prec!(H)
         #
@@ -223,9 +213,7 @@ function complete_gen_impl!(
         #
         copyto!(B, A)
 
-        info = complete_impl!(
-            Mptr, Mval, A.S.Dptr, B.Dval, A.S.Lptr, B.Lval, Fval,
-            A.S.res, A.S.rel, A.S.chd, B.uplo)
+        info = complete_impl!(Mptr, Mval, Fval, B)
 
         ispositive(info) && throw(PosDefException(info))
         #
@@ -246,9 +234,7 @@ function complete_gen_impl!(
             #
             copyto!(B, A)
 
-            info = complete_impl!(
-                Mptr, Mval, A.S.Dptr, B.Dval, A.S.Lptr, B.Lval, Fval,
-                A.S.res, A.S.rel, A.S.chd, B.uplo)
+            info = complete_impl!(Mptr, Mval, Fval, B)
 
             ispositive(info) && throw(PosDefException(info))
         end
@@ -257,7 +243,6 @@ function complete_gen_impl!(
         #
         axpy!(step, desc, dual)
     end
-
     #
     #     A ← C + E(y)
     #
@@ -267,9 +252,7 @@ function complete_gen_impl!(
     #
     #     A ← chol(-∇ψ(X))
     #
-    info = complete_impl!(
-        Mptr, Mval, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, Fval,
-        A.S.res, A.S.rel, A.S.chd, A.uplo)
+    info = complete_impl!(Mptr, Mval, Fval, A)
 
     ispositive(info) && throw(PosDefException(info))
     return

@@ -200,16 +200,7 @@ function factorize!(
     @assert checksigns(signs, reg)
 
     info = factorize!(L, d, pivot, signs, reg, tol)
-
-    if isnegative(info)
-        throw(ArgumentError(info))
-    elseif ispositive(info) && check
-        if DIAG === :N
-            throw(PosDefException(info))
-        else
-            throw(SingularException(info))
-        end
-    end
+    check && checkinfo(info, L.diag)
 
     return info
 end
@@ -228,16 +219,7 @@ function factorize!(
     @assert checksigns(signs, reg)
 
     info = factorize!(L, d, pivot, perm, invp, signs, reg, tol)
-
-    if isnegative(info)
-        throw(ArgumentError(info))
-    elseif ispositive(info) && check
-        if DIAG === :N
-            throw(PosDefException(info))
-        else
-            throw(SingularException(info))
-        end
-    end
+    check && checkinfo(info, L.diag)
 
     return info
 end
@@ -246,9 +228,9 @@ end
 
 function factorize!(
         L::ChordalTriangular{DIAG, UPLO, T, I},
-        d::AbstractVector,
+        d::AbstractVector{T},
         ::NoPivot,
-        signs::AbstractVector,
+        signs::AbstractVector{T},
         reg::AbstractRegularization,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
@@ -258,7 +240,7 @@ function factorize!(
     Mval = FVector{T}(undef, L.S.nMval)
     Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
 
-    return chol_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, d, Fval, L.S.res, L.S.rel, L.S.chd, L.uplo, signs, R, L.diag)
+    return chol_impl!(Mptr, Mval, Fval, L, d, signs, R)
 end
 
 function chol_impl!(
@@ -292,6 +274,46 @@ function chol_impl!(
     end
 
     return zero(I)
+end
+
+#
+# Convenience wrapper that unpacks ChordalTriangular types (with d, S).
+#
+function chol_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector{T},
+        S::AbstractVector{T},
+        R::AbstractRegularization=NoRegularization(),
+    ) where {DIAG, UPLO, T, I <: Integer}
+    info = chol_impl!(
+        Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        d, Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        L.uplo, S, R, L.diag)
+
+    return info
+end
+
+#
+# Convenience wrapper for Cholesky (not LDLt) - creates d, S internally.
+#
+function chol_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{:N, UPLO, T, I},
+        R::AbstractRegularization=NoRegularization(),
+    ) where {UPLO, T, I <: Integer}
+    n = ncl(L)
+    d = Ones{T}(n)
+    S = Ones{T}(n)
+    info = chol_impl!(Mptr, Mval, Fval, L, d, S, R)
+    return info
 end
 
 function chol_loop!(

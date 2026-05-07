@@ -61,6 +61,7 @@ function trtri2!(::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}) where {T, DIAG}
             end
         end
     end
+
     return
 end
 
@@ -89,5 +90,6 @@ function trtri2!(::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}) where {T, DIAG}
             end
         end
     end
+
     return
 end

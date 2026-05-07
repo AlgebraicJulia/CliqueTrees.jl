@@ -21,8 +21,8 @@ KaHyPar = "2a6221f6-aa48-11e9-3542-2d9e0ef01880"
 Krylov = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
 Laplacians = "6f8e5838-0efe-5de0-80a3-5fb4f8dbb1de"
 Metis = "2679e427-3c69-5b7f-982b-ece356f1e94b"
-TreeWidthSolver = "7d267fc5-9ace-409f-a54c-cd2374872a55"
 Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
+TreeWidthSolver = "7d267fc5-9ace-409f-a54c-cd2374872a55"
 
 [extensions]
 AMDExt = "AMD"
@@ -32,8 +32,8 @@ KaHyParExt = "KaHyPar"
 KrylovExt = "Krylov"
 LaplaciansExt = "Laplacians"
 MetisExt = "Metis"
-TreeWidthSolverExt = "TreeWidthSolver"
 MooncakeExt = "Mooncake"
+TreeWidthSolverExt = "TreeWidthSolver"
 
 [compat]
 AMD = "0.5"

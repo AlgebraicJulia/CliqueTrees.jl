@@ -1,4 +1,4 @@
-using CliqueTrees.Multifrontal: flatindices, setflatindex!, triangular, selinv!, complete!, fisherroot!, fisher!
+using CliqueTrees.Multifrontal: flatindices, setflatindex!, triangular, selinv!, complete!, fisherroot!, fisher!, amari!
 
 @testset "cholesky" begin
     matrices = ("685_bus", "Trefethen_500", "bcsstk26", "bcsstk13", "mhd1280b")
@@ -159,7 +159,7 @@ end
     end
 end
 
-@testset "regularization" begin
+@testset "regularization (dense)" begin
     A = rand(10, 10)
     A = A' * A
     A -= 1.0001 * minimum(eigvals(A)) * I
@@ -201,6 +201,81 @@ end
         F = DenseLDLt{UPLO}(copy(A))
         ldlt!(F; signs, reg=GMW81())
         @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+    end
+end
+
+@testset "regularization (sparse)" begin
+    A = readmatrix("msc01440")
+    A -= 1.0001 * minimum(eigvals(Matrix(A))) * I
+    signs = ones(size(A, 1))
+
+    for UPLO in (:L, :U)
+        for P in (NoPivot, RowMaximum)
+            for R in (GMW81, SE99)
+                F = ChordalCholesky{UPLO}(A)
+                cholesky!(F, P(); reg=R())
+                @test A ≈ Matrix(F) rtol=1e-3
+
+                F = ChordalLDLt{UPLO}(A)
+                ldlt!(F, P(); signs, reg=R())
+                @test A ≈ Matrix(F) rtol=1e-3
+            end
+        end
+    end
+
+    C = readmatrix("662_bus")
+    C -= 1.0001 * minimum(eigvals(Matrix(C))) * I
+    B = sprand(size(A, 1), size(C, 1), .001)
+
+    P = randperm(size(A, 1) + size(C, 1))
+    A = [A B; B' -C][P, P]
+    signs = [signs; -signs][P]
+
+    for UPLO in (:L, :U)
+        for P in (NoPivot, RowMaximum)
+            for R in (GMW81, SE99)
+                F = ChordalLDLt{UPLO}(A)
+                ldlt!(F, P(); signs, reg=R())
+                @test A ≈ Matrix(F) rtol=1e-3
+            end
+        end
+    end
+
+    A = [
+        1 1 2
+        1 1 3
+        2 3 1
+    ]
+
+    signs = [1, 1, 1]
+
+    for UPLO in (:L, :U)
+        F = ChordalCholesky{UPLO}(A)
+        cholesky!(F; reg=GMW81())
+        @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+
+        F = ChordalLDLt{UPLO}(A)
+        ldlt!(F; signs, reg=GMW81())
+        @test diag(F) ≈ [3.771, 5.750, 1.121] rtol=1e-3
+    end
+end
+
+@testset "condition number" begin
+    A = readmatrix("bcsstk26")
+    F = cholesky!(ChordalCholesky(A))
+
+    for p in (1, Inf)
+        @test cond(F, p) ≈ cond(A, p) rtol=1
+        @test cond(F.L, p) ≈ cond(sparse(F.L), p) rtol=1
+        @test cond(F.U, p) ≈ cond(sparse(F.U), p) rtol=1
+    end
+
+    F = ldlt!(ChordalLDLt(A))
+
+    for p in (1, Inf)
+        @test cond(F, p) ≈ cond(A, p) rtol=1
+        @test cond(F.L, p) ≈ cond(sparse(F.L), p) rtol=1
+        @test cond(F.U, p) ≈ cond(sparse(F.U), p) rtol=1
     end
 end
 
@@ -257,37 +332,60 @@ end
 end
 
 @testset "complete" begin
-    matrices = ("nos4", "mesh3e1")
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
 
     for name in matrices
+        M = readmatrix(name)
+
         for UPLO in (:L, :U)
-            A = readmatrix(name)
-            B = tril(A)
+            F = cholesky!(ChordalCholesky{UPLO}(M))
+            G = copy(F)
 
-            for j in axes(B, 2)
-                for i in j + 1:size(B, 1)
-                    if rand() < 0.3
-                        B[i, j] = B[j, i] = 0
-                    end
-                end
-            end
+            selinv!(G)
+            complete!(G)
 
-            dropzeros!(B)
-            F = ChordalCholesky{UPLO}(B)
-            complete!(F, Hermitian(B, :L))
-            Finv = inv(Matrix(F))
+            @test triangular(F) ≈ triangular(G)
 
-            @test all(isapprox(Finv[i, j], v; rtol=1e-6) for (i, j, v) in zip(findnz(B)...))
-            @test logdet(Finv) + 1e-6 > logdet(A)
+            selinv!(G)
+            complete!(G)
+
+            @test triangular(F) ≈ triangular(G)
         end
     end
+
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
+
+    for UPLO in (:L, :U)
+        F = cholesky!(ChordalCholesky{UPLO}(M))
+        G = copy(F)
+
+        selinv!(G)
+        complete!(G)
+
+        @test triangular(F) ≈ triangular(G)
+
+        selinv!(G)
+        complete!(G)
+
+        @test triangular(F) ≈ triangular(G)
+    end
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
+    L = selinv!(cholesky!(ChordalCholesky{:L}(M)))
+    U = selinv!(cholesky!(ChordalCholesky{:U}(M)))
+    @inferred complete!(L)
+    @inferred complete!(U)
+    @test_call target_modules = (CliqueTrees,) complete!(L)
+    @test_call target_modules = (CliqueTrees,) complete!(U)
+    @test_opt target_modules = (CliqueTrees,) complete!(L)
+    @test_opt target_modules = (CliqueTrees,) complete!(U)
 end
 
-@testset "fisherroot" begin
-    matrices = ("nos4", "mesh3e1", "mhdb416")
+@testset "fisherroot (inv=false)" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
 
     for name in matrices
-        M = readmatrix(name); n = size(M, 2)
+        M = readmatrix(name)
 
         for UPLO in (:L, :U)
             F = cholesky!(ChordalCholesky{UPLO}(M))
@@ -296,58 +394,53 @@ end
             Y = similar(F)
             rand!(Y.Dval)
             rand!(Y.Lval)
-
             Z = copy(Y)
 
             fisherroot!(Y, F, S; adj=false, inv=false)
-            fisherroot!(Y, F, S; adj=true,  inv=false)
-            fisherroot!(Y, F, S; adj=true,  inv=true)
-            fisherroot!(Y, F, S; adj=false, inv=true)
+            fisherroot!(Y, F, S; adj=true, inv=false)
 
-            YT = triangular(Y)
-            ZT = triangular(Z)
+            fisher!(Z, F, S; inv=false)
 
-            @test all(isapprox(v, ZT[i, j]; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(YT)...))
+            @test triangular(Y) ≈ triangular(Z)
         end
     end
 
-    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4")); n = size(M, 2)
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
 
     for UPLO in (:L, :U)
         F = cholesky!(ChordalCholesky{UPLO}(M))
         S = selinv!(copy(F))
 
-        Y = copy(F)
-        Y.Dval .*= BigFloat("0.1")
-        Y.Lval .*= BigFloat("0.1")
-
+        Y = similar(F)
+        rand!(Y.Dval)
+        rand!(Y.Lval)
         Z = copy(Y)
 
         fisherroot!(Y, F, S; adj=false, inv=false)
-        fisherroot!(Y, F, S; adj=true,  inv=false)
-        fisherroot!(Y, F, S; adj=true,  inv=true)
-        fisherroot!(Y, F, S; adj=false, inv=true)
+        fisherroot!(Y, F, S; adj=true, inv=false)
 
-        YT = triangular(Y)
-        ZT = triangular(Z)
+        fisher!(Z, F, S; inv=false)
 
-        @test all(isapprox(v, ZT[i, j]; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(YT)...))
+        @test triangular(Y) ≈ triangular(Z)
     end
 
     M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
     F = cholesky!(ChordalCholesky(M))
     S = selinv!(copy(F))
     Y = copy(F)
-    @inferred fisherroot!(Y, F, S)
-    @test_call target_modules = (CliqueTrees,) fisherroot!(Y, F, S)
-    @test_opt target_modules = (CliqueTrees,) fisherroot!(Y, F, S)
+    @inferred fisherroot!(Y, F, S; adj=false, inv=false)
+    @inferred fisherroot!(Y, F, S; adj=true, inv=false)
+    @test_call target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=false, inv=false)
+    @test_call target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=true, inv=false)
+    @test_opt target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=false, inv=false)
+    @test_opt target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=true, inv=false)
 end
 
-@testset "fisher" begin
-    matrices = ("nos4", "mesh3e1", "mhdb416")
+@testset "fisherroot (inv=true)" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
 
     for name in matrices
-        M = readmatrix(name); n = size(M, 2)
+        M = readmatrix(name)
 
         for UPLO in (:L, :U)
             F = cholesky!(ChordalCholesky{UPLO}(M))
@@ -356,45 +449,300 @@ end
             Y = similar(F)
             rand!(Y.Dval)
             rand!(Y.Lval)
+            Z = copy(Y)
 
+            fisherroot!(Y, F, S; adj=true, inv=true)
+            fisherroot!(Y, F, S; adj=false, inv=true)
+
+            fisher!(Z, F, S; inv=true)
+
+            @test triangular(Y) ≈ triangular(Z)
+        end
+    end
+
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
+
+    for UPLO in (:L, :U)
+        F = cholesky!(ChordalCholesky{UPLO}(M))
+        S = selinv!(copy(F))
+
+        Y = similar(F)
+        rand!(Y.Dval)
+        rand!(Y.Lval)
+        Z = copy(Y)
+
+        fisherroot!(Y, F, S; adj=true, inv=true)
+        fisherroot!(Y, F, S; adj=false, inv=true)
+
+        fisher!(Z, F, S; inv=true)
+
+        @test triangular(Y) ≈ triangular(Z)
+    end
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
+    F = cholesky!(ChordalCholesky(M))
+    S = selinv!(copy(F))
+    Y = copy(F)
+    @inferred fisherroot!(Y, F, S; adj=true, inv=true)
+    @inferred fisherroot!(Y, F, S; adj=false, inv=true)
+    @test_call target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=true, inv=true)
+    @test_call target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=false, inv=true)
+    @test_opt target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=true, inv=true)
+    @test_opt target_modules = (CliqueTrees,) fisherroot!(Y, F, S; adj=false, inv=true)
+end
+
+@testset "fisher (inv=false)" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
+
+    for name in matrices
+        M = readmatrix(name)
+
+        for UPLO in (:L, :U)
+            F = cholesky!(ChordalCholesky{UPLO}(M))
+            S = selinv!(copy(F))
+            Sinv = F.P * inv(Matrix(M)) * F.P'
+
+            Y = similar(F)
+            rand!(Y.Dval)
+            rand!(Y.Lval)
+            Ym = Symmetric(Matrix(triangular(Y)), UPLO)
+            fisher!(Y, F, S; inv=false)
+            Yexact = Sinv * Ym * Sinv
+
+            YT = triangular(Y)
+            @test all(isapprox(Yexact[i, j], v; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(YT)...))
+        end
+    end
+
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
+
+    for UPLO in (:L, :U)
+        F = cholesky!(ChordalCholesky{UPLO}(M))
+        S = selinv!(copy(F))
+        Sinv = F.P * inv(Matrix(M)) * F.P'
+
+        Y = similar(F)
+        rand!(Y.Dval)
+        rand!(Y.Lval)
+        Ym = Symmetric(Matrix(triangular(Y)), UPLO)
+        fisher!(Y, F, S; inv=false)
+        Yexact = Sinv * Ym * Sinv
+
+        YT = triangular(Y)
+        @test all(isapprox(Yexact[i, j], v; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(YT)...))
+    end
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
+    F = cholesky!(ChordalCholesky(M))
+    S = selinv!(copy(F))
+    Y = similar(F)
+    rand!(Y.Dval)
+    rand!(Y.Lval)
+    @inferred fisher!(Y, F, S; inv=false)
+    @test_call target_modules = (CliqueTrees,) fisher!(Y, F, S; inv=false)
+    @test_opt target_modules = (CliqueTrees,) fisher!(Y, F, S; inv=false)
+end
+
+@testset "fisher (inv=true)" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
+
+    for name in matrices
+        M = readmatrix(name)
+
+        for UPLO in (:L, :U)
+            F = cholesky!(ChordalCholesky{UPLO}(M))
+            S = selinv!(copy(F))
+
+            Y = similar(F)
+            rand!(Y.Dval)
+            rand!(Y.Lval)
             Z = copy(Y)
 
             fisher!(Y, F, S; inv=false)
             fisher!(Y, F, S; inv=true)
 
-            YT = triangular(Y)
-            ZT = triangular(Z)
-
-            @test all(isapprox(v, ZT[i, j]; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(YT)...))
+            @test triangular(Y) ≈ triangular(Z) rtol=1e-5 atol=1e-14
         end
     end
 
-    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4")); n = size(M, 2)
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
 
     for UPLO in (:L, :U)
         F = cholesky!(ChordalCholesky{UPLO}(M))
         S = selinv!(copy(F))
 
-        Y = copy(F)
-        Y.Dval .*= BigFloat("0.1")
-        Y.Lval .*= BigFloat("0.1")
-
+        Y = similar(F)
+        rand!(Y.Dval)
+        rand!(Y.Lval)
         Z = copy(Y)
 
         fisher!(Y, F, S; inv=false)
         fisher!(Y, F, S; inv=true)
 
-        YT = triangular(Y)
-        ZT = triangular(Z)
-
-        @test all(isapprox(v, ZT[i, j]; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(YT)...))
+        @test triangular(Y) ≈ triangular(Z) rtol=1e-5 atol=1e-14
     end
 
     M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
     F = cholesky!(ChordalCholesky(M))
     S = selinv!(copy(F))
     Y = copy(F)
-    @inferred fisher!(Y, F, S)
-    @test_call target_modules = (CliqueTrees,) fisher!(Y, F, S)
-    @test_opt target_modules = (CliqueTrees,) fisher!(Y, F, S)
+    @inferred fisher!(Y, F, S; inv=true)
+    @test_call target_modules = (CliqueTrees,) fisher!(Y, F, S; inv=true)
+    @test_opt target_modules = (CliqueTrees,) fisher!(Y, F, S; inv=true)
+end
+
+@testset "amari (inv=false)" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
+
+    for name in matrices
+        M = readmatrix(name)
+
+        for UPLO in (:L, :U)
+            F = cholesky!(ChordalCholesky{UPLO}(M))
+            S = selinv!(copy(F))
+            Sinv = F.P * inv(Matrix(M)) * F.P'
+
+            Y = similar(F)
+            rand!(Y.Dval)
+            rand!(Y.Lval)
+  
+            Z = similar(F)
+            rand!(Z.Dval)
+            rand!(Z.Lval)
+
+            T = similar(F)
+
+            Ym = Symmetric(Matrix(triangular(Y)), UPLO)
+            Zm = Symmetric(Matrix(triangular(Z)), UPLO)
+
+            amari!(T, Y, Z, F, S; inv=false)
+
+            Texact = -(Sinv * Ym * Sinv * Zm * Sinv + Sinv * Zm * Sinv * Ym * Sinv)
+
+            TT = triangular(T)
+            @test all(isapprox(Texact[i, j], v; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(TT)...))
+        end
+    end
+
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
+
+    for UPLO in (:L, :U)
+        F = cholesky!(ChordalCholesky{UPLO}(M))
+        S = selinv!(copy(F))
+        Sinv = F.P * inv(Matrix(M)) * F.P'
+
+        Y = similar(F)
+        rand!(Y.Dval)
+        rand!(Y.Lval)
+
+        Z = similar(F)
+        rand!(Z.Dval)
+        rand!(Z.Lval)
+
+        T = similar(F)
+
+        Ym = Symmetric(Matrix(triangular(Y)), UPLO)
+        Zm = Symmetric(Matrix(triangular(Z)), UPLO)
+
+        amari!(T, Y, Z, F, S; inv=false)
+
+        Texact = -(Sinv * Ym * Sinv * Zm * Sinv + Sinv * Zm * Sinv * Ym * Sinv)
+
+        TT = triangular(T)
+        @test all(isapprox(Texact[i, j], v; rtol=1e-6, atol=1e-14) for (i, j, v) in zip(findnz(TT)...))
+    end
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
+    F = cholesky!(ChordalCholesky(M))
+    S = selinv!(copy(F))
+    Y = similar(F)
+    rand!(Y.Dval)
+    rand!(Y.Lval)
+    Z = similar(F)
+    rand!(Z.Dval)
+    rand!(Z.Lval)
+    T = similar(F)
+    @inferred amari!(T, Y, Z, F, S; inv=false)
+    # @test_call target_modules = (CliqueTrees,) amari!(T, Y, Z, F, S; inv=false)
+    # @test_opt target_modules = (CliqueTrees,) amari!(T, Y, Z, F, S; inv=false)
+end
+
+@testset "amari (inv=true)" begin
+    matrices = ("nos4", "mesh3e1", "494_bus", "mhdb416", "685_bus")
+
+    for name in matrices
+        M = readmatrix(name)
+
+        for UPLO in (:L, :U)
+            F = cholesky!(ChordalCholesky{UPLO}(M))
+            S = selinv!(copy(F))
+
+            Y = similar(F)
+            rand!(Y.Dval)
+            rand!(Y.Lval)
+
+            Z = similar(F)
+            rand!(Z.Dval)
+            rand!(Z.Lval)
+
+            # Direct inv=true
+            Y1 = copy(Y)
+            Z1 = copy(Z)
+            T1 = similar(F)
+            amari!(T1, Y1, Z1, F, S; inv=true)
+
+            # Roundtrip: fisher inv=true on inputs, amari inv=false, fisher inv=true on output, negate
+            Y2 = copy(Y)
+            Z2 = copy(Z)
+            T2 = similar(F)
+            fisher!(Y2, F, S; inv=true)
+            fisher!(Z2, F, S; inv=true)
+            amari!(T2, Y2, Z2, F, S; inv=false)
+            fisher!(T2, F, S; inv=true)
+
+            @test triangular(T1) ≈ triangular(T2)
+        end
+    end
+
+    M = SparseMatrixCSC{BigFloat}(readmatrix("nos4"))
+
+    for UPLO in (:L, :U)
+        F = cholesky!(ChordalCholesky{UPLO}(M))
+        S = selinv!(copy(F))
+
+        Y = similar(F)
+        rand!(Y.Dval)
+        rand!(Y.Lval)
+
+        Z = similar(F)
+        rand!(Z.Dval)
+        rand!(Z.Lval)
+
+        # Direct inv=true
+        Y1 = copy(Y)
+        Z1 = copy(Z)
+        T1 = similar(F)
+        amari!(T1, Y1, Z1, F, S; inv=true)
+
+        # Roundtrip
+        Y2 = copy(Y)
+        Z2 = copy(Z)
+        T2 = similar(F)
+        fisher!(Y2, F, S; inv=true)
+        fisher!(Z2, F, S; inv=true)
+        amari!(T2, Y2, Z2, F, S; inv=false)
+        fisher!(T2, F, S; inv=true)
+
+        @test triangular(T1) ≈ triangular(T2)
+    end
+
+    M = SparseMatrixCSC{Float64}(readmatrix("nos4"))
+    F = cholesky!(ChordalCholesky(M))
+    S = selinv!(copy(F))
+    Y = copy(F)
+    Z = copy(F)
+    T = similar(F)
+    @inferred amari!(T, Y, Z, F, S; inv=true)
+    # @test_call target_modules = (CliqueTrees,) amari!(T, Y, Z, F, S; inv=true)
+    # @test_opt target_modules = (CliqueTrees,) amari!(T, Y, Z, F, S; inv=true)
 end

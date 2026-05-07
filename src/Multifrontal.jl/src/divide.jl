@@ -128,7 +128,7 @@ function LinearAlgebra.ldiv!(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
     @assert size(A, 1) == size(B, 1)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:L), A.diag)
+    return div_impl!(B, A, tA, tB, Val(:L))
 end
 
 # --- AbstractFactorization ---
@@ -204,7 +204,7 @@ function LinearAlgebra.rdiv!(B::AbstractMatrix, A::MaybeAdjOrTransTri)
     @assert size(A, 1) == size(B, 2)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return div_impl!(A.S, A.S.Dptr, A.Dval, A.S.Lptr, A.Lval, B, tA, tB, A.uplo, Val(:R), A.diag)
+    return div_impl!(B, A, tA, tB, Val(:R))
 end
 
 # --- AbstractFactorization ---
@@ -249,38 +249,23 @@ end
 # ============================== div_impl! ==============================
 
 function div_impl!(
-        S::ChordalSymbolic{I},
+        B::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
-        B::AbstractVecOrMat{R},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
         tA::Val{TA},
         tB::Val{TB},
         uplo::Val{UPLO},
         side::Val{SIDE},
         diag::Val{DIAG},
     ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
-
-    res = S.res
-    rel = S.rel
-    chd = S.chd
-
-    nMptr = S.nMptr
-    nNval = S.nNval
-    nFval = S.nFval
-
-    if B isa AbstractVector
-        nrhs = one(I)
-    elseif SIDE === :L
-        nrhs = convert(I, size(B, 2))
-    else
-        nrhs = convert(I, size(B, 1))
-    end
-
-    Mptr = FVector{I}(undef, nMptr)
-    Mval = FVector{R}(undef, nNval * nrhs)
-    Fval = FVector{R}(undef, nFval * nrhs)
 
     ns = zero(I); Mptr[one(I)] = one(I)
 
@@ -295,6 +280,127 @@ function div_impl!(
     end
 
     return B
+end
+
+function div_impl!(
+        B::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Fval::AbstractVector{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    return div_impl!(
+        B, Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        tA, tB, L.uplo, side, L.diag)
+end
+
+function div_impl!(
+        B::AbstractVecOrMat{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    if B isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(B, 2))
+    else
+        nrhs = convert(I, size(B, 1))
+    end
+
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{R}(undef, L.S.nNval * nrhs)
+    Fval = FVector{R}(undef, L.S.nFval * nrhs)
+
+    return div_impl!(B, Mptr, Mval, Fval, L, tA, tB, side)
+end
+
+function mt_div_impl!(
+        B::AbstractMatrix{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Fval::AbstractVector{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+        nt::I,
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    if SIDE === :L
+        nrhs = convert(I, size(B, 2))
+    else
+        nrhs = convert(I, size(B, 1))
+    end
+
+    nMptr = L.S.nMptr
+    nNval = L.S.nNval
+    nFval = L.S.nFval
+    blocksize = convert(I, max(32, div(nrhs, 4nt)))
+
+    pool = Channel{I}(nt)
+
+    for t in oneto(nt)
+        put!(pool, t)
+    end
+
+    @threads for strt in one(I):blocksize:nrhs
+        size = min(blocksize, nrhs - strt + one(I))
+        stop = strt + size - one(I)
+
+        t = take!(pool)
+
+        Mptroff = (t - one(I)) * nMptr
+        Mvaloff = (t - one(I)) * nNval * blocksize
+        Fvaloff = (t - one(I)) * nFval * blocksize
+
+        Mptrblk = view(Mptr, Mptroff + one(I):Mptroff + nMptr)
+        Mvalblk = view(Mval, Mvaloff + one(I):Mvaloff + nNval * size)
+        Fvalblk = view(Fval, Fvaloff + one(I):Fvaloff + nFval * size)
+
+        if SIDE === :L
+            Bblk = view(B, :, strt:stop)
+        else
+            Bblk = view(B, strt:stop, :)
+        end
+
+        div_impl!(Bblk, Mptrblk, Mvalblk, Fvalblk, L, tA, tB, side)
+
+        put!(pool, t)
+    end
+
+    close(pool)
+    return B
+end
+
+function mt_div_impl!(
+        B::AbstractMatrix{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+        nt::I,
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    if SIDE === :L
+        nrhs = convert(I, size(B, 2))
+    else
+        nrhs = convert(I, size(B, 1))
+    end
+
+    blocksize = convert(I, max(32, div(nrhs, 4nt)))
+
+    Mptr = FVector{I}(undef, L.S.nMptr * nt)
+    Mval = FVector{R}(undef, L.S.nNval * blocksize * nt)
+    Fval = FVector{R}(undef, L.S.nFval * blocksize * nt)
+
+    return mt_div_impl!(B, Mptr, Mval, Fval, L, tA, tB, side, nt)
 end
 
 function div_fwd_loop!(
