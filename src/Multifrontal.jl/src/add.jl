@@ -162,15 +162,17 @@ function LinearAlgebra.axpby!(α::Number, X::SymTri{UPLO, T}, β::Number, Y::Sym
 end
 
 function LinearAlgebra.axpby!(α::Number, J::UniformScaling, β::Number, A::ChordalTriangular{:N})
+    if iszero(β)
+        fill!(A, β)
+    elseif !isone(β)
+        rmul!(A, β)
+    end
+
     @inbounds for f in fronts(A)
         D, _ = diagblock(A, f)
 
         for i in diagind(D)
-            if iszero(β)
-                D[i] = α * J.λ
-            else
-                D[i] = α * J.λ + β * D[i]
-            end
+            D[i] += α * J.λ
         end
     end
 
@@ -178,17 +180,17 @@ function LinearAlgebra.axpby!(α::Number, J::UniformScaling, β::Number, A::Chor
 end
 
 function LinearAlgebra.axpby!(α::Number, J::Diagonal, β::Number, A::ChordalTriangular{:N})
+    if iszero(β)
+        fill!(A, β)
+    elseif !isone(β)
+        rmul!(A, β)
+    end
+
     @inbounds for f in fronts(A)
         D, res = diagblock(A, f)
 
         for (i, j) in zip(diagind(D), res)
-            Jj = J.diag[j]
-
-            if iszero(β)
-                D[i] = α * Jj
-            else
-                D[i] = α * Jj + β * D[i]
-            end
+            D[i] += α * J.diag[j]
         end
     end
 

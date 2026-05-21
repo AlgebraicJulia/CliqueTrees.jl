@@ -250,59 +250,6 @@ end
 
 function div_impl!(
         B::AbstractVecOrMat{R},
-        Mptr::AbstractVector{I},
-        Mval::AbstractVector{R},
-        Dptr::AbstractVector{I},
-        Dval::AbstractVector{T},
-        Lptr::AbstractVector{I},
-        Lval::AbstractVector{T},
-        Fval::AbstractVector{R},
-        res::AbstractGraph{I},
-        rel::AbstractGraph{I},
-        chd::AbstractGraph{I},
-        tA::Val{TA},
-        tB::Val{TB},
-        uplo::Val{UPLO},
-        side::Val{SIDE},
-        diag::Val{DIAG},
-    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
-
-    ns = zero(I); Mptr[one(I)] = one(I)
-
-    if isforward(UPLO, TA, SIDE)
-        for j in vertices(res)
-            ns = div_fwd_loop!(B, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tA, tB, uplo, side, diag)
-        end
-    else
-        for j in reverse(vertices(res))
-            ns = div_bwd_loop!(B, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tA, tB, uplo, side, diag)
-        end
-    end
-
-    return B
-end
-
-function div_impl!(
-        B::AbstractVecOrMat{R},
-        Mptr::AbstractVector{I},
-        Mval::AbstractVector{R},
-        Fval::AbstractVector{R},
-        L::ChordalTriangular{DIAG, UPLO, T, I},
-        tA::Val{TA},
-        tB::Val{TB},
-        side::Val{SIDE},
-    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
-    return div_impl!(
-        B, Mptr, Mval,
-        L.S.Dptr, L.Dval,
-        L.S.Lptr, L.Lval,
-        Fval,
-        L.S.res, L.S.rel, L.S.chd,
-        tA, tB, L.uplo, side, L.diag)
-end
-
-function div_impl!(
-        B::AbstractVecOrMat{R},
         L::ChordalTriangular{DIAG, UPLO, T, I},
         tA::Val{TA},
         tB::Val{TB},
@@ -323,6 +270,49 @@ function div_impl!(
     return div_impl!(B, Mptr, Mval, Fval, L, tA, tB, side)
 end
 
+function div_impl!(
+        B::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Fval::AbstractVector{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+        args...,
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    return div_impl!(
+        B, Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        tA, tB, L.uplo, side, L.diag,
+        args...)
+end
+
+function mt_div_impl!(
+        B::AbstractMatrix{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+        bs::I,
+        nt::I,
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    if SIDE === :L
+        nrhs = convert(I, size(B, 2))
+    else
+        nrhs = convert(I, size(B, 1))
+    end
+
+    Mptr = FVector{I}(undef, L.S.nMptr * nt)
+    Mval = FVector{R}(undef, L.S.nNval * bs * nt)
+    Fval = FVector{R}(undef, L.S.nFval * bs * nt)
+
+    return mt_div_impl!(B, Mptr, Mval, Fval, L, tA, tB, side, bs, nt)
+end
+
 function mt_div_impl!(
         B::AbstractMatrix{R},
         Mptr::AbstractVector{I},
@@ -332,6 +322,7 @@ function mt_div_impl!(
         tA::Val{TA},
         tB::Val{TB},
         side::Val{SIDE},
+        bs::I,
         nt::I,
     ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
     if SIDE === :L
@@ -343,7 +334,6 @@ function mt_div_impl!(
     nMptr = L.S.nMptr
     nNval = L.S.nNval
     nFval = L.S.nFval
-    blocksize = convert(I, max(32, div(nrhs, 4nt)))
 
     pool = Channel{I}(nt)
 
@@ -351,15 +341,15 @@ function mt_div_impl!(
         put!(pool, t)
     end
 
-    @threads for strt in one(I):blocksize:nrhs
-        size = min(blocksize, nrhs - strt + one(I))
-        stop = strt + size - one(I)
+    @threads for strt in one(I):bs:nrhs
+        size = min(bs, nrhs - strt + one(I))
+        stop =         strt + size - one(I)
 
         t = take!(pool)
 
         Mptroff = (t - one(I)) * nMptr
-        Mvaloff = (t - one(I)) * nNval * blocksize
-        Fvaloff = (t - one(I)) * nFval * blocksize
+        Mvaloff = (t - one(I)) * nNval * bs
+        Fvaloff = (t - one(I)) * nFval * bs
 
         Mptrblk = view(Mptr, Mptroff + one(I):Mptroff + nMptr)
         Mvalblk = view(Mval, Mvaloff + one(I):Mvaloff + nNval * size)
@@ -380,27 +370,39 @@ function mt_div_impl!(
     return B
 end
 
-function mt_div_impl!(
-        B::AbstractMatrix{R},
-        L::ChordalTriangular{DIAG, UPLO, T, I},
+function div_impl!(
+        B::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
         tA::Val{TA},
         tB::Val{TB},
+        uplo::Val{UPLO},
         side::Val{SIDE},
-        nt::I,
-    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
-    if SIDE === :L
-        nrhs = convert(I, size(B, 2))
+        diag::Val{DIAG},
+        rng::AbstractRange{I} = vertices(res),
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+
+    ns = zero(I); Mptr[one(I)] = one(I)
+
+    if isforward(UPLO, TA, SIDE)
+        for j in rng
+            ns = div_fwd_loop!(B, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tA, tB, uplo, side, diag)
+        end
     else
-        nrhs = convert(I, size(B, 1))
+        for j in reverse(rng)
+            ns = div_bwd_loop!(B, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tA, tB, uplo, side, diag)
+        end
     end
 
-    blocksize = convert(I, max(32, div(nrhs, 4nt)))
-
-    Mptr = FVector{I}(undef, L.S.nMptr * nt)
-    Mval = FVector{R}(undef, L.S.nNval * blocksize * nt)
-    Fval = FVector{R}(undef, L.S.nFval * blocksize * nt)
-
-    return mt_div_impl!(B, Mptr, Mval, Fval, L, tA, tB, side, nt)
+    return B
 end
 
 function div_fwd_loop!(
@@ -423,6 +425,48 @@ function div_fwd_loop!(
         side::Val{SIDE},
         diag::Val{DIAG},
     ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    nn = eltypedegree(res, j)
+
+    if T <: Real && isone(nn)
+        return div_fwd_loop_nod!(
+            C, Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            Fval,
+            res, rel, chd, ns, j, tA, tB, uplo, side, diag
+        )
+    else
+        return div_fwd_loop_snd!(
+            C, Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            Fval,
+            res, rel, chd, ns, nn, j, tA, tB, uplo, side, diag
+        )
+    end
+end
+
+function div_fwd_loop_snd!(
+        C::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
     #
     # nrhs is the number of right-hand sides
     #
@@ -438,7 +482,6 @@ function div_fwd_loop!(
     #
     #     nn = |res(j)|
     #
-    nn = eltypedegree(res, j)
     #
     # na is the size of the separator at node j
     #
@@ -571,7 +614,8 @@ function div_fwd_loop!(
     return ns
 end
 
-function div_bwd_loop!(
+# Fast path for nn = 1 and real element types
+function div_fwd_loop_nod!(
         C::AbstractVecOrMat{R},
         Mptr::AbstractVector{I},
         Mval::AbstractVector{R},
@@ -602,11 +646,213 @@ function div_bwd_loop!(
         nrhs = convert(I, size(C, 1))
     end
     #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = |sep(j)|
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = |bag(j)| = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #        nrhs
+    #   F = [ f₁ ] 1
+    #       [ F₂ ] na
+    #
+    if C isa AbstractVector
+        F = view(Fval, oneto(nj))
+        F₂ = view(F, nn + one(I):nj)
+    elseif SIDE === :L
+        F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
+        f₁ = view(F, one(I), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
+    else
+        F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
+        f₁ = view(F, oneto(nrhs), one(I))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    end
+    #
+    # L is part of the factor (d₁₁ is scalar, l₂₁ is vector)
+    #
+    #        res(j)
+    #   L = [ d₁₁ ] res(j)
+    #       [ l₂₁ ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    Rp = pointers(res)[j]
+    d₁₁ = Dval[Dp]
+    l₂₁ = view(Lval, Lp:Lp + na - one(I))
+    #
+    # c₁ is part of the right-hand side
+    #
+    #        nrhs
+    #   C = [ c₁ ] res(j)
+    #
+    if C isa AbstractVector
+        c₁ = C[Rp]
+    elseif SIDE === :L
+        c₁ = view(C, Rp, oneto(nrhs))
+    else
+        c₁ = view(C, oneto(nrhs), Rp)
+    end
+    #
+    #     F ← 0
+    #
+    zerorec!(F)
+
+    for i in Iterators.reverse(neighbors(chd, j))
+        #
+        # add the update matrix for child i to F
+        #
+        #     F ← F + Rᵢ Mᵢ
+        #
+        div_fwd_update!(F, Mptr, Mval, rel, ns, i, side)
+        ns -= one(I)
+    end
+    #
+    #     c₁ ← c₁ + f₁
+    #
+    if C isa AbstractVector
+        c₁ += Fval[one(I)]
+    else
+        addrec!(c₁, f₁)
+    end
+    #
+    #     c₁ ← d₁₁⁻¹ c₁ (scalar division)
+    #
+    if DIAG === :N
+        if C isa AbstractVector
+            c₁ /= d₁₁
+        else
+            rdiv!(c₁, d₁₁)
+        end
+    end
+    #
+    # Write back scalar for vector case
+    #
+    if C isa AbstractVector
+        C[Rp] = c₁
+    end
+
+    if ispositive(na)
+        ns += one(I)
+        #
+        # M₂ is the update matrix for node j
+        #
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * nrhs
+
+        if C isa AbstractVector
+            M₂ = view(Mval, strt:stop - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:stop - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:stop - one(I)), nrhs, na)
+        end
+        #
+        #     M₂ ← F₂ - l₂₁ c₁
+        #
+        copyrec!(M₂, F₂)
+
+        if C isa AbstractVector
+            axpy!(-c₁, l₂₁, M₂)
+        elseif SIDE === :L
+            ger!(-1, l₂₁, c₁, M₂)
+        else
+            ger!(-1, c₁, l₂₁, M₂)
+        end
+    end
+
+    return ns
+end
+
+function div_bwd_loop!(
+        C::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    nn = eltypedegree(res, j)
+
+    if T <: Real && isone(nn)
+        return div_bwd_loop_nod!(
+            C, Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            Fval,
+            res, rel, chd, ns, j, tA, tB, uplo, side, diag
+        )
+    else
+        return div_bwd_loop_snd!(
+            C, Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            Fval,
+            res, rel, chd, ns, nn, j, tA, tB, uplo, side, diag
+        )
+    end
+end
+
+function div_bwd_loop_snd!(
+        C::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    #
+    # nrhs is the number of right-hand sides
+    #
+    if C isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(C, 2))
+    else
+        nrhs = convert(I, size(C, 1))
+    end
+    #
     # nn is the size of the residual at node j
     #
     #     nn = |res(j)|
     #
-    nn = eltypedegree(res, j)
     #
     # na is the size of the separator at node j
     #
@@ -723,6 +969,7 @@ function div_bwd_loop!(
     #
     if ispositive(na)
         strt = Mptr[ns + one(I)]
+
         if C isa AbstractVector
             M₂ = view(Mval, strt:strt + na - one(I))
         elseif SIDE === :L
@@ -730,6 +977,172 @@ function div_bwd_loop!(
         else
             M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
         end
+        copyrec!(F₂, M₂)
+    end
+
+    for i in neighbors(chd, j)
+        #
+        # push F restricted to sep(i) to child i
+        #
+        #     Mᵢ ← Rᵢᵀ F
+        #
+        ns += one(I)
+        div_bwd_update!(F, Mptr, Mval, rel, ns, i, side)
+    end
+
+    return ns
+end
+
+# Fast path for nn = 1 and real element types
+function div_bwd_loop_nod!(
+        C::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    #
+    # nrhs is the number of right-hand sides
+    #
+    if C isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(C, 2))
+    else
+        nrhs = convert(I, size(C, 1))
+    end
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = |sep(j)|
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = |bag(j)| = 1 + na
+    #
+    nj = nn + na
+    #
+    # L is part of the factor (d₁₁ is scalar, l₂₁ is vector)
+    #
+    #        res(j)
+    #   L = [ d₁₁ ] res(j)
+    #       [ l₂₁ ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    Rp = pointers(res)[j]
+    d₁₁ = Dval[Dp]
+    l₂₁ = view(Lval, Lp:Lp + na - one(I))
+    #
+    # c₁ is part of the right-hand side
+    #
+    #        nrhs
+    #   C = [ c₁ ] res(j)
+    #
+    if C isa AbstractVector
+        c₁ = C[Rp]
+    elseif SIDE === :L
+        c₁ = view(C, Rp, oneto(nrhs))
+    else
+        c₁ = view(C, oneto(nrhs), Rp)
+    end
+    #
+    # subtract the update matrix from ancestor
+    #
+    #     c₁ ← c₁ - l₂₁ᵀ M₂
+    #
+    if ispositive(na)
+        strt = Mptr[ns]
+
+        if C isa AbstractVector
+            M₂ = view(Mval, strt:strt + na - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
+        end
+
+        ns -= one(I)
+
+        if C isa AbstractVector
+            c₁ -= dot(l₂₁, M₂)
+        elseif SIDE === :L
+            gemv!(Val(:T), -1, M₂, l₂₁, 1, c₁)
+        else
+            gemv!(Val(:N), -1, M₂, l₂₁, 1, c₁)
+        end
+    end
+    #
+    #     c₁ ← d₁₁⁻¹ c₁ (scalar division)
+    #
+    if DIAG === :N
+        if C isa AbstractVector
+            c₁ /= d₁₁
+        else
+            rdiv!(c₁, d₁₁)
+        end
+    end
+    #
+    # Write back scalar for vector case
+    #
+    if C isa AbstractVector
+        C[Rp] = c₁
+    end
+    #
+    # F is the frontal matrix at node j
+    #
+    #        nrhs
+    #   F = [ f₁ ] 1
+    #       [ F₂ ] na
+    #
+    if C isa AbstractVector
+        F = view(Fval, oneto(nj))
+        F₂ = view(F, nn + one(I):nj)
+        Fval[one(I)] = c₁
+    elseif SIDE === :L
+        F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
+        f₁ = view(F, one(I), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
+        copyrec!(f₁, c₁)
+    else
+        F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
+        f₁ = view(F, oneto(nrhs), one(I))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+        copyrec!(f₁, c₁)
+    end
+    #
+    #     F₂ ← M₂
+    #
+    if ispositive(na)
+        strt = Mptr[ns + one(I)]
+
+        if C isa AbstractVector
+            M₂ = view(Mval, strt:strt + na - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
+        end
+
         copyrec!(F₂, M₂)
     end
 
@@ -833,6 +1246,470 @@ function div_bwd_update!(
     end
 
     return
+end
+
+# ============================= div_piv_impl! =============================
+
+function div_piv_impl!(
+        B::AbstractVecOrMat{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    if B isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(B, 2))
+    else
+        nrhs = convert(I, size(B, 1))
+    end
+
+    Mptr = FVector{I}(undef, L.S.nMptr)
+    Mval = FVector{R}(undef, L.S.nNval * nrhs)
+    Fval = FVector{R}(undef, L.S.nFval * nrhs)
+
+    return div_piv_impl!(B, Mptr, Mval, Fval, L, tA, tB, side)
+end
+
+function div_piv_impl!(
+        B::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Fval::AbstractVector{R},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        tA::Val{TA},
+        tB::Val{TB},
+        side::Val{SIDE},
+    ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
+    return div_piv_impl!(
+        B, Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        tA, tB, L.uplo, side, L.diag
+    )
+end
+
+function div_piv_impl!(
+        B::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+        rng::AbstractRange{I} = vertices(res),
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+
+    ns = zero(I); Mptr[one(I)] = one(I)
+
+    if isforward(UPLO, TA, SIDE)
+        for j in rng
+            ns = div_piv_fwd_loop!(B, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tA, tB, uplo, side, diag)
+        end
+    else
+        for j in reverse(rng)
+            ns = div_piv_bwd_loop!(B, Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, res, rel, chd, ns, j, tA, tB, uplo, side, diag)
+        end
+    end
+
+    return B
+end
+
+function div_piv_fwd_loop!(
+        C::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    #
+    # nrhs is the number of right-hand sides
+    #
+    if C isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(C, 2))
+    else
+        nrhs = convert(I, size(C, 1))
+    end
+    #
+    # nn is the size of the residual at node j
+    #
+    #     nn = |res(j)|
+    #
+    nn = eltypedegree(res, j)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = |sep(j)|
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = |bag(j)|
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #        nrhs
+    #   F = [ F₁ ] nn
+    #       [ F₂ ] na
+    #
+    if C isa AbstractVector
+        F = view(Fval, oneto(nj))
+        F₁ = view(F, oneto(nn))
+        F₂ = view(F, nn + one(I):nj)
+    elseif SIDE === :L
+        F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
+        F₁ = view(F, oneto(nn), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
+    else
+        F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
+        F₁ = view(F, oneto(nrhs), oneto(nn))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    end
+    #
+    # B is part of the L factor
+    #
+    #        res(j)
+    #   B = [ D₁₁ ] res(j)
+    #       [ L₂₁ ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    D₁₁ = reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
+    #
+    # Compute rank by scanning diagonal of D₁₁
+    #
+    rank = zero(I)
+
+    @inbounds while rank < nn && ispositive(D₁₁[rank + one(I), rank + one(I)])
+        rank += one(I)
+    end
+
+    rD₁₁ = view(D₁₁, oneto(rank), oneto(rank))
+
+    if UPLO === :L
+         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
+        rL₂₁ = view(L₂₁, oneto(na), oneto(rank))
+    else
+         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
+        rL₂₁ = view(L₂₁, oneto(rank), oneto(na))
+    end
+    #
+    # C₁ is part of the right-hand side
+    #
+    #        nrhs
+    #   C = [ C₁ ] res(j)
+    #
+    if C isa AbstractVector
+         C₁ = view(C,  neighbors(res, j))
+        rC₁ = view(C₁, oneto(rank))
+        nC₁ = view(C₁, rank + one(I):nn)
+    elseif SIDE === :L
+         C₁ = view(C,  neighbors(res, j), oneto(nrhs))
+        rC₁ = view(C₁, oneto(rank),       oneto(nrhs))
+        nC₁ = view(C₁, rank + one(I):nn,  oneto(nrhs))
+    else
+         C₁ = view(C,  oneto(nrhs), neighbors(res, j))
+        rC₁ = view(C₁, oneto(nrhs), oneto(rank))
+        nC₁ = view(C₁, oneto(nrhs), rank + one(I):nn)
+    end
+    #
+    #     F ← 0
+    #
+    zerorec!(F)
+
+    for i in Iterators.reverse(neighbors(chd, j))
+        #
+        # add the update matrix for child i to F
+        #
+        #     F ← F + Rᵢ Mᵢ
+        #
+        div_fwd_update!(F, Mptr, Mval, rel, ns, i, side)
+        ns -= one(I)
+    end
+    #
+    #     C₁ ← C₁ + F₁
+    #
+    addrec!(C₁, F₁)
+    #
+    # Zero out null-space components
+    #
+    zerorec!(nC₁)
+    #
+    #     C₁ ← D₁₁⁻¹ C₁  (only the full-rank part)
+    #
+    if ispositive(rank)
+        if C isa AbstractVector
+            trsv!(uplo, tA, diag, rD₁₁, rC₁)
+        else
+            trsm!(side, uplo, tA, diag, 1, rD₁₁, rC₁)
+        end
+    end
+
+    if ispositive(na)
+        ns += one(I)
+        #
+        # M₂ is the update matrix for node j
+        #
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * nrhs
+
+        if C isa AbstractVector
+            M₂ = view(Mval, strt:stop - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:stop - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:stop - one(I)), nrhs, na)
+        end
+        #
+        #     M₂ ← F₂ - L₂₁ C₁  (only the full-rank part)
+        #
+        copyrec!(M₂, F₂)
+
+        if isforward(UPLO, :N, SIDE)
+            tL = Val(:N)
+        else
+            tL = tA
+        end
+
+        if ispositive(rank)
+            if C isa AbstractVector
+                gemv!(tL, -1, rL₂₁, rC₁, 1, M₂)
+            elseif SIDE === :L
+                gemm!(tL, tB, -1, rL₂₁, rC₁, 1, M₂)
+            else
+                gemm!(tB, tL, -1, rC₁, rL₂₁, 1, M₂)
+            end
+        end
+    end
+
+    return ns
+end
+
+function div_piv_bwd_loop!(
+        C::AbstractVecOrMat{R},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{R},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{R},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        tA::Val{TA},
+        tB::Val{TB},
+        uplo::Val{UPLO},
+        side::Val{SIDE},
+        diag::Val{DIAG},
+    ) where {T, R, I <: Integer, TA, TB, UPLO, SIDE, DIAG}
+    #
+    # nrhs is the number of right-hand sides
+    #
+    if C isa AbstractVector
+        nrhs = one(I)
+    elseif SIDE === :L
+        nrhs = convert(I, size(C, 2))
+    else
+        nrhs = convert(I, size(C, 1))
+    end
+    #
+    # nn is the size of the residual at node j
+    #
+    #     nn = |res(j)|
+    #
+    nn = eltypedegree(res, j)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = |sep(j)|
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = |bag(j)|
+    #
+    nj = nn + na
+    #
+    # B is part of the L factor
+    #
+    #        res(j)
+    #   B = [ D₁₁ ] res(j)
+    #       [ L₂₁ ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    D₁₁ = reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
+    #
+    # Compute rank by scanning diagonal of D₁₁
+    #
+    rank = zero(I)
+
+    @inbounds while rank < nn && ispositive(D₁₁[rank + one(I), rank + one(I)])
+        rank += one(I)
+    end
+
+    rD₁₁ = view(D₁₁, oneto(rank), oneto(rank))
+
+    if UPLO === :L
+         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
+        rL₂₁ = view(L₂₁, oneto(na), oneto(rank))
+    else
+         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
+        rL₂₁ = view(L₂₁, oneto(rank), oneto(na))
+    end
+    #
+    # C₁ is part of the right-hand side
+    #
+    #        nrhs
+    #   C = [ C₁ ] res(j)
+    #
+    if C isa AbstractVector
+         C₁ = view(C,  neighbors(res, j))
+        rC₁ = view(C₁, oneto(rank))
+        nC₁ = view(C₁, rank + one(I):nn)
+    elseif SIDE === :L
+         C₁ = view(C,  neighbors(res, j), oneto(nrhs))
+        rC₁ = view(C₁, oneto(rank),       oneto(nrhs))
+        nC₁ = view(C₁, rank + one(I):nn,  oneto(nrhs))
+    else
+         C₁ = view(C,  oneto(nrhs), neighbors(res, j))
+        rC₁ = view(C₁, oneto(nrhs), oneto(rank))
+        nC₁ = view(C₁, oneto(nrhs), rank + one(I):nn)
+    end
+    #
+    # subtract the update matrix from ancestor
+    #
+    #     C₁ ← C₁ - L₂₁ᴴ M₂  (only the full-rank part)
+    #
+    if ispositive(na)
+        strt = Mptr[ns]
+
+        if C isa AbstractVector
+            M₂ = view(Mval, strt:strt + na - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
+        end
+
+        ns -= one(I)
+
+        if isforward(UPLO, :N, SIDE)
+            tL = tA
+        else
+            tL = Val(:N)
+        end
+
+        if ispositive(rank)
+            if C isa AbstractVector
+                gemv!(tL, -1, rL₂₁, M₂, 1, rC₁)
+            elseif SIDE === :L
+                gemm!(tL, Val(:N), -1, rL₂₁, M₂, 1, rC₁)
+            else
+                gemm!(Val(:N), tL, -1, M₂, rL₂₁, 1, rC₁)
+            end
+        end
+    end
+    #
+    # Zero out null-space components
+    #
+    zerorec!(nC₁)
+    #
+    #     C₁ ← D₁₁⁻ᴴ C₁  (only the full-rank part)
+    #
+    if ispositive(rank)
+        if C isa AbstractVector
+            trsv!(uplo, tA, diag, rD₁₁, rC₁)
+        else
+            trsm!(side, uplo, tA, diag, 1, rD₁₁, rC₁)
+        end
+    end
+    #
+    # F is the frontal matrix at node j
+    #
+    #        nrhs
+    #   F = [ F₁ ] nn
+    #       [ F₂ ] na
+    #
+    if C isa AbstractVector
+        F = view(Fval, oneto(nj))
+        F₁ = view(F, oneto(nn))
+        F₂ = view(F, nn + one(I):nj)
+    elseif SIDE === :L
+        F = reshape(view(Fval, oneto(nj * nrhs)), nj, nrhs)
+        F₁ = view(F, oneto(nn), oneto(nrhs))
+        F₂ = view(F, nn + one(I):nj, oneto(nrhs))
+    else
+        F = reshape(view(Fval, oneto(nj * nrhs)), nrhs, nj)
+        F₁ = view(F, oneto(nrhs), oneto(nn))
+        F₂ = view(F, oneto(nrhs), nn + one(I):nj)
+    end
+    #
+    #     F₁ ← C₁
+    #
+    copyrec!(F₁, C₁)
+    #
+    #     F₂ ← M₂
+    #
+    if ispositive(na)
+        strt = Mptr[ns + one(I)]
+
+        if C isa AbstractVector
+            M₂ = view(Mval, strt:strt + na - one(I))
+        elseif SIDE === :L
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), na, nrhs)
+        else
+            M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
+        end
+
+        copyrec!(F₂, M₂)
+    end
+
+    for i in neighbors(chd, j)
+        #
+        # push F restricted to sep(i) to child i
+        #
+        #     Mᵢ ← Rᵢᵀ F
+        #
+        ns += one(I)
+        div_bwd_update!(F, Mptr, Mval, rel, ns, i, side)
+    end
+
+    return ns
 end
 
 # ================================ ldiv!! ================================

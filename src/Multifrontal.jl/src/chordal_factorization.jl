@@ -315,11 +315,11 @@ end
 # ===== flatindices =====
 
 function flatindices(F::ChordalFactorization{DIAG, UPLO}, A::SparseMatrixCSC; check::Bool=true) where {DIAG, UPLO}
-    return flatindices(F.invp, F.S, A, Val(UPLO); check)
+    return flatindices(F.P, F.S, A, Val(UPLO); check)
 end
 
 function flatindices(F::ChordalFactorization{DIAG, UPLO}, A::HermOrSym) where {DIAG, UPLO}
-    return flatindices(F.invp, F.S, A, Val(UPLO))
+    return flatindices(F.P, F.S, A, Val(UPLO))
 end
 
 function getflatindex(F::ChordalFactorization, p::Integer)

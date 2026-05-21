@@ -260,6 +260,42 @@ end
     end
 end
 
+@testset "semidefinite (pivoted)" begin
+    # Sheaf Laplacian L = D'D where D is a coboundary operator (double integrator dynamics)
+    # This matrix has a 6-dimensional null space, testing pivoted factorization on rank-deficient matrices
+    h = 0.25
+    ρ = [1 h h^2/2; 0 1 h]      # dynamics restriction map [A_d | B_d]
+    σ = [-1 0 0; 0 -1 0]        # state projection map -[I | 0]
+    D = spzeros(18, 24)
+    D[1:2,   1:2]   = -I(2)                         # boundary edge
+    D[3:4,   1:3]   = ρ;   D[3:4,   4:6]   = σ      # dynamics edges
+    D[5:6,   4:6]   = ρ;   D[5:6,   7:9]   = σ
+    D[7:8,   7:9]   = ρ;   D[7:8,   10:12] = σ
+    D[9:10,  10:12] = ρ;   D[9:10,  13:15] = σ
+    D[11:12, 13:15] = ρ;   D[11:12, 16:18] = σ
+    D[13:14, 16:18] = ρ;   D[13:14, 19:21] = σ
+    D[15:16, 19:21] = ρ;   D[15:16, 22:23] = σ[:, 1:2]
+    D[17:18, 22:24] = ρ                              # last edge (no target projection)
+    L = D' * D
+
+    # Verify it's semidefinite with non-trivial null space
+    eigs = eigvals(Matrix(L))
+    @test minimum(eigs) ≈ 0 atol=1e-10
+    @test count(e -> abs(e) < 1e-10, eigs) == 6  # 6-dimensional null space
+
+    for UPLO in (:L, :U)
+        # Pivoted Cholesky should handle semidefinite matrices
+        F = ChordalCholesky{UPLO}(L)
+        cholesky!(F, RowMaximum())
+        @test L ≈ Matrix(F) rtol=1e-10
+
+        # Pivoted LDLt should also work
+        F = ChordalLDLt{UPLO}(L)
+        ldlt!(F, RowMaximum())
+        @test L ≈ Matrix(F) rtol=1e-10
+    end
+end
+
 @testset "condition number" begin
     A = readmatrix("bcsstk26")
     F = cholesky!(ChordalCholesky(A))

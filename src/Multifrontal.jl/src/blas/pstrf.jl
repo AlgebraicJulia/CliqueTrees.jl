@@ -48,7 +48,7 @@ function pstrf2!(uplo::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::Abst
     n = size(A, 1)
 
     @inbounds for j in bstrt:bstop
-        pstrf_pivot!(uplo, A, D, P, S, R, tol, j) || return 0, j - 1
+        pstrf_pivot!(uplo, A, D, P, S, R, tol, j) || return j, j - 1
 
         for k in bstrt:j - 1
             cLjk = conj(A[j, k])
@@ -64,7 +64,7 @@ function pstrf2!(uplo::Val{:L}, A::AbstractMatrix{T}, D::AbstractVector, P::Abst
 
         Djj = regularize(R, S, real(D[j]), j)
 
-        iszero(Djj) && return 0, j - 1
+        iszero(Djj) && return j, j - 1
 
         if DIAG === :N
             A[j, j] = Djj = sqrt(Djj)
@@ -94,11 +94,11 @@ function pstrf2!(uplo::Val{:U}, A::AbstractMatrix{T}, D::AbstractVector, P::Abst
     n = size(A, 1)
 
     @inbounds for j in bstrt:bstop
-        pstrf_pivot!(uplo, A, D, P, S, R, tol, j) || return 0, j - 1
+        pstrf_pivot!(uplo, A, D, P, S, R, tol, j) || return j, j - 1
 
         Djj = regularize(R, S, real(D[j]), j)
 
-        iszero(Djj) && return 0, j - 1
+        iszero(Djj) && return j, j - 1
 
         if DIAG === :N
             A[j, j] = Djj = sqrt(Djj)
@@ -163,8 +163,25 @@ for (pstrf, T, R) in
     end
 end
 
-function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, P::AbstractVector{BlasInt}, tol::Real) where {T <: BlasFloat}
+function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, P::AbstractVector{BlasInt}, tol::Real=-one(real(T))) where {T <: BlasFloat}
     return pstrf!(char(uplo), A, P, reinterpret(real(T), W), tol)
+end
+
+function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, P::AbstractVector, R_or_tol::Union{Real, AbstractRegularization}=-one(real(T))) where {T}
+    n = size(A, 1)
+    S = Ones{T}(n)
+    M = Ones{T}(n * n)
+    diag = Val(:N)
+
+    if R_or_tol isa AbstractRegularization
+        R = R_or_tol
+        tol = -one(real(T))
+    else
+        R = NoRegularization()
+        tol = R_or_tol
+    end
+
+    return pstrf!(uplo, M, A, W, P, S, R, tol, diag)
 end
 
 function pstrf!(uplo::Val, W::AbstractVector{T}, A::AbstractMatrix{T}, D::AbstractVector{T}, P::AbstractVector{BlasInt}, ::AbstractVector{T}, ::NoRegularization, tol::Real, ::Val{:N}) where {T <: BlasFloat}

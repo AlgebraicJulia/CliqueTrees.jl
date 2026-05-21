@@ -81,12 +81,43 @@ function complete_loop!(
         j::I,
         uplo::Val{UPLO},
     ) where {UPLO, T, I <: Integer}
-    #
-    # nn is the size of the residual at node j
-    #
-    #     nn = | res(j) |
-    #
     nn = eltypedegree(res, j)
+
+    if isone(nn)
+        return complete_loop_nod!(
+            Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            Fval,
+            res, rel, chd, ns, j, uplo
+        )
+    else
+        return complete_loop_snd!(
+            Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            Fval,
+            res, rel, chd, ns, nn, j, uplo
+        )
+    end
+end
+
+function complete_loop_snd!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        uplo::Val{UPLO},
+    ) where {UPLO, T, I <: Integer}
     #
     # na is the size of the separator at node j
     #
@@ -216,6 +247,159 @@ function complete_loop!(
     end
 
     trtri!(uplo, Val(:N), D₁₁)
+
+    for i in neighbors(chd, j)
+        #
+        # send update matrix to child i
+        #
+        #     Mᵢ ← Rᵢᵀ F Rᵢ
+        #
+        ns += one(I)
+        complete_send!(F, Mptr, Mval, rel, ns, i, uplo)
+    end
+
+    return ns, zero(I)
+end
+
+# Fast path for nn = 1 (residual size is 1)
+# In this case, diagonal blocks are scalars and off-diagonal blocks are vectors
+function complete_loop_nod!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        uplo::Val{UPLO},
+    ) where {UPLO, T, I <: Integer}
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) | = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #           1   na
+    #     F = [ f₁₁     ] 1
+    #         [ f₂₁ F₂₂ ] na
+    #
+    F = reshape(view(Fval, oneto(nj * nj)), nj, nj)
+
+    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    if UPLO === :L
+        f₂₁ = view(F, nn + one(I):nj, one(I))
+    else
+        f₂₁ = view(F, one(I), nn + one(I):nj)
+    end
+    #
+    # L is part of the Cholesky factor (d₁₁ is scalar, l₂₁ is vector)
+    #
+    #          res(j)
+    #     L = [ d₁₁  ] res(j)
+    #         [ l₂₁  ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    d₁₁ = Dval[Dp]
+    l₂₁ = view(Lval, Lp:Lp + na - one(I))
+    #
+    # copy L into F
+    #
+    #     f₁₁ ← d₁₁
+    #     f₂₁ ← l₂₁
+    #
+    F[one(I)] = d₁₁
+    copyrec!(f₂₁, l₂₁)
+
+    if ispositive(na)
+        #
+        # M₂₂ is the update matrix from the parent of node j
+        #
+        strt = Mptr[ns]
+        M₂₂ = reshape(view(Mval, strt:strt + na * na - one(I)), na, na)
+        ns -= one(I)
+        #
+        # copy M into F
+        #
+        #     F₂₂ ← M₂₂
+        #
+        copytri!(F₂₂, M₂₂, uplo)
+        #
+        # factorize M₂₂
+        #
+        #     M₂₂ ← chol(M₂₂)
+        #
+        info = potrf!(uplo, M₂₂)
+        ispositive(info) && return ns, info
+        #
+        # solve
+        #
+        #     l₂₁ ← M₂₂⁻¹ l₂₁ (trsv for vectors)
+        #
+        if UPLO === :L
+            trsv!(Val(:L), Val(:N), Val(:N), M₂₂, l₂₁)
+        else
+            trsv!(Val(:U), Val(:T), Val(:N), M₂₂, l₂₁)
+        end
+        #
+        #     d₁₁ ← d₁₁ - l₂₁ᴴ l₂₁ (dot product)
+        #
+        d₁₁ -= dot(l₂₁, l₂₁)
+        #
+        # solve
+        #
+        #     l₂₁ ← -M₂₂⁻ᴴ l₂₁ (trsv for vectors, then negate)
+        #
+        if UPLO === :L
+            trsv!(Val(:L), Val(:C), Val(:N), M₂₂, l₂₁)
+        else
+            trsv!(Val(:U), Val(:N), Val(:N), M₂₂, l₂₁)
+        end
+
+        rmul!(l₂₁, -one(T))
+    end
+    #
+    #     d₁₁ ← sqrt(d₁₁) (scalar Cholesky, check positive definite)
+    #
+    if !ispositive(real(d₁₁))
+        return ns, one(I)
+    end
+
+    d₁₁ = sqrt(d₁₁)
+
+    if ispositive(na)
+        #
+        #     l₂₁ ← l₂₁ / d₁₁
+        #
+        rdiv!(l₂₁, d₁₁)
+    end
+    #
+    #     d₁₁ ← 1 / d₁₁
+    #
+    d₁₁ = inv(d₁₁)
+    #
+    # Write back scalar
+    #
+    Dval[Dp] = d₁₁
 
     for i in neighbors(chd, j)
         #

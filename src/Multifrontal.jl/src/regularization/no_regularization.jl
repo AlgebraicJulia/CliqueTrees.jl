@@ -31,3 +31,12 @@ function regularize(::NoRegularization, S::AbstractVector, Djj, j::Integer)
         return Djj
     end
 end
+
+# Fast path for nn = 1: D is scalar, L is vector (l is ignored)
+function regularize(::NoRegularization, s, Djj, ::AbstractVector)
+    if !iszero(s) && !ispositive(real(s) * Djj)
+        return zero(Djj)
+    else
+        return Djj
+    end
+end

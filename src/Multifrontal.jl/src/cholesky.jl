@@ -246,6 +246,40 @@ end
 function chol_impl!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{:N, UPLO, T, I},
+        R::AbstractRegularization=NoRegularization(),
+    ) where {UPLO, T, I <: Integer}
+    n = ncl(L)
+    d = Ones{T}(n)
+    S = Ones{T}(n)
+    info = chol_impl!(Mptr, Mval, Fval, L, d, S, R)
+    return info
+end
+
+function chol_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector{T},
+        S::AbstractVector{T},
+        R::AbstractRegularization=NoRegularization(),
+    ) where {DIAG, UPLO, T, I <: Integer}
+    info = chol_impl!(
+        Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        d, Fval,
+        L.S.res, L.S.rel, L.S.chd,
+        L.uplo, S, R, L.diag)
+
+    return info
+end
+
+function chol_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
@@ -276,46 +310,6 @@ function chol_impl!(
     return zero(I)
 end
 
-#
-# Convenience wrapper that unpacks ChordalTriangular types (with d, S).
-#
-function chol_impl!(
-        Mptr::AbstractVector{I},
-        Mval::AbstractVector{T},
-        Fval::AbstractVector{T},
-        L::ChordalTriangular{DIAG, UPLO, T, I},
-        d::AbstractVector{T},
-        S::AbstractVector{T},
-        R::AbstractRegularization=NoRegularization(),
-    ) where {DIAG, UPLO, T, I <: Integer}
-    info = chol_impl!(
-        Mptr, Mval,
-        L.S.Dptr, L.Dval,
-        L.S.Lptr, L.Lval,
-        d, Fval,
-        L.S.res, L.S.rel, L.S.chd,
-        L.uplo, S, R, L.diag)
-
-    return info
-end
-
-#
-# Convenience wrapper for Cholesky (not LDLt) - creates d, S internally.
-#
-function chol_impl!(
-        Mptr::AbstractVector{I},
-        Mval::AbstractVector{T},
-        Fval::AbstractVector{T},
-        L::ChordalTriangular{:N, UPLO, T, I},
-        R::AbstractRegularization=NoRegularization(),
-    ) where {UPLO, T, I <: Integer}
-    n = ncl(L)
-    d = Ones{T}(n)
-    S = Ones{T}(n)
-    info = chol_impl!(Mptr, Mval, Fval, L, d, S, R)
-    return info
-end
-
 function chol_loop!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
@@ -335,12 +329,47 @@ function chol_loop!(
         R::AbstractRegularization,
         diag::Val{DIAG},
     ) where {T, I <: Integer, UPLO, DIAG}
-    #
-    # nn is the size of the residual at node j
-    #
-    #     nn = | res(j) |
-    #
     nn = eltypedegree(res, j)
+
+    if isone(nn)
+        return chol_loop_nod!(
+            Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            d, Fval,
+            res, rel, chd, ns, j, uplo, S, R, diag
+        )
+    else
+        return chol_loop_snd!(
+            Mptr, Mval,
+            Dptr, Dval,
+            Lptr, Lval,
+            d, Fval,
+            res, rel, chd, ns, nn, j, uplo, S, R, diag
+        )
+    end
+end
+
+function chol_loop_snd!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        d::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        uplo::Val{UPLO},
+        S::AbstractVector{T},
+        R::AbstractRegularization,
+        diag::Val{DIAG},
+    ) where {T, I <: Integer, UPLO, DIAG}
     #
     # na is the size of the separator at node j
     #
@@ -410,9 +439,18 @@ function chol_loop!(
     addtri!(D₁₁, F₁₁, uplo)
     addrec!(L₂₁, F₂₁)
     #
-    # M₂₂ is the update matrix for node j
+    # factorize D₁₁ and solve for L₂₁
     #
+    #     D₁₁ ← cholesky(D₁₁)
+    #     L₂₁ ← L₂₁ D₁₁⁻ᴴ
+    #
+    info = chol_factor!(D₁₁, L₂₁, Fval, d₁₁, S₁₁, R, uplo, diag)
+    !iszero(info) && return ns, convert(I, info)
+
     if ispositive(na)
+        #
+        # M₂₂ is the update matrix for node j
+        #
         ns += one(I)
         strt = Mptr[ns]
         stop = Mptr[ns + one(I)] = strt + na * na
@@ -421,65 +459,155 @@ function chol_loop!(
         #     M₂₂ ← F₂₂
         #
         copytri!(M₂₂, F₂₂, uplo)
-    else
-        M₂₂ = reshape(view(Mval, one(I):zero(I)), zero(I), zero(I))
-    end
 
-    info = convert(I, chol_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, S₁₁, R, uplo, diag))
-
-    if ispositive(na) && ispositive(info)
-        ns -= one(I)
-    end
-
-    return ns, info
-end
-
-@inline function chol_kernel!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
-        M::AbstractMatrix{T},
-        W::AbstractVector{T},
-        d::AbstractVector{T},
-        S::AbstractVector{T},
-        R::AbstractRegularization,
-        uplo::Val{UPLO},
-        diag::Val{DIAG},
-    ) where {T, UPLO, DIAG}
-    @assert size(D, 1) == size(D, 2)
-    @assert size(M, 1) == size(M, 2)
-
-    if UPLO === :L
-        @assert size(L, 1) == size(M, 1)
-        @assert size(L, 2) == size(D, 1)
-    else
-        @assert size(L, 1) == size(D, 1)
-        @assert size(L, 2) == size(M, 1)
-    end
-
-    if DIAG === :U
-        @assert size(D, 1) == length(d)
-        @assert length(L) <= length(W)
-    end
-    #
-    # factorize D
-    #
-    #     D ← cholesky(D)
-    #
-    info = chol_factor!(D, L, W, d, S, R, uplo, diag)
-
-    if iszero(info) && !isempty(M)
         if UPLO === :L
             trans = Val(:N)
         else
             trans = Val(:C)
         end
         #
-        #     M ← M - L Lᴴ
+        #     M₂₂ ← M₂₂ - L₂₁ L₂₁ᴴ
         #
-        syrk!(uplo, trans, -one(real(T)), W, L, d, one(real(T)), M, diag)
+        syrk!(uplo, trans, -one(real(T)), Fval, L₂₁, d₁₁, one(real(T)), M₂₂, diag)
     end
 
-    return info
+    return ns, zero(I)
+end
+
+# Fast path for nn = 1 (residual size is 1)
+# In this case, diagonal blocks are scalars and off-diagonal blocks are vectors
+function chol_loop_nod!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        d::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        uplo::Val{UPLO},
+        S::AbstractVector{T},
+        R::AbstractRegularization,
+        diag::Val{DIAG},
+    ) where {T, I <: Integer, UPLO, DIAG}
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) | = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #           1   na
+    #     F = [ f₁₁     ] 1
+    #         [ f₂₁ F₂₂ ] na
+    #
+    F = reshape(view(Fval, oneto(nj * nj)), nj, nj)
+
+    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    if UPLO === :L
+        f₂₁ = view(F, nn + one(I):nj, one(I))
+    else
+        f₂₁ = view(F, one(I), nn + one(I):nj)
+    end
+    #
+    # L is part of the Cholesky factor (d₁₁ is scalar, l₂₁ is vector)
+    #
+    #          res(j)
+    #     L = [ d₁₁  ] res(j)
+    #         [ l₂₁  ] sep(j)
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    Rp = pointers(res)[j]
+    s₁ = S[Rp]
+    l₂₁ = view(Lval, Lp:Lp + na - one(I))
+    #
+    #     F ← 0
+    #
+    zerotri!(F, uplo)
+
+    for i in Iterators.reverse(neighbors(chd, j))
+        #
+        # add the update matrix for child i to F
+        #
+        #   F ← F + Rᵢ Sᵢ Rᵢᵀ
+        #
+        chol_send!(F, Mptr, Mval, rel, ns, i, uplo)
+        ns -= one(I)
+    end
+    #
+    # add F to L (scalar and vector additions)
+    #
+    #     d₁₁ ← d₁₁ + f₁₁
+    #     l₂₁ ← l₂₁ + f₂₁
+    #
+    d₁₁ = Dval[Dp] + F[one(I)]
+    addrec!(l₂₁, f₂₁)
+    #
+    # regularize d₁₁
+    #
+    d₁₁ = regularize(R, s₁, real(d₁₁), l₂₁)
+
+    if iszero(d₁₁)
+        return ns, one(I)
+    end
+
+    if DIAG === :N
+        d₁₁ = sqrt(d₁₁)
+        Dval[Dp] = d₁₁
+    else
+        d[Rp] = d₁₁
+    end
+
+    if ispositive(na)
+        #
+        # M₂₂ is the update matrix for node j
+        #
+        ns += one(I)
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * na
+        M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
+        #
+        #     M₂₂ ← F₂₂
+        #
+        copytri!(M₂₂, F₂₂, uplo)
+        #
+        #     l₂₁ ← l₂₁ / d₁₁
+        #
+        rdiv!(l₂₁, d₁₁)
+
+        if DIAG === :U
+            #
+            #     M₂₂ ← M₂₂ - d₁₁ l₂₁ l₂₁ᴴ
+            #
+            syr!(uplo, -d₁₁, l₂₁, M₂₂)
+        else
+            #
+            #     M₂₂ ← M₂₂ - l₂₁ l₂₁ᴴ
+            #
+            syr!(uplo, -one(real(T)), l₂₁, M₂₂)
+        end
+    end
+
+    return ns, zero(I)
 end
 
 @inline function chol_factor!(

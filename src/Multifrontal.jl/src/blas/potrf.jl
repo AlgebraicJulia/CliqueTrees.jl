@@ -89,12 +89,11 @@ function potrf!(uplo::Val{UPLO}, A::AbstractMatrix{T}) where {T <: BlasFloat, UP
     return info
 end
 
-function potrf!(uplo::Val{UPLO}, A::AbstractMatrix{T}) where {T, UPLO}
+function potrf!(uplo::Val{UPLO}, A::AbstractMatrix{T}, R::AbstractRegularization=NoRegularization()) where {T, UPLO}
     n = size(A, 1)
     W = Ones{T}(n * n)
     d = Ones{T}(n)
     S = Ones{T}(n)
-    R = NoRegularization()
     diag = Val(:N)
     return potrf!(uplo, W, A, d, S, R, diag)
 end

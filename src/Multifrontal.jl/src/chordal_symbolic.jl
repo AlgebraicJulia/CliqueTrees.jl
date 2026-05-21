@@ -532,7 +532,11 @@ function flatindices(S::ChordalSymbolic{I}, B::SparseMatrixCSC, ::Val{:U}) where
     return P
 end
 
-function flatindices(invp::AbstractVector{I}, S::ChordalSymbolic{I}, A::SparseMatrixCSC, uplo::Val{UPLO}; check::Bool=true) where {I, UPLO}
+function flatindices(P::Permutation, S::ChordalSymbolic, A::SparseMatrixCSC, uplo::Val; check::Bool=true)
+    return flatindices(P.invp, S, A, uplo; check)
+end
+
+function flatindices(invp::AbstractVector, S::ChordalSymbolic, A::SparseMatrixCSC, uplo::Val{UPLO}; check::Bool=true) where {UPLO}
     if !check || ishermitian(A)
         return flatindices(invp, S, Hermitian(A, UPLO), uplo)
     elseif istril(A)
@@ -542,6 +546,10 @@ function flatindices(invp::AbstractVector{I}, S::ChordalSymbolic{I}, A::SparseMa
     end
 
     error()
+end
+
+function flatindices(P::Permutation, S::ChordalSymbolic, A::HermOrSym, uplo::Val)
+    return flatindices(P.invp, S, A, uplo)
 end
 
 function flatindices(invp::AbstractVector{I}, S::ChordalSymbolic{I}, A::HermOrSym, uplo::Val{UPLO}) where {I, UPLO}

@@ -204,10 +204,10 @@ function chol_se99_piv_fwd_loop!(
     #
     # update invp with local pivot permutation
     #
-    offset = first(neighbors(res, j)) - one(I)
+    off = pointers(res)[j] - one(I)
 
     @inbounds for v in oneto(nn)
-        invp[offset + piv[v]] = offset + v
+        invp[off + piv[v]] = off + v
     end
 
     return ns, deltapos, deltaneg, phase

@@ -24,13 +24,86 @@ function factorize!(
         R = initialize(L, signs, reg)
     end
 
+    info = chol_piv_impl!(Mptr, Mval, Fval, piv, mval, fval, L, d, perm, invp, signs, R)
+
+    return info
+end
+
+# ============================= chol_piv_impl! =============================
+
+function chol_piv_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        piv::AbstractVector{<:Integer},
+        mval::AbstractVector{I},
+        fval::AbstractVector{I},
+        L::ChordalTriangular{:N, UPLO, T, I},
+        perm::AbstractVector{I},
+        invp::AbstractVector{I},
+        R::Union{AbstractRegularization, Real}=-one(real(T)),
+    ) where {UPLO, T, I <: Integer}
+    n = ncl(L)
+    d = Ones{T}(n)
+    S = Ones{T}(n)
+    return chol_piv_impl!(Mptr, Mval, Fval, piv, mval, fval, L, d, perm, invp, S, R)
+end
+
+function chol_piv_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        piv::AbstractVector{<:Integer},
+        mval::AbstractVector{I},
+        fval::AbstractVector{I},
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector{T},
+        perm::AbstractVector{I},
+        invp::AbstractVector{I},
+        S::AbstractVector{T},
+        R::Union{AbstractRegularization, Real},
+    ) where {DIAG, UPLO, T, I <: Integer}
+    return chol_piv_impl!(
+        Mptr, Mval,
+        L.S.Dptr, L.Dval,
+        L.S.Lptr, L.Lval,
+        d, Fval, piv, mval, fval,
+        L.S.res, L.S.rel, L.S.sep, L.S.chd,
+        perm, invp, S, R, L.uplo, L.diag
+    )
+end
+
+function chol_piv_impl!(
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        d::AbstractVector{T},
+        Fval::AbstractVector{T},
+        piv::AbstractVector{<:Integer},
+        mval::AbstractVector{I},
+        fval::AbstractVector{I},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        perm::AbstractVector{I},
+        invp::AbstractVector{I},
+        S::AbstractVector{T},
+        R::Union{AbstractRegularization, Real},
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+    ) where {T, I <: Integer, UPLO, DIAG}
+
     info = chol_piv_fwd!(
-        Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, d, Fval,
-        L.S.res, L.S.rel, L.S.chd, piv, perm, signs, R, L.uplo, L.diag
+        Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
+        res, rel, chd, piv, perm, S, R, uplo, diag
     )
 
-    chol_piv_bwd!(Mptr, mval, fval, L.S.Dptr, L.S.Lptr, L.Lval, L.S.res, L.S.rel, L.S.sep, L.S.chd, perm, Fval, L.uplo)
-    chol_piv_rel!(L.S.res, L.S.sep, L.S.rel, L.S.chd)
+    chol_piv_bwd!(Mptr, mval, fval, Dptr, Lptr, Lval, res, rel, sep, chd, perm, Fval, uplo)
+    chol_piv_rel!(res, sep, rel, chd)
 
     @inbounds for i in eachindex(invp)
         invp[i] = perm[invp[i]]
@@ -44,9 +117,6 @@ function factorize!(
 end
 
 # ============================= chol_piv_fwd! =============================
-#
-# Unified pivoted forward pass for Cholesky (Val{:N}) and LDLt (Val{:U})
-#
 
 function chol_piv_fwd!(
         Mptr::AbstractVector{I},
@@ -157,9 +227,20 @@ function chol_piv_fwd_loop!(
         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
     end
     #
-    # d₁₁ is the diagonal for the vertices in res(j)
+    # S₁₁ is the signs for the vertices in res(j)
     #
-    d₁₁ = view(d, neighbors(res, j))
+    S₁₁ = view(S, neighbors(res, j))
+    #
+    # d₁₁ is the diagonal workspace
+    #
+    #     Cholesky: use Fval (workspace)
+    #     LDLt:     use view of d (actual diagonal storage)
+    #
+    if DIAG === :N
+        d₁₁ = Fval
+    else
+        d₁₁ = view(d, neighbors(res, j))
+    end
     #
     #     F ← 0
     #
@@ -182,6 +263,10 @@ function chol_piv_fwd_loop!(
     addtri!(D₁₁, F₁₁, uplo)
     addrec!(L₂₁, F₂₁)
     #
+    # pivoted factorization
+    #
+    info, rank = chol_piv_factor!(D₁₁, L₂₁, Fval, d₁₁, piv, S₁₁, R, uplo, diag)
+    #
     # M₂₂ is the update matrix for node j
     #
     if ispositive(na)
@@ -193,95 +278,38 @@ function chol_piv_fwd_loop!(
         #     M₂₂ ← F₂₂
         #
         copytri!(M₂₂, F₂₂, uplo)
-    else
-        M₂₂ = reshape(view(Mval, one(I):zero(I)), zero(I), zero(I))
+        #
+        # Schur complement update
+        #
+        if ispositive(rank)
+            rd = view(d₁₁, 1:rank)
+
+            if UPLO === :L
+                rL = view(L₂₁, :, 1:rank)
+                trans = Val(:N)
+            else
+                rL = view(L₂₁, 1:rank, :)
+                trans = Val(:C)
+            end
+
+            syrk!(uplo, trans, -one(real(T)), Fval, rL, rd, one(real(T)), M₂₂, diag)
+        end
     end
-    #
-    # S₁₁ is the signs for the vertices in res(j)
-    #
-    S₁₁ = view(S, neighbors(res, j))
-    #
-    # pivoted factorization
-    #
-    info = chol_piv_kernel!(D₁₁, L₂₁, M₂₂, Fval, d₁₁, piv, S₁₁, R, uplo, diag)
     #
     # update invp with local pivot permutation
     # invp maps P-indices to Q-indices
-    # piv[k] = p means vertex (offset + p) gets Q-index (offset + k)
+    # piv[k] = p means vertex (off + p) gets Q-index (off + k)
     #
-    offset = first(neighbors(res, j)) - one(I)
+    off = pointers(res)[j] - one(I)
 
     @inbounds for v in oneto(nn)
-        invp[offset + piv[v]] = offset + v
+        invp[off + piv[v]] = off + v
     end
 
     return ns, info
 end
 
-# ============================= chol_piv_kernel! =============================
-#
-# Unified pivoted factorization kernel for Cholesky (Val{:N}) and LDLt (Val{:U})
-#
-
-function chol_piv_kernel!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
-        M::AbstractMatrix{T},
-        W::AbstractVector{T},
-        d::AbstractFill{T},
-        P::AbstractVector,
-        S::AbstractVector{T},
-        R::Union{AbstractRegularization, Real},
-        uplo::Val{UPLO},
-        diag::Val{:N},
-    ) where {T, UPLO}
-    return chol_piv_kernel!(D, L, M, W, W, P, S, R, uplo, diag)
-end
-
-function chol_piv_kernel!(
-        D::AbstractMatrix{T},
-        L::AbstractMatrix{T},
-        M::AbstractMatrix{T},
-        W::AbstractVector{T},
-        d::AbstractVector{T},
-        P::AbstractVector,
-        S::AbstractVector{T},
-        R::Union{AbstractRegularization, Real},
-        uplo::Val{UPLO},
-        diag::Val{DIAG},
-    ) where {T, UPLO, DIAG}
-    @assert size(D, 1) == size(D, 2)
-    @assert size(M, 1) == size(M, 2)
-
-    if UPLO === :L
-        @assert size(L, 1) == size(M, 1)
-        @assert size(L, 2) == size(D, 1)
-    else
-        @assert size(L, 1) == size(D, 1)
-        @assert size(L, 2) == size(M, 1)
-    end
-
-    info, rank = chol_piv_factor!(D, L, W, d, P, S, R, uplo, diag)
-
-    if iszero(info) && !isempty(M) && ispositive(rank)
-        #
-        # Use only the first `rank` columns/rows for the Schur complement
-        #
-        rd = view(d, 1:rank)
-
-        if UPLO === :L
-            rL = view(L, :, 1:rank)
-            trans = Val(:N)
-        else
-            rL = view(L, 1:rank, :)
-            trans = Val(:C)
-        end
-
-        syrk!(uplo, trans, -one(real(T)), W, rL, rd, one(real(T)), M, diag)
-    end
-
-    return info
-end
+# ============================= chol_piv_factor! =============================
 
 function chol_piv_factor!(
         D::AbstractMatrix{T},
@@ -308,17 +336,11 @@ function chol_piv_factor!(
     #
     info, rank = pstrf!(uplo, W, D, d, P, S, NoRegularization(), tol, diag)
     #
-    # zero out the rank-deficient part of D and L
+    # zero out the rank-deficient part of D
     #
     zerotri!(D, rank + 1:size(D, 1), uplo)
 
-    if UPLO === :L
-        zerorec!(L, rank + 1:size(D, 1), Val(:R))
-    else
-        zerorec!(L, rank + 1:size(D, 1), Val(:L))
-    end
-
-    if iszero(info) && !isempty(L) && ispositive(rank)
+    if !isempty(L)
         #
         # permute L by pivot
         #
@@ -331,24 +353,37 @@ function chol_piv_factor!(
             copygatherrec!(L, M, P, Val(:L))
         end
         #
-        # Use only the first `rank` columns/rows for the solve
+        # zero out the rank-deficient part of L (after permutation)
         #
-        rD = view(D, 1:rank, 1:rank)
-        rd = view(d, 1:rank)
-
         if UPLO === :L
-            rL = view(L, :, 1:rank)
-            side = Val(:R)
+            zerorec!(L, rank + 1:size(D, 1), Val(:R))
         else
-            rL = view(L, 1:rank, :)
-            side = Val(:L)
+            zerorec!(L, rank + 1:size(D, 1), Val(:L))
         end
         #
-        #     rL ← rL rD⁻ᴴ       (Cholesky)
-        #     rL ← rL rD⁻ᴴ rd⁻¹  (LDLt)
+        # triangular solve
         #
-        trsm!(side, uplo, Val(:C), diag, one(T), rD, rL)
-        cdiv!(side, diag, rL, rd)
+        if ispositive(rank)
+            #
+            # Use only the first `rank` columns/rows for the solve
+            #
+            rD = view(D, 1:rank, 1:rank)
+            rd = view(d, 1:rank)
+
+            if UPLO === :L
+                rL = view(L, :, 1:rank)
+                side = Val(:R)
+            else
+                rL = view(L, 1:rank, :)
+                side = Val(:L)
+            end
+            #
+            #     rL ← rL rD⁻ᴴ       (Cholesky)
+            #     rL ← rL rD⁻ᴴ rd⁻¹  (LDLt)
+            #
+            trsm!(side, uplo, Val(:C), diag, one(T), rD, rL)
+            cdiv!(side, diag, rL, rd)
+        end
     end
 
     return info, rank
@@ -479,26 +514,16 @@ function chol_piv_bwd_loop!(
     copyrec!(F₂₁, L₂₁)
 
     if UPLO === :L
-        @inbounds for k in oneto(nn)
-            for i in oneto(na)
-                L₂₁[i, k] = F₂₁[s₂[i], k]
-            end
-        end
+        copygatherrec!(L₂₁, F₂₁, s₂, Val(:L))
     else
-        @inbounds for i in oneto(na)
-            for k in oneto(nn)
-                L₂₁[k, i] = F₂₁[k, s₂[i]]
-            end
-        end
+        copygatherrec!(L₂₁, F₂₁, s₂, Val(:R))
     end
     #
     # update sep(j) targets with sorted Q-indices
     #
     #     sep(j) ← f₂[s₂]
     #
-    @inbounds for i in oneto(na)
-        s₂[i] = f₂[s₂[i]]
-    end
+    copygatherrec!(s₂, f₂, s₂, Val(:L))
 
     return ns
 end

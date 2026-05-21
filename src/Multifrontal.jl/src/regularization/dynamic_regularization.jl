@@ -79,3 +79,12 @@ function regularize(R::DynamicRegularization, S::AbstractVector, Djj, j::Integer
         return Djj
     end
 end
+
+# Fast path for nn = 1: D is scalar, L is vector (l is ignored)
+function regularize(R::DynamicRegularization, s, Djj, ::AbstractVector)
+    if real(s) * Djj < R.epsilon
+        return R.delta * real(s)
+    else
+        return Djj
+    end
+end

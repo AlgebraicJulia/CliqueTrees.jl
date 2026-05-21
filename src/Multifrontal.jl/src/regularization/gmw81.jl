@@ -137,3 +137,19 @@ function regularize(
 
     return real(S[j]) * max(abs(Djj), Aimax^2 / R.beta, R.delta)
 end
+
+# Fast path for nn = 1: D is scalar, L is vector
+function regularize(
+        R::GMW81,
+        s,
+        Djj::T,
+        l::AbstractVector{T},
+    ) where {T}
+    Aimax = zero(real(T))
+
+    for i in eachindex(l)
+        Aimax = max(Aimax, abs(l[i]))
+    end
+
+    return real(s) * max(abs(Djj), Aimax^2 / R.beta, R.delta)
+end

@@ -88,11 +88,12 @@ function fisherroot_fwd!(
         L::ChordalTriangular{:N, UPLO, T, I},
         Y::ChordalTriangular{:N, UPLO, T, I},
         inv::Val{INV},
+        rng::AbstractRange{I} = vertices(L.S.res),
     ) where {UPLO, T, I <: Integer, INV}
 
     ns = zero(I); Uptr[one(I)] = one(I)
 
-    for j in vertices(L.S.res)
+    for j in rng
         ns = fisherroot_fwd_loop!(
             Uptr, Uval, Fval,
             L.S.Dptr, L.S.Lptr,
@@ -123,12 +124,46 @@ function fisherroot_fwd_loop!(
         uplo::Val{UPLO},
         inv::Val{INV},
     ) where {UPLO, T, I <: Integer, INV}
-    #
-    # nn is the size of the residual at node j
-    #
-    #     nn = | res(j) |
-    #
     nn = eltypedegree(res, j)
+
+    if isone(nn)
+        return fisherroot_fwd_loop_nod!(
+            Uptr, Uval, Fval,
+            Dptr, Lptr,
+            LDval, LLval,
+            YDval, YLval,
+            res, rel, chd, ns, j, uplo, inv
+        )
+    else
+        return fisherroot_fwd_loop_snd!(
+            Uptr, Uval, Fval,
+            Dptr, Lptr,
+            LDval, LLval,
+            YDval, YLval,
+            res, rel, chd, ns, nn, j, uplo, inv
+        )
+    end
+end
+
+function fisherroot_fwd_loop_snd!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        LDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        YDval::AbstractVector{T},
+        YLval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        uplo::Val{UPLO},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, INV}
     #
     # na is the size of the separator at node j
     #
@@ -285,6 +320,168 @@ function fisherroot_fwd_loop!(
     return ns
 end
 
+# Fast path for nn = 1 (residual size is 1)
+# In this case, diagonal blocks are scalars and off-diagonal blocks are vectors
+function fisherroot_fwd_loop_nod!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        LDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        YDval::AbstractVector{T},
+        YLval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        uplo::Val{UPLO},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, INV}
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) | = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #           1   na
+    #     F = [ f₁₁     ] 1
+    #         [ f₂₁ F₂₂ ] na
+    #
+    F = reshape(view(Fval, oneto(nj * nj)), nj, nj)
+
+    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    if UPLO === :L
+        f₂₁ = view(F, nn + one(I):nj, one(I))
+    else
+        f₂₁ = view(F, one(I), nn + one(I):nj)
+    end
+    #
+    # Dp and Lp are indices into the diagonal and off-diagonal blocks
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    #
+    # Y is the direction matrix at node j (y₁₁ is scalar, y₂₁ is vector)
+    #
+    y₁₁ = YDval[Dp]
+    y₂₁ = view(YLval, Lp:Lp + na - one(I))
+    #
+    # L is the Cholesky factor at node j (l₁₁ is scalar, l₂₁ is vector)
+    #
+    l₁₁ = LDval[Dp]
+    l₂₁ = view(LLval, Lp:Lp + na - one(I))
+    #
+    #     F ← 0
+    #
+    F[one(I)] = zero(T)
+    zerorec!(f₂₁)
+    zerotri!(F₂₂, uplo)
+
+    for i in Iterators.reverse(neighbors(chd, j))
+        #
+        # add the update matrix for child i to F
+        #
+        #     F ← F + Rᵢ Uᵢ Rᵢᵀ
+        #
+        fisherroot_add_update!(F, Uptr, Uval, rel, ns, i, uplo)
+        ns -= one(I)
+    end
+    #
+    # Load f₁₁ after children updates
+    #
+    f₁₁ = F[one(I)]
+    #
+    #     Y ← Y + F
+    #
+    #
+    # U₂₂ is the update matrix for node j
+    #
+    if !INV
+        α = -one(real(T))
+        #
+        #     y₁₁ ← y₁₁ + f₁₁
+        #
+        y₁₁ += f₁₁
+        addrec!(y₂₁, f₂₁)
+        #
+        #     y₁₁ ← l₁₁⁻¹ y₁₁ l₁₁⁻ᴴ = y₁₁ / |l₁₁|²
+        #
+        y₁₁ /= abs2(l₁₁)
+    else
+        α = one(real(T))
+    end
+
+    if ispositive(na)
+        ns += one(I)
+        strt = Uptr[ns]
+        stop = Uptr[ns + one(I)] = strt + na * na
+        U₂₂ = reshape(view(Uval, strt:stop - one(I)), na, na)
+        #
+        #     U₂₂ ← F₂₂
+        #
+        copytri!(U₂₂, F₂₂, uplo)
+        #
+        #     y₂₁ ← y₂₁ / conj(l₁₁)
+        #
+        if !INV
+            rdiv!(y₂₁, conj(l₁₁))
+        end
+        #
+        #     U₂₂ ← U₂₂ + α l₂₁ y₂₁ᴴ
+        #
+        gert!(uplo, α, l₂₁, y₂₁, U₂₂)
+        #
+        #     y₂₁ ← y₂₁ + α y₁₁ l₂₁
+        #
+        axpy!(α * y₁₁, l₂₁, y₂₁)
+        #
+        #     U₂₂ ← U₂₂ + α y₂₁ l₂₁ᴴ
+        #
+        gert!(uplo, α, y₂₁, l₂₁, U₂₂)
+        #
+        #     y₂₁ ← y₂₁ * conj(l₁₁)
+        #
+        if INV
+            rmul!(y₂₁, conj(l₁₁))
+        end
+    end
+
+    if INV
+        #
+        #     y₁₁ ← l₁₁ y₁₁ l₁₁ᴴ = y₁₁ * |l₁₁|²
+        #
+        y₁₁ *= abs2(l₁₁)
+        #
+        #     y₁₁ ← y₁₁ + f₁₁
+        #
+        y₁₁ += f₁₁
+        addrec!(y₂₁, f₂₁)
+    end
+    #
+    # Write back scalar
+    #
+    YDval[Dp] = y₁₁
+
+    return ns
+end
+
 function fisherroot_bwd!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
@@ -292,11 +489,12 @@ function fisherroot_bwd!(
         L::ChordalTriangular{:N, UPLO, T, I},
         Y::ChordalTriangular{:N, UPLO, T, I},
         inv::Val{INV},
+        rng::AbstractRange{I} = vertices(L.S.res),
     ) where {UPLO, T, I <: Integer, INV}
 
     ns = zero(I); Uptr[one(I)] = one(I)
 
-    for j in reverse(vertices(L.S.res))
+    for j in reverse(rng)
         ns = fisherroot_bwd_loop!(
             Uptr, Uval, Fval,
             L.S.Dptr, L.S.Lptr,
@@ -327,12 +525,46 @@ function fisherroot_bwd_loop!(
         uplo::Val{UPLO},
         inv::Val{INV},
     ) where {UPLO, T, I <: Integer, INV}
-    #
-    # nn is the size of the residual at node j
-    #
-    #     nn = | res(j) |
-    #
     nn = eltypedegree(res, j)
+
+    if isone(nn)
+        return fisherroot_bwd_loop_nod!(
+            Uptr, Uval, Fval,
+            Dptr, Lptr,
+            LDval, LLval,
+            YDval, YLval,
+            res, rel, chd, ns, j, uplo, inv
+        )
+    else
+        return fisherroot_bwd_loop_snd!(
+            Uptr, Uval, Fval,
+            Dptr, Lptr,
+            LDval, LLval,
+            YDval, YLval,
+            res, rel, chd, ns, nn, j, uplo, inv
+        )
+    end
+end
+
+function fisherroot_bwd_loop_snd!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        LDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        YDval::AbstractVector{T},
+        YLval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        uplo::Val{UPLO},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, INV}
     #
     # na is the size of the separator at node j
     #
@@ -481,6 +713,156 @@ function fisherroot_bwd_loop!(
     return ns
 end
 
+# Fast path for nn = 1 (residual size is 1)
+# In this case, diagonal blocks are scalars and off-diagonal blocks are vectors
+function fisherroot_bwd_loop_nod!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        LDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        YDval::AbstractVector{T},
+        YLval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        uplo::Val{UPLO},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, INV}
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) | = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #           1   na
+    #     F = [ f₁₁     ] 1
+    #         [ f₂₁ F₂₂ ] na
+    #
+    F = reshape(view(Fval, oneto(nj * nj)), nj, nj)
+
+    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    if UPLO === :L
+        f₂₁ = view(F, nn + one(I):nj, one(I))
+    else
+        f₂₁ = view(F, one(I), nn + one(I):nj)
+    end
+    #
+    # Dp and Lp are indices into the diagonal and off-diagonal blocks
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    #
+    # Y is the direction matrix at node j (y₁₁ is scalar, y₂₁ is vector)
+    #
+    y₁₁ = YDval[Dp]
+    y₂₁ = view(YLval, Lp:Lp + na - one(I))
+    #
+    # L is the Cholesky factor at node j (l₁₁ is scalar, l₂₁ is vector)
+    #
+    l₁₁ = LDval[Dp]
+    l₂₁ = view(LLval, Lp:Lp + na - one(I))
+
+    if INV
+        α = one(real(T))
+        #
+        #     f₁₁ ← y₁₁, f₂₁ ← y₂₁
+        #
+        f₁₁ = y₁₁
+        copyrec!(f₂₁, y₂₁)
+        #
+        #     y₁₁ ← l₁₁ᴴ y₁₁ l₁₁ = y₁₁ * |l₁₁|²
+        #
+        y₁₁ *= abs2(l₁₁)
+    else
+        α = -one(real(T))
+        f₁₁ = zero(T)
+    end
+    #
+    # S₂₂ is the update matrix from the parent of node j
+    #
+    if ispositive(na)
+        strt = Uptr[ns]
+        S₂₂ = reshape(view(Uval, strt:strt + na * na - one(I)), na, na)
+        ns -= one(I)
+        #
+        #     F₂₂ ← S₂₂
+        #
+        copytri!(F₂₂, S₂₂, uplo)
+        #
+        #     y₂₁ ← y₂₁ * l₁₁
+        #
+        if INV
+            rmul!(y₂₁, l₁₁)
+        end
+        #
+        #     y₁₁ ← y₁₁ + α l₂₁ᴴ y₂₁ (dot product)
+        #
+        y₁₁ += α * dot(l₂₁, y₂₁)
+        #
+        #     y₂₁ ← y₂₁ + α S₂₂ l₂₁ (symv)
+        #
+        symv!(uplo, α, S₂₂, l₂₁, one(T), y₂₁)
+        #
+        #     y₁₁ ← y₁₁ + α y₂₁ᴴ l₂₁ (dot product)
+        #
+        y₁₁ += α * dot(y₂₁, l₂₁)
+        #
+        #     y₂₁ ← y₂₁ / l₁₁
+        #
+        if !INV
+            rdiv!(y₂₁, l₁₁)
+        end
+    end
+
+    if !INV
+        #
+        #     y₁₁ ← l₁₁⁻ᴴ y₁₁ l₁₁⁻¹ = y₁₁ / |l₁₁|²
+        #
+        y₁₁ /= abs2(l₁₁)
+        #
+        #     f₁₁ ← y₁₁, f₂₁ ← y₂₁
+        #
+        f₁₁ = y₁₁
+        copyrec!(f₂₁, y₂₁)
+    end
+    #
+    # Write back scalars
+    #
+    F[one(I)] = f₁₁
+    YDval[Dp] = y₁₁
+
+    for i in neighbors(chd, j)
+        #
+        # send update matrix to child i
+        #
+        #     Uᵢ ← Rᵢᵀ F Rᵢ
+        #
+        ns += one(I)
+        fisherroot_get_update!(F, Uptr, Uval, rel, ns, i, uplo)
+    end
+
+    return ns
+end
+
 function fisherroot_scale!(
         Uptr::AbstractVector{I},
         Uval::AbstractVector{T},
@@ -530,12 +912,51 @@ function fisherroot_scale_loop!(
         adj::Val{ADJ},
         inv::Val{INV},
     ) where {UPLO, T, I <: Integer, ADJ, INV}
-    #
-    # nn is the size of the residual at node j
-    #
-    #     nn = | res(j) |
-    #
     nn = eltypedegree(res, j)
+
+    if isone(nn)
+        return fisherroot_scale_loop_nod!(
+            Uptr, Uval, Fval,
+            Dptr, Lptr,
+            LDval, LLval,
+            SDval, SLval,
+            YDval, YLval,
+            res, rel, chd, ns, j, uplo, adj, inv
+        )
+    else
+        return fisherroot_scale_loop_snd!(
+            Uptr, Uval, Fval,
+            Dptr, Lptr,
+            LDval, LLval,
+            SDval, SLval,
+            YDval, YLval,
+            res, rel, chd, ns, nn, j, uplo, adj, inv
+        )
+    end
+end
+
+function fisherroot_scale_loop_snd!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        LDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        SDval::AbstractVector{T},
+        SLval::AbstractVector{T},
+        YDval::AbstractVector{T},
+        YLval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        nn::I,
+        j::I,
+        uplo::Val{UPLO},
+        adj::Val{ADJ},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, ADJ, INV}
     #
     # na is the size of the separator at node j
     #
@@ -652,6 +1073,139 @@ function fisherroot_scale_loop!(
             trsm!(sdL, uplo, trR, Val(:N), one(T), S₂₂, Y₂₁)
         else
             trmm!(sdL, uplo, trR, Val(:N), one(T), S₂₂, Y₂₁)
+        end
+    end
+
+    for i in neighbors(chd, j)
+        #
+        # send update matrix to child i
+        #
+        #     Uᵢ ← Rᵢᵀ F Rᵢ
+        #
+        ns += one(I)
+        fisherroot_get_update!(F, Uptr, Uval, rel, ns, i, uplo)
+    end
+
+    return ns, zero(I)
+end
+
+# Fast path for nn = 1 (residual size is 1)
+# In this case, diagonal blocks are scalars and off-diagonal blocks are vectors
+function fisherroot_scale_loop_nod!(
+        Uptr::AbstractVector{I},
+        Uval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        LDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        SDval::AbstractVector{T},
+        SLval::AbstractVector{T},
+        YDval::AbstractVector{T},
+        YLval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+        uplo::Val{UPLO},
+        adj::Val{ADJ},
+        inv::Val{INV},
+    ) where {UPLO, T, I <: Integer, ADJ, INV}
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) | = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #           1   na
+    #     F = [ f₁₁     ] 1
+    #         [ f₂₁ F₂₂ ] na
+    #
+    F = reshape(view(Fval, oneto(nj * nj)), nj, nj)
+
+    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    if UPLO === :L
+        f₂₁ = view(F, nn + one(I):nj, one(I))
+    else
+        f₂₁ = view(F, one(I), nn + one(I):nj)
+    end
+    #
+    # Dp and Lp are indices into the diagonal and off-diagonal blocks
+    #
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    #
+    # S is the selected inverse at node j (s₁₁ is scalar, s₂₁ is vector)
+    #
+    s₁₁ = SDval[Dp]
+    s₂₁ = view(SLval, Lp:Lp + na - one(I))
+    #
+    #     F ← S (f₁₁ ← s₁₁ is scalar, f₂₁ ← s₂₁ is vector copy)
+    #
+    F[one(I)] = s₁₁
+    copyrec!(f₂₁, s₂₁)
+    #
+    # Y is the direction matrix at node j (y₂₁ is vector)
+    #
+    y₂₁ = view(YLval, Lp:Lp + na - one(I))
+
+    if ADJ
+        trR = Val(:N)
+    else
+        trR = Val(:C)
+    end
+    #
+    # For UPLO === :U, we need to swap transpose for right-multiplication on vectors
+    # Right mult by U → left mult by Uᵀ, so :N → :T
+    # Right mult by Uᴴ → left mult by U* = Ū, which for real is U, so :C → :N
+    #
+    if UPLO === :U
+        if ADJ
+            trV = Val(:T)
+        else
+            trV = Val(:N)
+        end
+    else
+        trV = trR
+    end
+    #
+    # S₂₂ is the update matrix from the parent of node j
+    #
+    if ispositive(na)
+        strt = Uptr[ns]
+        S₂₂ = reshape(view(Uval, strt:strt + na * na - one(I)), na, na)
+        ns -= one(I)
+        #
+        #     F₂₂ ← S₂₂
+        #
+        copytri!(F₂₂, S₂₂, uplo)
+        #
+        #     S₂₂ ← chol(S₂₂)
+        #
+        info = potrf!(uplo, S₂₂)
+        ispositive(info) && return ns, info
+        #
+        #     y₂₁ ← S₂₂⁻ᴴ y₂₁  or  y₂₁ ← S₂₂ᴴ y₂₁ (trsv/trmv for vectors)
+        #
+        if INV
+            trsv!(uplo, trV, Val(:N), S₂₂, y₂₁)
+        else
+            trmv!(uplo, trV, Val(:N), S₂₂, y₂₁)
         end
     end
 
