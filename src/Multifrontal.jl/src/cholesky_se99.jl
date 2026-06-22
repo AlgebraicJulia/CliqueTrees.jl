@@ -1,6 +1,7 @@
 # ===== factorize! Level 3: ChordalTriangular all positional (SE99) =====
 
 function factorize!(
+        W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector,
         pivot::NoPivot,
@@ -9,11 +10,6 @@ function factorize!(
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
     R = initialize(L, signs, reg)
-
-    Mptr = FVector{I}(undef, L.S.nMptr)
-    Mval = FVector{T}(undef, L.S.nMval)
-    Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
-    Eval = FVector{T}(undef, L.S.nFval)
 
     if DIAG === :U
         @inbounds for j in fronts(L)
@@ -26,7 +22,7 @@ function factorize!(
         e = LinearAlgebra.diag(L)
     end
 
-    chol_se99_impl!(Mptr, Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, e, Eval, Fval, L.S.res, L.S.rel, L.S.sep, L.S.chd, L.uplo, signs, R, L.diag)
+    chol_se99_impl!(W.Mptr, W.Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, e, W.Eval, W.Fval, L.S.res, L.S.rel, L.S.sep, L.S.chd, L.uplo, signs, R, L.diag)
 
     return zero(I)
 end

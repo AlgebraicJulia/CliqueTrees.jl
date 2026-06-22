@@ -18,6 +18,7 @@ end
 
 @testset "Multifrontal" begin
     include("multifrontal.jl")
+    include("nullspace.jl")
 end
 
 @testset "Differential" begin

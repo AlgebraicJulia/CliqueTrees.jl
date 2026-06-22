@@ -1,6 +1,7 @@
 # ===== factorize! Level 3: ChordalTriangular all positional (pivoted) =====
 
 function factorize!(
+        W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector,
         pivot::RowMaximum,
@@ -10,26 +11,30 @@ function factorize!(
         reg::AbstractRegularization,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
-
-    Mptr = FVector{I}(undef, L.S.nMptr)
-    Mval = FVector{T}(undef, L.S.nMval)
-    Fval = FVector{T}(undef, max(L.S.nFval * L.S.nFval, two(I)))
-    piv  = FVector{BlasInt}(undef, L.S.nFval)
-    mval = FVector{I}(undef, L.S.nNval)
-    fval = FVector{I}(undef, L.S.nFval)
-
     if reg isa NoRegularization
         R = convert(real(T), tol)
     else
         R = initialize(L, signs, reg)
     end
 
-    info = chol_piv_impl!(Mptr, Mval, Fval, piv, mval, fval, L, d, perm, invp, signs, R)
+    info = chol_piv_impl!(W, L, d, perm, invp, signs, R)
 
     return info
 end
 
 # ============================= chol_piv_impl! =============================
+
+function chol_piv_impl!(
+        W::FactorizationWorkspace,
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        perm::AbstractVector,
+        invp::AbstractVector,
+        signs::AbstractVector,
+        R::Union{AbstractRegularization, Real},
+    ) where {DIAG, UPLO, T, I <: Integer}
+    return chol_piv_impl!(W.Mptr, W.Mval, W.Fval, W.piv, W.mval, W.fval, L, d, perm, invp, signs, R)
+end
 
 function chol_piv_impl!(
         Mptr::AbstractVector{I},
@@ -138,20 +143,20 @@ function chol_piv_fwd!(
         diag::Val{DIAG},
     ) where {T, I <: Integer, UPLO, DIAG}
 
-    ns = zero(I); Mptr[one(I)] = one(I)
+    ns = info = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns, info = chol_piv_fwd_loop!(
+        ns, localinfo = chol_piv_fwd_loop!(
             Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
             res, rel, chd, ns, j, piv, invp, S, R, uplo, diag
         )
 
-        if isnegative(info)
-            return info
+        if ispositive(localinfo) && iszero(info)
+            info = localinfo + pointers(res)[j] - one(I)
         end
     end
 
-    return zero(I)
+    return info
 end
 
 function chol_piv_fwd_loop!(

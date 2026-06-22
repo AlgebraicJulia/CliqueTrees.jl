@@ -90,10 +90,186 @@ function symbolic(graph::AbstractGraph{I}; kw...) where {I <: Integer}
     return FPermutation(perm), ChordalSymbolic(tree)
 end
 
+function symbolic(weight::AbstractVector{I}, graph::AbstractGraph{I}; kw...) where {I <: Integer}
+    blkperm, tree = cliquetree(weight, graph; kw...)
+
+    blkptr = FVector{I}(undef, nv(graph) + one(I))
+    v = zero(I)
+
+    for bv in vertices(graph)
+        blkptr[bv] = v + one(I)
+        v += weight[bv]
+    end
+
+    blkptr[nv(graph) + one(I)] = v + one(I)
+
+    perm = FVector{I}(undef, v)
+    v = zero(I)
+
+    for bv in vertices(graph)
+        bw = blkperm[bv]
+
+        for w in blkptr[bw]:blkptr[bw + one(I)] - one(I)
+            v += one(I); perm[v] = w
+        end
+    end
+
+    v = zero(I)
+
+    for bv in vertices(graph)
+        blkptr[bv] = v + one(I)
+        v += weight[blkperm[bv]]
+    end
+
+    blkptr[nv(graph) + one(I)] = v + one(I)
+    return FPermutation(blkperm), FPermutation(perm), ChordalSymbolic(blkptr, tree)
+end
+
 function ChordalSymbolic(tree::CliqueTree{I, I}) where {I <: Integer}
     res = residuals(tree)
     sep = separators(tree)
     return ChordalSymbolic(res, sep, Tree(tree))
+end
+
+function ChordalSymbolic(blkptr::AbstractVector{I}, tree::CliqueTree{I, I}) where {I <: Integer}
+    blkres = residuals(tree)
+    blksep = separators(tree)
+
+    nres = zero(I)
+    nsep = zero(I)
+
+    for j in vertices(blkres)
+        blo = pointers(blkres)[j]
+        bhi = pointers(blkres)[j + one(I)]
+        nres += blkptr[bhi] - blkptr[blo]
+
+        for bp in incident(blksep, j)
+            bv = targets(blksep)[bp]
+            nsep += blkptr[bv + one(I)] - blkptr[bv]
+        end
+    end
+
+    resptr = FVector{I}(undef, nv(blkres) + one(I))
+    sepptr = FVector{I}(undef, nv(blkres) + one(I))
+    septgt = FVector{I}(undef, nsep)
+
+    res = BipartiteGraph(last(blkptr) - one(I), nv(blkres), nres, resptr, oneto(last(blkptr) - one(I)))
+    sep = BipartiteGraph(last(blkptr) - one(I), nv(blkres), nsep, sepptr, septgt)
+
+    rp = zero(I)
+    sp = zero(I)
+
+    for j in vertices(blkres)
+        pointers(res)[j] = rp + one(I)
+        pointers(sep)[j] = sp + one(I)
+
+        blo = pointers(blkres)[j]
+        bhi = pointers(blkres)[j + one(I)]
+
+        rp += blkptr[bhi] - blkptr[blo]
+
+        for bp in incident(blksep, j)
+            bv = targets(blksep)[bp]
+
+            for v in blkptr[bv]:blkptr[bv + one(I)] - one(I)
+                sp += one(I); septgt[sp] = v
+            end
+        end
+    end
+
+    pointers(res)[nv(blkres) + one(I)] = rp + one(I)
+    pointers(sep)[nv(blkres) + one(I)] = sp + one(I)
+
+    return ChordalSymbolic(blkptr, res, sep, blkres, blksep, Tree(tree))
+end
+
+function ChordalSymbolic(blkptr::AbstractVector{I}, res::BipartiteGraph, sep::BipartiteGraph, blkres::BipartiteGraph, blksep::BipartiteGraph, tree::Tree) where {I}
+    chd = tree.graph
+    pnt = tree.tree.prnt
+
+    reltgt = FVector{I}(undef, ne(sep))
+    rel = BipartiteGraph(nov(sep), nv(sep), ne(sep), pointers(sep), reltgt)
+
+    nMptr = jMptr = one(I)
+    nMval = jMval = zero(I)
+    nNval = jNval = zero(I)
+    nFval = zero(I)
+    Dp = zero(I)
+    Lp = zero(I)
+
+    idx = FVector{I}(undef, nov(res))
+    Dptr = FVector{I}(undef, nv(res) + one(I))
+    Lptr = FVector{I}(undef, nv(res) + one(I))
+
+    for j in vertices(blkres)
+        Dptr[j] = Dp + one(I)
+        Lptr[j] = Lp + one(I)
+
+        bnn = eltypedegree(blkres, j)
+        bna = eltypedegree(blksep, j)
+
+        nn = eltypedegree(res, j)
+        na = eltypedegree(sep, j)
+        nj = nn + na
+
+        jblkres = neighbors(blkres, j)
+        jblksep = neighbors(blksep, j)
+
+        for bw in jblkres
+            for w in blkptr[bw]:blkptr[bw + one(I)] - one(I)
+                idx[w] = j
+            end
+        end
+
+        for i in neighbors(chd, j)
+            p = pointers(sep)[i]
+            q = one(I); bq = one(I); bw = jblkres[bq]
+
+            for bp in incident(blksep, i)
+                bv = targets(blksep)[bp]
+
+                while bw < bv && bq < bnn
+                    q += blkptr[bw + one(I)] - blkptr[bw]; bq += one(I); bw = jblkres[bq]
+                end
+
+                while bw < bv
+                    q += blkptr[bw + one(I)] - blkptr[bw]; bq += one(I); bw = jblksep[bq - bnn]
+                end
+
+                wv = blkptr[bv + one(I)] - blkptr[bv]
+
+                for b in oneto(wv)
+                    reltgt[p] = q + b - one(I)
+                    p += one(I)
+                end
+            end
+
+            ma = eltypedegree(sep, i)
+
+            jMptr -= one(I)
+            jMval -= ma * ma
+            jNval -= ma
+        end
+
+        if ispositive(na)
+            jMptr += one(I)
+            jMval += na * na
+            jNval += na
+
+            nMptr = max(nMptr, jMptr)
+            nMval = max(nMval, jMval)
+            nNval = max(nNval, jNval)
+        end
+
+        nFval = max(nFval, nj)
+        Dp += nn * nn
+        Lp += nn * na
+    end
+
+    Dptr[nv(res) + one(I)] = Dp + one(I)
+    Lptr[nv(res) + one(I)] = Lp + one(I)
+
+    return ChordalSymbolic(res, sep, rel, chd, pnt, idx, Dptr, Lptr, nMptr, nMval, nNval, nFval)
 end
 
 function ChordalSymbolic(res::BipartiteGraph{I, I}, sep::BipartiteGraph{I, I}) where {I}

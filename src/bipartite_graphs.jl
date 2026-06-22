@@ -432,7 +432,7 @@ function simplegraph(graph::AbstractGraph{V}) where {V}
     return simplegraph(V, E, graph)
 end
 
-function linegraph(ve::AbstractGraph{V}, ev::AbstractGraph{V}) where {V}
+function linegraph(ve::AbstractGraph{V}, ev::AbstractGraph{V}=reverse(ve)) where {V}
     @assert nv(ve) == nov(ev)
     @assert nv(ev) == nov(ve)
     @assert ne(ve) == ne(ev)

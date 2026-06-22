@@ -189,6 +189,11 @@ function ChordalFactorization{DIAG, UPLO, T}(P::Permutation{I, Prm, Ivp}, S::Cho
     return ChordalFactorization{DIAG, UPLO, T, I, Dia, FVector{T}, FVector{T}, Prm, Ivp, FScalar{I}}(P, S)
 end
 
+function ChordalFactorization{DIAG, UPLO, T}(S::ChordalSymbolic{I}) where {DIAG, UPLO, T, I <: Integer}
+    P = NaturalPermutation{I}(ncl(S))
+    return ChordalFactorization{DIAG, UPLO, T}(P, S)
+end
+
 function (::Type{Fac})(A::AbstractMatrix; kw...) where {DIAG, Fac <: ChordalFactorization{DIAG}}
     return Fac{DEFAULT_UPLO}(A; kw...)
 end

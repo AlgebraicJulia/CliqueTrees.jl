@@ -1,3 +1,30 @@
+# ===== DivisionWorkspace =====
+
+struct DivisionWorkspace{T, I <: Integer}
+    Mptr::FVector{I}
+    Mval::FVector{T}
+    Fval::FVector{T}
+end
+
+function DivisionWorkspace{T}(S::ChordalSymbolic{I}, nrhs::Integer) where {T, I <: Integer}
+    Mptr = FVector{I}(undef, S.nMptr)
+    Mval = FVector{T}(undef, S.nNval * nrhs)
+    Fval = FVector{T}(undef, S.nFval * nrhs)
+    return DivisionWorkspace{T, I}(Mptr, Mval, Fval)
+end
+
+function DivisionWorkspace(L::ChordalTriangular{DIAG, UPLO, T}, nrhs::Integer) where {DIAG, UPLO, T}
+    return DivisionWorkspace{T}(L.S, nrhs)
+end
+
+function DivisionWorkspace(F::AbstractFactorization, nrhs::Integer)
+    return DivisionWorkspace(triangular(F), nrhs)
+end
+
+function DivisionWorkspace(A::AdjOrTransTri, nrhs::Integer)
+    return DivisionWorkspace(parent(A), nrhs)
+end
+
 # ================================== \ ==================================
 
 # --- Permutation ---
@@ -125,10 +152,15 @@ function LinearAlgebra.ldiv!(α::Number, A::TransTri)
 end
 
 function LinearAlgebra.ldiv!(A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
+    W = DivisionWorkspace(A, size(B, 2))
+    return ldiv!(W, A, B)
+end
+
+function LinearAlgebra.ldiv!(W::DivisionWorkspace, A::MaybeAdjOrTransTri, B::AbstractVecOrMat)
     @assert size(A, 1) == size(B, 1)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return div_impl!(B, A, tA, tB, Val(:L))
+    return div_impl!(B, W, A, tA, tB, Val(:L))
 end
 
 # --- AbstractFactorization ---
@@ -144,12 +176,17 @@ function LinearAlgebra.ldiv!(α::Number, F::AbstractFactorization{DIAG}) where {
 end
 
 function LinearAlgebra.ldiv!(F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
+    W = DivisionWorkspace(F, size(B, 2))
+    return ldiv!(W, F, B)
+end
+
+function LinearAlgebra.ldiv!(W::DivisionWorkspace, F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
 
     if DIAG === :N
-        return ldiv!(F.U, ldiv!(F.L, B))
+        return ldiv!(W, F.U, ldiv!(W, F.L, B))
     else
-        return ldiv!(F.U, ldiv!(F.D, ldiv!(F.L, B)))
+        return ldiv!(W, F.U, ldiv!(F.D, ldiv!(W, F.L, B)))
     end
 end
 
@@ -201,10 +238,15 @@ function LinearAlgebra.rdiv!(A::TransTri, α::Number)
 end
 
 function LinearAlgebra.rdiv!(B::AbstractMatrix, A::MaybeAdjOrTransTri)
+    W = DivisionWorkspace(A, size(B, 1))
+    return rdiv!(W, B, A)
+end
+
+function LinearAlgebra.rdiv!(W::DivisionWorkspace, B::AbstractMatrix, A::MaybeAdjOrTransTri)
     @assert size(A, 1) == size(B, 2)
     A, tA = unwrap(A)
     B, tB = unwrap(B)
-    return div_impl!(B, A, tA, tB, Val(:R))
+    return div_impl!(B, W, A, tA, tB, Val(:R))
 end
 
 # --- AbstractFactorization ---
@@ -220,12 +262,17 @@ function LinearAlgebra.rdiv!(F::AbstractFactorization{DIAG}, α::Number) where {
 end
 
 function LinearAlgebra.rdiv!(B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
+    W = DivisionWorkspace(F, size(B, 1))
+    return rdiv!(W, B, F)
+end
+
+function LinearAlgebra.rdiv!(W::DivisionWorkspace, B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
 
     if DIAG === :N
-        return rdiv!(rdiv!(B, F.U), F.L)
+        return rdiv!(W, rdiv!(W, B, F.U), F.L)
     else
-        return rdiv!(rdiv!(rdiv!(B, F.U), F.D), F.L)
+        return rdiv!(W, rdiv!(rdiv!(W, B, F.U), F.D), F.L)
     end
 end
 
@@ -250,24 +297,13 @@ end
 
 function div_impl!(
         B::AbstractVecOrMat{R},
+        W::DivisionWorkspace{R, I},
         L::ChordalTriangular{DIAG, UPLO, T, I},
         tA::Val{TA},
         tB::Val{TB},
         side::Val{SIDE},
     ) where {T, R, I <: Integer, DIAG, UPLO, TA, TB, SIDE}
-    if B isa AbstractVector
-        nrhs = one(I)
-    elseif SIDE === :L
-        nrhs = convert(I, size(B, 2))
-    else
-        nrhs = convert(I, size(B, 1))
-    end
-
-    Mptr = FVector{I}(undef, L.S.nMptr)
-    Mval = FVector{R}(undef, L.S.nNval * nrhs)
-    Fval = FVector{R}(undef, L.S.nFval * nrhs)
-
-    return div_impl!(B, Mptr, Mval, Fval, L, tA, tB, side)
+    return div_impl!(B, W.Mptr, W.Mval, W.Fval, L, tA, tB, side)
 end
 
 function div_impl!(
@@ -853,7 +889,6 @@ function div_bwd_loop_snd!(
     #
     #     nn = |res(j)|
     #
-    #
     # na is the size of the separator at node j
     #
     #     na = |sep(j)|
@@ -914,13 +949,13 @@ function div_bwd_loop_snd!(
 
         if C isa AbstractVector
             if UPLO === :L
-                gemv!(tA, -1, L₂₁, M₂, 1, C₁)
+                gemv!(    tA,  -1, L₂₁, M₂, 1, C₁)
             else
                 gemv!(Val(:N), -1, L₂₁, M₂, 1, C₁)
             end
         elseif SIDE === :L
             if UPLO === :L
-                gemm!(tA, Val(:N), -1, L₂₁, M₂, 1, C₁)
+                gemm!(    tA,  Val(:N), -1, L₂₁, M₂, 1, C₁)
             else
                 gemm!(Val(:N), Val(:N), -1, L₂₁, M₂, 1, C₁)
             end
@@ -928,7 +963,7 @@ function div_bwd_loop_snd!(
             if UPLO === :L
                 gemm!(Val(:N), Val(:N), -1, M₂, L₂₁, 1, C₁)
             else
-                gemm!(Val(:N), tA, -1, M₂, L₂₁, 1, C₁)
+                gemm!(Val(:N),     tA,  -1, M₂, L₂₁, 1, C₁)
             end
         end
     end
@@ -977,6 +1012,7 @@ function div_bwd_loop_snd!(
         else
             M₂ = reshape(view(Mval, strt:strt + na * nrhs - one(I)), nrhs, na)
         end
+
         copyrec!(F₂, M₂)
     end
 

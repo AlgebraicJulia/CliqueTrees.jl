@@ -67,6 +67,7 @@ include("amari.jl")
 include("lowrank.jl")
 include("krylov.jl")
 include("complete_generic.jl")
+include("nullspace.jl")
 if Base.USE_GPL_LIBS
     include("cholmod.jl")
 end

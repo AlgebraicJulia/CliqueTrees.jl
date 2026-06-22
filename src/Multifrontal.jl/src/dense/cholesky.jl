@@ -40,11 +40,7 @@ function factorize!(
     info = factorize!(L, d, pivot, perm, invp, signs, reg, tol)
 
     if ispositive(info) && check
-        if L isa LowerTriangular || L isa UpperTriangular
-            throw(PosDefException(info))
-        else
-            throw(ZeroPivotException(info))
-        end
+        throw(RankDeficientException(info))
     end
 
     return info
@@ -135,6 +131,8 @@ function factorize!(
     end
 
     info, rank = pstrf!(uplo, W, M, e, invp, S, R, tol, diag)
+
+    zerotri!(M, rank + 1:size(M, 1), uplo)
 
     for i in eachindex(perm)
         perm[i] = invp[perm[i]]
