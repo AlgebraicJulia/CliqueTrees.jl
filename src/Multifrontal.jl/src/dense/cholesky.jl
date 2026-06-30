@@ -1,3 +1,33 @@
+# ===== factorize! with DenseFactorizationWorkspace (bridge to existing methods) =====
+
+function factorize!(
+        ::DenseFactorizationWorkspace,
+        L::AbstractTriangular{T},
+        d::AbstractVector,
+        pivot::NoPivot;
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {T}
+    return factorize!(L, d, pivot; signs, reg, check, tol)
+end
+
+function factorize!(
+        ::DenseFactorizationWorkspace,
+        L::AbstractTriangular{T},
+        d::AbstractVector,
+        pivot::RowMaximum,
+        perm::AbstractVector,
+        invp::AbstractVector;
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {T}
+    return factorize!(L, d, pivot, perm, invp; signs, reg, check, tol)
+end
+
 # ===== factorize! Level 2: Dense triangular with kwargs =====
 
 function factorize!(
@@ -143,4 +173,22 @@ function factorize!(
     end
 
     return info
+end
+
+# ===== DenseDivisionWorkspace bridging methods =====
+
+function LinearAlgebra.ldiv!(::DenseDivisionWorkspace, A::AbstractTriangular, B::AbstractVecOrMat)
+    return ldiv!(A, B)
+end
+
+function LinearAlgebra.ldiv!(::DenseDivisionWorkspace, A::AdjOrTrans{<:Any, <:AbstractTriangular}, B::AbstractVecOrMat)
+    return ldiv!(A, B)
+end
+
+function LinearAlgebra.rdiv!(::DenseDivisionWorkspace, B::AbstractMatrix, A::AbstractTriangular)
+    return rdiv!(B, A)
+end
+
+function LinearAlgebra.rdiv!(::DenseDivisionWorkspace, B::AbstractMatrix, A::AdjOrTrans{<:Any, <:AbstractTriangular})
+    return rdiv!(B, A)
 end

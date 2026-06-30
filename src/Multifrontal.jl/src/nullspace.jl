@@ -1,29 +1,3 @@
-# ============================================================================
-#  Nullspace basis computation for ChordalLDLt factorizations.
-#
-#  Given a pivoted LDLᵀ factorization of a positive-semidefinite matrix A:
-#
-#      P A Pᵀ = L D Lᵀ
-#
-#  where D has some zero (or near-zero) diagonal entries, the nullspace of A
-#  is given by:
-#
-#      ker(A) = Pᵀ L⁻ᵀ ker(D)
-#
-#  Since ker(D) is spanned by standard basis vectors eᵢ where Dᵢᵢ = 0, we
-#  compute selected columns of L⁻ᵀ, which are the same as selected rows of L⁻¹.
-#
-#  Key structural fact:
-#      (L⁻¹)[i,j] ≠ 0  ⟹  i is an ancestor of j on the elimination tree.
-#
-#  This means a requested row activates at its owning front and propagates
-#  DOWN to descendants. The row-axis embedding is pure prepend (identity),
-#  so only column gathering is needed via `rel`.
-# ============================================================================
-
-# ---------------------------------------------------------------------------
-#  Top-level entry point.
-# ---------------------------------------------------------------------------
 function LinearAlgebra.nullspace(F::AbstractFactorization{DIAG, UPLO, T}; atol::Real = 0, rtol::Real = atol > 0 ? 0 : ncl(F) * eps(real(T))) where {DIAG, UPLO, T}
     null_impl(triangular(F), F.d, F.perm, convert(T, atol), convert(T, rtol))
 end
@@ -31,19 +5,17 @@ end
 function null_impl(L::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector{T}, perm::AbstractVector{I}, atol::T, rtol::T) where {DIAG, UPLO, T, I}
     S = L.S
 
-    # compute tolerance: max(atol, rtol * maxdiag)
     maxdiag = zero(T)
 
     if DIAG === :N
-        # Cholesky: diagonal stored in D blocks
         for j in vertices(S.res)
             D, _ = diagblock(L, j)
+
             for i in axes(D, 1)
                 maxdiag = max(maxdiag, abs(D[i, i]))
             end
         end
     else
-        # LDLt: diagonal stored in d vector
         for j in axes(L, 1)
             maxdiag = max(maxdiag, abs(d[j]))
         end
@@ -51,45 +23,27 @@ function null_impl(L::ChordalTriangular{DIAG, UPLO, T, I}, d::AbstractVector{T},
 
     tol = max(atol, rtol * maxdiag)
 
-    # allocate symbolic arrays
     mrkptr = FVector{I}(undef, nfr(S) + 1)
     mrktgt = FVector{I}(undef, ncl(S))
     nanc = FVector{I}(undef, nfr(S))
     anc = FVector{I}(undef, nfr(S))
     Cptr = FVector{I}(undef, nfr(S) + 1)
 
-    # symbolic pass
     mrk, nXval, nFval, nMval = null_symb!(mrkptr, mrktgt, nanc, anc, Cptr, L, d, tol)
 
-    # allocate numerical arrays
     Xval = FVector{T}(undef, nXval)
     Mptr = FVector{I}(undef, S.nMptr)
     Mval = FVector{T}(undef, nMval)
     Fval = FVector{T}(undef, nFval)
 
-    # numerical pass
     null_impl!(Xval, mrk, nanc, Cptr, Mptr, Mval, Fval, L, L.uplo, L.diag)
 
-    # allocate output matrix
     N = Matrix{T}(undef, ncl(S), ne(mrk))
 
-    # halfperm pass
     return null_half!(N, Xval, mrk, nanc, anc, Cptr, S.res, S.idx, perm)
 end
 
 
-# ---------------------------------------------------------------------------
-#  Symbolic pass: d, tol -> (mrk, nanc, Cptr) + workspace sizes
-# ---------------------------------------------------------------------------
-#
-#   mrkptr    : pointers for mrk BipartiteGraph (pre-allocated, length n+1)
-#   mrktgt    : targets for mrk BipartiteGraph (pre-allocated, length ncl(S))
-#   nanc      : ancestor row counts (pre-allocated, length n)
-#   Cptr      : flat block offsets into Xval (pre-allocated, length n+1)
-#   nXval     : total output elements = Cptr[n+1] - 1
-#   nFval     : peak frontal scratch = max_j nanc[j]·(nn_j + na_j)
-#   nMval     : peak message-stack elements
-#
 function null_symb!(
         mrkptr::AbstractVector{I},
         mrktgt::AbstractVector{I},
@@ -173,9 +127,6 @@ function null_symb!(
     return mrk, nXval, nFval, nMval
 end
 
-# ---------------------------------------------------------------------------
-#  Numerical pass: backward sweep over all fronts.
-# ---------------------------------------------------------------------------
 function null_impl!(
         Xval::AbstractVector{T},
         mrk::AbstractGraph{I},
@@ -210,9 +161,6 @@ function null_impl!(
     return Xval
 end
 
-# ---------------------------------------------------------------------------
-#  Per-front loop body dispatch.
-# ---------------------------------------------------------------------------
 function null_loop!(
         Xval::AbstractVector{T},
         mrk::AbstractGraph{I},
@@ -239,9 +187,6 @@ function null_loop!(
                           ns, nn, j, uplo, diag)
 end
 
-# ---------------------------------------------------------------------------
-#  Per-front loop body (supernodal).
-# ---------------------------------------------------------------------------
 function null_loop_snd!(
         Xval::AbstractVector{T},
         mrk::AbstractGraph{I},
@@ -312,12 +257,17 @@ function null_loop_snd!(
     #
     # Dₙₙ block views:
     #
-    #          1     2
-    #   Dₙₙ = [ D₁₁  0 ] 1
-    #         [ D₂₁  I ] 2
+    #          1     2                      1     2
+    #   Dₙₙ = [ D₁₁  0 ] 1  (lower)  Dₙₙ = [ D₁₁  D₁₂ ] 1  (upper)
+    #         [ D₂₁  I ] 2                 [ 0    I   ] 2
     #
     D₁₁ = view(Dₙₙ, one(I):ln, one(I):ln)
-    D₂₁ = view(Dₙₙ, ln + one(I):nn, one(I):ln)
+
+    if UPLO === :L
+        D₂₁ = view(Dₙₙ, ln + one(I):nn, one(I):ln)
+    else
+        D₁₂ = view(Dₙₙ, one(I):ln, ln + one(I):nn)
+    end
     #
     # L₃ₙ block views (L₃₂ = 0):
     #
@@ -366,11 +316,13 @@ function null_loop_snd!(
 
         if ispositive(ma)
             M₃₃ = reshape(view(Mval, strt:strt + ma * na - one(I)), ma, na)
+
             if UPLO === :L
                 gemm!(Val(:N), Val(:N), -one(T), M₃₃, L₃₁, zero(T), C₃₁)
             else
                 gemm!(Val(:N), Val(:T), -one(T), M₃₃, L₃₁, zero(T), C₃₁)
             end
+
             copyrec!(F₃₃, M₃₃)
         end
 
@@ -392,16 +344,29 @@ function null_loop_snd!(
     # (C₃₂ = 0, so C₃₂ D₂₁ = 0)
     #
     if ispositive(ln)
-        @inbounds for j in axes(D₂₁, 2)
-            for i in axes(D₂₁, 1)
-                C₂₁[i, j] = -D₂₁[i, j]
+        if UPLO === :L
+            @inbounds for j in axes(D₂₁, 2)
+                for i in axes(D₂₁, 1)
+                    C₂₁[i, j] = -D₂₁[i, j]
+                end
+            end
+        else
+            @inbounds for j in axes(D₁₂, 1)
+                for i in axes(D₁₂, 2)
+                    C₂₁[i, j] = -D₁₂[j, i]
+                end
             end
         end
         #
-        # C₁ ← C₁ D₁₁⁻¹
+        # C₁ ← C₁ D₁₁⁻¹  (lower)
+        # C₁ ← C₁ D₁₁⁻ᵀ  (upper)
         #
         if ispositive(mj)
-            trsm!(Val(:R), uplo, Val(:N), diag, one(T), D₁₁, C₁)
+            if UPLO === :L
+                trsm!(Val(:R), uplo, Val(:N), diag, one(T), D₁₁, C₁)
+            else
+                trsm!(Val(:R), uplo, Val(:T), diag, one(T), D₁₁, C₁)
+            end
         end
     end
     #
@@ -421,12 +386,6 @@ function null_loop_snd!(
     return ns
 end
 
-# ---------------------------------------------------------------------------
-#  Push F restricted to columns sep(i) down to child i.
-#
-#  F has compact layout [F₁ | F₃] with columns 1:ln and ln+1:ln+na_parent.
-#  The virtual right block (columns ln+1:nn in original indexing) is [I; 0].
-# ---------------------------------------------------------------------------
 function null_update!(
         F::AbstractMatrix{T},
         ptr::AbstractVector{I},
@@ -488,11 +447,6 @@ function null_update!(
     return
 end
 
-# ---------------------------------------------------------------------------
-#  Halfperm pass: build dense Matrix from block representation.
-#
-#  Optimized to walk ancestors once per front (not once per row).
-# ---------------------------------------------------------------------------
 function null_half!(
         N::AbstractMatrix{T},
         Xval::AbstractVector{T},

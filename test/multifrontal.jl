@@ -782,3 +782,37 @@ end
     # @test_call target_modules = (CliqueTrees,) amari!(T, Y, Z, F, S; inv=true)
     # @test_opt target_modules = (CliqueTrees,) amari!(T, Y, Z, F, S; inv=true)
 end
+
+@testset "nullspace" begin
+    using LinearAlgebra: nullspace
+
+    for UPLO in (:L, :U)
+        # Positive definite: B'B + I where B is square
+        B = sprand(50, 50, 0.1)
+        M = B' * B + I
+
+        F = cholesky!(ChordalCholesky{UPLO}(Symmetric(M, UPLO)), RowMaximum())
+        N = nullspace(F)
+        @test size(N, 2) == 0
+
+        F = ldlt!(ChordalLDLt{UPLO}(Symmetric(M, UPLO)), RowMaximum())
+        N = nullspace(F)
+        @test size(N, 2) == 0
+
+        # Semidefinite: B'B where B is wide (m < n), nullity = n - m
+        m, n = 50, 100
+        B = sprand(m, n, 0.3)
+        B[:, 1:m] += I  # guarantees full row rank
+        M = B' * B
+
+        F = cholesky!(ChordalCholesky{UPLO}(Symmetric(M, UPLO)), RowMaximum(); check=false)
+        N = nullspace(F)
+        @test size(N, 2) == n - m
+        @test norm(M * N) < 1e-10
+
+        F = ldlt!(ChordalLDLt{UPLO}(Symmetric(M, UPLO)), RowMaximum(); check=false)
+        N = nullspace(F)
+        @test size(N, 2) == n - m
+        @test norm(M * N) < 1e-10
+    end
+end

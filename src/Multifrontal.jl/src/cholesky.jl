@@ -1,6 +1,8 @@
 # ===== FactorizationWorkspace =====
 
-struct FactorizationWorkspace{T, I <: Integer}
+abstract type AbstractFactorizationWorkspace end
+
+struct FactorizationWorkspace{T, I <: Integer} <: AbstractFactorizationWorkspace
     Mptr::FVector{I}
     Mval::FVector{T}
     Fval::FVector{T}
@@ -27,6 +29,13 @@ end
 
 function FactorizationWorkspace(F::AbstractFactorization)
     return FactorizationWorkspace(triangular(F))
+end
+
+# TODO: workspace for dense factorization
+struct DenseFactorizationWorkspace <: AbstractFactorizationWorkspace end
+
+function FactorizationWorkspace(::AbstractTriangular)
+    return DenseFactorizationWorkspace()
 end
 
 """
@@ -80,7 +89,7 @@ function LinearAlgebra.cholesky!(
 end
 
 function LinearAlgebra.cholesky!(
-        W::FactorizationWorkspace,
+        W::AbstractFactorizationWorkspace,
         F::AbstractCholesky{UPLO, T},
         pivot::PivotingStrategy=NoPivot();
         check::Bool=true,
@@ -93,7 +102,18 @@ end
 
 function LinearAlgebra.cholesky!(
         L::ChordalTriangular{:N, UPLO, T},
-        pivot::PivotingStrategy=NoPivot();
+        pivot::NoPivot=NoPivot();
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    W = FactorizationWorkspace(L)
+    return cholesky!(W, L, pivot; check, reg, tol)
+end
+
+function LinearAlgebra.cholesky!(
+        L::ChordalTriangular{:N, UPLO, T},
+        pivot::RowMaximum;
         check::Bool=true,
         reg::AbstractRegularization=NoRegularization(),
         tol::Real=-one(real(T)),
@@ -171,7 +191,7 @@ function LinearAlgebra.ldlt!(
 end
 
 function LinearAlgebra.ldlt!(
-        W::FactorizationWorkspace,
+        W::AbstractFactorizationWorkspace,
         F::AbstractLDLt{UPLO, T},
         pivot::PivotingStrategy=NoPivot();
         signs::AbstractVector=Zeros{T}(size(F, 1)),
@@ -211,7 +231,7 @@ end
 # ===== factorize! Level 1: AbstractFactorization =====
 
 function factorize!(
-        W::FactorizationWorkspace,
+        W::AbstractFactorizationWorkspace,
         F::AbstractFactorization{DIAG, UPLO, T},
         pivot::PivotingStrategy;
         signs::AbstractVector,

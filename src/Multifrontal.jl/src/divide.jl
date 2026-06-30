@@ -1,10 +1,14 @@
 # ===== DivisionWorkspace =====
 
-struct DivisionWorkspace{T, I <: Integer}
+abstract type AbstractDivisionWorkspace end
+
+struct DivisionWorkspace{T, I <: Integer} <: AbstractDivisionWorkspace
     Mptr::FVector{I}
     Mval::FVector{T}
     Fval::FVector{T}
 end
+
+struct DenseDivisionWorkspace <: AbstractDivisionWorkspace end
 
 function DivisionWorkspace{T}(S::ChordalSymbolic{I}, nrhs::Integer) where {T, I <: Integer}
     Mptr = FVector{I}(undef, S.nMptr)
@@ -23,6 +27,10 @@ end
 
 function DivisionWorkspace(A::AdjOrTransTri, nrhs::Integer)
     return DivisionWorkspace(parent(A), nrhs)
+end
+
+function DivisionWorkspace(::AbstractTriangular, nrhs::Integer)
+    return DenseDivisionWorkspace()
 end
 
 # ================================== \ ==================================
@@ -180,7 +188,7 @@ function LinearAlgebra.ldiv!(F::NaturalFactorization{DIAG}, B::AbstractVecOrMat)
     return ldiv!(W, F, B)
 end
 
-function LinearAlgebra.ldiv!(W::DivisionWorkspace, F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
+function LinearAlgebra.ldiv!(W::AbstractDivisionWorkspace, F::NaturalFactorization{DIAG}, B::AbstractVecOrMat) where {DIAG}
     @assert size(F, 1) == size(B, 1)
 
     if DIAG === :N
@@ -266,7 +274,7 @@ function LinearAlgebra.rdiv!(B::AbstractMatrix, F::NaturalFactorization{DIAG}) w
     return rdiv!(W, B, F)
 end
 
-function LinearAlgebra.rdiv!(W::DivisionWorkspace, B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
+function LinearAlgebra.rdiv!(W::AbstractDivisionWorkspace, B::AbstractMatrix, F::NaturalFactorization{DIAG}) where {DIAG}
     @assert size(F, 1) == size(B, 2)
 
     if DIAG === :N
