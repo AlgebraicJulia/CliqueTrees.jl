@@ -475,6 +475,61 @@ function linegraph(ve::AbstractGraph{V}, ev::AbstractGraph{V}=reverse(ve)) where
     return BipartiteGraph{V, E}(n, n, m, pointer, target)   
 end
 
+function uniongraph(left::AbstractGraph{V}, right::AbstractGraph{V}) where {V}
+    @assert nov(left) == nov(right)
+    @assert nv(left) == nv(right)
+
+    E = promote_type(etype(left), etype(right))
+    h = nov(left); n = nv(left); m = zero(E)
+    marker = FVector{V}(undef, h)
+
+    @inbounds for w in outvertices(left)
+        marker[w] = zero(V)
+    end
+
+    @inbounds for v in vertices(left)
+        for w in neighbors(left, v)
+            if marker[w] < v
+                marker[w] = v
+                m += one(E)
+            end
+        end
+
+        for w in neighbors(right, v)
+            if marker[w] < v
+                marker[w] = v
+                m += one(E)
+            end
+        end
+    end
+
+    target = FVector{V}(undef, m)
+    pointer = FVector{E}(undef, n + one(V))
+    @inbounds pointer[one(V)] = p = one(E)
+
+    @inbounds for v in vertices(left)
+        tag = n + v
+
+        for w in neighbors(left, v)
+            if marker[w] < tag
+                marker[w] = tag
+                target[p] = w; p += one(E)
+            end
+        end
+
+        for w in neighbors(right, v)
+            if marker[w] < tag
+                marker[w] = tag
+                target[p] = w; p += one(E)
+            end
+        end
+
+        pointer[v + one(V)] = p
+    end
+
+    return BipartiteGraph{V, E}(h, n, m, pointer, target)
+end
+
 function symmetric(graph)
     return symmetric(BipartiteGraph(graph))
 end

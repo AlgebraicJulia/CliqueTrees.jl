@@ -10,8 +10,8 @@ end
 # ===== frule =====
 
 function selinv_frule_impl(A::HermOrSymSparse, F::ChordalCholesky, dA::HermOrSymSparse)
-      B = selinv(A, F)
-     cB = copyto!(similar(F),  B)
+     cB = selinv!(copy(F))
+      B = project(A, cB)
     cdA = copyto!(similar(F), dA)
      dB = project(A, fisher!(cdA, F, cB; inv=false))
     rmul!(parent(dB), -1)
@@ -21,7 +21,7 @@ end
 # ===== rrule =====
 
 function selinv_rrule_impl!(ΣA::HermOrSymSparse, A::HermOrSymSparse, F::ChordalCholesky, B::HermOrSymSparse, ΔB::HermOrSymSparse)
-     cB = copyto!(similar(F),  B)
+     cB = selinv!(copy(F))
     cΔB = copyto!(similar(F), ΔB)
      dA = scldia!(project(A, fisher!(scldia!(cΔB, 2), F, cB; inv=false)), 1 / 2)
     selaxpy!(-1, dA, ΣA)

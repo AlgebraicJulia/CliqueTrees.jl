@@ -32,19 +32,43 @@ function trsx2_fwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::A
     end
 end
 
-function trsx2_fwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {UPLO, DIAG}
-    @inbounds @fastmath for j in axes(A, 1)
+function trsx2_fwd!(::Val{:L}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+    n = size(A, 1)
+
+    @inbounds @fastmath for j in 1:n
+        if DIAG === :N
+            iAjj = inv(A[j, j])
+        end
+
         for i in axes(B, 2)
-            for k in 1:j - 1
-                if UPLO === :U
-                    B[j, i] -= A[k, j] * B[k, i]
-                else
-                    B[j, i] -= A[j, k] * B[k, i]
-                end
+            if DIAG === :N
+                B[j, i] *= iAjj
             end
 
+            Bji = B[j, i]
+
+            for k in j + 1:n
+                B[k, i] -= A[k, j] * Bji
+            end
+        end
+    end
+end
+
+function trsx2_fwd!(::Val{:L}, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+    n = size(A, 1)
+
+    @inbounds @fastmath for j in 1:n
+        for i in axes(B, 2)
+            Δ = zero(promote_eltype(A, B))
+
+            for k in 1:j - 1
+                Δ += A[k, j] * B[k, i]
+            end
+
+            B[j, i] -= Δ
+
             if DIAG === :N
-                B[j, i] *= inv(A[j, j])
+                B[j, i] /= A[j, j]
             end
         end
     end
@@ -74,19 +98,43 @@ function trsx2_bwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::A
     end
 end
 
-function trsx2_bwd!(::Val{:L}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {UPLO, DIAG}
-    @inbounds @fastmath for j in reverse(axes(A, 1))
+function trsx2_bwd!(::Val{:L}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+    n = size(A, 1)
+
+    @inbounds @fastmath for j in n:-1:1
+        if DIAG === :N
+            iAjj = inv(A[j, j])
+        end
+
         for i in axes(B, 2)
-            if DIAG === :N
-                B[j, i] *= inv(A[j, j])
+            Δ = zero(promote_eltype(A, B))
+
+            for k in j + 1:n
+                Δ += A[k, j] * B[k, i]
             end
 
+            B[j, i] -= Δ
+
+            if DIAG === :N
+                B[j, i] *= iAjj
+            end
+        end
+    end
+end
+
+function trsx2_bwd!(::Val{:L}, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+    n = size(A, 1)
+
+    @inbounds @fastmath for j in n:-1:1
+        for i in axes(B, 2)
+            if DIAG === :N
+                B[j, i] /= A[j, j]
+            end
+
+            Bji = B[j, i]
+
             for k in 1:j - 1
-                if UPLO === :U
-                    B[k, i] -= A[k, j] * B[j, i]
-                else
-                    B[k, i] -= A[j, k] * B[j, i]
-                end
+                B[k, i] -= A[k, j] * Bji
             end
         end
     end
@@ -94,7 +142,12 @@ end
 
 # ===== trsx! =====
 
-function trsx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A::AbstractMatrix, B::AbstractVecOrMat) where {SIDE, UPLO, TRANS}
+function trsx!(side::Val, uplo::Val, trans::Val, diag::Val, A::AbstractMatrix, B::AbstractVector)
+    trsx2!(side, uplo, trans, diag, A, B)
+    return
+end
+
+function trsx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A::AbstractMatrix, B::AbstractMatrix) where {SIDE, UPLO, TRANS}
     n = size(A, 1)
 
     if n <= THRESHOLD
@@ -113,10 +166,7 @@ function trsx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A
         A₂₁ = view(A, 1:m, m+1:n)
     end
 
-    if B isa AbstractVector
-        B₁ = view(B, 1:m)
-        B₂ = view(B, m+1:n)
-    elseif SIDE === :R
+    if SIDE === :R
         B₁ = view(B, :, 1:m)
         B₂ = view(B, :, m+1:n)
     else
@@ -127,9 +177,7 @@ function trsx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A
     if isforward(UPLO, TRANS, SIDE)
         trsx!(side, uplo, trans, diag, A₁₁, B₁)
 
-        if B isa AbstractVector
-            gemv!(trans, -1, A₂₁, B₁, 1, B₂)
-        elseif SIDE === :R
+        if SIDE === :R
             gemm!(Val(:N), trans, -1, B₁, A₂₁, 1, B₂)
         else
             gemm!(trans, Val(:N), -1, A₂₁, B₁, 1, B₂)
@@ -139,9 +187,7 @@ function trsx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A
     else
         trsx!(side, uplo, trans, diag, A₂₂, B₂)
 
-        if B isa AbstractVector
-            gemv!(trans, -1, A₂₁, B₂, 1, B₁)
-        elseif SIDE === :R
+        if SIDE === :R
             gemm!(Val(:N), trans, -1, B₂, A₂₁, 1, B₁)
         else
             gemm!(trans, Val(:N), -1, A₂₁, B₂, 1, B₁)
