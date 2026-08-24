@@ -4,13 +4,14 @@ function factorize!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector,
+        P::Permutation,
         pivot::RowMaximum,
-        perm::AbstractVector,
-        invp::AbstractVector,
         signs::AbstractVector,
         reg::SE99,
         tol::Real,
     ) where {DIAG, UPLO, T, I <: Integer}
+    perm = P.perm
+    invp = P.invp
     R = initialize(L, signs, reg)
 
     if DIAG === :U

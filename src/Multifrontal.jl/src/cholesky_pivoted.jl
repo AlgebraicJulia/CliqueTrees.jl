@@ -4,9 +4,8 @@ function factorize!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector,
+        P::Permutation,
         pivot::RowMaximum,
-        perm::AbstractVector,
-        invp::AbstractVector,
         signs::AbstractVector,
         reg::AbstractRegularization,
         tol::Real,
@@ -17,7 +16,7 @@ function factorize!(
         R = initialize(L, signs, reg)
     end
 
-    info = chol_piv_impl!(W, L, d, perm, invp, signs, R)
+    info = chol_piv_impl!(W, L, d, P.perm, P.invp, signs, R)
 
     return info
 end

@@ -387,6 +387,26 @@ function Base.getproperty(S::ChordalSymbolic, d::Symbol)
     end
 end
 
+function Base.copy(S::ChordalSymbolic)
+    return ChordalSymbolic(
+        copy(S.res), copy(S.sep), copy(S.rel), copy(S.chd),
+        copy(S.pnt), copy(S.idx), copy(S.Dptr), copy(S.Lptr),
+        S.nMptr, S.nMval, S.nNval, S.nFval,
+    )
+end
+
+function Base.copyto!(dst::ChordalSymbolic, src::ChordalSymbolic)
+    copyto!(dst.res, src.res)
+    copyto!(dst.sep, src.sep)
+    copyto!(dst.rel, src.rel)
+    copyto!(dst.chd, src.chd)
+    copyto!(dst.pnt, src.pnt)
+    copyto!(dst.idx, src.idx)
+    copyto!(dst.Dptr, src.Dptr)
+    copyto!(dst.Lptr, src.Lptr)
+    return dst
+end
+
 function Base.show(io::IO, S::T) where {T <: ChordalSymbolic}
     n = ncl(S)
     print(io, "$n×$n $T with $(nnz(S)) stored entries")

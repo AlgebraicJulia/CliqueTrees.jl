@@ -4,7 +4,6 @@ function factorize!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector,
-        pivot::NoPivot,
         signs::AbstractVector,
         reg::SE99,
         tol::Real,

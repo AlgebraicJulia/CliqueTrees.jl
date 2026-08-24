@@ -643,7 +643,7 @@ function Base.copy(graph::BipartiteGraph)
     )
 end
 
-function Base.copy!(dst::BipartiteGraph{V, E}, src::BipartiteGraph) where {V, E}
+function Base.copyto!(dst::BipartiteGraph{V, E}, src::BipartiteGraph) where {V, E}
     @assert nov(dst) == nov(src)
     @assert nv(dst) == nv(src)
     @assert ne(dst) == ne(src)
@@ -652,13 +652,17 @@ function Base.copy!(dst::BipartiteGraph{V, E}, src::BipartiteGraph) where {V, E}
     return dst
 end
 
-function Base.copy!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGraph) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}}
+function Base.copyto!(dst::BipartiteGraph{V, E, Ptr, OneTo{V}}, src::BipartiteGraph) where {V <: Integer, E <: Integer, Ptr <: AbstractVector{E}}
     @assert nov(dst) == nov(src)
     @assert nv(dst) == nv(src)
     @assert ne(dst) == ne(src)
     @assert targets(dst) == targets(src)
     copyto!(pointers(dst), one(V), pointers(src), one(V), nv(src) + one(V))
     return dst
+end
+
+function Base.copy!(dst::BipartiteGraph, src::BipartiteGraph)
+    return copyto!(dst, src)
 end
 
 #############################

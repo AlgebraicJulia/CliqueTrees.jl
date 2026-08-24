@@ -129,14 +129,16 @@ function sympermute!(C::AbstractMatrix{T}, A::AbstractMatrix{T}, invp::AbstractV
 
             if tgt === 'L'
                 lo, hi = minmax(pi, pj)
+                flag = pi < pj
             else
                 hi, lo = minmax(pi, pj)
+                flag = pi > pj
             end
 
-            if (i > j) == (pi > pj)
-                C[hi, lo] = A[i, j]
-            else
+            if flag
                 C[hi, lo] = conj(A[i, j])
+            else
+                C[hi, lo] = A[i, j]
             end
         end
     end
@@ -196,18 +198,20 @@ function sympermute(A::SparseMatrixCSC{T, I}, invp::AbstractVector, src::Char, t
 
             if tgt === 'L'
                 lo, hi = minmax(pi, pj)
+                flag = pi < pj
             else
                 hi, lo = minmax(pi, pj)
+                flag = pi > pj
             end
 
             q = colptr[hi + one(I)]
             rowval[q] = lo
             v = nonzeros(A)[p]
 
-            if (i > j) == (pi > pj)
-                nzval[q] = conj(v)
-            else
+            if flag
                 nzval[q] = v
+            else
+                nzval[q] = conj(v)
             end
 
             colptr[hi + one(I)] += one(I)

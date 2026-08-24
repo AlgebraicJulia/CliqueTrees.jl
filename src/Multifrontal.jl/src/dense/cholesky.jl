@@ -3,37 +3,34 @@
 function factorize!(
         ::DenseFactorizationWorkspace,
         L::AbstractTriangular{T},
-        d::AbstractVector,
-        pivot::NoPivot;
+        d::AbstractVector;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
         tol::Real,
     ) where {T}
-    return factorize!(L, d, pivot; signs, reg, check, tol)
+    return factorize!(L, d; signs, reg, check, tol)
 end
 
 function factorize!(
         ::DenseFactorizationWorkspace,
         L::AbstractTriangular{T},
         d::AbstractVector,
-        pivot::RowMaximum,
-        perm::AbstractVector,
-        invp::AbstractVector;
+        P::Permutation,
+        pivot::RowMaximum;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
         tol::Real,
     ) where {T}
-    return factorize!(L, d, pivot, perm, invp; signs, reg, check, tol)
+    return factorize!(L, d, P, pivot; signs, reg, check, tol)
 end
 
 # ===== factorize! Level 2: Dense triangular with kwargs =====
 
 function factorize!(
         L::AbstractTriangular{T},
-        d::AbstractVector,
-        pivot::NoPivot;
+        d::AbstractVector;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
@@ -41,7 +38,7 @@ function factorize!(
     ) where {T}
     @assert checksigns(signs, reg)
 
-    info = factorize!(L, d, pivot, signs, reg, tol)
+    info = factorize!(L, d, signs, reg, tol)
 
     if ispositive(info) && check
         if L isa LowerTriangular || L isa UpperTriangular
@@ -57,9 +54,8 @@ end
 function factorize!(
         L::AbstractTriangular{T},
         d::AbstractVector,
-        pivot::RowMaximum,
-        perm::AbstractVector,
-        invp::AbstractVector;
+        P::Permutation,
+        pivot::RowMaximum;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
@@ -67,7 +63,7 @@ function factorize!(
     ) where {T}
     @assert checksigns(signs, reg)
 
-    info = factorize!(L, d, pivot, perm, invp, signs, reg, tol)
+    info = factorize!(L, d, P, pivot, signs, reg, tol)
 
     if ispositive(info) && check
         throw(RankDeficientException(info))
@@ -81,7 +77,6 @@ end
 function factorize!(
         L::AbstractTriangular{T},
         d::AbstractVector,
-        pivot::NoPivot,
         signs::AbstractVector,
         reg::AbstractRegularization,
         tol::Real,
@@ -125,13 +120,14 @@ end
 function factorize!(
         L::AbstractTriangular{T},
         d::AbstractVector,
+        P::Permutation,
         pivot::RowMaximum,
-        perm::AbstractVector,
-        invp::AbstractVector,
         signs::AbstractVector,
         reg::AbstractRegularization,
         tol::Real,
     ) where {T}
+    perm = P.perm
+    invp = P.invp
     S = permuteto(T, signs, eachindex(signs))
     R = initialize(L, S, reg)
     M = parent(L)

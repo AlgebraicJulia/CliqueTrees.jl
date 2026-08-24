@@ -101,30 +101,43 @@ function LinearAlgebra.cholesky!(
 end
 
 function LinearAlgebra.cholesky!(
-        L::ChordalTriangular{:N, UPLO, T},
-        pivot::NoPivot=NoPivot();
+        L::ChordalTriangular{:N, UPLO, T};
         check::Bool=true,
         reg::AbstractRegularization=NoRegularization(),
         tol::Real=-one(real(T)),
     ) where {UPLO, T}
     W = FactorizationWorkspace(L)
-    return cholesky!(W, L, pivot; check, reg, tol)
+    return cholesky!(W, L; check, reg, tol)
 end
 
 function LinearAlgebra.cholesky!(
         L::ChordalTriangular{:N, UPLO, T},
-        pivot::RowMaximum;
+        P::Permutation,
+        pivot::PivotingStrategy=NoPivot();
         check::Bool=true,
         reg::AbstractRegularization=NoRegularization(),
         tol::Real=-one(real(T)),
     ) where {UPLO, T}
     W = FactorizationWorkspace(L)
-    return cholesky!(W, L, pivot; check, reg, tol)
+    return cholesky!(W, L, P, pivot; check, reg, tol)
+end
+
+function LinearAlgebra.cholesky!(
+        W::FactorizationWorkspace,
+        L::ChordalTriangular{:N, UPLO, T};
+        check::Bool=true,
+        reg::AbstractRegularization=NoRegularization(),
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    signs = Ones{T}(size(L, 1))
+    d = Ones{T}(size(L, 1))
+    return factorize!(W, L, d; signs, reg, check, tol)
 end
 
 function LinearAlgebra.cholesky!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{:N, UPLO, T},
+        P::Permutation,
         pivot::PivotingStrategy=NoPivot();
         check::Bool=true,
         reg::AbstractRegularization=NoRegularization(),
@@ -132,7 +145,7 @@ function LinearAlgebra.cholesky!(
     ) where {UPLO, T}
     signs = Ones{T}(size(L, 1))
     d = Ones{T}(size(L, 1))
-    return factorize!(W, L, d, pivot; signs, reg, check, tol)
+    return factorize!(W, L, d, P, pivot; signs, reg, check, tol)
 end
 
 """
@@ -204,7 +217,20 @@ end
 
 function LinearAlgebra.ldlt!(
         L::ChordalTriangular{:U, UPLO, T},
+        d::AbstractVector{T};
+        signs::AbstractVector=Zeros{T}(size(L, 1)),
+        reg::AbstractRegularization=NoRegularization(),
+        check::Bool=true,
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    W = FactorizationWorkspace(L)
+    return ldlt!(W, L, d; signs, reg, check, tol)
+end
+
+function LinearAlgebra.ldlt!(
+        L::ChordalTriangular{:U, UPLO, T},
         d::AbstractVector{T},
+        P::Permutation,
         pivot::PivotingStrategy=NoPivot();
         signs::AbstractVector=Zeros{T}(size(L, 1)),
         reg::AbstractRegularization=NoRegularization(),
@@ -212,20 +238,33 @@ function LinearAlgebra.ldlt!(
         tol::Real=-one(real(T)),
     ) where {UPLO, T}
     W = FactorizationWorkspace(L)
-    return ldlt!(W, L, d, pivot; signs, reg, check, tol)
+    return ldlt!(W, L, d, P, pivot; signs, reg, check, tol)
+end
+
+function LinearAlgebra.ldlt!(
+        W::FactorizationWorkspace,
+        L::ChordalTriangular{:U, UPLO, T},
+        d::AbstractVector{T};
+        signs::AbstractVector=Zeros{T}(size(L, 1)),
+        reg::AbstractRegularization=NoRegularization(),
+        check::Bool=true,
+        tol::Real=-one(real(T)),
+    ) where {UPLO, T}
+    return factorize!(W, L, d; signs, reg, check, tol)
 end
 
 function LinearAlgebra.ldlt!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{:U, UPLO, T},
         d::AbstractVector{T},
+        P::Permutation,
         pivot::PivotingStrategy=NoPivot();
         signs::AbstractVector=Zeros{T}(size(L, 1)),
         reg::AbstractRegularization=NoRegularization(),
         check::Bool=true,
         tol::Real=-one(real(T)),
     ) where {UPLO, T}
-    return factorize!(W, L, d, pivot; signs, reg, check, tol)
+    return factorize!(W, L, d, P, pivot; signs, reg, check, tol)
 end
 
 # ===== factorize! Level 1: AbstractFactorization =====
@@ -242,9 +281,9 @@ function factorize!(
     S = permuteto(T, signs, F.perm)
 
     if pivot isa NoPivot
-        info = factorize!(W, triangular(F), F.d, pivot; signs=S, reg, check, tol)
+        info = factorize!(W, triangular(F), F.d; signs=S, reg, check, tol)
     else
-        info = factorize!(W, triangular(F), F.d, pivot, F.perm, F.invp; signs=S, reg, check, tol)
+        info = factorize!(W, triangular(F), F.d, F.P, pivot; signs=S, reg, check, tol)
     end
 
     if iszero(info)
@@ -261,8 +300,7 @@ end
 function factorize!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
-        d::AbstractVector,
-        pivot::NoPivot;
+        d::AbstractVector;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
@@ -270,7 +308,7 @@ function factorize!(
     ) where {DIAG, UPLO, T, I <: Integer}
     @assert checksigns(signs, reg)
 
-    info = factorize!(W, L, d, pivot, signs, reg, tol)
+    info = factorize!(W, L, d, signs, reg, tol)
     check && checkinfo(info, L.diag)
 
     return info
@@ -280,9 +318,8 @@ function factorize!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector,
-        pivot::RowMaximum,
-        perm::AbstractVector,
-        invp::AbstractVector;
+        P::Permutation,
+        pivot::RowMaximum;
         signs::AbstractVector,
         reg::AbstractRegularization,
         check::Bool,
@@ -290,7 +327,7 @@ function factorize!(
     ) where {DIAG, UPLO, T, I <: Integer}
     @assert checksigns(signs, reg)
 
-    info = factorize!(W, L, d, pivot, perm, invp, signs, reg, tol)
+    info = factorize!(W, L, d, P, pivot, signs, reg, tol)
 
     if check && ispositive(info)
         # throw(RankDeficientException(info))
@@ -299,13 +336,26 @@ function factorize!(
     return info
 end
 
+function factorize!(
+        W::FactorizationWorkspace,
+        L::ChordalTriangular{DIAG, UPLO, T, I},
+        d::AbstractVector,
+        ::Permutation,
+        ::NoPivot;
+        signs::AbstractVector,
+        reg::AbstractRegularization,
+        check::Bool,
+        tol::Real,
+    ) where {DIAG, UPLO, T, I <: Integer}
+    return factorize!(W, L, d; signs, reg, check, tol)
+end
+
 # ===== factorize! Level 3: all positional (core computation) =====
 
 function factorize!(
         W::FactorizationWorkspace,
         L::ChordalTriangular{DIAG, UPLO, T, I},
         d::AbstractVector{T},
-        ::NoPivot,
         signs::AbstractVector{T},
         reg::AbstractRegularization,
         tol::Real,

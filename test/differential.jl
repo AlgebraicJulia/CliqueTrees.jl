@@ -48,6 +48,19 @@ function testgradient(f, args...; rtol=1e-4)
     return isapprox(dy, sum(real ∘ splat(dot), zip(gradients, tangents)); rtol)
 end
 
+function testfinitediff(fAD, ftrue, Q; ε=1e-6, rtol=1e-4, atol=1e-8)
+    config = Config(friendly_tangents=true)
+    fwd_cache = prepare_derivative_cache(fAD, Q; config)
+
+    df = zero_tangent(fAD)
+    t = randtangent(Q)
+
+    _, dy = value_and_derivative!!(fwd_cache, (fAD, df), (Q, t))
+    fd = (ftrue(Q + ε * t) - ftrue(Q - ε * t)) / 2ε
+
+    return isapprox(dy, fd; rtol, atol)
+end
+
 @testset "Mooncake" begin
     for T in (Float64,)
         @testset "$T" begin
@@ -84,6 +97,41 @@ end
             @testset "X / F matrix" begin
                 X = randn(T, 3, n)
                 @test testgradient(X -> (Y = X / F; dot(Y, Y)), X)
+            end
+        end
+    end
+end
+
+@testset "Finite difference (non-chordal)" begin
+    for T in (Float64,)
+        @testset "$T" begin
+            n = 8
+
+            rows = Int[]; cols = Int[]; vals = T[]
+
+            for i in 1:n
+                j = i % n + 1
+                push!(rows, i, j); push!(cols, j, i); push!(vals, -one(T), -one(T))
+            end
+
+            for i in 1:n
+                push!(rows, i); push!(cols, i); push!(vals, T(4))
+            end
+
+            Q = sparse(rows, cols, vals, n, n)
+            F = cholesky!(ChordalCholesky(Symmetric(Q)))
+
+            selinvloss(Qm, Fm) = real(dot(selinv(Qm, Fm), selinv(Qm, Fm)))
+
+            fAD = Qm -> selinvloss(Qm, F)
+            ftrue = Qm -> selinvloss(Qm, cholesky!(ChordalCholesky(Symmetric(Qm))))
+
+            @testset "selinv(Q, F)" begin
+                @test testfinitediff(fAD, ftrue, Q)
+            end
+
+            @testset "logdet(Q, F)" begin
+                @test testfinitediff(Qm -> logdet(Qm, F), Qm -> logdet(cholesky!(ChordalCholesky(Symmetric(Qm)))), Q)
             end
         end
     end
