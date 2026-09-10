@@ -6,13 +6,13 @@ using Base.Threads: @threads, maxthreadid, nthreads, threadid
 using FillArrays: Ones, Zeros, AbstractFill, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasComplex, Factorization, LAPACK, BLAS, PivotingStrategy, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm, AbstractTriangular, axpby!
+using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasComplex, BlasReal, Factorization, LAPACK, BLAS, PivotingStrategy, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm, AbstractTriangular, axpby!
 using Random
 using Random: rand!
 using SparseArrays
 using SparseArrays: getcolptr
 
-import ..BipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree,
+import ..BipartiteGraph, ..FBipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
     ..eltypedegree, ..etype, ..residual, ..half, ..ispositive, ..isnegative, ..two, ..twice,
     ..cliquetree, ..residuals, ..separators, ..childindices, ..AbstractScalar, ..DEFAULT_ELIMINATION_ALGORITHM
@@ -64,7 +64,7 @@ include("dense/dense.jl")
 include("fisherroot.jl")
 include("fisher.jl")
 include("amari.jl")
-include("lowrank.jl")
+include("lowrank/lowrank.jl")
 include("krylov.jl")
 include("complete_generic.jl")
 include("nullspace.jl")

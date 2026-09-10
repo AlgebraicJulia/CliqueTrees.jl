@@ -36,7 +36,7 @@ function fisherroot!(
         info = fisherroot_impl!(Uptr, Uval, Fval, F, S, Y, Val(false), Val(false))
     end
 
-    check && checkinfo(info, F.diag)
+    checkinfo(info, F.diag, check)
 
     return info
 end

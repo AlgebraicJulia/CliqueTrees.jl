@@ -101,6 +101,10 @@ function chol_piv_impl!(
         diag::Val{DIAG},
     ) where {T, I <: Integer, UPLO, DIAG}
 
+    if R isa Real && isnegative(R)
+        R = chol_piv_tol(Dptr, Dval, res)
+    end
+
     info = chol_piv_fwd!(
         Mptr, Mval, Dptr, Dval, Lptr, Lval, d, Fval,
         res, rel, chd, piv, perm, S, R, uplo, diag
@@ -118,6 +122,33 @@ function chol_piv_impl!(
     end
 
     return info
+end
+
+# ============================= chol_piv_tol =============================
+
+function chol_piv_tol(
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        res::AbstractGraph{I},
+    ) where {T, I <: Integer}
+    maxdiag = zero(real(T))
+
+    @inbounds for j in vertices(res)
+        n = eltypedegree(res, j)
+
+        p = Dptr[j]
+
+        for j in oneto(n)
+            np1 = n + one(I)
+            jm1 = j - one(I)
+
+            Djj = Dval[p + jm1 * np1]
+
+            maxdiag = max(maxdiag, abs(Djj))
+        end
+    end
+
+    return nov(res) * eps(real(T)) * maxdiag
 end
 
 # ============================= chol_piv_fwd! =============================

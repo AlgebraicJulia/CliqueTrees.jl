@@ -776,12 +776,12 @@ function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}
     return Arr(n)
 end
 
-function checkinfo(info, ::Val{DIAG}) where {DIAG}
+function checkinfo(info, ::Val{DIAG}, check) where {DIAG}
     if isnegative(info)
         throw(ArgumentError(info))
-    elseif DIAG === :N && ispositive(info)
+    elseif check && DIAG === :N && ispositive(info)
         throw(PosDefException(info))
-    elseif DIAG === :U && ispositive(info)
+    elseif check && DIAG === :U && ispositive(info)
         throw(SingularException(info))
     end
 

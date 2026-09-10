@@ -30,7 +30,7 @@ function fisher!(
         info = fisher_impl!(Uptr, Uval, Fval, F, S, Y, Val(false))
     end
 
-    check && checkinfo(info, F.diag)
+    checkinfo(info, F.diag, check)
 
     return info
 end

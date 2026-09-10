@@ -17,7 +17,7 @@ function complete!(
 
     info = complete_impl!(Mptr, Mval, Fval, L)
 
-    check && checkinfo(info, L.diag)
+    checkinfo(info, L.diag, check)
 
     return info
 end

@@ -66,7 +66,7 @@ function amari!(
         info = amari_impl!(Uptr, Uval, Vval, Fval, T, Y, Z, L, S, Val(false))
     end
 
-    check && checkinfo(info, L.diag)
+    checkinfo(info, L.diag, check)
 
     return info
 end

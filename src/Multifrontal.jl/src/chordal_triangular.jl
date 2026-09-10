@@ -419,11 +419,17 @@ end
 
 function LinearAlgebra.rank(A::ChordalTriangular{DIAG, UPLO, T, I}; kw...) where {DIAG, UPLO, T, I <: Integer}
     if DIAG === :N
+        tol = nulltol(A; kw...)
         out = 0
 
         @inbounds for j in fronts(A)
-            D, res = diagblock(A, j)
-            out += rank(D; kw...)
+            D, _ = diagblock(A, j)
+
+            for i in diagind(D)
+                if abs2(D[i]) > tol
+                    out += 1
+                end
+            end
         end
 
         return out

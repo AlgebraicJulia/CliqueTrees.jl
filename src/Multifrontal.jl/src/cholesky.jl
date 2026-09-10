@@ -309,7 +309,7 @@ function factorize!(
     @assert checksigns(signs, reg)
 
     info = factorize!(W, L, d, signs, reg, tol)
-    check && checkinfo(info, L.diag)
+    checkinfo(info, L.diag, check)
 
     return info
 end
