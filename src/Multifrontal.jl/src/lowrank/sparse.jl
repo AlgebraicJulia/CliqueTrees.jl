@@ -286,13 +286,12 @@ function lowrank_sparse_permutation(B::SparseMatrixCSC{T, I}) where {T, I <: Int
 
         if strt < stop
             r = rowvals(B)[strt]
-            tgt[ptr[r]] = c
-            ptr[r] += one(I)
         else
-            tgt[ptr[m + one(I)]] = c
-            ptr[m + one(I)] += one(I)
+            r = m + one(I)
         end
 
+        tgt[ptr[r]] = c
+        ptr[r] += one(I)
         strt = stop
     end
 

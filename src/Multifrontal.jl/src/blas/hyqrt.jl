@@ -21,7 +21,7 @@ function hyqrt_apply!(Ablk::AbstractMatrix{T}, Bblk::AbstractMatrix{T}, V::Abstr
     copyto!(Zv, Ablk)
     gemm!(Val(:C), Val(:N), -one(T), V, Bblk, one(T), Zv)
     trmm!(Val(:L), Val(:U), Val(:C), Val(:N), one(T), Tv, Zv)
-    Ablk .-= Zv
+    axpy!(-one(T), Zv, Ablk)
     gemm!(Val(:N), Val(:N), -one(T), V, Zv, one(T), Bblk)
 
     return
@@ -46,7 +46,10 @@ function hyqrt_fact!(A::AbstractMatrix{T}, Bp::AbstractMatrix{T}, Tw::AbstractMa
             end
 
             if iszero(s2)
-                Tw[jl, jl] = zero(T)
+                for i in lo:jl
+                    Tw[i, jl] = zero(T)
+                end
+
                 continue
             end
 
@@ -170,7 +173,7 @@ function hylqt_apply!(Ablk::AbstractMatrix{T}, Bblk::AbstractMatrix{T}, V::Abstr
     copyto!(Zv, Ablk)
     gemm!(Val(:N), Val(:C), -one(T), Bblk, V, one(T), Zv)
     trmm!(Val(:R), Val(:U), Val(:N), Val(:N), one(T), Tv, Zv)
-    Ablk .-= Zv
+    axpy!(-one(T), Zv, Ablk)
     gemm!(Val(:N), Val(:N), -one(T), Zv, V, one(T), Bblk)
 
     return
@@ -194,7 +197,10 @@ function hylqt_fact!(A::AbstractMatrix{T}, Bp::AbstractMatrix{T}, Tw::AbstractMa
             end
 
             if iszero(s2)
-                Tw[jl, jl] = zero(T)
+                for i in lo:jl
+                    Tw[i, jl] = zero(T)
+                end
+
                 continue
             end
 
