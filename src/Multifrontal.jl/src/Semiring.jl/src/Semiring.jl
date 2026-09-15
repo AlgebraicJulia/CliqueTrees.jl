@@ -5,17 +5,21 @@ using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, nthreads
 using Graphs: AbstractGraph, neighbors, vertices
+using LinearAlgebra: Factorization, Transpose, mul!
+import LinearAlgebra: lu!, ldiv!, rdiv!
 using SIMD: Vec, vload, vstore, shufflevector
-using SparseArrays: SparseMatrixCSC
+using SparseArrays: SparseMatrixCSC, permute
 
-using ...Multifrontal: ChordalTriangular, DivisionWorkspace, FVector, THRESHOLD,
-    copy_scatter!, copygatherrec!, copyrec!, eltypedegree, isforward, ispositive
+using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
+    FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
+    copy_scatter!, copygatherrec!, copyrec!, eltypedegree, isforward, ispositive, symbolic,
+    symmetric
 
 export AbstractSemiring, AbstractQuantale, IntegralQuantale, AbstractLattice, DualLattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
 export GCDProd, LCMProd, GCDLCM, LCMGCD, AndOr, OrAnd, RelPlus, RelProd
 export LAndPar, LOrTens
-export splus, sprod, sstar, szero, sone, smuladd, slu!, sldiv!, srdiv!
+export splus, sprod, sstar, szero, sone, smuladd, sldiv!, srdiv!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, Jet, Best, AffGCDProd
 
@@ -33,6 +37,7 @@ include("blas/sgemx.jl")
 include("blas/strsx.jl")
 include("blas/slu.jl")
 include("utils.jl")
+include("semiring_lu.jl")
 include("slu.jl")
 include("divide.jl")
 

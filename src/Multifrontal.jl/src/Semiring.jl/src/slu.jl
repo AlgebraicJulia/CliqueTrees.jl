@@ -1,18 +1,26 @@
-# ===== scopyto! =====
-
-function scopyto!(s::AbstractSemiring, A::ChordalTriangular{<:Any, <:Any, T}, B::SparseMatrixCSC) where {T}
-    fill!(A, szero(s, T))
-    return copy_scatter!(A, B)
-end
-
 # ===== slu! =====
 
-function slu!(s::AbstractSemiring, L::ChordalTriangular{<:Any, :L, T, I}, U::ChordalTriangular{<:Any, :U, T, I}) where {T, I}
+function lu!(F::SemiringLU)
+    slu!(F.s, F.L, F.U)
+    return F
+end
+
+function lu!(F::SemiringLU, W::FactorizationWorkspace)
+    slu!(F.s, F.L, F.U, W)
+    return F
+end
+
+function slu!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}) where {T, I}
+    W = FactorizationWorkspace(L)
+    return slu!(s, L, U, W)
+end
+
+function slu!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}, W::FactorizationWorkspace{T, I}) where {T, I}
     S = L.S
 
-    Fval = FVector{T}(undef, S.nFval * S.nFval)
-    Mptr = FVector{I}(undef, S.nMptr)
-    Mval = FVector{T}(undef, S.nMval)
+    Fval = W.Fval
+    Mptr = W.Mptr
+    Mval = W.Mval
 
     res = S.res
     rel = S.rel

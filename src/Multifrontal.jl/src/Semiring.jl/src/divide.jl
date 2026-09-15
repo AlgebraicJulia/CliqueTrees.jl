@@ -1,3 +1,54 @@
+const RowVector{T, V <: AbstractVector{T}} = Transpose{T, V}
+
+# ===== ldiv! =====
+
+function ldiv!(F::SemiringLU{Sem, T}, B::AbstractVecOrMat) where {Sem, T}
+    if B isa AbstractVector
+        nrhs = 1
+    else
+        nrhs = size(B, 2)
+    end
+
+    W = DivisionWorkspace{T}(F.S, nrhs)
+    return ldiv!(W, F, B)
+end
+
+function ldiv!(W::DivisionWorkspace, F::SemiringLU{Sem, T}, B::AbstractVecOrMat) where {Sem, T}
+    C = FArray{T}(undef, size(B))
+    mul!(C, F.P, B)
+    sldiv!(F.s, W, F.L, F.U, C)
+    ldiv!(B, F.Q, C)
+    return B
+end
+
+# ===== rdiv! =====
+
+function rdiv!(B::AbstractMatrix, F::SemiringLU{Sem, T}) where {Sem, T}
+    W = DivisionWorkspace{T}(F.S, size(B, 1))
+    return rdiv!(W, B, F)
+end
+
+function rdiv!(W::DivisionWorkspace, B::AbstractMatrix, F::SemiringLU{Sem, T}) where {Sem, T}
+    C = FMatrix{T}(undef, size(B))
+    rdiv!(C, B, F.Q)
+    srdiv!(F.s, W, C, F.L, F.U)
+    mul!(B, C, F.P)
+    return B
+end
+
+function rdiv!(W::DivisionWorkspace, bt::RowVector, F::SemiringLU{Sem, T}) where {Sem, T}
+    b = parent(bt)
+    c = FVector{T}(undef, length(b))
+    mul!(c, F.Q, b)
+    srdiv!(F.s, W, c, F.L, F.U)
+    ldiv!(b, F.P, c)
+    return bt
+end
+
+function Base.:/(bt::RowVector, F::SemiringLU)
+    return rdiv!(transpose(copy(parent(bt))), F)
+end
+
 # ===== sldiv! =====
 
 function sldiv!(
