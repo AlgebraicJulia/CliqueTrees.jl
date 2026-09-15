@@ -161,11 +161,25 @@ function LowrankWorkspace(L::ChordalTriangular{DIAG, UPLO, T}, H::HyperSymbolic)
     return LowrankWorkspace{T}(L.S, H)
 end
 
-function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatrixCSC; check::Bool=true) where {UPLO, T}
-    return lowrankupdate!(F, convert(SparseMatrixCSC{T}, B); check)
+function LinearAlgebra.lowrankupdate!(F::ChordalCholesky, B::AbstractMatrix; check::Bool=true)
+    return lowrankupdate!(F, sparse(B); check)
 end
 
-function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatrixCSC{T}; check::Bool=true) where {UPLO, T}
+function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatrixCSC; check::Bool=true) where {UPLO, T}
+    return lowrankupdate!(F, convert(SparseMatrixCSC{T}, B), true; check)
+end
+
+function LinearAlgebra.lowrankdowndate!(F::ChordalCholesky, B::AbstractMatrix; check::Bool=true)
+    return lowrankdowndate!(F, sparse(B); check)
+end
+
+function LinearAlgebra.lowrankdowndate!(F::ChordalCholesky{UPLO, T}, B::SparseMatrixCSC; check::Bool=true) where {UPLO, T}
+    return lowrankupdate!(F, convert(SparseMatrixCSC{T}, B), -true; check)
+end
+
+function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatrixCSC{T}, w::Real; check::Bool=true) where {UPLO, T}
+    @assert isone(abs(w))
+
     L = triangular(F)
 
     rowperm = F.perm
@@ -176,7 +190,7 @@ function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatr
 
     H = HyperSymbolic(L, B)
     W = LowrankWorkspace(L, H)
-    info = lowrankupdate!(W, L, H, nonzeros(B))
+    info = lowrankupdate!(W, L, H, nonzeros(B), w)
 
     if ispositive(info)
         F.info[] = rowperm[info]
@@ -188,8 +202,17 @@ function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatr
     return F
 end
 
-function LinearAlgebra.lowrankupdate!(F::ChordalCholesky, B::AbstractMatrix; check::Bool=true)
-    return lowrankupdate!(F, sparse(B); check)
+function LinearAlgebra.lowrankupdate!(
+        W::LowrankWorkspace{T, I},
+        L::ChordalTriangular{:N, UPLO, T, I},
+        H::HyperSymbolic{I},
+        Bval::AbstractVector{T},
+        w::Real=true,
+    ) where {UPLO, T, I <: Integer}
+    return lowrank_sparse_impl!(
+        W.Mptr, W.Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, W.Fval, W.Wval, W.Sptr, H.Aptr,
+        Bval, L.S.res, L.S.sep, L.S.rel, H.col, L.S.chd, L.uplo, w,
+    )
 end
 
 function lowrank_sparse_permutation(B::SparseMatrixCSC{T, I}) where {T, I <: Integer}
@@ -276,18 +299,6 @@ function lowrank_sparse_permutation(B::SparseMatrixCSC{T, I}) where {T, I <: Int
     return tgt
 end
 
-function LinearAlgebra.lowrankupdate!(
-        W::LowrankWorkspace{T, I},
-        L::ChordalTriangular{:N, UPLO, T, I},
-        H::HyperSymbolic{I},
-        Bval::AbstractVector{T},
-    ) where {UPLO, T, I <: Integer}
-    return lowrank_sparse_impl!(
-        W.Mptr, W.Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, W.Fval, W.Wval, W.Sptr, H.Aptr,
-        Bval, L.S.res, L.S.sep, L.S.rel, H.col, L.S.chd, L.uplo,
-    )
-end
-
 function lowrank_sparse_impl!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
@@ -306,6 +317,7 @@ function lowrank_sparse_impl!(
         col::AbstractGraph{I},
         chd::AbstractGraph{I},
         uplo::Val{UPLO},
+        w::Real,
     ) where {UPLO, T, I <: Integer}
     ns = zero(I); Mptr[one(I)] = one(I)
     info = zero(I)
@@ -313,7 +325,7 @@ function lowrank_sparse_impl!(
     for j in vertices(res)
         ns, localinfo = lowrank_sparse_loop!(
             Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, Wval, Sptr, Aptr,
-            Bval, res, sep, rel, col, chd, ns, j, uplo,
+            Bval, res, sep, rel, col, chd, ns, j, uplo, w,
         )
 
         if ispositive(localinfo) && iszero(info)
@@ -380,6 +392,7 @@ function lowrank_sparse_loop!(
         ns::I,
         j::I,
         uplo::Val{UPLO},
+        w::Real,
     ) where {UPLO, T, I <: Integer}
     #
     # nn is the size of the residual at node j
@@ -490,7 +503,7 @@ function lowrank_sparse_loop!(
         ns -= one(I)
     end
 
-    if lowrank_sparse_iszero(D₁₁, L₂₁, uplo)
+    if ispositive(w) && lowrank_sparse_iszero(D₁₁, L₂₁, uplo)
         #
         # factorize F
         #
@@ -575,7 +588,15 @@ function lowrank_sparse_loop!(
         #   G₂₂ ← G₂₂'
         #
         if ispositive(bn)
-            lowrank_sparse_factor_1!(D₁₁, L₂₁, G₁₂, G₂₂, Wval, uplo)
+            if isnegative(w)
+                info = convert(I, lowrank_sparse_factor_dn_1!(D₁₁, L₂₁, G₁₂, G₂₂, Wval, uplo))
+            else
+                info = convert(I, lowrank_sparse_factor_up_1!(D₁₁, L₂₁, G₁₂, G₂₂, Wval, uplo))
+            end
+
+            if ispositive(info)
+                return ns, info
+            end
         end
         #
         # factorize F₂₂
@@ -833,7 +854,7 @@ function lowrank_sparse_send_2B!(
     return
 end
 
-function lowrank_sparse_factor_1!(
+function lowrank_sparse_factor_up_1!(
         D₁₁::AbstractMatrix{T},
         L₂₁::AbstractMatrix{T},
         G₁₂::AbstractMatrix{T},
@@ -842,7 +863,12 @@ function lowrank_sparse_factor_1!(
         ::Val{UPLO},
     ) where {UPLO, T}
     m = size(D₁₁, 1)
-    n = UPLO === :L ? size(L₂₁, 1) : size(L₂₁, 2)
+    if UPLO === :L
+        n = size(L₂₁, 1)
+    else
+        n = size(L₂₁, 2)
+    end
+
     k = min(m, LOWRANK_BLOCK)
 
     wsize = k * max(m, n)
@@ -880,7 +906,36 @@ function lowrank_sparse_factor_1!(
         end
     end
 
-    return
+    return 0
+end
+
+function lowrank_sparse_factor_dn_1!(
+        D₁₁::AbstractMatrix{T},
+        L₂₁::AbstractMatrix{T},
+        G₁₂::AbstractMatrix{T},
+        G₂₂::AbstractMatrix{T},
+        Wval::AbstractVector{T},
+        ::Val{UPLO},
+    ) where {UPLO, T}
+    m = size(D₁₁, 1)
+
+    if UPLO === :L
+        n = size(L₂₁, 1)
+    else
+        n = size(L₂₁, 2)
+    end
+
+    nb = min(m, LOWRANK_BLOCK)
+    zc = max(m, n)
+    W = reshape(view(Wval, 1:nb * nb), nb, nb)
+
+    if UPLO === :L
+        Z = reshape(view(Wval, nb * nb + 1:nb * nb + zc * nb), zc, nb)
+        return hylqt!(D₁₁, G₁₂, L₂₁, G₂₂, W, Z)
+    else
+        Z = reshape(view(Wval, nb * nb + 1:nb * nb + nb * zc), nb, zc)
+        return hyqrt!(D₁₁, G₁₂, L₂₁, G₂₂, W, Z)
+    end
 end
 
 #
@@ -1064,7 +1119,11 @@ function lowrank_sparse_factor_2!(
         r0::I,
         uplo::Val{UPLO},
     ) where {UPLO, T, I <: Integer}
-    n = size(F₂₂, UPLO === :L ? 1 : 2)
+    if UPLO === :L
+        n = size(F₂₂, 1)
+    else
+        n = size(F₂₂, 2)
+    end
 
     rstrt = 1
 

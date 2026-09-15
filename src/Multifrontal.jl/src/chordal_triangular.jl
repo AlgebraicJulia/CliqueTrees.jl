@@ -855,10 +855,7 @@ function setflatindex!(A::ChordalTriangular, x, p::Integer)
 end
 
 
-function Base.copyto!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
-    zerorec!(A.Dval)
-    zerorec!(A.Lval)
-
+function copy_scatter!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
     @inbounds for i in fronts(A)
         D, res = diagblock(A, i)
         L, sep = offdblock(A, i)
@@ -898,10 +895,7 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC) 
     return A
 end
 
-function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
-    zerorec!(A.Dval)
-    zerorec!(A.Lval)
-
+function copy_scatter!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
     @inbounds for i in fronts(A)
         D, res = diagblock(A, i)
         L, sep = offdblock(A, i)
@@ -929,6 +923,12 @@ function Base.copyto!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) 
     end
 
     return A
+end
+
+function Base.copyto!(A::ChordalTriangular{<:Any, <:Any, T}, B::SparseMatrixCSC) where {T}
+    zerorec!(A.Dval)
+    zerorec!(A.Lval)
+    return copy_scatter!(A, B)
 end
 
 function Base.copy!(A::ChordalTriangular, B::AbstractMatrix)

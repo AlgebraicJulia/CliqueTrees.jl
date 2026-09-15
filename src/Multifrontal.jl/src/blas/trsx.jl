@@ -35,14 +35,10 @@ end
 function trsx2_fwd!(::Val{:L}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
     n = size(A, 1)
 
-    @inbounds @fastmath for j in 1:n
-        if DIAG === :N
-            iAjj = inv(A[j, j])
-        end
-
-        for i in axes(B, 2)
+    @inbounds @fastmath for i in axes(B, 2)
+        for j in 1:n
             if DIAG === :N
-                B[j, i] *= iAjj
+                B[j, i] /= A[j, j]
             end
 
             Bji = B[j, i]
@@ -98,6 +94,28 @@ function trsx2_bwd!(::Val{:R}, ::Val{UPLO}, ::Val{DIAG}, A::AbstractMatrix, B::A
     end
 end
 
+function trsx2_bwd!(::Val{:R}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+    n = size(A, 1)
+
+    @inbounds @fastmath for j in n:-1:1
+        for k in j + 1:n
+            Akj = A[k, j]
+
+            for i in axes(B, 1)
+                B[i, j] -= B[i, k] * Akj
+            end
+        end
+
+        if DIAG === :N
+            iAjj = inv(A[j, j])
+
+            for i in axes(B, 1)
+                B[i, j] *= iAjj
+            end
+        end
+    end
+end
+
 function trsx2_bwd!(::Val{:L}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
     n = size(A, 1)
 
@@ -125,8 +143,8 @@ end
 function trsx2_bwd!(::Val{:L}, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
     n = size(A, 1)
 
-    @inbounds @fastmath for j in n:-1:1
-        for i in axes(B, 2)
+    @inbounds @fastmath for i in axes(B, 2)
+        for j in n:-1:1
             if DIAG === :N
                 B[j, i] /= A[j, j]
             end
@@ -142,59 +160,92 @@ end
 
 # ===== trsx! =====
 
-function trsx!(side::Val, uplo::Val, trans::Val, diag::Val, A::AbstractMatrix, B::AbstractVector)
+function trsx!(side::Val, uplo::Val, trans::Val, diag::Val, A::AbstractMatrix, B::AbstractVector; nt::Integer = nthreads())
     trsx2!(side, uplo, trans, diag, A, B)
     return
 end
 
-function trsx!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A::AbstractMatrix, B::AbstractMatrix) where {SIDE, UPLO, TRANS}
+function trsx!(side::Val{S}, uplo::Val, trans::Val, diag::Val, A::AbstractMatrix, B::AbstractMatrix; nt::Integer = nthreads()) where {S}
+    if S === :L
+        ncol = size(B, 2)
+    else
+        ncol = size(B, 1)
+    end
+
+    if nt <= 1 || ncol <= THRESHOLD
+        trsx_impl!(side, uplo, trans, diag, A, B; nt)
+    else
+        h = ncol >> 1
+
+        if S === :L
+            B₁ = view(B, :, 1:h)
+            B₂ = view(B, :, h + 1:ncol)
+        else
+            B₁ = view(B, 1:h, :)
+            B₂ = view(B, h + 1:ncol, :)
+        end
+
+        nt₁ = nt >> 1
+
+        task = @spawn trsx!(side, uplo, trans, diag, A, B₁; nt = nt₁)
+        trsx!(side, uplo, trans, diag, A, B₂; nt = nt - nt₁)
+        wait(task)
+    end
+
+    return
+end
+
+# ===== trsx_impl! =====
+
+function trsx_impl!(side::Val{SIDE}, uplo::Val{UPLO}, trans::Val{TRANS}, diag::Val, A::AbstractMatrix, B::AbstractMatrix; nt::Integer = nthreads()) where {SIDE, UPLO, TRANS}
     n = size(A, 1)
 
     if n <= THRESHOLD
         trsx2!(side, uplo, trans, diag, A, B)
-        return
-    end
-
-    m = prevpow(2, n) >> 1
-
-    A₁₁ = view(A, 1:m, 1:m)
-    A₂₂ = view(A, m+1:n, m+1:n)
-
-    if UPLO === :L
-        A₂₁ = view(A, m+1:n, 1:m)
     else
-        A₂₁ = view(A, 1:m, m+1:n)
-    end
+        m = prevpow(2, n) >> 1
 
-    if SIDE === :R
-        B₁ = view(B, :, 1:m)
-        B₂ = view(B, :, m+1:n)
-    else
-        B₁ = view(B, 1:m, :)
-        B₂ = view(B, m+1:n, :)
-    end
+        A₁₁ = view(A, 1:m, 1:m)
+        A₂₂ = view(A, m+1:n, m+1:n)
 
-    if isforward(UPLO, TRANS, SIDE)
-        trsx!(side, uplo, trans, diag, A₁₁, B₁)
-
-        if SIDE === :R
-            gemm!(Val(:N), trans, -1, B₁, A₂₁, 1, B₂)
+        if UPLO === :L
+            A₂₁ = view(A, m+1:n, 1:m)
         else
-            gemm!(trans, Val(:N), -1, A₂₁, B₁, 1, B₂)
+            A₂₁ = view(A, 1:m, m+1:n)
         end
 
-        trsx!(side, uplo, trans, diag, A₂₂, B₂)
-    else
-        trsx!(side, uplo, trans, diag, A₂₂, B₂)
-
         if SIDE === :R
-            gemm!(Val(:N), trans, -1, B₂, A₂₁, 1, B₁)
+            B₁ = view(B, :, 1:m)
+            B₂ = view(B, :, m+1:n)
         else
-            gemm!(trans, Val(:N), -1, A₂₁, B₂, 1, B₁)
+            B₁ = view(B, 1:m, :)
+            B₂ = view(B, m+1:n, :)
         end
 
-        trsx!(side, uplo, trans, diag, A₁₁, B₁)
+        if isforward(UPLO, TRANS, SIDE)
+            trsx_impl!(side, uplo, trans, diag, A₁₁, B₁; nt)
+
+            if SIDE === :R
+                gemm!(Val(:N), trans, -1, B₁, A₂₁, 1, B₂; nt)
+            else
+                gemm!(trans, Val(:N), -1, A₂₁, B₁, 1, B₂; nt)
+            end
+
+            trsx_impl!(side, uplo, trans, diag, A₂₂, B₂; nt)
+        else
+            trsx_impl!(side, uplo, trans, diag, A₂₂, B₂; nt)
+
+            if SIDE === :R
+                gemm!(Val(:N), trans, -1, B₂, A₂₁, 1, B₁; nt)
+            else
+                gemm!(trans, Val(:N), -1, A₂₁, B₂, 1, B₁; nt)
+            end
+
+            trsx_impl!(side, uplo, trans, diag, A₁₁, B₁; nt)
+        end
     end
+
+    return
 end
 
 # ===== trsm! =====
@@ -204,8 +255,8 @@ function trsm!(side::Val, uplo::Val, tA::Val, diag::Val, α, A::AbstractMatrix{T
     return
 end
 
-function trsm!(side::Val, uplo::Val, tA::Val, diag::Val, α, A::AbstractMatrix, B::AbstractMatrix)
-    trsx!(side, uplo, tA, diag, A, B)
+function trsm!(side::Val, uplo::Val, tA::Val, diag::Val, α, A::AbstractMatrix, B::AbstractMatrix; nt::Integer = nthreads())
+    trsx!(side, uplo, tA, diag, A, B; nt)
     lmul!(α, B)
     return
 end

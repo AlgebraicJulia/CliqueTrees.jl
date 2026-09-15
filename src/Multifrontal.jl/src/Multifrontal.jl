@@ -2,7 +2,7 @@ module Multifrontal
 
 using AbstractTrees
 using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, isstored, promote_eltype
-using Base.Threads: @threads, maxthreadid, nthreads, threadid
+using Base.Threads: @spawn, @threads, maxthreadid, nthreads, threadid
 using FillArrays: Ones, Zeros, AbstractFill, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs
 using LinearAlgebra
@@ -75,5 +75,9 @@ end
 include("Differential.jl/src/Differential.jl")
 
 using .Differential
+
+include("Semiring.jl/src/Semiring.jl")
+
+import .Semiring
 
 end # module Multifrontal

@@ -726,15 +726,27 @@ function chol_loop_nod!(
         rdiv!(l₂₁, d₁₁)
 
         if DIAG === :U
+            ω = -d₁₁
+        else
+            ω = -one(real(T))
+        end
+
+        if UPLO === :L
             #
-            #     M₂₂ ← M₂₂ - d₁₁ l₂₁ l₂₁ᴴ
+            #     M₂₂ ← M₂₂ + ω l₂₁ l₂₁ᴴ
             #
-            syr!(uplo, -d₁₁, l₂₁, M₂₂)
+            syr!(uplo, ω, l₂₁, M₂₂)
         else
             #
-            #     M₂₂ ← M₂₂ - l₂₁ l₂₁ᴴ
+            #     M₂₂ ← M₂₂ + ω l₂₁ᴴ l₂₁
             #
-            syr!(uplo, -one(real(T)), l₂₁, M₂₂)
+            @inbounds for c in oneto(na)
+                ωlc = ω * l₂₁[c]
+
+                for r in oneto(c)
+                    M₂₂[r, c] += conj(l₂₁[r]) * ωlc
+                end
+            end
         end
     end
 
