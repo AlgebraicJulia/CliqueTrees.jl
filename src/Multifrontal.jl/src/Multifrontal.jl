@@ -2,6 +2,7 @@ module Multifrontal
 
 using AbstractTrees
 using Base: oneto, OneTo, print_matrix, replace_with_centered_mark, isstored, promote_eltype
+using Base.Cartesian: @nexprs, @ntuple
 using Base.Threads: @spawn, @threads, maxthreadid, nthreads, threadid
 using FillArrays: Ones, Zeros, AbstractFill, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs

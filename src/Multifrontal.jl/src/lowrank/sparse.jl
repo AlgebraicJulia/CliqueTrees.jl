@@ -914,7 +914,7 @@ function lowrank_sparse_factor_dn_1!(
         G₁₂::AbstractMatrix{T},
         G₂₂::AbstractMatrix{T},
         Wval::AbstractVector{T},
-        ::Val{UPLO},
+        uplo::Val{UPLO},
     ) where {UPLO, T}
     m = size(D₁₁, 1)
 
@@ -924,17 +924,22 @@ function lowrank_sparse_factor_dn_1!(
         n = size(L₂₁, 2)
     end
 
-    nb = min(m, LOWRANK_BLOCK)
-    zc = max(m, n)
-    W = reshape(view(Wval, 1:nb * nb), nb, nb)
+    k = min(m, LOWRANK_BLOCK)
 
-    if UPLO === :L
-        Z = reshape(view(Wval, nb * nb + 1:nb * nb + zc * nb), zc, nb)
-        return hylqt!(D₁₁, G₁₂, L₂₁, G₂₂, W, Z)
-    else
-        Z = reshape(view(Wval, nb * nb + 1:nb * nb + nb * zc), nb, zc)
-        return hyqrt!(D₁₁, G₁₂, L₂₁, G₂₂, W, Z)
+    wsize = k * max(m, n)
+
+    work1 = view(Wval,         1:k * m)
+    work2 = view(Wval, k * m + 1:k * m + wsize)
+
+    W = reshape(work1, k, m)
+
+    info = hytpqxt!(D₁₁, G₁₂, W, work2, uplo, Val(:D))
+
+    if info == 0 && !isempty(G₂₂)
+        hytpmqxt!(G₁₂, W, L₂₁, G₂₂, work2, uplo, Val(:D))
     end
+
+    return info
 end
 
 #
@@ -971,7 +976,7 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, w::AbstractVector{T}, r::In
 
             ν = zero(real(T))
 
-            @inbounds for c in r + 1:t
+            @inbounds @simd for c in r + 1:t
                 ν += abs2(F[r, c] / σ)
             end
 
@@ -1062,7 +1067,7 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, c::Int, t::Int, n::Int, ::V
 
             ν = zero(real(T))
 
-            @inbounds for r in c + 1:t
+            @inbounds @simd for r in c + 1:t
                 ν += abs2(F[r, c] / σ)
             end
 
@@ -1093,12 +1098,11 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, c::Int, t::Int, n::Int, ::V
                 @inbounds for u in c + 1:n
                     α = F[c, u]
 
-                    for r in c + 1:t
+                    @simd for r in c + 1:t
                         α = muladd(conj(F[r, c]), F[r, u], α)
                     end
 
-                    α *= τ
-                    F[c, u] -= α
+                    F[c, u] -= α *= τ
 
                     for r in c + 1:t
                         F[r, u] = muladd(-α, F[r, c], F[r, u])
