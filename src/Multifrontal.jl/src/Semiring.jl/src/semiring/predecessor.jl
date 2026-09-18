@@ -70,5 +70,3 @@ end
 function sstar(s::PredSucc, (av, ai, ah)::Tuple{V, I, H}) where {V, I, H}
     return (sstar(s.s, av), zero(I), zero(H))
 end
-
-

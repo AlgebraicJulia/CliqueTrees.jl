@@ -17,11 +17,10 @@ using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
 
 export AbstractSemiring, AbstractQuantale, IntegralQuantale, AbstractLattice, DualLattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
-export GCDProd, LCMProd, GCDLCM, LCMGCD, AndOr, OrAnd, RelPlus, RelProd
-export LAndPar, LOrTens
+export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sldiv!, srdiv!
 export slte, sgte, TropicalSemiring
-export Pred, Succ, Jet, Best, AffGCDProd
+export Pred, Succ
 
 abstract type AbstractSemiring end
 
