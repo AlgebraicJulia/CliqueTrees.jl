@@ -1,9 +1,41 @@
+# The tropical semiring
+#
+#   ([-∞, ∞], min, +)
+#
+# - elements are extended real numbers
+# - addition is minimization
+# - multiplication is addition (+∞ + -∞ = +∞)
+#
 struct MinPlus <: AbstractQuantale end
 
+# The dual tropical semiring
+#
+#   ([-∞, ∞], max, +)
+#
+# - elements are extended real numbers
+# - addition is maximization
+# - multiplication is addition (+∞ + -∞ = -∞)
+#
 struct MaxPlus <: AbstractQuantale end
 
+# The Viterbi semiring
+#
+#   ([0, ∞], min, ×)
+#
+# - elements are non-negative extended real numbers
+# - addition is minization
+# - multiplication is as usual (+∞ × 0 = +∞)
+#
 struct MinProd <: AbstractQuantale end
 
+# The max-times semiring
+#
+#   ([0, ∞], max, ×)
+#
+# - elements are non-negative extended real numbers
+# - addition is maximization
+# - multiplication is as usual (+∞ × 0 = 0)
+#
 struct MaxProd <: AbstractQuantale end
 
 const TropicalSemiring = Union{MinPlus, MaxPlus, MinProd, MaxProd}
@@ -72,6 +104,10 @@ function sprod(::Union{MinProd, MaxProd}, a, b)
     return a * b
 end
 
+#
+#   a* = { 1  if a ≤ 1
+#        { ⊤  otherwise
+#
 function sstar(s::TropicalSemiring, a::T) where {T}
     if !slte(s, a, sone(s, T))
         b = stop(s, T)

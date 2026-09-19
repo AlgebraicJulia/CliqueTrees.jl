@@ -1,5 +1,21 @@
+# The Boolean lattice
+#
+#   ({0, 1}, &, |)
+#
+# - elements are truth values
+# - addition is conjunction
+# - multiplication disjunction
+#
 struct AndOr <: AbstractLattice end
 
+# The dual Boolean lattice
+#
+#   ({0, 1}, |, &)
+#
+# - elements are truth values
+# - addition is disjunction
+# - multiplication conjunction
+#
 const OrAnd = DualLattice{AndOr}
 
 function szero(::AndOr, ::Type{T}) where {T}

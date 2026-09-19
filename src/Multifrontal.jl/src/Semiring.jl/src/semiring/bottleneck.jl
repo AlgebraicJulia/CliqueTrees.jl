@@ -1,5 +1,21 @@
+# The bottleneck lattice
+#
+#   ([-∞, ∞], min, max)
+#
+# - elements are extended real numbers
+# - addition is minimization
+# - multiplication is maximization
+#
 struct MinMax <: AbstractLattice end
 
+# The dual bottleneck lattice
+#
+#   ([-∞, ∞], max, min)
+#
+# - elements are extended real numbers
+# - addition is maximization
+# - multiplication is minimization
+#
 const MaxMin = DualLattice{MinMax}
 
 function slte(::MinMax, a, b)

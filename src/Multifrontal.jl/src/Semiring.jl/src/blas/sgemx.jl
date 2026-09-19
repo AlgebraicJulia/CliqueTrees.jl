@@ -1,6 +1,9 @@
-const SGEMX_MR   = 8
 const SGEMX_NR   = 4
 const SGEMX_LEAF = 256
+
+function sgemx_width(::Type{V}) where {V}
+    return 64 ÷ sizeof(V)
+end
 
 # ===== sgemx! =====
 
@@ -9,26 +12,33 @@ function sgemx!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix{V},
     @assert size(C, 2) == size(B, 2)
     @assert size(A, 2) == size(B, 1)
 
-    m = size(C, 1)
-    n = size(C, 2)
-    k = size(A, 2)
+    ni = size(C, 1)
+    nj = size(A, 2)
+    nk = size(C, 2)
 
-    mc = min(m, SGEMX_LEAF)
-    nc = min(n, SGEMX_LEAF)
-    kc = min(k, SGEMX_LEAF)
+    mr  = sgemx_width(V)
+    nic = min(ni, SGEMX_LEAF)
+    njc = min(nj, SGEMX_LEAF)
+    nkc = min(nk, SGEMX_LEAF)
 
-    if nt <= 1 || max(m, n, k) <= SGEMX_LEAF
-        AP = FVector{V}(undef, cld(mc, SGEMX_MR) * SGEMX_MR * kc)
-        BP = FVector{V}(undef, cld(nc, SGEMX_NR) * SGEMX_NR * kc)
-        sgemx_st!(s, C, A, B, AP, BP)
+    apn = cld(nic, mr) * mr * njc
+    bpn = cld(nkc, SGEMX_NR) * SGEMX_NR * njc
+    cpn = mr * SGEMX_NR
+
+    if nt <= 1 || max(ni, nj, nk) <= SGEMX_LEAF
+        AP = Vector{V}(undef, apn)
+        BP = Vector{V}(undef, bpn)
+        CP = Vector{V}(undef, cpn)
+        sgemx_st!(s, C, A, B, AP, BP, CP)
     else
         depth = ceil(Int, log2(nt)) + 1
-        work = Channel{Tuple{FVector{V}, FVector{V}}}(nt)
+        work = Channel{Tuple{Vector{V}, Vector{V}, Vector{V}}}(nt)
 
         for _ in 1:nt
-            AP = FVector{V}(undef, cld(mc, SGEMX_MR) * SGEMX_MR * kc)
-            BP = FVector{V}(undef, cld(nc, SGEMX_NR) * SGEMX_NR * kc)
-            put!(work, (AP, BP))
+            AP = Vector{V}(undef, apn)
+            BP = Vector{V}(undef, bpn)
+            CP = Vector{V}(undef, cpn)
+            put!(work, (AP, BP, CP))
         end
 
         sgemx_mt!(s, C, A, B, work, depth)
@@ -38,204 +48,207 @@ function sgemx!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix{V},
 end
 
 function sgemx_mt!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix, B::AbstractMatrix, work::Channel, depth::Int) where {V}
-    m = size(C, 1)
-    n = size(C, 2)
-    k = size(A, 2)
+    ni = size(C, 1)
+    nj = size(A, 2)
+    nk = size(C, 2)
 
-    if depth <= 0 || (m <= SGEMX_LEAF && n <= SGEMX_LEAF && k <= SGEMX_LEAF)
-        AP, BP = take!(work)
+    if depth <= 0 || (ni <= SGEMX_LEAF && nj <= SGEMX_LEAF && nk <= SGEMX_LEAF)
+        AP, BP, CP = take!(work)
 
         try
-            sgemx_st!(s, C, A, B, AP, BP)
+            sgemx_st!(s, C, A, B, AP, BP, CP)
         finally
-            put!(work, (AP, BP))
+            put!(work, (AP, BP, CP))
         end
     else
-        mx = max(m, n, k)
+        mx = max(ni, nj, nk)
 
-        if m == mx
-            h = (m >> 1); h -= h % SGEMX_MR; h = max(h, SGEMX_MR)
-            task = @spawn sgemx_mt!(s, view(C, 1:h, :), view(A, 1:h, :), B, work, depth - 1)
-            sgemx_mt!(s, view(C, h + 1:m, :), view(A, h + 1:m, :), B, work, depth - 1)
+        if ni == mx
+            #
+            #   [ C₁ ] = [ A₁ ] B
+            #   [ C₂ ]   [ A₂ ]
+            #
+            mr = sgemx_width(V)
+
+            hi = ni >> 1
+            hi -= hi % mr
+            hi = max(hi, mr)
+
+            C₁ = view(C,      1:hi, 1:nk)
+            C₂ = view(C, hi + 1:ni, 1:nk)
+            A₁ = view(A,      1:hi, 1:nj)
+            A₂ = view(A, hi + 1:ni, 1:nj)
+
+            task = @spawn sgemx_mt!(s, C₁, A₁, B, work, depth - 1)
+            sgemx_mt!(s, C₂, A₂, B, work, depth - 1)
             wait(task)
-        elseif n == mx
-            h = (n >> 1); h -= h % SGEMX_NR; h = max(h, SGEMX_NR)
-            task = @spawn sgemx_mt!(s, view(C, :, 1:h), A, view(B, :, 1:h), work, depth - 1)
-            sgemx_mt!(s, view(C, :, h + 1:n), A, view(B, :, h + 1:n), work, depth - 1)
+        elseif nk == mx
+            #
+            #   [ C₁ C₂ ] = A [ B₁ B₂ ]
+            #
+            hk = nk >> 1
+            hk -= hk % SGEMX_NR
+            hk = max(hk, SGEMX_NR)
+
+            C₁ = view(C, 1:ni,      1:hk)
+            C₂ = view(C, 1:ni, hk + 1:nk)
+            B₁ = view(B, 1:nj,      1:hk)
+            B₂ = view(B, 1:nj, hk + 1:nk)
+
+            task = @spawn sgemx_mt!(s, C₁, A, B₁, work, depth - 1)
+            sgemx_mt!(s, C₂, A, B₂, work, depth - 1)
             wait(task)
         else
-            h = k >> 1
-            sgemx_mt!(s, C, view(A, :, 1:h), view(B, 1:h, :), work, depth)
-            sgemx_mt!(s, C, view(A, :, h + 1:k), view(B, h + 1:k, :), work, depth)
+            #
+            #   C = [ A₁ A₂ ] [ B₁ ]
+            #                 [ B₂ ]
+            #
+            hj = nj >> 1
+
+            A₁ = view(A,      1:ni,      1:hj)
+            A₂ = view(A,      1:ni, hj + 1:nj)
+            B₁ = view(B,      1:hj,      1:nk)
+            B₂ = view(B, hj + 1:nj,      1:nk)
+
+            sgemx_mt!(s, C, A₁, B₁, work, depth)
+            sgemx_mt!(s, C, A₂, B₂, work, depth)
         end
     end
 
     return C
 end
 
-function sgemx_st!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector) where {V}
-    m = size(C, 1)
-    n = size(C, 2)
-    k = size(A, 2)
+function sgemx_st!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector) where {V}
+    ni = size(C, 1)
+    nj = size(A, 2)
+    nk = size(C, 2)
 
-    if m <= SGEMX_LEAF && n <= SGEMX_LEAF && k <= SGEMX_LEAF
-        sgemx_leaf!(s, C, A, B, AP, BP)
+    if ni <= SGEMX_LEAF && nj <= SGEMX_LEAF && nk <= SGEMX_LEAF
+        sgemx_leaf!(s, C, A, B, AP, BP, CP)
     else
-        mx = max(m, n, k)
+        mx = max(ni, nj, nk)
 
-        if m == mx
-            h = (m >> 1); h -= h % SGEMX_MR; h = max(h, SGEMX_MR)
-            sgemx_st!(s, view(C, 1:h, :), view(A, 1:h, :), B, AP, BP)
-            sgemx_st!(s, view(C, h + 1:m, :), view(A, h + 1:m, :), B, AP, BP)
-        elseif n == mx
-            h = (n >> 1); h -= h % SGEMX_NR; h = max(h, SGEMX_NR)
-            sgemx_st!(s, view(C, :, 1:h), A, view(B, :, 1:h), AP, BP)
-            sgemx_st!(s, view(C, :, h + 1:n), A, view(B, :, h + 1:n), AP, BP)
+        if ni == mx
+            #
+            #   [ C₁ ] = [ A₁ ] B
+            #   [ C₂ ]   [ A₂ ]
+            #
+            mr = sgemx_width(V)
+
+            hi = ni >> 1
+            hi -= hi % mr
+            hi = max(hi, mr)
+
+            C₁ = view(C,      1:hi, 1:nk)
+            C₂ = view(C, hi + 1:ni, 1:nk)
+            A₁ = view(A,      1:hi, 1:nj)
+            A₂ = view(A, hi + 1:ni, 1:nj)
+
+            sgemx_st!(s, C₁, A₁, B, AP, BP, CP)
+            sgemx_st!(s, C₂, A₂, B, AP, BP, CP)
+        elseif nk == mx
+            #
+            #   [ C₁ C₂ ] = A [ B₁ B₂ ]
+            #
+            hk = nk >> 1
+            hk -= hk % SGEMX_NR
+            hk = max(hk, SGEMX_NR)
+
+            C₁ = view(C, 1:ni,      1:hk)
+            C₂ = view(C, 1:ni, hk + 1:nk)
+            B₁ = view(B, 1:nj,      1:hk)
+            B₂ = view(B, 1:nj, hk + 1:nk)
+
+            sgemx_st!(s, C₁, A, B₁, AP, BP, CP)
+            sgemx_st!(s, C₂, A, B₂, AP, BP, CP)
         else
-            h = k >> 1
-            sgemx_st!(s, C, view(A, :, 1:h), view(B, 1:h, :), AP, BP)
-            sgemx_st!(s, C, view(A, :, h + 1:k), view(B, h + 1:k, :), AP, BP)
+            #
+            #   C = [ A₁ A₂ ] [ B₁ ]
+            #                 [ B₂ ]
+            #
+            hj = nj >> 1
+
+            A₁ = view(A,      1:ni,      1:hj)
+            A₂ = view(A,      1:ni, hj + 1:nj)
+            B₁ = view(B,      1:hj,      1:nk)
+            B₂ = view(B, hj + 1:nj,      1:nk)
+
+            sgemx_st!(s, C, A₁, B₁, AP, BP, CP)
+            sgemx_st!(s, C, A₂, B₂, AP, BP, CP)
         end
     end
 
     return C
 end
 
-function sgemx_leaf!(s::AbstractSemiring, C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector)
-    if s isa PlusProd
-        sgemx_col!(s, C, A, B, AP, BP)
-    else
-        sgemx_row!(s, C, A, B, AP, BP)
-    end
+# ===== sgemx_leaf! =====
 
-    return C
-end
+function sgemx_leaf!(s::AbstractSemiring, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(sgemx_width(T))) where {T, MR}
+    ni = size(C, 1)
+    nj = size(A, 2)
+    nk = size(C, 2)
+    z = szero(s, T)
 
-# ===== sgemx_row! =====
+    @inbounds for i0 in 0:MR:ni - 1
+        it = min(MR, ni - i0); ip0 = i0 * nj
 
-function sgemx_row!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector) where {V}
-    m = size(C, 1)
-    n = size(C, 2)
-    k = size(A, 2)
-
-    @inbounds for i in 1:m
-        off = (i - 1) * k
-
-        for p in 1:k
-            AP[off + p] = A[i, p]
-        end
-    end
-
-    @inbounds for j in 1:n
-        off = (j - 1) * k
-
-        for p in 1:k
-            BP[off + p] = B[p, j]
-        end
-    end
-
-    j0 = 1
-
-    @inbounds while j0 + SGEMX_NR - 1 <= n
-        sgemx_row_kernel!(s, C, AP, BP, j0, m, k)
-        j0 += SGEMX_NR
-    end
-
-    @inbounds while j0 <= n
-        bp0 = (j0 - 1) * k
-
-        for i in 1:m
-            ap0 = (i - 1) * k
-            Δ = C[i, j0]
-
-            @simd for p in 1:k
-                Δ = smuladd(s, AP[ap0 + p], BP[bp0 + p], Δ)
+        for j in 1:nj
+            for ip in 1:it
+                AP[ip0 + (j - 1) * MR + ip] = A[i0 + ip, j]
             end
 
-            C[i, j0] = Δ
-        end
-
-        j0 += 1
-    end
-
-    return C
-end
-
-@inline function sgemx_row_kernel!(s::AbstractSemiring, C::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, j0::Int, m::Int, k::Int)
-    b0 = (j0 - 1) * k
-    b1 = b0 + k
-    b2 = b1 + k
-    b3 = b2 + k
-
-    @inbounds for i in 1:m
-        ap0 = (i - 1) * k
-
-        Δ0 = C[i, j0]
-        Δ1 = C[i, j0 + 1]
-        Δ2 = C[i, j0 + 2]
-        Δ3 = C[i, j0 + 3]
-
-        @simd for p in 1:k
-            a = AP[ap0 + p]
-            Δ0 = smuladd(s, a, BP[b0 + p], Δ0)
-            Δ1 = smuladd(s, a, BP[b1 + p], Δ1)
-            Δ2 = smuladd(s, a, BP[b2 + p], Δ2)
-            Δ3 = smuladd(s, a, BP[b3 + p], Δ3)
-        end
-
-        C[i, j0]     = Δ0
-        C[i, j0 + 1] = Δ1
-        C[i, j0 + 2] = Δ2
-        C[i, j0 + 3] = Δ3
-    end
-
-    return
-end
-
-# ===== sgemx_col! =====
-
-function sgemx_col!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector) where {V}
-    m = size(C, 1)
-    n = size(C, 2)
-    k = size(A, 2)
-
-    @inbounds for j0 in 1:SGEMX_NR:n
-        nt = min(SGEMX_NR, n - j0 + 1)
-        off = (j0 - 1) * k
-
-        for p in 1:k
-            for j in 1:nt
-                BP[off + (p - 1) * SGEMX_NR + j] = B[p, j0 + j - 1]
+            for ip in it + 1:MR
+                AP[ip0 + (j - 1) * MR + ip] = z
             end
         end
     end
 
-    @inbounds for i0 in 1:SGEMX_MR:m
-        mt = min(SGEMX_MR, m - i0 + 1)
-        off = (i0 - 1) * k
+    @inbounds for k0 in 0:SGEMX_NR:nk - 1
+        kt = min(SGEMX_NR, nk - k0); kp0 = k0 * nj
 
-        for p in 1:k
-            for i in 1:mt
-                AP[off + (p - 1) * SGEMX_MR + i] = A[i0 + i - 1, p]
+        for j in 1:nj
+            for kp in 1:kt
+                BP[kp0 + (j - 1) * SGEMX_NR + kp] = B[j, k0 + kp]
+            end
+
+            for kp in kt + 1:SGEMX_NR
+                BP[kp0 + (j - 1) * SGEMX_NR + kp] = z
             end
         end
     end
 
-    @inbounds for j0 in 1:SGEMX_NR:n
-        for i0 in 1:SGEMX_MR:m
-            mt = min(SGEMX_MR, m - i0 + 1)
-            nt = min(SGEMX_NR, n - j0 + 1)
+    @inbounds for k0 in 0:SGEMX_NR:nk - 1
+        kt = min(SGEMX_NR, nk - k0); kp0 = k0 * nj
 
-            if mt == SGEMX_MR && nt == SGEMX_NR
-                sgemx_col_kernel!(s, C, AP, (i0 - 1) * k + 1, BP, (j0 - 1) * k + 1, i0, j0, k)
+        for i0 in 0:MR:ni - 1
+            it = min(MR, ni - i0); ip0 = i0 * nj
+
+            if it == MR && kt == SGEMX_NR
+                sgemx_kernel!(s, C, i0, k0, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
             else
-                for j in 1:nt
-                    for p in 1:k
-                        b = BP[(j0 - 1) * k + (p - 1) * SGEMX_NR + j]
+                for kp in 1:kt
+                    for ip in 1:it
+                        CP[(kp - 1) * MR + ip] = C[i0 + ip, k0 + kp]
+                    end
 
-                        for i in 1:mt
-                            C[i0 + i - 1, j0 + j - 1] = smuladd(s, AP[(i0 - 1) * k + (p - 1) * SGEMX_MR + i], b, C[i0 + i - 1, j0 + j - 1])
-                        end
+                    for ip in it + 1:MR
+                        CP[(kp - 1) * MR + ip] = z
+                    end
+                end
+
+                for kp in kt + 1:SGEMX_NR
+                    for ip in 1:MR
+                        CP[(kp - 1) * MR + ip] = z
+                    end
+                end
+
+                @preserve CP begin
+                    sgemx_kernel!(s, pointer(CP), MR, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
+                end
+
+                for kp in 1:kt
+                    for ip in 1:it
+                        C[i0 + ip, k0 + kp] = CP[(kp - 1) * MR + ip]
                     end
                 end
             end
@@ -245,62 +258,54 @@ function sgemx_col!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix
     return C
 end
 
-@generated function sgemx_col_kernel!(s::AbstractSemiring, C::AbstractMatrix, AP::AbstractVector, ap0::Int, BP::AbstractVector, bp0::Int, i0::Int, j0::Int, k::Int)
-    load  = Expr[]
-    la    = Expr[]
-    lb    = Expr[]
-    fma   = Expr[]
-    store = Expr[]
+function sgemx_kernel!(s::AbstractSemiring, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
+    w = ldC * sizeof(T)
 
-    for i in 1:SGEMX_MR
-        ai = Symbol(:a, i)
-        push!(la, :($ai = AP[aoff + $(i - 1)]))
+    p1 = pC
+    p2 = p1 + w
+    p3 = p2 + w
+    p4 = p3 + w
+
+    c1 = vload(Vec{MR, T}, p1)
+    c2 = vload(Vec{MR, T}, p2)
+    c3 = vload(Vec{MR, T}, p3)
+    c4 = vload(Vec{MR, T}, p4)
+
+    @inbounds for jp in 1:nj
+        a = vload(Vec{MR, T}, AP, ip0 + (jp - 1) * MR)
+        kpj = kp0 + (jp - 1) * SGEMX_NR
+        c1 = smuladd(s, a, BP[kpj],     c1)
+        c2 = smuladd(s, a, BP[kpj + 1], c2)
+        c3 = smuladd(s, a, BP[kpj + 2], c3)
+        c4 = smuladd(s, a, BP[kpj + 3], c4)
     end
 
-    for j in 1:SGEMX_NR
-        bj = Symbol(:b, j)
-        push!(lb, :($bj = BP[boff + $(j - 1)]))
+    vstore(c1, p1)
+    vstore(c2, p2)
+    vstore(c3, p3)
+    vstore(c4, p4)
+    return
+end
 
-        for i in 1:SGEMX_MR
-            ai  = Symbol(:a, i)
-            Δij = Symbol(:Δ, i, j)
-            push!(load,  :($Δij = C[i0 + $(i - 1), j0 + $(j - 1)]))
-            push!(fma,   :($Δij = smuladd(s, $ai, $bj, $Δij)))
-            push!(store, :(C[i0 + $(i - 1), j0 + $(j - 1)] = $Δij))
-        end
+function sgemx_kernel!(s::AbstractSemiring, C::AbstractMatrix{T}, i0::Int, k0::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, mr::Val{MR}) where {T, MR}
+    @preserve C begin
+        pC = unsafe_convert(Ptr{T}, C) + (k0 * stride(C, 2) + i0) * sizeof(T)
+        sgemx_kernel!(s, pC, stride(C, 2), AP, ip0, BP, kp0, nj, mr)
     end
 
-    return quote
-        $(Expr(:meta, :inline))
-        @inbounds begin
-            $(load...)
-
-            for p in 1:k
-                aoff = ap0 + (p - 1) * SGEMX_MR
-                boff = bp0 + (p - 1) * SGEMX_NR
-
-                $(la...)
-                $(lb...)
-                $(fma...)
-            end
-
-            $(store...)
-        end
-
-        return
-    end
+    return
 end
 
 # ===== sgemv! =====
 
 function sgemv!(s::AbstractSemiring, c::AbstractVector, A::AbstractMatrix, b::AbstractVector)
-    m = size(A, 1)
-    k = size(A, 2)
+    ni = size(A, 1)
+    nj = size(A, 2)
 
-    @inbounds for j in 1:k
+    @inbounds for j in 1:nj
         bj = b[j]
 
-        for i in 1:m
+        for i in 1:ni
             c[i] = smuladd(s, A[i, j], bj, c[i])
         end
     end

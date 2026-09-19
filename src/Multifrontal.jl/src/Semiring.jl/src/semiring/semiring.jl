@@ -87,6 +87,8 @@ end
 
 include("real.jl")
 include("tropical.jl")
+include("lawvere.jl")
 include("bottleneck.jl")
 include("boolean.jl")
 include("predecessor.jl")
+include("relative.jl")

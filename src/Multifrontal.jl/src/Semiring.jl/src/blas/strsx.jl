@@ -17,7 +17,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:L}, A::AbstractMatrix, B
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B::AbstractMatrix)
+function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B::AbstractMatrix) where {S <: AbstractSemiring}
     n = size(A, 1)
     m = size(B, 1)
 
@@ -30,23 +30,30 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B
             end
         end
 
-        sAjj = sstar(s, A[j, j])
+        if !(S <: IntegralQuantale)
+            sAjj = sstar(s, A[j, j])
 
-        for i in 1:m
-            B[i, j] = sprod(s, B[i, j], sAjj)
+            for i in 1:m
+                B[i, j] = sprod(s, B[i, j], sAjj)
+            end
         end
     end
 
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:U}, A::AbstractMatrix, B::AbstractVecOrMat)
+function strsx2!(s::S, ::Val{:L}, ::Val{:U}, A::AbstractMatrix, B::AbstractVecOrMat) where {S <: AbstractSemiring}
     n = size(A, 1)
     m = size(B, 2)
 
     @inbounds for i in 1:m
         for j in n:-1:1
-            Bji = sprod(s, sstar(s, A[j, j]), B[j, i])
+            if S <: IntegralQuantale
+                Bji = B[j, i]
+            else
+                Bji = sprod(s, sstar(s, A[j, j]), B[j, i])
+            end
+
             B[j, i] = Bji
 
             for k in 1:j - 1
@@ -75,7 +82,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:L}, A::AbstractMatrix, B
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, b::AbstractVector)
+function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, b::AbstractVector) where {S <: AbstractSemiring}
     n = size(A, 1)
 
     @inbounds for j in 1:n
@@ -85,7 +92,11 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, b
             bj = smuladd(s, b[k], A[k, j], bj)
         end
 
-        b[j] = sprod(s, sstar(s, A[j, j]), bj)
+        if S <: IntegralQuantale
+            b[j] = bj
+        else
+            b[j] = sprod(s, sstar(s, A[j, j]), bj)
+        end
     end
 
     return b
@@ -115,23 +126,26 @@ function strsx!(s::AbstractSemiring, side::Val, uplo::Val, A::AbstractMatrix, b:
 end
 
 function strsx!(s::AbstractSemiring, side::Val{S}, uplo::Val, A::AbstractMatrix, B::AbstractMatrix; nt::Integer = nthreads()) where {S}
+    m = size(B, 1)
+    n = size(B, 2)
+
     if S === :L
-        ncol = size(B, 2)
+        c = n
     else
-        ncol = size(B, 1)
+        c = m
     end
 
-    if nt <= 1 || ncol <= THRESHOLD
+    if nt <= 1 || c <= THRESHOLD
         strsx_impl!(s, side, uplo, A, B; nt)
     else
-        h = ncol >> 1
+        h = c >> 1
 
         if S === :L
-            B₁ = view(B, :, 1:h)
-            B₂ = view(B, :, h + 1:ncol)
+            B₁ = view(B, 1:m,     1:h)
+            B₂ = view(B, 1:m, h + 1:n)
         else
-            B₁ = view(B, 1:h, :)
-            B₂ = view(B, h + 1:ncol, :)
+            B₁ = view(B,     1:h, 1:n)
+            B₂ = view(B, h + 1:m, 1:n)
         end
 
         nt₁ = nt >> 1
@@ -154,7 +168,7 @@ function strsx_impl!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val{UPLO}, A::A
     else
         m = prevpow(2, n) >> 1
 
-        A₁₁ = view(A, 1:m, 1:m)
+        A₁₁ = view(A,     1:m,     1:m)
         A₂₂ = view(A, m + 1:n, m + 1:n)
 
         if UPLO === :L
@@ -164,12 +178,15 @@ function strsx_impl!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val{UPLO}, A::A
         end
 
         if SIDE === :L
-            B₁ = view(B, 1:m, :)
-            B₂ = view(B, m + 1:n, :)
+            q = size(B, 2)
+            B₁ = view(B,     1:m, 1:q)
+            B₂ = view(B, m + 1:n, 1:q)
         else
-            B₁ = view(B, :, 1:m)
-            B₂ = view(B, :, m + 1:n)
+            q = size(B, 1)
+            B₁ = view(B, 1:q,     1:m)
+            B₂ = view(B, 1:q, m + 1:n)
         end
+
 
         if isforward(UPLO, :N, SIDE)
             strsx_impl!(s, side, uplo, A₁₁, B₁; nt)

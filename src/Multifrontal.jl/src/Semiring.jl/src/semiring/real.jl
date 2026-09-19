@@ -1,3 +1,11 @@
+# The semiring of nonnegative real numbers
+#
+#   ([0, ∞], +, ×)
+#
+# - elements are extended non-negative real numbers
+# - addition is as usual
+# - multiplication is as usual
+#
 struct PlusProd <: AbstractSemiring end
 
 function slte(::PlusProd, a, b)
@@ -24,6 +32,10 @@ function sprod(::PlusProd, a, b)
     return a * b
 end
 
+#
+#   a* = { (1 - a)⁻¹ if a < 1
+#        {  ∞        if a ≥ 1
+#
 function sstar(::PlusProd, a::T) where {T}
     if a < one(T)
         b = inv(one(T) - a)

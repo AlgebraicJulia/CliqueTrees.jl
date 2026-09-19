@@ -1,13 +1,13 @@
 module Semiring
 
-using Base: oneto, promote_eltype, BitInteger, unsafe_rational
+using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational
 using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, nthreads
 using Graphs: AbstractGraph, neighbors, vertices
 using LinearAlgebra: Factorization, Transpose, mul!
 import LinearAlgebra: lu!, ldiv!, rdiv!
-using SIMD: Vec, vload, vstore, shufflevector
+using SIMD: Vec, vload, vstore, vifelse, shufflevector
 using SparseArrays: SparseMatrixCSC, permute
 
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
@@ -17,10 +17,12 @@ using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
 
 export AbstractSemiring, AbstractQuantale, IntegralQuantale, AbstractLattice, DualLattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
+export MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw, LawvereQuantale
 export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sldiv!, srdiv!
 export slte, sgte, TropicalSemiring
-export Pred, Succ
+export Pred, Succ, UnsafePred, UnsafeSucc
+export RelPlus, RelProd, RelationQuantale
 
 abstract type AbstractSemiring end
 
