@@ -53,6 +53,20 @@ function stop(s::IntegralQuantale, ::Type{T}) where {T}
     return sone(s, T)
 end
 
+# ----- integrality -----
+
+function isintegral(s::S) where {S <: AbstractSemiring}
+    return isintegral(S)
+end
+
+function isintegral(::Type{<:AbstractSemiring})
+    return false
+end
+
+function isintegral(::Type{<:IntegralQuantale})
+    return true
+end
+
 # ----- dual lattice -----
 
 struct DualLattice{S <: AbstractLattice} <: AbstractLattice

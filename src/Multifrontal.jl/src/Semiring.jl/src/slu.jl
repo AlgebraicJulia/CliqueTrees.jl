@@ -26,10 +26,13 @@ function slu!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::Chorda
     rel = S.rel
     chd = S.chd
 
+    nt = nthreads()
+    pool = spool(T, nt)
+
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns = slu_loop!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, ns, j)
+        ns = slu_loop!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, pool, nt, ns, j)
     end
 
     return L, U
@@ -49,6 +52,8 @@ function slu_loop!(
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
+        pool::Channel,
+        nt::Integer,
         ns::I,
         j::I,
     ) where {T, I}
@@ -107,15 +112,15 @@ function slu_loop!(
     #
     #     F₁₁ ← L₁₁ + U₁₁       (F₁₁* = U₁₁* L₁₁*)
     #
-    slu!(s, F₁₁)
+    slu_mt!(s, F₁₁, pool, nt)
 
     if ispositive(na)
         #
         #     F₂₁ ← F₂₁ U₁₁*
         #     F₁₂ ← L₁₁* F₁₂
         #
-        strsx!(s, Val(:R), Val(:U), F₁₁, F₂₁)
-        strsx!(s, Val(:L), Val(:L), F₁₁, F₁₂)
+        strsx_mt!(s, Val(:R), Val(:U), F₁₁, F₂₁, pool, nt)
+        strsx_mt!(s, Val(:L), Val(:L), F₁₁, F₁₂, pool, nt)
         #
         #     M₂₂ ← F₂₂
         #     M₂₂ ← F₂₁ F₁₂ + M₂₂
@@ -125,7 +130,7 @@ function slu_loop!(
         stop = Mptr[ns + one(I)] = strt + na * na
         M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
         copyrec!(M₂₂, F₂₂)
-        sgemx!(s, M₂₂, F₂₁, F₁₂)
+        sgemx_mt!(s, M₂₂, F₂₁, F₁₂, pool, ceil(Int, log2(nt)) + 1)
     end
     #
     #     L₁₁ ← F₁₁    U₁₁ ← F₁₁

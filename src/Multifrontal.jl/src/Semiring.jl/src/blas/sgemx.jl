@@ -26,18 +26,18 @@ function sgemx!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix{V},
     cpn = mr * SGEMX_NR
 
     if nt <= 1 || max(ni, nj, nk) <= SGEMX_LEAF
-        AP = Vector{V}(undef, apn)
-        BP = Vector{V}(undef, bpn)
-        CP = Vector{V}(undef, cpn)
+        AP = FVector{V}(undef, apn)
+        BP = FVector{V}(undef, bpn)
+        CP = FVector{V}(undef, cpn)
         sgemx_st!(s, C, A, B, AP, BP, CP)
     else
         depth = ceil(Int, log2(nt)) + 1
-        work = Channel{Tuple{Vector{V}, Vector{V}, Vector{V}}}(nt)
+        work = Channel{Tuple{FVector{V}, FVector{V}, FVector{V}}}(nt)
 
         for _ in 1:nt
-            AP = Vector{V}(undef, apn)
-            BP = Vector{V}(undef, bpn)
-            CP = Vector{V}(undef, cpn)
+            AP = FVector{V}(undef, apn)
+            BP = FVector{V}(undef, bpn)
+            CP = FVector{V}(undef, cpn)
             put!(work, (AP, BP, CP))
         end
 
@@ -124,7 +124,7 @@ function sgemx_st!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix,
     nk = size(C, 2)
 
     if ni <= SGEMX_LEAF && nj <= SGEMX_LEAF && nk <= SGEMX_LEAF
-        sgemx_leaf!(s, C, A, B, AP, BP, CP)
+        sgemx2!(s, C, A, B, AP, BP, CP)
     else
         mx = max(ni, nj, nk)
 
@@ -181,9 +181,9 @@ function sgemx_st!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix,
     return C
 end
 
-# ===== sgemx_leaf! =====
+# ===== sgemx2! =====
 
-function sgemx_leaf!(s::AbstractSemiring, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(sgemx_width(T))) where {T, MR}
+function sgemx2!(s::AbstractSemiring, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(sgemx_width(T))) where {T, MR}
     ni = size(C, 1)
     nj = size(A, 2)
     nk = size(C, 2)

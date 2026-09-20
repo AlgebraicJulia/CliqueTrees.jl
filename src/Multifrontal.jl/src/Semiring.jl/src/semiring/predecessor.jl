@@ -18,6 +18,24 @@ const PredSucc{S} = Union{Pred{S}, Succ{S}}
 const UnsafePredSucc{S} = Union{UnsafePred{S}, UnsafeSucc{S}}
 const MaybeSafePredSucc{S} = Union{PredSucc{S}, UnsafePredSucc{S}}
 
+# ----- integrality -----
+
+function isintegral(::Type{Pred{S}}) where {S}
+    return isintegral(S)
+end
+
+function isintegral(::Type{Succ{S}}) where {S}
+    return isintegral(S)
+end
+
+function isintegral(::Type{UnsafePred{S}}) where {S}
+    return isintegral(S)
+end
+
+function isintegral(::Type{UnsafeSucc{S}}) where {S}
+    return isintegral(S)
+end
+
 # ----- pack / unpack -----
 
 function flip(v::UInt32)

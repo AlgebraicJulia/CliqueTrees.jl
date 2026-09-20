@@ -76,22 +76,26 @@ function sldiv!(
     ) where {T, I}
     S = L.S
 
+    nt = nthreads()
+
     if B isa AbstractVector
         nrhs = one(I)
+        pool = nothing
     else
         nrhs = convert(I, size(B, 2))
+        pool = spool(T, nt)
     end
     #
     #   B ← L* B
     #
     for j in vertices(S.res)
-        sldiv_fwd!(s, B, W.Mval, L.Dval, L.Lval, S.Dptr, S.Lptr, S.res, S.sep, nrhs, j)
+        sldiv_fwd!(s, B, W.Mval, L.Dval, L.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j)
     end
     #
     #   B ← U* B
     #
     for j in reverse(vertices(S.res))
-        sldiv_bwd!(s, B, W.Mval, U.Dval, U.Lval, S.Dptr, S.Lptr, S.res, S.sep, nrhs, j)
+        sldiv_bwd!(s, B, W.Mval, U.Dval, U.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j)
     end
 
     return B
@@ -107,6 +111,8 @@ function sldiv_fwd!(
         Lptr::AbstractVector{I},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
+        pool,
+        nt::Integer,
         nrhs::I,
         j::I,
     ) where {T, I}
@@ -135,33 +141,35 @@ function sldiv_fwd!(
     #   C = [ C₁ ] res(j)
     #       [ C₂ ] sep(j)
     #
-    if C isa AbstractVector
-        C₁ = view(C, neighbors(res, j))
-    else
-        C₁ = view(C, neighbors(res, j), oneto(nrhs))
-    end
-    #
     #   C₁ ← L₁₁* C₁
     #
-    strsx!(s, Val(:L), Val(:L), D₁₁, C₁)
+    if C isa AbstractVector
+        C₁ = view(C, neighbors(res, j))
+        strsx!(s, Val(:L), Val(:L), D₁₁, C₁)
+    else
+        C₁ = view(C, neighbors(res, j), oneto(nrhs))
+        strsx_mt!(s, Val(:L), Val(:L), D₁₁, C₁, pool, nt)
+    end
 
     if ispositive(na)
-        if C isa AbstractVector
-            M₂ = view(Mval, oneto(na))
-        else
-            M₂ = reshape(view(Mval, oneto(na * nrhs)), na, nrhs)
-        end
         #
         #   M₂ ← L₂₁ C₁
         #
-        fill!(M₂, szero(s, T))
-        sgemx!(s, M₂, L₂₁, C₁)
-        #
-        #   C₂ ← C₂ + M₂
-        #
         if C isa AbstractVector
+            M₂ = view(Mval, oneto(na))
+            fill!(M₂, szero(s, T))
+            sgemx!(s, M₂, L₂₁, C₁)
+            #
+            #   C₂ ← C₂ + M₂
+            #
             sscatteradd!(s, C, M₂, neighbors(sep, j))
         else
+            M₂ = reshape(view(Mval, oneto(na * nrhs)), na, nrhs)
+            fill!(M₂, szero(s, T))
+            sgemx_mt!(s, M₂, L₂₁, C₁, pool, ceil(Int, log2(nt)) + 1)
+            #
+            #   C₂ ← C₂ + M₂
+            #
             sscatteradd!(s, C, M₂, neighbors(sep, j), Val(:L))
         end
     end
@@ -179,6 +187,8 @@ function sldiv_bwd!(
         Lptr::AbstractVector{I},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
+        pool,
+        nt::Integer,
         nrhs::I,
         j::I,
     ) where {T, I}
@@ -213,28 +223,29 @@ function sldiv_bwd!(
     end
 
     if ispositive(na)
-        if C isa AbstractVector
-            M₂ = view(Mval, oneto(na))
-        else
-            M₂ = reshape(view(Mval, oneto(na * nrhs)), na, nrhs)
-        end
         #
         #   M₂ ← C₂
         #
-        if C isa AbstractVector
-            copygatherrec!(M₂, C, neighbors(sep, j))
-        else
-            copygatherrec!(M₂, C, neighbors(sep, j), Val(:L))
-        end
-        #
         #   C₁ ← U₁₂ M₂ + C₁
         #
-        sgemx!(s, C₁, U₁₂, M₂)
+        if C isa AbstractVector
+            M₂ = view(Mval, oneto(na))
+            copygatherrec!(M₂, C, neighbors(sep, j))
+            sgemx!(s, C₁, U₁₂, M₂)
+        else
+            M₂ = reshape(view(Mval, oneto(na * nrhs)), na, nrhs)
+            copygatherrec!(M₂, C, neighbors(sep, j), Val(:L))
+            sgemx_mt!(s, C₁, U₁₂, M₂, pool, ceil(Int, log2(nt)) + 1)
+        end
     end
     #
     #   C₁ ← U₁₁* C₁
     #
-    strsx!(s, Val(:L), Val(:U), D₁₁, C₁)
+    if C isa AbstractVector
+        strsx!(s, Val(:L), Val(:U), D₁₁, C₁)
+    else
+        strsx_mt!(s, Val(:L), Val(:U), D₁₁, C₁, pool, nt)
+    end
 
     return
 end
@@ -266,22 +277,26 @@ function srdiv!(
     ) where {T, I}
     S = L.S
 
+    nt = nthreads()
+
     if B isa AbstractVector
         nrhs = one(I)
+        pool = nothing
     else
         nrhs = convert(I, size(B, 1))
+        pool = spool(T, nt)
     end
     #
     #   B ← B U*
     #
     for j in vertices(S.res)
-        srdiv_fwd!(s, B, W.Mval, U.Dval, U.Lval, S.Dptr, S.Lptr, S.res, S.sep, nrhs, j)
+        srdiv_fwd!(s, B, W.Mval, U.Dval, U.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j)
     end
     #
     #   B ← B L*
     #
     for j in reverse(vertices(S.res))
-        srdiv_bwd!(s, B, W.Mval, L.Dval, L.Lval, S.Dptr, S.Lptr, S.res, S.sep, nrhs, j)
+        srdiv_bwd!(s, B, W.Mval, L.Dval, L.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j)
     end
 
     return B
@@ -297,6 +312,8 @@ function srdiv_fwd!(
         Lptr::AbstractVector{I},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
+        pool,
+        nt::Integer,
         nrhs::I,
         j::I,
     ) where {T, I}
@@ -324,33 +341,35 @@ function srdiv_fwd!(
     #          res(j) sep(j)
     #     C = [  C₁     C₂ ]
     #
-    if C isa AbstractVector
-        C₁ = view(C, neighbors(res, j))
-    else
-        C₁ = view(C, oneto(nrhs), neighbors(res, j))
-    end
-    #
     #   C₁ ← C₁ U₁₁*
     #
-    strsx!(s, Val(:R), Val(:U), D₁₁, C₁)
+    if C isa AbstractVector
+        C₁ = view(C, neighbors(res, j))
+        strsx!(s, Val(:R), Val(:U), D₁₁, C₁)
+    else
+        C₁ = view(C, oneto(nrhs), neighbors(res, j))
+        strsx_mt!(s, Val(:R), Val(:U), D₁₁, C₁, pool, nt)
+    end
 
     if ispositive(na)
-        if C isa AbstractVector
-            M₂ = view(Mval, oneto(na))
-        else
-            M₂ = reshape(view(Mval, oneto(na * nrhs)), nrhs, na)
-        end
         #
         #   M₂ ← C₁ U₁₂
         #
-        fill!(M₂, szero(s, T))
-        sgemx!(s, M₂, C₁, U₁₂)
-        #
-        #   C₂ ← C₂ + M₂
-        #
         if C isa AbstractVector
+            M₂ = view(Mval, oneto(na))
+            fill!(M₂, szero(s, T))
+            sgemx!(s, M₂, C₁, U₁₂)
+            #
+            #   C₂ ← C₂ + M₂
+            #
             sscatteradd!(s, C, M₂, neighbors(sep, j))
         else
+            M₂ = reshape(view(Mval, oneto(na * nrhs)), nrhs, na)
+            fill!(M₂, szero(s, T))
+            sgemx_mt!(s, M₂, C₁, U₁₂, pool, ceil(Int, log2(nt)) + 1)
+            #
+            #   C₂ ← C₂ + M₂
+            #
             sscatteradd!(s, C, M₂, neighbors(sep, j), Val(:R))
         end
     end
@@ -368,6 +387,8 @@ function srdiv_bwd!(
         Lptr::AbstractVector{I},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
+        pool,
+        nt::Integer,
         nrhs::I,
         j::I,
     ) where {T, I}
@@ -403,28 +424,29 @@ function srdiv_bwd!(
     end
 
     if ispositive(na)
-        if C isa AbstractVector
-            M₂ = view(Mval, oneto(na))
-        else
-            M₂ = reshape(view(Mval, oneto(na * nrhs)), nrhs, na)
-        end
         #
         #   M₂ ← C₂
         #
-        if C isa AbstractVector
-            copygatherrec!(M₂, C, neighbors(sep, j))
-        else
-            copygatherrec!(M₂, C, neighbors(sep, j), Val(:R))
-        end
-        #
         #   C₁ ← M₂ L₂₁ + C₁
         #
-        sgemx!(s, C₁, M₂, L₂₁)
+        if C isa AbstractVector
+            M₂ = view(Mval, oneto(na))
+            copygatherrec!(M₂, C, neighbors(sep, j))
+            sgemx!(s, C₁, M₂, L₂₁)
+        else
+            M₂ = reshape(view(Mval, oneto(na * nrhs)), nrhs, na)
+            copygatherrec!(M₂, C, neighbors(sep, j), Val(:R))
+            sgemx_mt!(s, C₁, M₂, L₂₁, pool, ceil(Int, log2(nt)) + 1)
+        end
     end
     #
     #   C₁ ← C₁ L₁₁*
     #
-    strsx!(s, Val(:R), Val(:L), D₁₁, C₁)
+    if C isa AbstractVector
+        strsx!(s, Val(:R), Val(:L), D₁₁, C₁)
+    else
+        strsx_mt!(s, Val(:R), Val(:L), D₁₁, C₁, pool, nt)
+    end
 
     return
 end

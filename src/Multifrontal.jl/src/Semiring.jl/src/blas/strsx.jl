@@ -17,7 +17,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:L}, A::AbstractMatrix, B
     return B
 end
 
-function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B::AbstractMatrix) where {S <: AbstractSemiring}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B::AbstractMatrix)
     n = size(A, 1)
     m = size(B, 1)
 
@@ -30,7 +30,7 @@ function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B::AbstractMatri
             end
         end
 
-        if !(S <: IntegralQuantale)
+        if !isintegral(s)
             sAjj = sstar(s, A[j, j])
 
             for i in 1:m
@@ -42,13 +42,13 @@ function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, B::AbstractMatri
     return B
 end
 
-function strsx2!(s::S, ::Val{:L}, ::Val{:U}, A::AbstractMatrix, B::AbstractVecOrMat) where {S <: AbstractSemiring}
+function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:U}, A::AbstractMatrix, B::AbstractVecOrMat)
     n = size(A, 1)
     m = size(B, 2)
 
     @inbounds for i in 1:m
         for j in n:-1:1
-            if S <: IntegralQuantale
+            if isintegral(s)
                 Bji = B[j, i]
             else
                 Bji = sprod(s, sstar(s, A[j, j]), B[j, i])
@@ -82,7 +82,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:L}, A::AbstractMatrix, B
     return B
 end
 
-function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, b::AbstractVector) where {S <: AbstractSemiring}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, b::AbstractVector)
     n = size(A, 1)
 
     @inbounds for j in 1:n
@@ -92,7 +92,7 @@ function strsx2!(s::S, ::Val{:R}, ::Val{:U}, A::AbstractMatrix, b::AbstractVecto
             bj = smuladd(s, b[k], A[k, j], bj)
         end
 
-        if S <: IntegralQuantale
+        if isintegral(s)
             b[j] = bj
         else
             b[j] = sprod(s, sstar(s, A[j, j]), bj)
@@ -125,22 +125,54 @@ function strsx!(s::AbstractSemiring, side::Val, uplo::Val, A::AbstractMatrix, b:
     return b
 end
 
-function strsx!(s::AbstractSemiring, side::Val{S}, uplo::Val, A::AbstractMatrix, B::AbstractMatrix; nt::Integer = nthreads()) where {S}
+function strsx!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val, A::AbstractMatrix, B::AbstractMatrix{T}; nt::Integer = nthreads()) where {SIDE, T}
     m = size(B, 1)
     n = size(B, 2)
 
-    if S === :L
+    if SIDE === :L
         c = n
     else
         c = m
     end
 
     if nt <= 1 || c <= THRESHOLD
-        strsx_impl!(s, side, uplo, A, B; nt)
+        mr = sgemx_width(T)
+        AP = FVector{T}(undef, cld(SGEMX_LEAF, mr) * mr * SGEMX_LEAF)
+        BP = FVector{T}(undef, cld(SGEMX_LEAF, SGEMX_NR) * SGEMX_NR * SGEMX_LEAF)
+        CP = FVector{T}(undef, mr * SGEMX_NR)
+        strsx_st!(s, side, uplo, A, B, AP, BP, CP)
+    else
+        pool = spool(T, nt)
+        strsx_mt!(s, side, uplo, A, B, pool, nt)
+    end
+
+    return B
+end
+
+# ===== strsx_mt! =====
+
+function strsx_mt!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val, A::AbstractMatrix, B::AbstractMatrix, pool::Channel, w::Integer) where {SIDE}
+    m = size(B, 1)
+    n = size(B, 2)
+
+    if SIDE === :L
+        c = n
+    else
+        c = m
+    end
+
+    if w <= 1 || c <= THRESHOLD
+        AP, BP, CP = take!(pool)
+
+        try
+            strsx_st!(s, side, uplo, A, B, AP, BP, CP)
+        finally
+            put!(pool, (AP, BP, CP))
+        end
     else
         h = c >> 1
 
-        if S === :L
+        if SIDE === :L
             B₁ = view(B, 1:m,     1:h)
             B₂ = view(B, 1:m, h + 1:n)
         else
@@ -148,19 +180,18 @@ function strsx!(s::AbstractSemiring, side::Val{S}, uplo::Val, A::AbstractMatrix,
             B₂ = view(B, h + 1:m, 1:n)
         end
 
-        nt₁ = nt >> 1
-
-        task = @spawn strsx!(s, side, uplo, A, B₁; nt = nt₁)
-        strsx!(s, side, uplo, A, B₂; nt = nt - nt₁)
+        w₁ = w >> 1
+        task = @spawn strsx_mt!(s, side, uplo, A, B₁, pool, w₁)
+        strsx_mt!(s, side, uplo, A, B₂, pool, w - w₁)
         wait(task)
     end
 
     return B
 end
 
-# ===== strsx_impl! =====
+# ===== strsx_st! =====
 
-function strsx_impl!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val{UPLO}, A::AbstractMatrix, B::AbstractMatrix; nt::Integer = nthreads()) where {SIDE, UPLO}
+function strsx_st!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val{UPLO}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector) where {SIDE, UPLO}
     n = size(A, 1)
 
     if n <= THRESHOLD
@@ -187,27 +218,26 @@ function strsx_impl!(s::AbstractSemiring, side::Val{SIDE}, uplo::Val{UPLO}, A::A
             B₂ = view(B, 1:q, m + 1:n)
         end
 
-
         if isforward(UPLO, :N, SIDE)
-            strsx_impl!(s, side, uplo, A₁₁, B₁; nt)
+            strsx_st!(s, side, uplo, A₁₁, B₁, AP, BP, CP)
 
             if SIDE === :L
-                sgemx!(s, B₂, A₂₁, B₁; nt)
+                sgemx_st!(s, B₂, A₂₁, B₁, AP, BP, CP)
             else
-                sgemx!(s, B₂, B₁, A₂₁; nt)
+                sgemx_st!(s, B₂, B₁, A₂₁, AP, BP, CP)
             end
 
-            strsx_impl!(s, side, uplo, A₂₂, B₂; nt)
+            strsx_st!(s, side, uplo, A₂₂, B₂, AP, BP, CP)
         else
-            strsx_impl!(s, side, uplo, A₂₂, B₂; nt)
+            strsx_st!(s, side, uplo, A₂₂, B₂, AP, BP, CP)
 
             if SIDE === :L
-                sgemx!(s, B₁, A₂₁, B₂; nt)
+                sgemx_st!(s, B₁, A₂₁, B₂, AP, BP, CP)
             else
-                sgemx!(s, B₁, B₂, A₂₁; nt)
+                sgemx_st!(s, B₁, B₂, A₂₁, AP, BP, CP)
             end
 
-            strsx_impl!(s, side, uplo, A₁₁, B₁; nt)
+            strsx_st!(s, side, uplo, A₁₁, B₁, AP, BP, CP)
         end
     end
 

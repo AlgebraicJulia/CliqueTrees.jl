@@ -34,9 +34,7 @@ abstract type AbstractLattice <: IntegralQuantale end
 
 include("semiring/semiring.jl")
 
-include("blas/sgemx.jl")
-include("blas/strsx.jl")
-include("blas/slu.jl")
+include("blas/blas.jl")
 include("utils.jl")
 include("semiring_lu.jl")
 include("slu.jl")
