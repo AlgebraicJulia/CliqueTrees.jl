@@ -5,7 +5,7 @@ using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, nthreads
 using Graphs: AbstractGraph, neighbors, vertices
-using LinearAlgebra: Factorization, Transpose, mul!
+using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, mul!
 import LinearAlgebra: lu!, ldiv!, rdiv!
 using SIMD: Vec, vload, vstore, vifelse, shufflevector
 using SparseArrays: SparseMatrixCSC, permute
@@ -15,22 +15,18 @@ using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     copy_scatter!, copygatherrec!, copyrec!, eltypedegree, isforward, ispositive, symbolic,
     symmetric
 
-export AbstractSemiring, AbstractQuantale, IntegralQuantale, AbstractLattice, DualLattice
+export AbstractSemiring, AbstractQuantale, DualQuantale, NegativeQuantale, Lattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
 export MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw, LawvereQuantale
 export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sldiv!, srdiv!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, UnsafePred, UnsafeSucc
-export RelPlus, RelProd, RelationQuantale
+export RelProd
 
 abstract type AbstractSemiring end
 
 abstract type AbstractQuantale <: AbstractSemiring end
-
-abstract type IntegralQuantale <: AbstractQuantale end
-
-abstract type AbstractLattice <: IntegralQuantale end
 
 include("semiring/semiring.jl")
 

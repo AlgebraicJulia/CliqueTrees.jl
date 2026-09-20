@@ -53,11 +53,11 @@ function slu_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Inte
                 #
                 #   Akn ← Lkk* Akn
                 #
-                strsx_mt!(s, Val(:L), Val(:L), Akk, Akn, pool, nt)
+                strsx_mt!(s, Val(:L), Val(:N), Val(:L), Akk, Akn, pool, nt)
                 #
                 #   Ank ← Ank Ukk*
                 #
-                strsx_mt!(s, Val(:R), Val(:U), Akk, Ank, pool, nt)
+                strsx_mt!(s, Val(:R), Val(:N), Val(:U), Akk, Ank, pool, nt)
                 #
                 #   Ann ← Ank Akn + Ann
                 #
@@ -88,7 +88,7 @@ function slu2!(s::AbstractSemiring, A::AbstractMatrix)
             sAii = sstar(s, A[i, i])
 
             for k in i + 1:n
-                A[k, i] = sprod(s, A[k, i], sAii)
+                A[k, i] = sprod(s, A[k, i], sAii, Val(:N), Val(:N))
             end
         end
         #
@@ -98,7 +98,7 @@ function slu2!(s::AbstractSemiring, A::AbstractMatrix)
             Aij = A[i, j]
 
             for k in i + 1:n
-                A[k, j] = smuladd(s, A[k, i], Aij, A[k, j])
+                A[k, j] = smuladd(s, A[k, i], Aij, A[k, j], Val(:N), Val(:N))
             end
         end
     end

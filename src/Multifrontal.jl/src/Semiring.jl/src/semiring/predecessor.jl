@@ -114,51 +114,51 @@ end
 
 # ----- stop -----
 
-function stop(s::MaybeSafePredSucc{S}, ::Type{UInt64}) where {S <: Union{MinPlusLaw, MinProd}}
+function szero(s::MaybeSafePredSucc{S}, ::Type{UInt64}, ::Val{:C}) where {S <: Union{MinPlusLaw, MinProd}}
     return 0x0000000000000000
 end
 
-function stop(s::MaybeSafePredSucc{MinProdLaw}, ::Type{UInt64})
+function szero(s::MaybeSafePredSucc{MinProdLaw}, ::Type{UInt64}, ::Val{:C})
     return 0x3f80000000000000
 end
 
-function stop(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64})
+function szero(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64}, ::Val{:C})
     return 0x007fffff00000000
 end
 
 # ----- szero -----
 
-function szero(s::MaybeSafePredSucc{S}, ::Type{UInt64}) where {S <: Union{MinPlusLaw, MinProdLaw, MinProd}}
+function szero(s::MaybeSafePredSucc{S}, ::Type{UInt64}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinProd}}
     return 0x7f80000000000000
 end
 
-function szero(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64})
+function szero(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64}, ::Val{:N})
     return 0xff80000000000000
 end
 
 # ----- sone -----
 
-function sone(s::MaybeSafePredSucc{MinPlusLaw}, ::Type{UInt64})
+function sone(s::MaybeSafePredSucc{MinPlusLaw}, ::Type{UInt64}, ::Val{:N})
     return 0x0000000000000000
 end
 
-function sone(s::MaybeSafePredSucc{S}, ::Type{UInt64}) where {S <: Union{MinProdLaw, MinProd}}
+function sone(s::MaybeSafePredSucc{S}, ::Type{UInt64}, ::Val{:N}) where {S <: Union{MinProdLaw, MinProd}}
     return 0x3f80000000000000
 end
 
-function sone(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64})
+function sone(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64}, ::Val{:N})
     return 0x8000000000000000
 end
 
 # ----- splus -----
 
-function splus(s::MaybeSafePredSucc{S}, a::UInt64, b::UInt64) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
+function splus(s::MaybeSafePredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
     return min(a, b)
 end
 
 # ----- sprod -----
 
-function sprod(s::PredSucc{S}, a::UInt64, b::UInt64) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
+function sprod(s::PredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
     W = 0x000000000000ffff
     H = 0x00000000ffff0000
 
@@ -207,7 +207,7 @@ function sprod(s::PredSucc{S}, a::UInt64, b::UInt64) where {S <: Union{MinPlusLa
     return c
 end
 
-function sprod(s::UnsafePredSucc{S}, a::UInt64, b::UInt64) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
+function sprod(s::UnsafePredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
     W = 0x00000000ffffffff
 
     au = UInt32(a >> 32)
@@ -257,7 +257,7 @@ end
 
 # ----- smuladd -----
 
-function smuladd(s::PredSucc{S}, a::UInt64, b::UInt64, c::UInt64) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
+function smuladd(s::PredSucc{S}, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
     W = 0x000000000000ffff
     H = 0x00000000ffff0000
 
@@ -306,7 +306,7 @@ function smuladd(s::PredSucc{S}, a::UInt64, b::UInt64, c::UInt64) where {S <: Un
     return min(d, c)
 end
 
-function smuladd(s::UnsafePredSucc{S}, a::UInt64, b::UInt64, c::UInt64) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
+function smuladd(s::UnsafePredSucc{S}, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
     W = 0x00000000ffffffff
 
     au = UInt32(a >> 32)
@@ -354,12 +354,12 @@ function smuladd(s::UnsafePredSucc{S}, a::UInt64, b::UInt64, c::UInt64) where {S
     return min(d, c)
 end
 
-@inline function smuladd(s::PredSucc{S}, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}, W}
+@inline function smuladd(s::PredSucc{S}, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}, W}
     V = 0xffffffff00000000
     H = 0x00000000ffff0000
     I = 0x000000000000ffff
 
-    if b & V == szero(s, UInt64)
+    if b & V == szero(s, UInt64, Val(:N))
         d = c
     else
         au = a
@@ -407,17 +407,6 @@ end
 end
 
 # ----- sstar -----
-
-#
-#   a* = sone
-#
-function sstar(s::MaybeSafePredSucc{MinPlusLaw}, a::UInt64)
-    return 0x0000000000000000
-end
-
-function sstar(s::MaybeSafePredSucc{MinProdLaw}, a::UInt64)
-    return 0x3f80000000000000
-end
 
 function sstar(s::MaybeSafePredSucc{MinPlus}, a::UInt64)
     if a < 0x8000000000000000

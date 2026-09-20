@@ -6,7 +6,7 @@
 # - addition is minimization
 # - multiplication is addition
 #
-struct MinPlusLaw <: IntegralQuantale end
+const MinPlusLaw = NegativeQuantale{MinPlus}
 
 # The dual Lawvere quantale
 #
@@ -16,7 +16,7 @@ struct MinPlusLaw <: IntegralQuantale end
 # - addition is maximization
 # - multiplication is addition
 #
-struct MaxPlusLaw <: IntegralQuantale end
+const MaxPlusLaw = NegativeQuantale{MaxPlus}
 
 # The multiplicative Lawvere quantale
 #
@@ -26,7 +26,7 @@ struct MaxPlusLaw <: IntegralQuantale end
 # - addition is minimization
 # - multiplication is as usual
 #
-struct MinProdLaw <: IntegralQuantale end
+const MinProdLaw = NegativeQuantale{MinProd}
 
 # The dual multiplicative Lawvere quantale
 #
@@ -36,50 +36,6 @@ struct MinProdLaw <: IntegralQuantale end
 # - addition is maximization
 # - multiplication is as usual
 #
-struct MaxProdLaw <: IntegralQuantale end
+const MaxProdLaw = NegativeQuantale{MaxProd}
 
 const LawvereQuantale = Union{MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw}
-
-function slte(::Union{MinPlusLaw, MinProdLaw}, a, b)
-    return a >= b
-end
-
-function slte(::Union{MaxPlusLaw, MaxProdLaw}, a, b)
-    return a <= b
-end
-
-function szero(::Union{MinPlusLaw, MinProdLaw}, ::Type{T}) where {T}
-    return typemax(T)
-end
-
-function szero(::MaxPlusLaw, ::Type{T}) where {T}
-    return typemin(T)
-end
-
-function szero(::MaxProdLaw, ::Type{T}) where {T}
-    return zero(T)
-end
-
-function sone(::Union{MinPlusLaw, MaxPlusLaw}, ::Type{T}) where {T}
-    return zero(T)
-end
-
-function sone(::Union{MinProdLaw, MaxProdLaw}, ::Type{T}) where {T}
-    return one(T)
-end
-
-function splus(::Union{MinPlusLaw, MinProdLaw}, a, b)
-    return min(a, b)
-end
-
-function splus(::Union{MaxPlusLaw, MaxProdLaw}, a, b)
-    return max(a, b)
-end
-
-function sprod(::Union{MinPlusLaw, MaxPlusLaw}, a, b)
-    return a + b
-end
-
-function sprod(::Union{MinProdLaw, MaxProdLaw}, a, b)
-    return a * b
-end

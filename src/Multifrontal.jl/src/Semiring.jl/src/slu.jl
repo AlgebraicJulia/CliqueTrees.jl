@@ -103,7 +103,7 @@ function slu_loop!(
     slu_gather!(F₁₁, LD, UD)
     copyrec!(F₂₁, LL)
     copyrec!(F₁₂, UL)
-    fill!(F₂₂, szero(s, T))
+    fill!(F₂₂, szero(s, T, Val(:N)))
 
     for i in Iterators.reverse(neighbors(chd, j))
         slu_send!(s, F, Mptr, Mval, rel, ns, i)
@@ -119,8 +119,8 @@ function slu_loop!(
         #     F₂₁ ← F₂₁ U₁₁*
         #     F₁₂ ← L₁₁* F₁₂
         #
-        strsx_mt!(s, Val(:R), Val(:U), F₁₁, F₂₁, pool, nt)
-        strsx_mt!(s, Val(:L), Val(:L), F₁₁, F₁₂, pool, nt)
+        strsx_mt!(s, Val(:R), Val(:N), Val(:U), F₁₁, F₂₁, pool, nt)
+        strsx_mt!(s, Val(:L), Val(:N), Val(:L), F₁₁, F₁₂, pool, nt)
         #
         #     M₂₂ ← F₂₂
         #     M₂₂ ← F₂₁ F₁₂ + M₂₂
@@ -188,7 +188,7 @@ function slu_send!(s::AbstractSemiring, F::AbstractMatrix, Mptr::AbstractVector{
 
         for v in oneto(na)
             iv = inj[v]
-            F[iv, iw] = splus(s, F[iv, iw], M[v, w])
+            F[iv, iw] = splus(s, F[iv, iw], M[v, w], Val(:N))
         end
     end
 

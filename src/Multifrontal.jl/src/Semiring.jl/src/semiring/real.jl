@@ -8,27 +8,31 @@
 #
 struct PlusProd <: AbstractSemiring end
 
+function iscommutative(::Type{PlusProd})
+    return true
+end
+
 function slte(::PlusProd, a, b)
     return a <= b
 end
 
-function stop(::PlusProd, ::Type{T}) where {T}
+function szero(::PlusProd, ::Type{T}, ::Val{:C}) where {T}
     return typemax(T)
 end
 
-function szero(::PlusProd, ::Type{T}) where {T}
+function szero(::PlusProd, ::Type{T}, ::Val{:N}) where {T}
     return zero(T)
 end
 
-function sone(::PlusProd, ::Type{T}) where {T}
+function sone(::PlusProd, ::Type{T}, ::Val{:N}) where {T}
     return one(T)
 end
 
-function splus(::PlusProd, a, b)
+function splus(::PlusProd, a, b, ::Val{:N})
     return a + b
 end
 
-function sprod(::PlusProd, a, b)
+function sprod(::PlusProd, a, b, ::Val{:N}, ::Val{:N})
     return a * b
 end
 
@@ -46,6 +50,6 @@ function sstar(::PlusProd, a::T) where {T}
     return b
 end
 
-function smuladd(::PlusProd, a, b, c)
+function smuladd(::PlusProd, a, b, c, ::Val{:N}, ::Val{:N})
     return muladd(a, b, c)
 end

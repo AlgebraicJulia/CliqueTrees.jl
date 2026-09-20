@@ -6,7 +6,7 @@
 # - addition is conjunction
 # - multiplication disjunction
 #
-struct AndOr <: AbstractLattice end
+struct AndOr <: AbstractQuantale end
 
 # The dual Boolean lattice
 #
@@ -16,20 +16,32 @@ struct AndOr <: AbstractLattice end
 # - addition is disjunction
 # - multiplication conjunction
 #
-const OrAnd = DualLattice{AndOr}
+const OrAnd = DualQuantale{AndOr}
 
-function szero(::AndOr, ::Type{T}) where {T}
+function islattice(::Type{AndOr})
+    return true
+end
+
+function iscommutative(::Type{AndOr})
+    return true
+end
+
+function szero(::AndOr, ::Type{T}, ::Val{:N}) where {T}
     return typemax(T)
 end
 
-function sone(::AndOr, ::Type{T}) where {T}
+function sone(::AndOr, ::Type{T}, ::Val{:N}) where {T}
     return zero(T)
 end
 
-function splus(::AndOr, a, b)
+function splus(::AndOr, a, b, ::Val{:N})
     return a & b
 end
 
-function sprod(::AndOr, a, b)
+function sprod(::AndOr, a, b, ::Val{:N}, ::Val{:N})
     return a | b
+end
+
+function sprod(s::Union{AndOr, OrAnd}, a, b, ::Val{:C}, ::Val{:N})
+    return splus(s, ~a, b, Val(:N))
 end

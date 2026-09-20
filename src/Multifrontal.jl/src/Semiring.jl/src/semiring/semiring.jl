@@ -1,103 +1,313 @@
-# ----- generic fallbacks -----
-
-function szero(s::AbstractSemiring, a::T) where {T}
-    return szero(s, T)
+struct DualQuantale{S <: AbstractQuantale} <: AbstractQuantale
+    s::S
 end
 
-function sone(s::AbstractSemiring, a::T) where {T}
-    return sone(s, T)
+function DualQuantale{S}() where {S <: AbstractQuantale}
+    return DualQuantale{S}(S())
 end
 
-function sstar(s::AbstractSemiring, a)
-    u = sone(s, a)
-    b = u
-    c = splus(s, u, a)
-
-    while b != c
-        b = c
-        c = smuladd(s, a, b, u)
-    end
-
-    return b
+struct NegativeQuantale{S <: AbstractQuantale} <: AbstractQuantale
+    s::S
 end
 
-function sstar(s::AbstractQuantale, a)
-    u = sone(s, a)
-    a = splus(s, u, a)
-
-    while u != a
-        u = a
-        a = sprod(s, u, u)
-    end
-
-    return a
+function NegativeQuantale{S}() where {S <: AbstractQuantale}
+    return NegativeQuantale{S}(S())
 end
 
-function sstar(s::IntegralQuantale, a::T) where {T}
-    return sone(s, T)
+struct Lattice{S <: AbstractQuantale} <: AbstractQuantale
+    s::S
 end
 
-function smuladd(s::AbstractSemiring, a, b, c)
-    return splus(s, sprod(s, a, b), c)
+function Lattice{S}() where {S <: AbstractQuantale}
+    return Lattice{S}(S())
+end
+
+function slte(s::AbstractSemiring, a, b)
+    return error("not implemented")
 end
 
 function slte(s::AbstractQuantale, a, b)
-    return splus(s, a, b) == b
+    return splus(s, a, b, Val(:N)) == b
+end
+
+function slte(d::DualQuantale, a, b)
+    return sgte(d.s, a, b)
+end
+
+function slte(n::NegativeQuantale, a, b)
+    return slte(n.s, a, b)
+end
+
+function slte(s::Lattice, a, b)
+    return slte(s.s, a, b)
 end
 
 function sgte(s::AbstractSemiring, a, b)
     return slte(s, b, a)
 end
 
-function stop(s::IntegralQuantale, ::Type{T}) where {T}
-    return sone(s, T)
+function szero(s::AbstractSemiring, a::T, op::Val) where {T}
+    return szero(s, T, op)
 end
 
-# ----- integrality -----
+function szero(s::AbstractSemiring, ::Type, ::Val)
+    return error("not implemented")
+end
+
+function szero(s::AbstractSemiring, ::Type{T}, ::Val{:T}) where {T}
+    return szero(s, T, Val(:N))
+end
+
+function szero(s::AbstractSemiring, ::Type{T}, ::Val{:C}) where {T}
+    if isintegral(s)
+        return sone(s, T, Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function szero(d::DualQuantale, ::Type{T}, ::Val{:N}) where {T}
+    return szero(d.s, T, Val(:C))
+end
+
+function szero(d::DualQuantale, ::Type{T}, ::Val{:C}) where {T}
+    return szero(d.s, T, Val(:N))
+end
+
+function szero(n::NegativeQuantale, ::Type{T}, ::Val{:N}) where {T}
+    return szero(n.s, T, Val(:N))
+end
+
+function szero(n::NegativeQuantale, ::Type{T}, ::Val{:C}) where {T}
+    return sone(n.s, T, Val(:N))
+end
+
+function szero(s::Lattice, ::Type{T}, ::Val{:N}) where {T}
+    return szero(s.s, T, Val(:N))
+end
+
+function sone(s::AbstractSemiring, a::T, op::Val) where {T}
+    return sone(s, T, op)
+end
+
+function sone(s::AbstractSemiring, ::Type, ::Val)
+    return error("not implemented")
+end
+
+function sone(s::AbstractSemiring, ::Type{T}, ::Val{:T}) where {T}
+    return sone(s, T, Val(:N))
+end
+
+function sone(s::AbstractSemiring, ::Type{T}, ::Val{:C}) where {T}
+    if islattice(s)
+        return szero(s, T, Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function sone(d::DualQuantale, ::Type{T}, ::Val{:N}) where {T}
+    return sone(d.s, T, Val(:C))
+end
+
+function sone(d::DualQuantale, ::Type{T}, ::Val{:C}) where {T}
+    return sone(d.s, T, Val(:N))
+end
+
+function sone(n::NegativeQuantale, ::Type{T}, ::Val{:N}) where {T}
+    return sone(n.s, T, Val(:N))
+end
+
+function sone(s::Lattice, ::Type{T}, ::Val{:N}) where {T}
+    return szero(s.s, T, Val(:C))
+end
+
+function splus(s::AbstractSemiring, a, b, ::Val)
+    return error("not implemented")
+end
+
+function splus(s::AbstractSemiring, a, b, ::Val{:T})
+    return splus(s, a, b, Val(:N))
+end
+
+function splus(s::AbstractSemiring, a, b, ::Val{:C})
+    if islattice(s)
+        return sprod(s, a, b, Val(:N), Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function splus(d::DualQuantale, a, b, ::Val{:N})
+    return splus(d.s, a, b, Val(:C))
+end
+
+function splus(d::DualQuantale, a, b, ::Val{:C})
+    return splus(d.s, a, b, Val(:N))
+end
+
+function splus(n::NegativeQuantale, a, b, ::Val{:N})
+    return splus(n.s, a, b, Val(:N))
+end
+
+function splus(n::NegativeQuantale, a, b, ::Val{:C})
+    return splus(n.s, a, b, Val(:C))
+end
+
+function splus(s::Lattice, a, b, ::Val{:N})
+    return splus(s.s, a, b, Val(:N))
+end
+
+function sprod(s::AbstractSemiring, a, b, ::Val, ::Val)
+    return error("not implemented")
+end
+
+function sprod(s::AbstractSemiring, a, b, ::Val{:T}, tB::Val)
+    return sprod(s, a, b, Val(:N), tB)
+end
+
+function sprod(s::AbstractSemiring, a, b, tA::Union{Val{:N}, Val{:C}}, ::Val{:T})
+    return sprod(s, a, b, tA, Val(:N))
+end
+
+function sprod(s::AbstractSemiring, a, b, ::Val{:N}, ::Val{:C})
+    if iscommutative(s)
+        return sprod(s, b, a, Val(:C), Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function sprod(n::NegativeQuantale, a, b, ::Val{:N}, ::Val{:N})
+    return sprod(n.s, a, b, Val(:N), Val(:N))
+end
+
+function sprod(n::NegativeQuantale, a, b, ::Val{:C}, ::Val{:N})
+    c = sprod(n.s, a, b, Val(:C), Val(:N))
+    return splus(n.s, c, sone(n.s, c, Val(:N)), Val(:C))
+end
+
+function sprod(n::NegativeQuantale, a, b, ::Val{:N}, ::Val{:C})
+    c = sprod(n.s, a, b, Val(:N), Val(:C))
+    return splus(n.s, c, sone(n.s, c, Val(:N)), Val(:C))
+end
+
+function sprod(s::Lattice, a, b, ::Val{:N}, ::Val{:N})
+    return splus(s.s, a, b, Val(:C))
+end
+
+function sprod(d::DualQuantale, a, b, ::Val{:N}, ::Val{:N})
+    if islattice(d.s)
+        return splus(d.s, a, b, Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function sstar(s::AbstractSemiring, a)
+    u = sone(s, a, Val(:N))
+    b = u
+
+    if !isintegral(s)
+        c = splus(s, u, a, Val(:N))
+
+        while b != c
+            b = c
+            c = smuladd(s, a, b, u, Val(:N), Val(:N))
+        end
+    end
+
+    return b
+end
+
+function sstar(s::AbstractQuantale, a)
+    b = sone(s, a, Val(:N))
+
+    if !isintegral(s)
+        a = splus(s, b, a, Val(:N))
+
+        while b != a
+            b = a
+            a = sprod(s, b, b, Val(:N), Val(:N))
+        end
+    end
+
+    return b
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::Val{TA}, tB::Val{TB}) where {TA, TB}
+    if TA === TB
+        op = Val(:N)
+    else
+        op = Val(:C)
+    end
+
+    return splus(s, sprod(s, a, b, tA, tB), c, op)
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, ::Val{:T}, tB::Val)
+    return smuladd(s, a, b, c, Val(:N), tB)
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::Union{Val{:N}, Val{:C}}, ::Val{:T})
+    return smuladd(s, a, b, c, tA, Val(:N))
+end
 
 function isintegral(s::S) where {S <: AbstractSemiring}
     return isintegral(S)
 end
 
-function isintegral(::Type{<:AbstractSemiring})
-    return false
+function isintegral(::Type{S}) where {S <: AbstractSemiring}
+    return islattice(S)
 end
 
-function isintegral(::Type{<:IntegralQuantale})
+function isintegral(::Type{DualQuantale{S}}) where {S}
+    return isintegral(S)
+end
+
+function isintegral(::Type{NegativeQuantale{S}}) where {S}
     return true
 end
 
-# ----- dual lattice -----
-
-struct DualLattice{S <: AbstractLattice} <: AbstractLattice
-    s::S
+function islattice(s::S) where {S <: AbstractSemiring}
+    return islattice(S)
 end
 
-function DualLattice{S}() where {S <: AbstractLattice}
-    return DualLattice{S}(S())
+function islattice(::Type{<:AbstractSemiring})
+    return false
 end
 
-function slte(d::DualLattice, a, b)
-    return sgte(d.s, a, b)
+function islattice(::Type{DualQuantale{S}}) where {S}
+    return islattice(S)
 end
 
-function szero(d::DualLattice, ::Type{T}) where {T}
-    return sone(d.s, T)
+function islattice(::Type{NegativeQuantale{S}}) where {S}
+    return islattice(S)
 end
 
-function sone(d::DualLattice, ::Type{T}) where {T}
-    return szero(d.s, T)
+function islattice(::Type{Lattice{S}}) where {S}
+    return true
 end
 
-function splus(d::DualLattice, a, b)
-    return sprod(d.s, a, b)
+function iscommutative(s::S) where {S <: AbstractSemiring}
+    return iscommutative(S)
 end
 
-function sprod(d::DualLattice, a, b)
-    return splus(d.s, a, b)
+function iscommutative(::Type{<:AbstractSemiring})
+    return false
 end
 
-# ----- semirings -----
+function iscommutative(::Type{DualQuantale{S}}) where {S}
+    return iscommutative(S)
+end
+
+function iscommutative(::Type{NegativeQuantale{S}}) where {S}
+    return iscommutative(S)
+end
+
+function iscommutative(::Type{Lattice{S}}) where {S}
+    return true
+end
 
 include("real.jl")
 include("tropical.jl")

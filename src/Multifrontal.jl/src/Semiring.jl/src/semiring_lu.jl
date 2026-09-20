@@ -51,6 +51,27 @@ const DSemiringLU{Sem, T, I} = SemiringLU{
     Vector{I},
 }
 
+const TransSLU{S, T} = TransposeFactorization{T, <:SemiringLU{S, T}}
+const   AdjSLU{S, T} =   AdjointFactorization{T, <:SemiringLU{S, T}}
+
+const AdjOrTransSLU{S, T} = Union{
+      AdjSLU{S, T},
+    TransSLU{S, T},
+}
+
+const MaybeAdjOrTransSLU{S, T} = Union{
+       SemiringLU{S, T},
+    AdjOrTransSLU{S, T},
+}
+
+function Base.transpose(F::SemiringLU)
+    return TransposeFactorization(F)
+end
+
+function Base.parent(F::SemiringLU)
+    return F
+end
+
 function SemiringLU(s::AbstractSemiring, A::SparseMatrixCSC{T}) where {T}
     P, S = symbolic(symmetric(A, 'N'))
     return SemiringLU(s, T, S, P.perm, P.invp, P.perm, P.invp)
@@ -104,6 +125,6 @@ function Base.copyto!(F::SemiringLU, A::SparseMatrixCSC)
 end
 
 function scopyto!(s::AbstractSemiring, A::ChordalTriangular{<:Any, <:Any, T}, B::SparseMatrixCSC) where {T}
-    fill!(A, szero(s, T))
+    fill!(A, szero(s, T, Val(:N)))
     return copy_scatter!(A, B)
 end
