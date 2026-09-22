@@ -38,11 +38,11 @@ function sgetrs_mt!(
         nt::Integer,
     ) where {T, I, SIDE, TRANS}
     if isforward(:L, TRANS, SIDE)
-        strsx_mt!(s, side, trans, L, B, W, pool, nt)
-        strsx_mt!(s, side, trans, U, B, W, pool, nt)
+        strsx_mt!(s, side, trans, Val(:U), L, B, W, pool, nt)
+        strsx_mt!(s, side, trans, Val(:N), U, B, W, pool, nt)
     else
-        strsx_mt!(s, side, trans, U, B, W, pool, nt)
-        strsx_mt!(s, side, trans, L, B, W, pool, nt)
+        strsx_mt!(s, side, trans, Val(:N), U, B, W, pool, nt)
+        strsx_mt!(s, side, trans, Val(:U), L, B, W, pool, nt)
     end
 
     return B

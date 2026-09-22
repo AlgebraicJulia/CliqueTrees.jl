@@ -26,8 +26,8 @@ end
 
 # ===== sgetrf! =====
 
-function sgetrf!(F::DenseSLU)
-    sgetrf!(F.s, F.A)
+function sgetrf!(F::DenseSLU; nt::Integer = nthreads())
+    sgetrf!(F.s, F.A; nt)
     return F
 end
 
@@ -35,4 +35,10 @@ end
 
 function sgetrs!(F::DenseSLU, side::Val, trans::Val, B::AbstractVecOrMat; nt::Integer = nthreads())
     return sgetrs!(F.s, side, trans, F.A, B; nt)
+end
+
+# ===== sgetri! =====
+
+function sgetri!(F::DenseSLU, C::AbstractMatrix; nt::Integer = nthreads())
+    return sgetri!(F.s, C, F.A; nt)
 end

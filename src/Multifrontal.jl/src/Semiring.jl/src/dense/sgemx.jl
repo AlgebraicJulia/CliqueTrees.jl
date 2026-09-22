@@ -15,7 +15,7 @@ function sgemx!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix
     ni = size(C, 1)
     nk = size(C, 2)
 
-    if TA === :N
+    if TA === :N || TA === :R
         nj = size(A, 2)
     else
         nj = size(A, 1)
@@ -32,7 +32,7 @@ function sgemx!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix
     return C
 end
 
-function sgemx!(s::AbstractSemiring, tA::Val{:N}, tB::Val, c::AbstractVector, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::Val, c::AbstractVector, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
     ni = size(A, 1)
     nj = size(A, 2)
 
@@ -47,7 +47,7 @@ function sgemx!(s::AbstractSemiring, tA::Val{:N}, tB::Val, c::AbstractVector, A:
     return c
 end
 
-function sgemx!(s::AbstractSemiring, tA::Union{Val{:T}, Val{:C}}, tB::Val, c::AbstractVector, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::T_OR_C, tB::Val, c::AbstractVector, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
     ni = size(A, 2)
     nj = size(A, 1)
 
@@ -64,7 +64,7 @@ function sgemx!(s::AbstractSemiring, tA::Union{Val{:T}, Val{:C}}, tB::Val, c::Ab
     return c
 end
 
-function sgemx!(s::AbstractSemiring, tA::Val{:N}, tB::Val{:N}, c::AbstractVector, a::AbstractVector, B::AbstractMatrix; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::N_OR_R, c::AbstractVector, a::AbstractVector, B::AbstractMatrix; nt::Integer = nthreads())
     ni = size(B, 2)
     nj = size(B, 1)
 
@@ -81,7 +81,7 @@ function sgemx!(s::AbstractSemiring, tA::Val{:N}, tB::Val{:N}, c::AbstractVector
     return c
 end
 
-function sgemx!(s::AbstractSemiring, tA::Val{:N}, tB::Union{Val{:T}, Val{:C}}, c::AbstractVector, a::AbstractVector, B::AbstractMatrix; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::T_OR_C, c::AbstractVector, a::AbstractVector, B::AbstractMatrix; nt::Integer = nthreads())
     ni = size(B, 1)
     nj = size(B, 2)
 
@@ -102,7 +102,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
     ni = size(C, 1)
     nk = size(C, 2)
 
-    if TA === :N
+    if TA === :N || TA === :R
         nj = size(A, 2)
     else
         nj = size(A, 1)
@@ -133,7 +133,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             C₁ = view(C,      1:hi, 1:nk)
             C₂ = view(C, hi + 1:ni, 1:nk)
 
-            if TA === :N
+            if TA === :N || TA === :R
                 A₁ = view(A,      1:hi, 1:nj)
                 A₂ = view(A, hi + 1:ni, 1:nj)
             else
@@ -156,7 +156,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             C₁ = view(C, 1:ni,      1:hk)
             C₂ = view(C, 1:ni, hk + 1:nk)
 
-            if TB === :N
+            if TB === :N || TB === :R
                 B₁ = view(B, 1:nj,      1:hk)
                 B₂ = view(B, 1:nj, hk + 1:nk)
             else
@@ -175,7 +175,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             #
             hj = nj >> 1
 
-            if TA === :N
+            if TA === :N || TA === :R
                 A₁ = view(A, 1:ni,      1:hj)
                 A₂ = view(A, 1:ni, hj + 1:nj)
             else
@@ -183,7 +183,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
                 A₂ = view(A, hj + 1:nj, 1:ni)
             end
 
-            if TB === :N
+            if TB === :N || TB === :R
                 B₁ = view(B,      1:hj, 1:nk)
                 B₂ = view(B, hj + 1:nj, 1:nk)
             else
@@ -209,7 +209,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
     ni = size(C, 1)
     nk = size(C, 2)
 
-    if TA === :N
+    if TA === :N || TA === :R
         nj = size(A, 2)
     else
         nj = size(A, 1)
@@ -234,7 +234,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             C₁ = view(C,      1:hi, 1:nk)
             C₂ = view(C, hi + 1:ni, 1:nk)
 
-            if TA === :N
+            if TA === :N || TA === :R
                 A₁ = view(A,      1:hi, 1:nj)
                 A₂ = view(A, hi + 1:ni, 1:nj)
             else
@@ -255,7 +255,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             C₁ = view(C, 1:ni,      1:hk)
             C₂ = view(C, 1:ni, hk + 1:nk)
 
-            if TB === :N
+            if TB === :N || TB === :R
                 B₁ = view(B, 1:nj,      1:hk)
                 B₂ = view(B, 1:nj, hk + 1:nk)
             else
@@ -272,7 +272,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             #
             hj = nj >> 1
 
-            if TA === :N
+            if TA === :N || TA === :R
                 A₁ = view(A, 1:ni,      1:hj)
                 A₂ = view(A, 1:ni, hj + 1:nj)
             else
@@ -280,7 +280,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
                 A₂ = view(A, hj + 1:nj, 1:ni)
             end
 
-            if TB === :N
+            if TB === :N || TB === :R
                 B₁ = view(B,      1:hj, 1:nk)
                 B₂ = view(B, hj + 1:nj, 1:nk)
             else
@@ -302,7 +302,7 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
     ni = size(C, 1)
     nk = size(C, 2)
 
-    if TA === :N
+    if TA === :N || TA === :R
         nj = size(A, 2)
     else
         nj = size(A, 1)
@@ -362,7 +362,7 @@ function sgemx_pack_A!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, AP::Abstra
 
         for j in 1:nj
             for ip in 1:it
-                if TA === :N
+                if TA === :N || TA === :R
                     AP[ip0 + (j - 1) * MR + ip] = A[i0 + ip, j]
                 else
                     AP[ip0 + (j - 1) * MR + ip] = A[j, i0 + ip]
@@ -386,7 +386,7 @@ function sgemx_pack_B!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, BP::Abstra
 
         for j in 1:nj
             for kp in 1:kt
-                if TB === :N
+                if TB === :N || TB === :R
                     BP[kp0 + (j - 1) * SGEMX_NR + kp] = B[j, k0 + kp]
                 else
                     BP[kp0 + (j - 1) * SGEMX_NR + kp] = B[k0 + kp, j]

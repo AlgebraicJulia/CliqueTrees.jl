@@ -66,6 +66,10 @@ function szero(s::AbstractSemiring, ::Type{T}, ::Val{:C}) where {T}
     end
 end
 
+function szero(s::AbstractSemiring, ::Type{T}, ::Val{:R}) where {T}
+    return szero(s, T, Val(:C))
+end
+
 function szero(d::DualQuantale, ::Type{T}, ::Val{:N}) where {T}
     return szero(d.s, T, Val(:C))
 end
@@ -106,6 +110,10 @@ function sone(s::AbstractSemiring, ::Type{T}, ::Val{:C}) where {T}
     end
 end
 
+function sone(s::AbstractSemiring, ::Type{T}, ::Val{:R}) where {T}
+    return sone(s, T, Val(:C))
+end
+
 function sone(d::DualQuantale, ::Type{T}, ::Val{:N}) where {T}
     return sone(d.s, T, Val(:C))
 end
@@ -138,6 +146,10 @@ function splus(s::AbstractSemiring, a, b, ::Val{:C})
     end
 end
 
+function splus(s::AbstractSemiring, a, b, ::Val{:R})
+    return splus(s, a, b, Val(:C))
+end
+
 function splus(d::DualQuantale, a, b, ::Val{:N})
     return splus(d.s, a, b, Val(:C))
 end
@@ -168,6 +180,14 @@ end
 
 function sprod(s::AbstractSemiring, a, b, tA::Union{Val{:N}, Val{:C}}, ::Val{:T})
     return sprod(s, a, b, tA, Val(:N))
+end
+
+function sprod(s::AbstractSemiring, a, b, ::Val{:R}, tB::Val)
+    return sprod(s, a, b, Val(:C), tB)
+end
+
+function sprod(s::AbstractSemiring, a, b, tA::Union{Val{:N}, Val{:C}}, ::Val{:R})
+    return sprod(s, a, b, tA, Val(:C))
 end
 
 function sprod(s::AbstractSemiring, a, b, ::Val{:N}, ::Val{:C})
@@ -251,6 +271,14 @@ end
 
 function smuladd(s::AbstractSemiring, a, b, c, tA::Union{Val{:N}, Val{:C}}, ::Val{:T})
     return smuladd(s, a, b, c, tA, Val(:N))
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, ::Val{:R}, tB::Val)
+    return smuladd(s, a, b, c, Val(:C), tB)
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::Union{Val{:N}, Val{:C}}, ::Val{:R})
+    return smuladd(s, a, b, c, tA, Val(:C))
 end
 
 function isintegral(s::S) where {S <: AbstractSemiring}

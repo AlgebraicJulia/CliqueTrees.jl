@@ -12,7 +12,7 @@ using SparseArrays: SparseMatrixCSC, permute
 
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
-    copy_scatter!, copygatherrec!, copyrec!, eltypedegree, isforward, ispositive, symbolic,
+    copy_scatter!, copygatherrec!, copyrec!, copytri!, eltypedegree, isforward, ispositive, symbolic,
     symmetric, unwrap
 
 export AbstractSemiring, DualQuantale, NegativeQuantale, Lattice
@@ -25,6 +25,9 @@ export Pred, Succ, UnsafePred, UnsafeSucc
 export RelProd
 
 abstract type AbstractSemiring end
+
+const N_OR_R = Union{Val{:N}, Val{:R}}
+const T_OR_C = Union{Val{:T}, Val{:C}}
 
 include("semiring/semiring.jl")
 

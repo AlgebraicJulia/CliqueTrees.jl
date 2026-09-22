@@ -38,5 +38,7 @@ end
 
 include("sgemx.jl")
 include("strsx.jl")
+include("strtri.jl")
 include("sgetrs.jl")
 include("sgetrf.jl")
+include("sgetri.jl")

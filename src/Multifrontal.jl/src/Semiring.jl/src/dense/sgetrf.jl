@@ -51,11 +51,11 @@ function sgetrf_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::I
                 #
                 #   Akn ← Lkk* Akn
                 #
-                strsx_mt!(s, Val(:L), Val(:N), Val(:L), Akk, Akn, pool, nt)
+                strsx_mt!(s, Val(:L), Val(:N), Val(:L), Val(:U), Akk, Akn, pool, nt)
                 #
                 #   Ank ← Ank Ukk*
                 #
-                strsx_mt!(s, Val(:R), Val(:N), Val(:U), Akk, Ank, pool, nt)
+                strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), Akk, Ank, pool, nt)
                 #
                 #   Ann ← Ank Akn + Ann
                 #

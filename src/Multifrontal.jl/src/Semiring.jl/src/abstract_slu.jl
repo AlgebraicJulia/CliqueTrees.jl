@@ -7,6 +7,12 @@ const MaybeTransSLU{T} = Union{
      TransSLU{T},
 }
 
+function Base.Matrix(F::AbstractSLU{T}) where {T}
+    n = size(F, 1)
+    C = Matrix{T}(undef, n, n)
+    return sgetri!(F, C)
+end
+
 function Base.parent(F::AbstractSLU)
     return F
 end
@@ -25,6 +31,12 @@ function slu(s::AbstractSemiring, A::SparseMatrixCSC)
     F = ChordalSLU(s, A)
     copyto!(F, A)
     return lu!(F)
+end
+
+# ===== sstar =====
+
+function sstar(s::AbstractSemiring, A::AbstractMatrix)
+    return Matrix(slu(s, A))
 end
 
 function slu(s::AbstractSemiring, A::AbstractMatrix)

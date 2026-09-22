@@ -20,7 +20,13 @@ function sgetrf_mt!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns = sgetrf_loop!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, pool, nt, ns, j)
+        nn = eltypedegree(res, j)
+
+        if isone(nn)
+            ns = sgetrf_loop_1!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, ns, j)
+        else
+            ns = sgetrf_loop!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, pool, nt, ns, j)
+        end
     end
 
     return L, U
@@ -107,8 +113,8 @@ function sgetrf_loop!(
         #     F₂₁ ← F₂₁ U₁₁*
         #     F₁₂ ← L₁₁* F₁₂
         #
-        strsx_mt!(s, Val(:R), Val(:N), Val(:U), F₁₁, F₂₁, pool, nt)
-        strsx_mt!(s, Val(:L), Val(:N), Val(:L), F₁₁, F₁₂, pool, nt)
+        strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), F₁₁, F₂₁, pool, nt)
+        strsx_mt!(s, Val(:L), Val(:N), Val(:L), Val(:U), F₁₁, F₁₂, pool, nt)
         #
         #     M₂₂ ← F₂₂
         #     M₂₂ ← F₂₁ F₁₂ + M₂₂
@@ -128,6 +134,110 @@ function sgetrf_loop!(
     copyrec!(UD, F₁₁)
     copyrec!(LL, F₂₁)
     copyrec!(UL, F₁₂)
+
+    return ns
+end
+
+function sgetrf_loop_1!(
+        s::AbstractSemiring,
+        LDval::AbstractVector{T},
+        UDval::AbstractVector{T},
+        LLval::AbstractVector{T},
+        ULval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        Mptr::AbstractVector{I},
+        Mval::AbstractVector{T},
+        Fval::AbstractVector{T},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        ns::I,
+        j::I,
+    ) where {T, I}
+    #
+    # nn = 1 (the size of the residual at node j)
+    #
+    nn = one(I)
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(rel, j)
+    #
+    # nj is the size of the bag at node j
+    #
+    #     nj = | bag(j) | = 1 + na
+    #
+    nj = nn + na
+    #
+    # F is the frontal matrix at node j
+    #
+    #           1   na
+    #     F = [ f₁₁ f₁₂ ] 1
+    #         [ f₂₁ F₂₂ ] na
+    #
+    F = reshape(view(Fval, oneto(nj * nj)), nj, nj)
+    f₂₁ = view(F, nn + one(I):nj, one(I))
+    f₁₂ = view(F, one(I),         nn + one(I):nj)
+    F₂₂ = view(F, nn + one(I):nj, nn + one(I):nj)
+
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    l₂₁ = view(LLval, Lp:Lp + na - one(I))
+    u₁₂ = view(ULval, Lp:Lp + na - one(I))
+    #
+    #     f₁₁ ← u₁₁       f₂₁ ← l₂₁
+    #     f₁₂ ← u₁₂       F₂₂ ← 0
+    #
+    F[one(I)] = UDval[Dp]
+    copyrec!(f₂₁, l₂₁)
+    copyrec!(f₁₂, u₁₂)
+    szerorec!(s, F₂₂, Val(:N))
+
+    for i in Iterators.reverse(neighbors(chd, j))
+        sgetrf_send!(s, F, Mptr, Mval, rel, ns, i)
+        ns -= one(I)
+    end
+
+    d₁₁ = F[one(I)]
+
+    if ispositive(na)
+        #
+        #     f₂₁ ← f₂₁ u₁₁*
+        #
+        if !isintegral(s)
+            ds = sstar(s, d₁₁)
+
+            @inbounds for i in oneto(na)
+                f₂₁[i] = sprod(s, f₂₁[i], ds, Val(:N), Val(:N))
+            end
+        end
+        #
+        #     M₂₂ ← F₂₂ + f₂₁ f₁₂
+        #
+        ns += one(I)
+        strt = Mptr[ns]
+        stop = Mptr[ns + one(I)] = strt + na * na
+        M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
+
+        @inbounds for c in oneto(na)
+            f = f₁₂[c]
+
+            for r in oneto(na)
+                M₂₂[r, c] = smuladd(s, f₂₁[r], f, F₂₂[r, c], Val(:N), Val(:N))
+            end
+        end
+    end
+    #
+    #     l₁₁ ← f₁₁    u₁₁ ← f₁₁
+    #     l₂₁ ← f₂₁    u₁₂ ← f₁₂
+    #
+    LDval[Dp] = d₁₁
+    UDval[Dp] = d₁₁
+    copyrec!(l₂₁, f₂₁)
+    copyrec!(u₁₂, f₁₂)
 
     return ns
 end

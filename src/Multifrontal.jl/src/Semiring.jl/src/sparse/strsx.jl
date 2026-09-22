@@ -4,6 +4,7 @@ function strsx!(
         s::AbstractSemiring,
         side::Val{SIDE},
         trans::Val{TRANS},
+        diag::Val,
         A::ChordalTriangular{<:Any, UPLO, T, I},
         B::AbstractVecOrMat;
         nt::Integer = nthreads(),
@@ -22,13 +23,14 @@ function strsx!(
     end
 
     W = DivisionWorkspace{T}(S, nrhs)
-    return strsx_mt!(s, side, trans, A, B, W, pool, nt)
+    return strsx_mt!(s, side, trans, diag, A, B, W, pool, nt)
 end
 
 function strsx_mt!(
         s::AbstractSemiring,
         side::Val{SIDE},
         trans::Val{TRANS},
+        diag::Val,
         A::ChordalTriangular{<:Any, UPLO, T, I},
         B::AbstractVecOrMat,
         W::DivisionWorkspace{T},
@@ -47,11 +49,23 @@ function strsx_mt!(
 
     if isforward(UPLO, TRANS, SIDE)
         for j in vertices(S.res)
-            strsx_fwd!(s, B, W.Mval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j, trans, A.uplo, side)
+            nn = eltypedegree(S.res, j)
+
+            if isone(nn)
+                strsx_fwd_1!(s, B, W.Mval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, nrhs, j, trans, A.uplo, diag, side)
+            else
+                strsx_fwd!(s, B, W.Mval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j, trans, A.uplo, diag, side)
+            end
         end
     else
         for j in reverse(vertices(S.res))
-            strsx_bwd!(s, B, W.Mval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j, trans, A.uplo, side)
+            nn = eltypedegree(S.res, j)
+
+            if isone(nn)
+                strsx_bwd_1!(s, B, W.Mval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, nrhs, j, trans, A.uplo, diag, side)
+            else
+                strsx_bwd!(s, B, W.Mval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, pool, nt, nrhs, j, trans, A.uplo, diag, side)
+            end
         end
     end
 
@@ -76,6 +90,7 @@ function strsx_fwd!(
         j::I,
         trans::Val{TRANS},
         uplo::Val{UPLO},
+        diag::Val,
         side::Val{SIDE},
     ) where {T, I, TRANS, UPLO, SIDE}
     #
@@ -119,9 +134,9 @@ function strsx_fwd!(
     #   C₁ ← L₁₁* C₁
     #
     if C isa AbstractVector
-        strsx!(s, side, trans, uplo, D₁₁, C₁)
+        strsx!(s, side, trans, uplo, diag, D₁₁, C₁)
     else
-        strsx_mt!(s, side, trans, uplo, D₁₁, C₁, pool, nt)
+        strsx_mt!(s, side, trans, uplo, diag, D₁₁, C₁, pool, nt)
     end
 
     if ispositive(na)
@@ -161,6 +176,114 @@ function strsx_fwd!(
     return
 end
 
+# ===== strsx_fwd_1! =====
+
+function strsx_fwd_1!(
+        s::AbstractSemiring,
+        C::AbstractVecOrMat{T},
+        Mval::AbstractVector{T},
+        Dval::AbstractVector{T},
+        Lval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nrhs::I,
+        j::I,
+        trans::Val{TRANS},
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+        side::Val{SIDE},
+    ) where {T, I, TRANS, UPLO, SIDE, DIAG}
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(sep, j)
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    #
+    #          res(j)
+    #     L = [ d₁₁ ] res(j)
+    #         [ l₂₁ ] sep(j)
+    #
+    d₁₁ = Dval[Dp]
+    l₂₁ = view(Lval, Lp:Lp + na - one(I))
+    Rp = first(neighbors(res, j))
+    #
+    #   c₁ ← d₁₁* c₁
+    #
+    if !isintegral(s) && DIAG === :N
+        ds = sstar(s, d₁₁)
+
+        if C isa AbstractVector
+            if SIDE === :L
+                C[Rp] = sprod(s, ds, C[Rp], trans, Val(:N))
+            else
+                C[Rp] = sprod(s, C[Rp], ds, Val(:N), trans)
+            end
+        else
+            @inbounds for k in oneto(nrhs)
+                if SIDE === :L
+                    C[Rp, k] = sprod(s, ds, C[Rp, k], trans, Val(:N))
+                else
+                    C[k, Rp] = sprod(s, C[k, Rp], ds, Val(:N), trans)
+                end
+            end
+        end
+    end
+
+    if ispositive(na)
+        #
+        #   M₂ ← l₂₁ c₁       C₂ ← C₂ + M₂
+        #
+        if C isa AbstractVector
+            M₂ = view(Mval, oneto(na))
+            szerorec!(s, M₂, trans)
+            c₁ = C[Rp]
+
+            @inbounds for i in oneto(na)
+                if SIDE === :L
+                    M₂[i] = smuladd(s, l₂₁[i], c₁, M₂[i], trans, Val(:N))
+                else
+                    M₂[i] = smuladd(s, c₁, l₂₁[i], M₂[i], Val(:N), trans)
+                end
+            end
+
+            sscatteradd!(s, trans, C, M₂, neighbors(sep, j))
+        else
+            if SIDE === :L
+                M₂ = reshape(view(Mval, oneto(na * nrhs)), na, nrhs)
+            else
+                M₂ = reshape(view(Mval, oneto(na * nrhs)), nrhs, na)
+            end
+
+            szerorec!(s, M₂, trans)
+
+            @inbounds for k in oneto(nrhs)
+                if SIDE === :L
+                    c₁ = C[Rp, k]
+
+                    for i in oneto(na)
+                        M₂[i, k] = smuladd(s, l₂₁[i], c₁, M₂[i, k], trans, Val(:N))
+                    end
+                else
+                    c₁ = C[k, Rp]
+
+                    for i in oneto(na)
+                        M₂[k, i] = smuladd(s, c₁, l₂₁[i], M₂[k, i], Val(:N), trans)
+                    end
+                end
+            end
+
+            sscatteradd!(s, trans, C, M₂, neighbors(sep, j), side)
+        end
+    end
+
+    return
+end
+
 # ===== strsx_bwd! =====
 
 function strsx_bwd!(
@@ -179,6 +302,7 @@ function strsx_bwd!(
         j::I,
         trans::Val{TRANS},
         uplo::Val{UPLO},
+        diag::Val,
         side::Val{SIDE},
     ) where {T, I, TRANS, UPLO, SIDE}
     #
@@ -253,9 +377,118 @@ function strsx_bwd!(
     #   C₁ ← U₁₁* C₁
     #
     if C isa AbstractVector
-        strsx!(s, side, trans, uplo, D₁₁, C₁)
+        strsx!(s, side, trans, uplo, diag, D₁₁, C₁)
     else
-        strsx_mt!(s, side, trans, uplo, D₁₁, C₁, pool, nt)
+        strsx_mt!(s, side, trans, uplo, diag, D₁₁, C₁, pool, nt)
+    end
+
+    return
+end
+
+# ===== strsx_bwd_1! =====
+
+function strsx_bwd_1!(
+        s::AbstractSemiring,
+        C::AbstractVecOrMat{T},
+        Mval::AbstractVector{T},
+        Dval::AbstractVector{T},
+        Lval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Lptr::AbstractVector{I},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nrhs::I,
+        j::I,
+        trans::Val{TRANS},
+        uplo::Val{UPLO},
+        diag::Val{DIAG},
+        side::Val{SIDE},
+    ) where {T, I, TRANS, UPLO, SIDE, DIAG}
+    #
+    # na is the size of the separator at node j
+    #
+    #     na = | sep(j) |
+    #
+    na = eltypedegree(sep, j)
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+    #
+    #          res(j) sep(j)
+    #     U = [ d₁₁    u₁₂ ] res(j)
+    #
+    d₁₁ = Dval[Dp]
+    u₁₂ = view(Lval, Lp:Lp + na - one(I))
+    Rp = first(neighbors(res, j))
+
+    if ispositive(na)
+        #
+        #   M₂ ← C₂       c₁ ← u₁₂ M₂ + c₁
+        #
+        if C isa AbstractVector
+            M₂ = view(Mval, oneto(na))
+            copygatherrec!(M₂, C, neighbors(sep, j))
+            c₁ = C[Rp]
+
+            @inbounds for i in oneto(na)
+                if SIDE === :L
+                    c₁ = smuladd(s, u₁₂[i], M₂[i], c₁, trans, Val(:N))
+                else
+                    c₁ = smuladd(s, M₂[i], u₁₂[i], c₁, Val(:N), trans)
+                end
+            end
+
+            C[Rp] = c₁
+        else
+            if SIDE === :L
+                M₂ = reshape(view(Mval, oneto(na * nrhs)), na, nrhs)
+            else
+                M₂ = reshape(view(Mval, oneto(na * nrhs)), nrhs, na)
+            end
+
+            copygatherrec!(M₂, C, neighbors(sep, j), side)
+
+            @inbounds for k in oneto(nrhs)
+                if SIDE === :L
+                    c₁ = C[Rp, k]
+
+                    for i in oneto(na)
+                        c₁ = smuladd(s, u₁₂[i], M₂[i, k], c₁, trans, Val(:N))
+                    end
+
+                    C[Rp, k] = c₁
+                else
+                    c₁ = C[k, Rp]
+
+                    for i in oneto(na)
+                        c₁ = smuladd(s, M₂[k, i], u₁₂[i], c₁, Val(:N), trans)
+                    end
+
+                    C[k, Rp] = c₁
+                end
+            end
+        end
+    end
+    #
+    #   c₁ ← d₁₁* c₁
+    #
+    if !isintegral(s) && DIAG === :N
+        ds = sstar(s, d₁₁)
+
+        if C isa AbstractVector
+            if SIDE === :L
+                C[Rp] = sprod(s, ds, C[Rp], trans, Val(:N))
+            else
+                C[Rp] = sprod(s, C[Rp], ds, Val(:N), trans)
+            end
+        else
+            @inbounds for k in oneto(nrhs)
+                if SIDE === :L
+                    C[Rp, k] = sprod(s, ds, C[Rp, k], trans, Val(:N))
+                else
+                    C[k, Rp] = sprod(s, C[k, Rp], ds, Val(:N), trans)
+                end
+            end
+        end
     end
 
     return
