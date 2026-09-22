@@ -608,8 +608,10 @@ function unwrap(A::TransposeFactorization)
 end
 
 function isforward(UPLO, TRANS, SIDE)
-    return UPLO === :L && (TRANS === :N && SIDE === :L || TRANS !== :N && SIDE === :R) ||
-           UPLO === :U && (TRANS !== :N && SIDE === :L || TRANS === :N && SIDE === :R)
+    N_OR_R = TRANS === :N || TRANS === :R
+
+    return UPLO === :L && ( N_OR_R && SIDE === :L || !N_OR_R && SIDE === :R) ||
+           UPLO === :U && (!N_OR_R && SIDE === :L ||  N_OR_R && SIDE === :R)
 end
 
 function swaprec!(v::AbstractVector, j::Integer, k::Integer)

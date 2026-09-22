@@ -127,20 +127,20 @@ end
 
 # ===== strsx2! =====
 
-function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:N}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
     n = size(A, 1)
     m = size(B, 2)
 
     @inbounds for j in 1:m
         for i in 1:n
             if DIAG === :N && !isintegral(s)
-                B[i, j] = sprod(s, sstar(s, A[i, i]), B[i, j], Val(:N), Val(:N))
+                B[i, j] = sprod(s, sstar(s, A[i, i]), B[i, j], trans, Val(:N))
             end
 
             Bij = B[i, j]
 
             for k in i + 1:n
-                B[k, j] = smuladd(s, A[k, i], Bij, B[k, j], Val(:N), Val(:N))
+                B[k, j] = smuladd(s, A[k, i], Bij, B[k, j], trans, Val(:N))
             end
         end
     end
@@ -148,20 +148,20 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:N}, ::Val{:L}, ::Val{DIA
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:L}, ::Val{:N}, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
     n = size(A, 1)
     m = size(B, 2)
 
     @inbounds for i in 1:m
         for j in n:-1:1
             if DIAG === :N && !isintegral(s)
-                Bji = B[j, i] = sprod(s, sstar(s, A[j, j]), B[j, i], Val(:N), Val(:N))
+                Bji = B[j, i] = sprod(s, sstar(s, A[j, j]), B[j, i], trans, Val(:N))
             else
                 Bji = B[j, i]
             end
 
             for k in 1:j - 1
-                B[k, i] = smuladd(s, A[k, j], Bji, B[k, i], Val(:N), Val(:N))
+                B[k, i] = smuladd(s, A[k, j], Bji, B[k, i], trans, Val(:N))
             end
         end
     end
@@ -219,7 +219,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::T_OR_C, ::Val{:U}, ::Val
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
     n = size(A, 1)
     m = size(B, 1)
 
@@ -228,7 +228,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:U}, ::Val{DIA
             Akj = A[k, j]
 
             for i in 1:m
-                B[i, j] = smuladd(s, B[i, k], Akj, B[i, j], Val(:N), Val(:N))
+                B[i, j] = smuladd(s, B[i, k], Akj, B[i, j], Val(:N), trans)
             end
         end
 
@@ -236,7 +236,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:U}, ::Val{DIA
             sAjj = sstar(s, A[j, j])
 
             for i in 1:m
-                B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), Val(:N))
+                B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), trans)
             end
         end
     end
@@ -244,7 +244,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:U}, ::Val{DIA
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
     n = size(A, 1)
     m = size(B, 1)
 
@@ -253,7 +253,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:L}, ::Val{DIA
             Akj = A[k, j]
 
             for i in 1:m
-                B[i, j] = smuladd(s, B[i, k], Akj, B[i, j], Val(:N), Val(:N))
+                B[i, j] = smuladd(s, B[i, k], Akj, B[i, j], Val(:N), trans)
             end
         end
 
@@ -261,7 +261,7 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:L}, ::Val{DIA
             sAjj = sstar(s, A[j, j])
 
             for i in 1:m
-                B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), Val(:N))
+                B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), trans)
             end
         end
     end
@@ -319,18 +319,18 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:U}, ::Val
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
     n = size(A, 1)
 
     @inbounds for j in 1:n
         bj = b[j]
 
         @simd for k in 1:j - 1
-            bj = smuladd(s, b[k], A[k, j], bj, Val(:N), Val(:N))
+            bj = smuladd(s, b[k], A[k, j], bj, Val(:N), trans)
         end
 
         if DIAG === :N && !isintegral(s)
-            b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), Val(:N))
+            b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), trans)
         else
             b[j] = bj
         end
@@ -339,18 +339,18 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:U}, ::Val{DIA
     return b
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, ::Val{:N}, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
     n = size(A, 1)
 
     @inbounds for j in n:-1:1
         bj = b[j]
 
         @simd for k in j + 1:n
-            bj = smuladd(s, b[k], A[k, j], bj, Val(:N), Val(:N))
+            bj = smuladd(s, b[k], A[k, j], bj, Val(:N), trans)
         end
 
         if DIAG === :N && !isintegral(s)
-            b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), Val(:N))
+            b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), trans)
         else
             b[j] = bj
         end

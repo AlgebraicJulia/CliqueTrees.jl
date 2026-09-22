@@ -118,37 +118,55 @@ end
 # ===== sgetrs! =====
 
 function sgetrs!(F::ChordalSLU{<:Any, T}, side::Val{SIDE}, trans::Val{TRANS}, B::AbstractVecOrMat; nt::Integer = nthreads()) where {T, SIDE, TRANS}
-    C = FArray{T}(undef, size(B))
-
     if SIDE === :L
-        if TRANS === :T
-            mul!(C, F.Q, B)
-        else
-            mul!(C, F.P, B)
-        end
+        m = size(B, 1)
+        n = size(B, 2)
     else
-        if TRANS === :T
-            rdiv!(C, B, F.P)
-        else
-            rdiv!(C, B, F.Q)
-        end
+        m = size(B, 2)
+        n = size(B, 1)
     end
 
-    sgetrs!(F.s, side, trans, F.L, F.U, C; nt)
+    if isforward(:U, TRANS, SIDE)
+        invp = F.cinvp
+        perm = F.rperm
+    else
+        invp = F.rinvp
+        perm = F.cperm
+    end
+
+    work = FVector{T}(undef, m * min(8, n))
 
     if SIDE === :L
-        if TRANS === :T
-            ldiv!(B, F.P, C)
-        else
-            ldiv!(B, F.Q, C)
-        end
+        permuterows!(B, work, invp)
     else
-        if TRANS === :T
-            mul!(B, C, F.Q)
-        else
-            mul!(B, C, F.P)
-        end
+        permutecols!(B, work, invp)
+    end
+
+    sgetrs!(F.s, side, trans, F.L, F.U, B; nt)
+
+    if SIDE === :L
+        permuterows!(B, work, perm)
+    else
+        permutecols!(B, work, perm)
     end
 
     return B
+end
+
+function sgetri!(F::ChordalSLU{<:Any, T}, C::AbstractMatrix; nt::Integer = nthreads()) where {T}
+    @assert size(F, 1) == size(C, 1) == size(C, 2)
+
+    n = size(C, 1)
+    #
+    #   C ← U* L*
+    #
+    sgetri!(F.s, F.L, F.U, C; nt)
+    #
+    #   C ← P⁻¹ C Q⁻¹
+    #
+    work = FVector{T}(undef, min(8, n) * n)
+    permuterows!(C, work, F.rperm)
+    permutecols!(C, work, F.cperm)
+
+    return C
 end

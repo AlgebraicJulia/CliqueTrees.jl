@@ -12,8 +12,8 @@ using SparseArrays: SparseMatrixCSC, permute
 
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
-    copy_scatter!, copygatherrec!, copyrec!, copytri!, eltypedegree, isforward, ispositive, symbolic,
-    symmetric, unwrap
+    copy_scatter!, copygatherrec!, copyrec!, copyscattertri!, copytri!, eltypedegree, isforward, ispositive, ncl, nfr, pointers,
+    symbolic, symmetric, unwrap
 
 export AbstractSemiring, DualQuantale, NegativeQuantale, Lattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
@@ -35,7 +35,7 @@ include("dense/dense.jl")
 include("utils.jl")
 include("abstract_slu.jl")
 include("chordal_slu.jl")
-include("sparse/sparse.jl")
+include("chordal/chordal.jl")
 include("dense_slu.jl")
 
 end

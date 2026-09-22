@@ -25,23 +25,23 @@ function Base.transpose(F::AbstractSLU)
     return TransposeFactorization(F)
 end
 
-# ===== slu =====
+# ===== mlu =====
 
-function slu(s::AbstractSemiring, A::SparseMatrixCSC)
+function mlu(s::AbstractSemiring, A::SparseMatrixCSC)
     F = ChordalSLU(s, A)
     copyto!(F, A)
     return lu!(F)
 end
 
-# ===== sstar =====
-
-function sstar(s::AbstractSemiring, A::AbstractMatrix)
-    return Matrix(slu(s, A))
-end
-
-function slu(s::AbstractSemiring, A::AbstractMatrix)
+function mlu(s::AbstractSemiring, A::AbstractMatrix)
     F = DenseSLU(s, A)
     return lu!(F)
+end
+
+# ===== mstar =====
+
+function mstar(s::AbstractSemiring, A::AbstractMatrix)
+    return Matrix(mlu(s, A))
 end
 
 # ===== lu! =====
@@ -69,7 +69,7 @@ function LinearAlgebra.ldiv!(F::AbstractSLU, B::AbstractVecOrMat)
 end
 
 function LinearAlgebra.ldiv!(F::TransSLU, B::AbstractVecOrMat)
-    return error()
+    return sgetrs!(parent(F), Val(:L), Val(:R), B)
 end
 
 function LinearAlgebra.rdiv!(B::AbstractMatrix, F::AbstractSLU)
@@ -77,7 +77,7 @@ function LinearAlgebra.rdiv!(B::AbstractMatrix, F::AbstractSLU)
 end
 
 function LinearAlgebra.rdiv!(B::AbstractMatrix, F::TransSLU)
-    return error()
+    return sgetrs!(parent(F), Val(:R), Val(:R), B)
 end
 
 # ===== * =====

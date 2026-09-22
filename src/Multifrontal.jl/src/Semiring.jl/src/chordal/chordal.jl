@@ -1,3 +1,5 @@
 include("sgetrf.jl")
 include("strsx.jl")
+include("strtri.jl")
 include("sgetrs.jl")
+include("sgetri.jl")
