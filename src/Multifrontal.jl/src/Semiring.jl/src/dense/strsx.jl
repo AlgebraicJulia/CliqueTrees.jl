@@ -1,3 +1,5 @@
+const STRSX_WORK = 8192
+
 # ===== strsx! =====
 
 function strsx!(s::AbstractSemiring, side::Val, trans::Val, uplo::Val, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
@@ -17,7 +19,7 @@ function strsx!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, A::
         d = n
     end
 
-    if nt <= 1 || c <= THRESHOLD
+    if nt <= 1 || c <= THRESHOLD || size(A, 1) * c < STRSX_WORK
         AP, BP, CP = spool_st(T, m, d, n)
         strsx_st!(s, side, trans, uplo, A, B, AP, BP, CP)
     else
@@ -40,7 +42,7 @@ function strsx_mt!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, 
         c = m
     end
 
-    if nt <= 1 || c <= THRESHOLD
+    if nt <= 1 || c <= THRESHOLD || size(A, 1) * c < STRSX_WORK
         AP, BP, CP = take!(pool)
 
         try

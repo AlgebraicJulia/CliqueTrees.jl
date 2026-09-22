@@ -2,7 +2,7 @@ const SLU_NB = 128
 
 # ===== sgetrf! =====
 
-function sgetrf!(s::AbstractSemiring, A::AbstractMatrix{V}) where {V}
+function sgetrf!(s::AbstractSemiring, A::AbstractMatrix{V}; nt::Integer = nthreads()) where {V}
     @assert size(A, 2) == size(A, 1)
 
     n = size(A, 1)
@@ -10,8 +10,7 @@ function sgetrf!(s::AbstractSemiring, A::AbstractMatrix{V}) where {V}
     if n <= SLU_NB
         sgetrf2!(s, A)
     else
-        nt = nthreads()
-        sgetrf_mt!(s, A, spool_mt(V, nt), nt)
+        sgetrf_mt!(s, A, spool_mt(V, nt, n, n, n), nt)
     end
 
     return A

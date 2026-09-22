@@ -21,7 +21,7 @@ function sgemx!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix
         nj = size(A, 1)
     end
 
-    if nt <= 1 || max(ni, nj, nk) <= SGEMX_LEAF
+    if nt <= 1 || max(ni, nk) <= SGEMX_LEAF || ni * nj * nk < SGEMX_LEAF * max(ni, nj, nk)
         AP, BP, CP = spool_st(T, ni, nj, nk)
         sgemx_st!(s, tA, tB, C, A, B, AP, BP, CP)
     else
@@ -108,7 +108,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
         nj = size(A, 1)
     end
 
-    if nt <= 1 || (ni <= SGEMX_LEAF && nj <= SGEMX_LEAF && nk <= SGEMX_LEAF)
+    if nt <= 1 || max(ni, nk) <= SGEMX_LEAF || ni * nj * nk < SGEMX_LEAF * max(ni, nj, nk)
         AP, BP, CP = take!(pool)
 
         try
