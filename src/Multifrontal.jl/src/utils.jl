@@ -595,6 +595,18 @@ function unwrap(A::Transpose)
     return (parent(A), Val(:T))
 end
 
+function unwrap(A::Factorization)
+    return (A, Val(:N))
+end
+
+function unwrap(A::AdjointFactorization)
+    return (parent(A), Val(:C))
+end
+
+function unwrap(A::TransposeFactorization)
+    return (parent(A), Val(:T))
+end
+
 function isforward(UPLO, TRANS, SIDE)
     return UPLO === :L && (TRANS === :N && SIDE === :L || TRANS !== :N && SIDE === :R) ||
            UPLO === :U && (TRANS !== :N && SIDE === :L || TRANS === :N && SIDE === :R)

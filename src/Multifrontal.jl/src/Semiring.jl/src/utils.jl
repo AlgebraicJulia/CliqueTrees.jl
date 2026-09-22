@@ -1,3 +1,8 @@
+function szerorec!(s::AbstractSemiring, A::AbstractVecOrMat{T}, trans::Val) where {T}
+    fill!(A, szero(s, T, trans))
+    return A
+end
+
 function sscatteradd!(s::AbstractSemiring, C::AbstractMatrix, M::AbstractMatrix, ind::AbstractVector, ::Val{:L})
     @inbounds for j in axes(M, 2)
         for i in axes(M, 1)

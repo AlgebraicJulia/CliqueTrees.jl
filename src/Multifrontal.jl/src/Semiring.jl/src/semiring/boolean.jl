@@ -6,7 +6,7 @@
 # - addition is conjunction
 # - multiplication disjunction
 #
-struct AndOr <: AbstractQuantale end
+struct AndOr <: AbstractSemiring end
 
 # The dual Boolean lattice
 #
@@ -19,10 +19,6 @@ struct AndOr <: AbstractQuantale end
 const OrAnd = DualQuantale{AndOr}
 
 function islattice(::Type{AndOr})
-    return true
-end
-
-function iscommutative(::Type{AndOr})
     return true
 end
 

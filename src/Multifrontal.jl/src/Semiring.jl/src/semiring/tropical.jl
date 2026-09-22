@@ -6,7 +6,7 @@
 # - addition is minimization
 # - multiplication is addition (+∞ + -∞ = +∞)
 #
-struct MinPlus <: AbstractQuantale end
+struct MinPlus <: AbstractSemiring end
 
 # The dual tropical semiring
 #
@@ -26,7 +26,7 @@ const MaxPlus = DualQuantale{MinPlus}
 # - addition is minization
 # - multiplication is as usual (+∞ × 0 = +∞)
 #
-struct MinProd <: AbstractQuantale end
+struct MinProd <: AbstractSemiring end
 
 # The max-times semiring
 #
@@ -45,6 +45,14 @@ function iscommutative(::Type{MinPlus})
 end
 
 function iscommutative(::Type{MinProd})
+    return true
+end
+
+function isidempotent(::Type{MinPlus})
+    return true
+end
+
+function isidempotent(::Type{MinProd})
     return true
 end
 

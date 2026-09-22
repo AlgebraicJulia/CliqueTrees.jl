@@ -1,33 +1,32 @@
 const SLU_NB = 128
 
-# ===== slu! =====
+# ===== sgetrf! =====
 
-function slu!(s::AbstractSemiring, A::AbstractMatrix{V}) where {V}
-    n = size(A, 1)
-    @assert size(A, 2) == n
-
-    if n <= SLU_NB
-        slu2!(s, A)
-    else
-        nt = nthreads()
-        slu_mt!(s, A, spool(V, nt), nt)
-    end
-
-    return A
-end
-
-# ===== slu_mt! =====
-
-function slu_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Integer)
+function sgetrf!(s::AbstractSemiring, A::AbstractMatrix{V}) where {V}
     @assert size(A, 2) == size(A, 1)
 
     n = size(A, 1)
 
     if n <= SLU_NB
-        slu2!(s, A)
+        sgetrf2!(s, A)
     else
-        depth = ceil(Int, log2(nt)) + 1
+        nt = nthreads()
+        sgetrf_mt!(s, A, spool_mt(V, nt), nt)
+    end
 
+    return A
+end
+
+# ===== sgetrf_mt! =====
+
+function sgetrf_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Integer)
+    @assert size(A, 2) == size(A, 1)
+
+    n = size(A, 1)
+
+    if n <= SLU_NB
+        sgetrf2!(s, A)
+    else
         for k in 1:SLU_NB:n
             #
             #   A = [ Akk Akn ]
@@ -44,7 +43,7 @@ function slu_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Inte
             #
             #   Akk ← Lkk + Ukk
             #
-            slu2!(s, Akk)
+            sgetrf2!(s, Akk)
 
             if k + b <= n
                 Akn = view(A, k:k + b - 1, k + b:n)
@@ -61,7 +60,7 @@ function slu_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Inte
                 #
                 #   Ann ← Ank Akn + Ann
                 #
-                sgemx_mt!(s, Ann, Ank, Akn, pool, depth)
+                sgemx_mt!(s, Val(:N), Val(:N), Ann, Ank, Akn, pool, nt)
             end
         end
     end
@@ -69,9 +68,9 @@ function slu_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Inte
     return A
 end
 
-# ===== slu2! =====
+# ===== sgetrf2! =====
 
-function slu2!(s::AbstractSemiring, A::AbstractMatrix)
+function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix)
     @assert size(A, 2) == size(A, 1)
 
     n = size(A, 1)

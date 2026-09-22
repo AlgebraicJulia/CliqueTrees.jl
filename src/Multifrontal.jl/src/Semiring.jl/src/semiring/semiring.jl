@@ -1,33 +1,33 @@
-struct DualQuantale{S <: AbstractQuantale} <: AbstractQuantale
+struct DualQuantale{S <: AbstractSemiring} <: AbstractSemiring
     s::S
 end
 
-function DualQuantale{S}() where {S <: AbstractQuantale}
+function DualQuantale{S}() where {S <: AbstractSemiring}
     return DualQuantale{S}(S())
 end
 
-struct NegativeQuantale{S <: AbstractQuantale} <: AbstractQuantale
+struct NegativeQuantale{S <: AbstractSemiring} <: AbstractSemiring
     s::S
 end
 
-function NegativeQuantale{S}() where {S <: AbstractQuantale}
+function NegativeQuantale{S}() where {S <: AbstractSemiring}
     return NegativeQuantale{S}(S())
 end
 
-struct Lattice{S <: AbstractQuantale} <: AbstractQuantale
+struct Lattice{S <: AbstractSemiring} <: AbstractSemiring
     s::S
 end
 
-function Lattice{S}() where {S <: AbstractQuantale}
+function Lattice{S}() where {S <: AbstractSemiring}
     return Lattice{S}(S())
 end
 
 function slte(s::AbstractSemiring, a, b)
-    return error("not implemented")
-end
-
-function slte(s::AbstractQuantale, a, b)
-    return splus(s, a, b, Val(:N)) == b
+    if isidempotent(s)
+        return splus(s, a, b, Val(:N)) == b
+    else
+        return error("not implemented")
+    end
 end
 
 function slte(d::DualQuantale, a, b)
@@ -205,34 +205,34 @@ function sprod(d::DualQuantale, a, b, ::Val{:N}, ::Val{:N})
 end
 
 function sstar(s::AbstractSemiring, a)
-    u = sone(s, a, Val(:N))
-    b = u
+    if isidempotent(s)
+        b = sone(s, a, Val(:N))
 
-    if !isintegral(s)
-        c = splus(s, u, a, Val(:N))
+        if !isintegral(s)
+            a = splus(s, b, a, Val(:N))
 
-        while b != c
-            b = c
-            c = smuladd(s, a, b, u, Val(:N), Val(:N))
+            while b != a
+                b = a
+                a = sprod(s, b, b, Val(:N), Val(:N))
+            end
         end
-    end
 
-    return b
-end
+        return b
+    else
+        u = sone(s, a, Val(:N))
+        b = u
 
-function sstar(s::AbstractQuantale, a)
-    b = sone(s, a, Val(:N))
+        if !isintegral(s)
+            c = splus(s, u, a, Val(:N))
 
-    if !isintegral(s)
-        a = splus(s, b, a, Val(:N))
-
-        while b != a
-            b = a
-            a = sprod(s, b, b, Val(:N), Val(:N))
+            while b != c
+                b = c
+                c = smuladd(s, a, b, u, Val(:N), Val(:N))
+            end
         end
-    end
 
-    return b
+        return b
+    end
 end
 
 function smuladd(s::AbstractSemiring, a, b, c, tA::Val{TA}, tB::Val{TB}) where {TA, TB}
@@ -293,8 +293,8 @@ function iscommutative(s::S) where {S <: AbstractSemiring}
     return iscommutative(S)
 end
 
-function iscommutative(::Type{<:AbstractSemiring})
-    return false
+function iscommutative(::Type{S}) where {S <: AbstractSemiring}
+    return islattice(S)
 end
 
 function iscommutative(::Type{DualQuantale{S}}) where {S}
@@ -305,8 +305,16 @@ function iscommutative(::Type{NegativeQuantale{S}}) where {S}
     return iscommutative(S)
 end
 
-function iscommutative(::Type{Lattice{S}}) where {S}
-    return true
+function isidempotent(s::S) where {S <: AbstractSemiring}
+    return isidempotent(S)
+end
+
+function isidempotent(::Type{S}) where {S <: AbstractSemiring}
+    return isintegral(S)
+end
+
+function isidempotent(::Type{DualQuantale{S}}) where {S}
+    return isidempotent(S)
 end
 
 include("real.jl")

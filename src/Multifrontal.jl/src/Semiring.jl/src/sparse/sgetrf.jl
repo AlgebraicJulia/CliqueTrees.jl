@@ -1,21 +1,12 @@
-# ===== slu! =====
+# ===== sgetrf! =====
 
-function lu!(F::SemiringLU)
-    slu!(F.s, F.L, F.U)
-    return F
-end
-
-function lu!(F::SemiringLU, W::FactorizationWorkspace)
-    slu!(F.s, F.L, F.U, W)
-    return F
-end
-
-function slu!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}) where {T, I}
+function sgetrf!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}; nt::Integer = nthreads()) where {T, I}
     W = FactorizationWorkspace(L)
-    return slu!(s, L, U, W)
+    pool = spool_mt(T, nt)
+    return sgetrf_mt!(s, L, U, W, pool, nt)
 end
 
-function slu!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}, W::FactorizationWorkspace{T, I}) where {T, I}
+function sgetrf_mt!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}, W::FactorizationWorkspace{T, I}, pool, nt::Integer) where {T, I}
     S = L.S
 
     Fval = W.Fval
@@ -26,19 +17,16 @@ function slu!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::Chorda
     rel = S.rel
     chd = S.chd
 
-    nt = nthreads()
-    pool = spool(T, nt)
-
     ns = zero(I); Mptr[one(I)] = one(I)
 
     for j in vertices(res)
-        ns = slu_loop!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, pool, nt, ns, j)
+        ns = sgetrf_loop!(s, L.Dval, U.Dval, L.Lval, U.Lval, S.Dptr, S.Lptr, Mptr, Mval, Fval, res, rel, chd, pool, nt, ns, j)
     end
 
     return L, U
 end
 
-function slu_loop!(
+function sgetrf_loop!(
         s::AbstractSemiring,
         LDval::AbstractVector{T},
         UDval::AbstractVector{T},
@@ -100,19 +88,19 @@ function slu_loop!(
     #     F₁₂ ← U₁₂
     #     F₂₂ ← 0
     #
-    slu_gather!(F₁₁, LD, UD)
+    sgetrf_gather!(F₁₁, LD, UD)
     copyrec!(F₂₁, LL)
     copyrec!(F₁₂, UL)
-    fill!(F₂₂, szero(s, T, Val(:N)))
+    szerorec!(s, F₂₂, Val(:N))
 
     for i in Iterators.reverse(neighbors(chd, j))
-        slu_send!(s, F, Mptr, Mval, rel, ns, i)
+        sgetrf_send!(s, F, Mptr, Mval, rel, ns, i)
         ns -= one(I)
     end
     #
     #     F₁₁ ← L₁₁ + U₁₁       (F₁₁* = U₁₁* L₁₁*)
     #
-    slu_mt!(s, F₁₁, pool, nt)
+    sgetrf_mt!(s, F₁₁, pool, nt)
 
     if ispositive(na)
         #
@@ -130,7 +118,7 @@ function slu_loop!(
         stop = Mptr[ns + one(I)] = strt + na * na
         M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
         copyrec!(M₂₂, F₂₂)
-        sgemx_mt!(s, M₂₂, F₂₁, F₁₂, pool, ceil(Int, log2(nt)) + 1)
+        sgemx_mt!(s, Val(:N), Val(:N), M₂₂, F₂₁, F₁₂, pool, nt)
     end
     #
     #     L₁₁ ← F₁₁    U₁₁ ← F₁₁
@@ -144,7 +132,7 @@ function slu_loop!(
     return ns
 end
 
-function slu_gather!(F::AbstractMatrix, LD::AbstractMatrix, UD::AbstractMatrix)
+function sgetrf_gather!(F::AbstractMatrix, LD::AbstractMatrix, UD::AbstractMatrix)
     n = size(F, 1)
 
     @inbounds for j in 1:n
@@ -160,7 +148,7 @@ function slu_gather!(F::AbstractMatrix, LD::AbstractMatrix, UD::AbstractMatrix)
     return F
 end
 
-function slu_send!(s::AbstractSemiring, F::AbstractMatrix, Mptr::AbstractVector{I}, Mval::AbstractVector, rel::AbstractGraph{I}, ns::I, i::I) where {I}
+function sgetrf_send!(s::AbstractSemiring, F::AbstractMatrix, Mptr::AbstractVector{I}, Mval::AbstractVector, rel::AbstractGraph{I}, ns::I, i::I) where {I}
     #
     # na is the size of the separator at node i
     #

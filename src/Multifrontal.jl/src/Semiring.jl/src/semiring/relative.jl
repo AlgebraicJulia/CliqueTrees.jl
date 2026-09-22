@@ -1,4 +1,8 @@
-struct RelProd <: AbstractQuantale end
+struct RelProd <: AbstractSemiring end
+
+function isidempotent(::Type{RelProd})
+    return true
+end
 
 # ----- pack / unpack -----
 

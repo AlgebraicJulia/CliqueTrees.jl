@@ -1,16 +1,60 @@
-struct Pred{S} <: AbstractQuantale
+# The predecessor semiring
+#
+#   (ℙ, max, ×)
+#
+# wrapping an inner semiring 𝕊. Elements
+# are triples (v, h, i) ∈ 𝕊 × ℕ × ℕ such
+# that
+#
+#  - i = 0 implies h = 0 and v ∈ {0, 1}
+#  - i ≠ 0 implies h > 0 or  v < 1
+#
+# Furthermore, we identify all triples
+# (0, h, i).
+#
+#  - addition is maximization in the lexicographic
+#    order over (𝕊, ℕᵒᵖ, ℕᵒᵖ)
+#
+#  - multiplication is as follows:
+#
+#       (av, ah, ai) × (bv, bh, bi) = { (av × bv, ah + bh, bi) if bi > 0
+#                                     { (av × bv, ah + bh, ai) if bi = 0
+#
+struct Pred{S} <: AbstractSemiring
     s::S
 end
 
-struct Succ{S} <: AbstractQuantale
+# The successor semiring
+#
+#   (ℚ, max, ×)
+#
+# wrapping an inner semiring 𝕊. Elements
+# are triples (v, h, i) ∈ 𝕊 × ℕ × ℕ such
+# that
+#
+#  - i = 0 implies h = 0 and v ∈ {0, 1}
+#  - i ≠ 0 implies h > 0 or  v < 1
+#
+# Furthermore, we identify all triples
+# (0, h, i).
+#
+#  - addition is maximization in the lexicographic
+#    order over (𝕊, ℕᵒᵖ, ℕᵒᵖ)
+#
+#  - multiplication is as follows:
+#
+#       (av, ah, ai) × (bv, bh, bi) = { (av × bv, ah + bh, ai) if ai > 0
+#                                     { (av × bv, ah + bh, bi) if ai = 0
+#
+struct Succ{S} <: AbstractSemiring
     s::S
 end
 
-struct UnsafePred{S} <: AbstractQuantale
+struct UnsafePred{S} <: AbstractSemiring
     s::S
 end
 
-struct UnsafeSucc{S} <: AbstractQuantale
+struct UnsafeSucc{S} <: AbstractSemiring
     s::S
 end
 
@@ -39,10 +83,13 @@ end
 # ----- pack / unpack -----
 
 function flip(v::UInt32)
-    if iszero(v & 0x80000000)
-        w = 0x80000000
+    SGN = 0x80000000
+    ALL = 0xffffffff
+
+    if iszero(v & SGN)
+        w = SGN
     else
-        w = 0xffffffff
+        w = ALL
     end
 
     return v ⊻ w
@@ -54,10 +101,13 @@ end
 end
 
 function unflip(v::UInt32)
-    if iszero(v & 0x80000000)
-        w = 0xffffffff
+    SGN = 0x80000000
+    ALL = 0xffffffff
+
+    if iszero(v & SGN)
+        w = ALL
     else
-        w = 0x80000000
+        w = SGN
     end
 
     return v ⊻ w
@@ -114,12 +164,8 @@ end
 
 # ----- stop -----
 
-function szero(s::MaybeSafePredSucc{S}, ::Type{UInt64}, ::Val{:C}) where {S <: Union{MinPlusLaw, MinProd}}
+function szero(s::MaybeSafePredSucc{MinProd}, ::Type{UInt64}, ::Val{:C})
     return 0x0000000000000000
-end
-
-function szero(s::MaybeSafePredSucc{MinProdLaw}, ::Type{UInt64}, ::Val{:C})
-    return 0x3f80000000000000
 end
 
 function szero(s::MaybeSafePredSucc{MinPlus}, ::Type{UInt64}, ::Val{:C})
@@ -156,6 +202,10 @@ function splus(s::MaybeSafePredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}) where {
     return min(a, b)
 end
 
+function splus(s::PredSucc{S}, a::UInt64, b::UInt64, ::Val{:C}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
+    return max(a, b)
+end
+
 # ----- sprod -----
 
 function sprod(s::PredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}}
@@ -172,14 +222,7 @@ function sprod(s::PredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N}) where
 
     av = reinterpret(Float32, au)
     bv = reinterpret(Float32, bu)
-
-    if S <: Union{MinProdLaw, MinProd}
-        cv = av * bv
-    else
-        cv = av + bv
-    end
-
-    cu = reinterpret(UInt32, cv)
+    cu = reinterpret(UInt32, sprod(s.s, av, bv, Val(:N), Val(:N)))
 
     if S <: MinPlus
         cu = flip(cu)
@@ -220,14 +263,7 @@ function sprod(s::UnsafePredSucc{S}, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N})
 
     av = reinterpret(Float32, au)
     bv = reinterpret(Float32, bu)
-
-    if S <: Union{MinProdLaw, MinProd}
-        cv = av * bv
-    else
-        cv = av + bv
-    end
-
-    cu = reinterpret(UInt32, cv)
+    cu = reinterpret(UInt32, sprod(s.s, av, bv, Val(:N), Val(:N)))
 
     if S <: MinPlus
         cu = flip(cu)
@@ -271,14 +307,7 @@ function smuladd(s::PredSucc{S}, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::V
 
     av = reinterpret(Float32, au)
     bv = reinterpret(Float32, bu)
-
-    if S <: Union{MinProdLaw, MinProd}
-        dv = av * bv
-    else
-        dv = av + bv
-    end
-
-    du = reinterpret(UInt32, dv)
+    du = reinterpret(UInt32, sprod(s.s, av, bv, Val(:N), Val(:N)))
 
     if S <: MinPlus
         du = flip(du)
@@ -319,14 +348,7 @@ function smuladd(s::UnsafePredSucc{S}, a::UInt64, b::UInt64, c::UInt64, ::Val{:N
 
     av = reinterpret(Float32, au)
     bv = reinterpret(Float32, bu)
-
-    if S <: Union{MinProdLaw, MinProd}
-        dv = av * bv
-    else
-        dv = av + bv
-    end
-
-    du = reinterpret(UInt32, dv)
+    du = reinterpret(UInt32, sprod(s.s, av, bv, Val(:N), Val(:N)))
 
     if S <: MinPlus
         du = flip(du)
@@ -372,14 +394,7 @@ end
 
         av = reinterpret(Vec{2W, Float32}, au & V)
         bv = reinterpret(Vec{2W, Float32}, bu & V)
-
-        if S <: Union{MinProdLaw, MinProd}
-            dv = av * bv
-        else
-            dv = av + bv
-        end
-
-        du = reinterpret(Vec{W, UInt64}, dv)
+        du = reinterpret(Vec{W, UInt64}, sprod(s.s, av, bv, Val(:N), Val(:N)))
 
         if S <: MinPlus
             du = flip(du)

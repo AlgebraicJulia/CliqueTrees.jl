@@ -7,7 +7,7 @@ using Base.Threads: @spawn, @threads, maxthreadid, nthreads, threadid
 using FillArrays: Ones, Zeros, AbstractFill, AbstractZeros, AbstractZerosVector, AbstractZerosMatrix
 using Graphs
 using LinearAlgebra
-using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasComplex, BlasReal, Factorization, LAPACK, BLAS, PivotingStrategy, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm, AbstractTriangular, axpby!
+using LinearAlgebra: Adjoint, Transpose, AdjOrTrans, HermOrSym, BlasFloat, BlasComplex, BlasReal, Factorization, TransposeFactorization, AdjointFactorization, LAPACK, BLAS, PivotingStrategy, RowMaximum, BlasInt, checksquare, chkstride1, require_one_based_indexing, givensAlgorithm, AbstractTriangular, axpby!
 using Random
 using Random: rand!
 using SparseArrays
