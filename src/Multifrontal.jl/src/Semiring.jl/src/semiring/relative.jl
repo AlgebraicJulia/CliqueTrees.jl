@@ -48,11 +48,11 @@ function sone(s::RelProd, ::Type{UInt64}, ::Val{:N})
     return 0x8040201008040201
 end
 
-function splus(s::RelProd, a::UInt64, b::UInt64, ::Val{:N})
+function splus(s::RelProd, a, b, ::Val{:N})
     return a | b
 end
 
-function splus(s::RelProd, a::UInt64, b::UInt64, ::Val{:C})
+function splus(s::RelProd, a, b, ::Val{:C})
     return a & b
 end
 
@@ -117,71 +117,28 @@ end
 end
 
 @inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
-    return c & ~smuladd(s, a, b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+    return c & ~smuladd(s, btr(a), ~b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
-    return c & ~smuladd(s, a, b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+    return c & ~smuladd(s, ~a, btr(b), zero(Vec{W, UInt64}), Val(:N), Val(:N))
 end
 
-function sgemx_pack_A!(s::RelProd, tA::Val{TA}, tB::Val{TB}, AP::AbstractVector, A::AbstractMatrix, ni::Int, nj::Int, z, ::Val{MR}) where {TA, TB, MR}
-    @inbounds for i0 in 0:MR:ni - 1
-        it = min(MR, ni - i0); ip0 = i0 * nj
-
-        for j in 1:nj
-            for ip in 1:it
-                if TA === :N
-                    x = A[i0 + ip, j]
-                else
-                    x = A[j, i0 + ip]
-                end
-
-                if TA === :C
-                    x = btr(x)
-                elseif TB === :C
-                    x = ~x
-                end
-
-                AP[ip0 + (j - 1) * MR + ip] = x
-            end
-
-            for ip in it + 1:MR
-                AP[ip0 + (j - 1) * MR + ip] = z
-            end
-        end
-    end
-
-    return AP
+@inline function smuladd(s::RelProd, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
+    lo, hi = luts(a)
+    return alut(lo, hi, b, c)
 end
 
-function sgemx_pack_B!(s::RelProd, tA::Val{TA}, tB::Val{TB}, BP::AbstractVector, B::AbstractMatrix, nk::Int, nj::Int, z) where {TA, TB}
-    @inbounds for k0 in 0:SGEMX_NR:nk - 1
-        kt = min(SGEMX_NR, nk - k0); kp0 = k0 * nj
+@inline function smuladd(s::RelProd, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
+    return c & ~smuladd(s, btr(a), ~b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+end
 
-        for j in 1:nj
-            for kp in 1:kt
-                if TB === :N
-                    x = B[j, k0 + kp]
-                else
-                    x = B[k0 + kp, j]
-                end
+@inline function smuladd(s::RelProd, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
+    return c & ~smuladd(s, ~a, btr(b), zero(Vec{W, UInt64}), Val(:N), Val(:N))
+end
 
-                if TB === :C
-                    x = btr(x)
-                elseif TA === :C
-                    x = ~x
-                end
-
-                BP[kp0 + (j - 1) * SGEMX_NR + kp] = x
-            end
-
-            for kp in kt + 1:SGEMX_NR
-                BP[kp0 + (j - 1) * SGEMX_NR + kp] = z
-            end
-        end
-    end
-
-    return BP
+@inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, tA::Union{Val{:N}, Val{:C}}, tB::Union{Val{:N}, Val{:C}}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], tA, tB), Val(W)))
 end
 
 function btr(a)
@@ -204,4 +161,74 @@ end
     end
 
     return :(shufflevector(v, Val($(ntuple(f, W)))))
+end
+
+function tbl1(t::Vec{16, UInt8}, v::Vec{16, UInt8})
+    return Vec(ccall("llvm.aarch64.neon.tbl1.v16i8", llvmcall, NTuple{16, VecElement{UInt8}},
+        (NTuple{16, VecElement{UInt8}}, NTuple{16, VecElement{UInt8}}), t.data, v.data))
+end
+
+@inline function luts(a::UInt64)
+    COL = 0x00000000000000ff
+
+    function flo(i)
+        n = i - 1; r = 0x00
+
+        for j in 0:3
+            if isodd(n >> j)
+                r |= UInt8((a >> (8j)) & COL)
+            end
+        end
+
+        return r
+    end
+
+    function fhi(i)
+        n = i - 1; r = 0x00
+
+        for j in 0:3
+            if isodd(n >> j)
+                r |= UInt8((a >> (8(j + 4))) & COL)
+            end
+        end
+
+        return r
+    end
+
+    lo = Vec{16, UInt8}(ntuple(flo, Val(16)))
+    hi = Vec{16, UInt8}(ntuple(fhi, Val(16)))
+
+    return lo, hi
+end
+
+@generated function half(v::Vec{N, UInt8}, ::Val{O}) where {N, O}
+    function f(i)
+        return O + i - 1
+    end
+
+    return :(shufflevector(v, Val($(ntuple(f, N ÷ 2)))))
+end
+
+@generated function cat2(a::Vec{N, UInt8}, b::Vec{N, UInt8}) where {N}
+    function f(i)
+        return i - 1
+    end
+
+    return :(shufflevector(a, b, Val($(ntuple(f, 2N)))))
+end
+
+@inline function tblv(lo::Vec{16, UInt8}, hi::Vec{16, UInt8}, v::Vec{16, UInt8})
+    rlo = tbl1(lo, v & 0x0f)
+    rhi = tbl1(hi, v >> 0x04)
+    return rlo | rhi
+end
+
+@inline function tblv(lo::Vec{16, UInt8}, hi::Vec{16, UInt8}, v::Vec{N, UInt8}) where {N}
+    return cat2(tblv(lo, hi, half(v, Val(0))), tblv(lo, hi, half(v, Val(N ÷ 2))))
+end
+
+@inline function alut(lo::Vec{16, UInt8}, hi::Vec{16, UInt8}, b::Vec{W, UInt64}, c::Vec{W, UInt64}) where {W}
+    bv = reinterpret(Vec{8W, UInt8}, b)
+    cv = reinterpret(Vec{8W, UInt8}, c)
+    return reinterpret(Vec{W, UInt64}, cv | tblv(lo, hi, bv))
 end

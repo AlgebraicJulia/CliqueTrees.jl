@@ -100,28 +100,38 @@ function splus(::Union{MinPlus, MinProd}, a, b, ::Val{:C})
     return max(a, b)
 end
 
-function sprod(::MinPlus, a, b, ::Val{:N}, ::Val{:N})
+function sprod_unsafe(::Union{MinPlus, MaxPlus}, a, b, ::Val{:N}, ::Val{:N})
     return a + b
 end
 
-function sprod(::MaxPlus, a, b, ::Val{:N}, ::Val{:N})
-    return a + b
-end
-
-function sprod(::MinProd, a, b, ::Val{:N}, ::Val{:N})
+function sprod_unsafe(::Union{MinProd, MaxProd}, a, b, ::Val{:N}, ::Val{:N})
     return a * b
 end
 
-function sprod(::MaxProd, a, b, ::Val{:N}, ::Val{:N})
-    return a * b
-end
-
-function sprod(::Union{MinPlus, MaxPlus}, a, b, ::Val{:C}, ::Val{:N})
+function sprod_unsafe(::Union{MinPlus, MaxPlus}, a, b, ::Val{:C}, ::Val{:N})
     return b - a
 end
 
-function sprod(::Union{MinProd, MaxProd}, a, b, ::Val{:C}, ::Val{:N})
+function sprod_unsafe(::Union{MinProd, MaxProd}, a, b, ::Val{:C}, ::Val{:N})
     return b / a
+end
+
+function sprod(s::TropicalSemiring, a, b, tA::Val{:N}, tB::Val{:N})
+    return sprod_unsafe(s, a, b, tA, tB)
+end
+
+function sprod(s::TropicalSemiring, a, b, tA::Val{:C}, tB::Val{:N})
+    return sprod_unsafe(s, a, b, tA, tB)
+end
+
+function sprod(s::TropicalSemiring, a::AbstractFloat, b::AbstractFloat, tA::Val{:N}, tB::Val{:N})
+    c = sprod_unsafe(s, a, b, tA, tB)
+    return ifelse(isnan(c), szero(s, c, tA), c)
+end
+
+function sprod(s::TropicalSemiring, a::AbstractFloat, b::AbstractFloat, tA::Val{:C}, tB::Val{:N})
+    c = sprod_unsafe(s, a, b, tA, tB)
+    return ifelse(isnan(c), szero(s, c, tA), c)
 end
 
 #

@@ -89,51 +89,63 @@ function sgetrf_loop!(
     LL = reshape(view(LLval, Lp:Lp + nn * na - one(I)), na, nn)
     UL = reshape(view(ULval, Lp:Lp + nn * na - one(I)), nn, na)
     #
-    #     F₁₁ ← L₁₁ + U₁₁
-    #     F₂₁ ← L₂₁
-    #     F₁₂ ← U₁₂
-    #     F₂₂ ← 0
+    #     F ← 0
     #
-    sgetrf_gather!(F₁₁, LD, UD)
-    copyrec!(F₂₁, LL)
-    copyrec!(F₁₂, UL)
-    szerorec!(s, F₂₂, Val(:N))
+    szerorec!(s, F, Val(:N))
 
     for i in Iterators.reverse(neighbors(chd, j))
         sgetrf_send!(s, F, Mptr, Mval, rel, ns, i)
         ns -= one(I)
     end
     #
-    #     F₁₁ ← L₁₁ + U₁₁       (F₁₁* = U₁₁* L₁₁*)
+    #     L₁₁ ← L₁₁ + U₁₁ + F₁₁       (L₁₁* = U₁₁* L₁₁*)
+    #     U₁₁ ← L₁₁
     #
-    sgetrf_mt!(s, F₁₁, pool, nt)
+    @inbounds for j in oneto(nn)
+        for i in oneto(nn)
+            if i > j
+                LD[i, j] = splus(s, F₁₁[i, j], LD[i, j], Val(:N))
+            else
+                LD[i, j] = splus(s, F₁₁[i, j], UD[i, j], Val(:N))
+            end
+        end
+    end
+
+    sgetrf_mt!(s, LD, pool, nt)
+    copytri!(UD, LD, Val(:U))
 
     if ispositive(na)
         #
-        #     F₂₁ ← F₂₁ U₁₁*
-        #     F₁₂ ← L₁₁* F₁₂
+        #     L₂₁ ← L₂₁ + F₂₁    U₁₂ ← U₁₂ + F₁₂
         #
-        strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), F₁₁, F₂₁, pool, nt)
-        strsx_mt!(s, Val(:L), Val(:N), Val(:L), Val(:U), F₁₁, F₁₂, pool, nt)
+        @inbounds for c in oneto(nn)
+            for r in oneto(na)
+                LL[r, c] = splus(s, LL[r, c], F₂₁[r, c], Val(:N))
+            end
+        end
+
+        @inbounds for c in oneto(na)
+            for r in oneto(nn)
+                UL[r, c] = splus(s, UL[r, c], F₁₂[r, c], Val(:N))
+            end
+        end
+        #
+        #     L₂₁ ← L₂₁ U₁₁*
+        #     U₁₂ ← L₁₁* U₁₂
+        #
+        strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), LD, LL, pool, nt)
+        strsx_mt!(s, Val(:L), Val(:N), Val(:L), Val(:U), LD, UL, pool, nt)
         #
         #     M₂₂ ← F₂₂
-        #     M₂₂ ← F₂₁ F₁₂ + M₂₂
+        #     M₂₂ ← L₂₁ U₁₂ + M₂₂
         #
         ns += one(I)
         strt = Mptr[ns]
         stop = Mptr[ns + one(I)] = strt + na * na
         M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
         copyrec!(M₂₂, F₂₂)
-        sgemx_mt!(s, Val(:N), Val(:N), M₂₂, F₂₁, F₁₂, pool, nt)
+        sgemx_mt!(s, Val(:N), Val(:N), M₂₂, LL, UL, pool, nt)
     end
-    #
-    #     L₁₁ ← F₁₁    U₁₁ ← F₁₁
-    #     L₂₁ ← F₂₁    U₁₂ ← F₁₂
-    #
-    copyrec!(LD, F₁₁)
-    copyrec!(UD, F₁₁)
-    copyrec!(LL, F₂₁)
-    copyrec!(UL, F₁₂)
 
     return ns
 end
@@ -188,74 +200,55 @@ function sgetrf_loop_1!(
     l₂₁ = view(LLval, Lp:Lp + na - one(I))
     u₁₂ = view(ULval, Lp:Lp + na - one(I))
     #
-    #     f₁₁ ← u₁₁       f₂₁ ← l₂₁
-    #     f₁₂ ← u₁₂       F₂₂ ← 0
+    #     F ← 0
     #
-    F[one(I)] = UDval[Dp]
-    copyrec!(f₂₁, l₂₁)
-    copyrec!(f₁₂, u₁₂)
-    szerorec!(s, F₂₂, Val(:N))
+    szerorec!(s, F, Val(:N))
 
     for i in Iterators.reverse(neighbors(chd, j))
         sgetrf_send!(s, F, Mptr, Mval, rel, ns, i)
         ns -= one(I)
     end
-
-    d₁₁ = F[one(I)]
+    #
+    #     f₁₁ ← u₁₁ + f₁₁
+    #
+    d₁₁ = splus(s, UDval[Dp], F[one(I)], Val(:N))
+    #
+    #     l₁₁ ← f₁₁    u₁₁ ← f₁₁
+    #
+    LDval[Dp] = d₁₁
+    UDval[Dp] = d₁₁
 
     if ispositive(na)
         #
-        #     f₂₁ ← f₂₁ u₁₁*
+        #     l₂₁ ← l₂₁ + f₂₁    u₁₂ ← u₁₂ + f₁₂
+        #
+        @inbounds for i in oneto(na)
+            l₂₁[i] = splus(s, l₂₁[i], f₂₁[i], Val(:N))
+            u₁₂[i] = splus(s, u₁₂[i], f₁₂[i], Val(:N))
+        end
+        #
+        #     l₂₁ ← l₂₁ u₁₁*
         #
         if !isintegral(s)
             ds = sstar(s, d₁₁)
 
             @inbounds for i in oneto(na)
-                f₂₁[i] = sprod(s, f₂₁[i], ds, Val(:N), Val(:N))
+                l₂₁[i] = sprod(s, l₂₁[i], ds, Val(:N), Val(:N))
             end
         end
         #
-        #     M₂₂ ← F₂₂ + f₂₁ f₁₂
+        #     M₂₂ ← F₂₂ + l₂₁ u₁₂
         #
         ns += one(I)
         strt = Mptr[ns]
         stop = Mptr[ns + one(I)] = strt + na * na
         M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
 
-        @inbounds for c in oneto(na)
-            f = f₁₂[c]
-
-            for r in oneto(na)
-                M₂₂[r, c] = smuladd(s, f₂₁[r], f, F₂₂[r, c], Val(:N), Val(:N))
-            end
-        end
+        copyto!(M₂₂, F₂₂)
+        sger!(s, Val(:N), Val(:N), Val(:R), l₂₁, u₁₂, M₂₂)
     end
-    #
-    #     l₁₁ ← f₁₁    u₁₁ ← f₁₁
-    #     l₂₁ ← f₂₁    u₁₂ ← f₁₂
-    #
-    LDval[Dp] = d₁₁
-    UDval[Dp] = d₁₁
-    copyrec!(l₂₁, f₂₁)
-    copyrec!(u₁₂, f₁₂)
 
     return ns
-end
-
-function sgetrf_gather!(F::AbstractMatrix, LD::AbstractMatrix, UD::AbstractMatrix)
-    n = size(F, 1)
-
-    @inbounds for j in 1:n
-        for i in 1:n
-            if i > j
-                F[i, j] = LD[i, j]
-            else
-                F[i, j] = UD[i, j]
-            end
-        end
-    end
-
-    return F
 end
 
 function sgetrf_send!(s::AbstractSemiring, F::AbstractMatrix, Mptr::AbstractVector{I}, Mval::AbstractVector, rel::AbstractGraph{I}, ns::I, i::I) where {I}

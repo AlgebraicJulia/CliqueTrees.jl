@@ -100,10 +100,13 @@ end
 
 # ===== strtri2! =====
 
-function strtri2!(s::AbstractSemiring, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix) where {DIAG}
+function strtri2!(s::AbstractSemiring, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}) where {T, DIAG}
     @assert size(A, 1) == size(A, 2)
 
     n = size(A, 1)
+
+    Z = sizeof(T)
+    sA = stride(A, 2)
 
     if DIAG === :N
         @inbounds for k in 1:n
@@ -111,22 +114,24 @@ function strtri2!(s::AbstractSemiring, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix
         end
     end
 
-    @inbounds for j in 1:n
-        if DIAG === :N && !isintegral(s)
-            for i in j + 1:n
-                A[i, j] = sprod(s, A[i, j], A[j, j], Val(:N), Val(:N))
-            end
-        end
+    @preserve A begin
+        pA = pointer(A)
 
-        for k in j + 1:n
+        @inbounds for j in 1:n
             if DIAG === :N && !isintegral(s)
-                Akj = A[k, j] = sprod(s, A[k, k], A[k, j], Val(:N), Val(:N))
-            else
-                Akj = A[k, j]
+                for i in j + 1:n
+                    A[i, j] = sprod(s, A[i, j], A[j, j], Val(:N), Val(:N))
+                end
             end
 
-            for i in k + 1:n
-                A[i, j] = smuladd(s, A[i, k], Akj, A[i, j], Val(:N), Val(:N))
+            for k in j + 1:n
+                if DIAG === :N && !isintegral(s)
+                    Akj = A[k, j] = sprod(s, A[k, k], A[k, j], Val(:N), Val(:N))
+                else
+                    Akj = A[k, j]
+                end
+
+                saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + k) * Z, pA + ((k - 1) * sA + k) * Z, Akj, n - k)
             end
         end
     end
@@ -134,10 +139,13 @@ function strtri2!(s::AbstractSemiring, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix
     return A
 end
 
-function strtri2!(s::AbstractSemiring, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix) where {DIAG}
+function strtri2!(s::AbstractSemiring, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}) where {T, DIAG}
     @assert size(A, 1) == size(A, 2)
 
     n = size(A, 1)
+
+    Z = sizeof(T)
+    sA = stride(A, 2)
 
     if DIAG === :N
         @inbounds for k in 1:n
@@ -145,22 +153,24 @@ function strtri2!(s::AbstractSemiring, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix
         end
     end
 
-    @inbounds for j in n:-1:1
-        if DIAG === :N && !isintegral(s)
-            for i in 1:j - 1
-                A[i, j] = sprod(s, A[i, j], A[j, j], Val(:N), Val(:N))
-            end
-        end
+    @preserve A begin
+        pA = pointer(A)
 
-        for k in j - 1:-1:1
+        @inbounds for j in n:-1:1
             if DIAG === :N && !isintegral(s)
-                Akj = A[k, j] = sprod(s, A[k, k], A[k, j], Val(:N), Val(:N))
-            else
-                Akj = A[k, j]
+                for i in 1:j - 1
+                    A[i, j] = sprod(s, A[i, j], A[j, j], Val(:N), Val(:N))
+                end
             end
 
-            for i in 1:k - 1
-                A[i, j] = smuladd(s, A[i, k], Akj, A[i, j], Val(:N), Val(:N))
+            for k in j - 1:-1:1
+                if DIAG === :N && !isintegral(s)
+                    Akj = A[k, j] = sprod(s, A[k, k], A[k, j], Val(:N), Val(:N))
+                else
+                    Akj = A[k, j]
+                end
+
+                saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + (j - 1) * sA * Z, pA + (k - 1) * sA * Z, Akj, k - 1)
             end
         end
     end

@@ -1,20 +1,20 @@
 # The Boolean lattice
 #
-#   ({0, 1}, &, |)
+#   (2ⁿ, ∩, ∪)
 #
-# - elements are truth values
-# - addition is conjunction
-# - multiplication disjunction
+# - elements are subsets
+# - addition is intersection
+# - multiplication is union
 #
 struct AndOr <: AbstractSemiring end
 
 # The dual Boolean lattice
 #
-#   ({0, 1}, |, &)
+#   (2ⁿ, ∪, ∩)
 #
-# - elements are truth values
-# - addition is disjunction
-# - multiplication conjunction
+# - elements are subsets
+# - addition is union
+# - multiplication is intersection
 #
 const OrAnd = DualQuantale{AndOr}
 

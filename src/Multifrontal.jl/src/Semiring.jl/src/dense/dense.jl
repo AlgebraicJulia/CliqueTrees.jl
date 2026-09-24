@@ -1,7 +1,13 @@
+# ===== vecwidth =====
+
+function vecwidth(::Type{T}) where {T}
+    return 64 ÷ sizeof(T)
+end
+
 # ===== workspace pool =====
 
 function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
-    mr = sgemx_width(T)
+    mr = vecwidth(T)
 
     nic = min(ni, SGEMX_LEAF)
     njc = min(nj, SGEMX_LEAF)
@@ -36,6 +42,9 @@ function spool_mt(::Type{T}, nt::Integer) where {T}
     return spool_mt(T, nt, SGEMX_LEAF, SGEMX_LEAF, SGEMX_LEAF)
 end
 
+include("sdot.jl")
+include("saxpy.jl")
+include("sger.jl")
 include("sgemx.jl")
 include("strsx.jl")
 include("strtri.jl")

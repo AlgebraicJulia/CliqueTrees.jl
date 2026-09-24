@@ -1,12 +1,6 @@
 const SGEMX_NR   = 4
 const SGEMX_LEAF = 256
 
-# ===== sgemx_width =====
-
-function sgemx_width(::Type{T}) where {T}
-    return 64 ÷ sizeof(T)
-end
-
 # ===== sgemx! =====
 
 function sgemx!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix{T}, B::AbstractMatrix{T}; nt::Integer = nthreads()) where {T, TA, TB}
@@ -32,64 +26,80 @@ function sgemx!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix
     return C
 end
 
-function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::Val, c::AbstractVector, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::Val, c::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector; nt::Integer = nthreads()) where {T}
     ni = size(A, 1)
     nj = size(A, 2)
+    sj = stride(A, 2)
 
-    @inbounds for j in 1:nj
-        bj = b[j]
+    Z = sizeof(T)
 
-        for i in 1:ni
-            c[i] = smuladd(s, A[i, j], bj, c[i], tA, tB)
+    @preserve c A begin
+        pc = pointer(c)
+
+        @inbounds for j in 1:nj
+            pa = pointer(A) + (j - 1) * sj * Z
+            saxpy_kern!(s, tA, tB, Val(:R), pc, pa, b[j], ni)
         end
     end
 
     return c
 end
 
-function sgemx!(s::AbstractSemiring, tA::T_OR_C, tB::Val, c::AbstractVector, A::AbstractMatrix, b::AbstractVector; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::T_OR_C, tB::Val, c::AbstractVector, A::AbstractMatrix{T}, b::AbstractVector; nt::Integer = nthreads()) where {T}
     ni = size(A, 2)
     nj = size(A, 1)
+    sj = stride(A, 2)
 
-    @inbounds for i in 1:ni
-        ci = c[i]
+    Z = sizeof(T)
 
-        @simd for j in 1:nj
-            ci = smuladd(s, A[j, i], b[j], ci, tA, tB)
+    op = compose(tA, tB)
+
+    @preserve A b begin
+        pb = pointer(b)
+
+        @inbounds for i in 1:ni
+            pa = pointer(A) + (i - 1) * sj * Z
+            c[i] = splus(s, c[i], sdot_kern!(s, tA, tB, op, pa, pb, nj), op)
         end
-
-        c[i] = ci
     end
 
     return c
 end
 
-function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::N_OR_R, c::AbstractVector, a::AbstractVector, B::AbstractMatrix; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::N_OR_R, c::AbstractVector, a::AbstractVector, B::AbstractMatrix{T}; nt::Integer = nthreads()) where {T}
     ni = size(B, 2)
     nj = size(B, 1)
+    sj = stride(B, 2)
 
-    @inbounds for i in 1:ni
-        ci = c[i]
+    Z = sizeof(T)
 
-        @simd for j in 1:nj
-            ci = smuladd(s, a[j], B[j, i], ci, tA, tB)
+    op = compose(tA, tB)
+
+    @preserve a B begin
+        pa = pointer(a)
+
+        @inbounds for i in 1:ni
+            pb = pointer(B) + (i - 1) * sj * Z
+            c[i] = splus(s, c[i], sdot_kern!(s, tA, tB, op, pa, pb, nj), op)
         end
-
-        c[i] = ci
     end
 
     return c
 end
 
-function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::T_OR_C, c::AbstractVector, a::AbstractVector, B::AbstractMatrix; nt::Integer = nthreads())
+function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::T_OR_C, c::AbstractVector{T}, a::AbstractVector, B::AbstractMatrix{T}; nt::Integer = nthreads()) where {T}
     ni = size(B, 1)
     nj = size(B, 2)
+    sj = stride(B, 2)
 
-    @inbounds for j in 1:nj
-        aj = a[j]
+    Z = sizeof(T)
 
-        for i in 1:ni
-            c[i] = smuladd(s, aj, B[i, j], c[i], tA, tB)
+    @preserve c B begin
+        pc = pointer(c)
+
+        @inbounds for j in 1:nj
+            pb = pointer(B) + (j - 1) * sj * Z
+            saxpy_kern!(s, tA, tB, Val(:L), pc, pb, a[j], ni)
         end
     end
 
@@ -124,7 +134,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             #   [ C₁ ] = [ A₁ ] B
             #   [ C₂ ]   [ A₂ ]
             #
-            mr = sgemx_width(T)
+            mr = vecwidth(T)
 
             hi = ni >> 1
             hi -= hi % mr
@@ -225,7 +235,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             #   [ C₁ ] = [ A₁ ] B
             #   [ C₂ ]   [ A₂ ]
             #
-            mr = sgemx_width(T)
+            mr = vecwidth(T)
 
             hi = ni >> 1
             hi -= hi % mr
@@ -298,7 +308,7 @@ end
 
 # ===== sgemx2! =====
 
-function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(sgemx_width(T))) where {T, MR, TA, TB}
+function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(vecwidth(T))) where {T, MR, TA, TB}
     ni = size(C, 1)
     nk = size(C, 2)
 
@@ -320,7 +330,7 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
             it = min(MR, ni - i0); ip0 = i0 * nj
 
             if it == MR && kt == SGEMX_NR
-                sgemx_kernel!(s, tA, tB, C, i0, k0, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
+                sgemx_kern!(s, tA, tB, C, i0, k0, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
             else
                 for kp in 1:kt
                     for ip in 1:it
@@ -339,7 +349,7 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
                 end
 
                 @preserve CP begin
-                    sgemx_kernel!(s, tA, tB, pointer(CP), MR, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
+                    sgemx_kern!(s, tA, tB, pointer(CP), MR, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
                 end
 
                 for kp in 1:kt
@@ -402,9 +412,9 @@ function sgemx_pack_B!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, BP::Abstra
     return BP
 end
 
-# ===== sgemx_kernel! =====
+# ===== sgemx_kern! =====
 
-function sgemx_kernel!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
+function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
     w = ldC * sizeof(T)
 
     p1 = pC
@@ -433,10 +443,10 @@ function sgemx_kernel!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::I
     return
 end
 
-function sgemx_kernel!(s::AbstractSemiring, tA::Val, tB::Val, C::AbstractMatrix{T}, i0::Int, k0::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, mr::Val{MR}) where {T, MR}
+function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, C::AbstractMatrix{T}, i0::Int, k0::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, mr::Val{MR}) where {T, MR}
     @preserve C begin
         pC = unsafe_convert(Ptr{T}, C) + (k0 * stride(C, 2) + i0) * sizeof(T)
-        sgemx_kernel!(s, tA, tB, pC, stride(C, 2), AP, ip0, BP, kp0, nj, mr)
+        sgemx_kern!(s, tA, tB, pC, stride(C, 2), AP, ip0, BP, kp0, nj, mr)
     end
 
     return

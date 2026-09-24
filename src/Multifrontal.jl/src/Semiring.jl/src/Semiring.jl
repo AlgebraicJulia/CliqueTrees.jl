@@ -8,7 +8,7 @@ using Graphs: AbstractGraph, neighbors, vertices
 using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, lu!, mul!, ldiv!, rdiv!, lmul!, rmul!
 import LinearAlgebra
 using SIMD: Vec, vload, vstore, vifelse, shufflevector
-using SparseArrays: SparseMatrixCSC, permute
+using SparseArrays: SparseMatrixCSC, getcolptr, nonzeros, nzrange, permute, rowvals
 
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
@@ -19,7 +19,7 @@ export AbstractSemiring, DualQuantale, NegativeQuantale, Lattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
 export MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw, LawvereQuantale
 export AndOr, OrAnd
-export splus, sprod, sstar, szero, sone, smuladd
+export splus, sprod, sstar, szero, sone, smuladd, sdot, saxpy!, sger!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, UnsafePred, UnsafeSucc
 export RelProd
@@ -32,6 +32,7 @@ const T_OR_C = Union{Val{:T}, Val{:C}}
 include("semiring/semiring.jl")
 
 include("dense/dense.jl")
+include("sparse/sparse.jl")
 include("utils.jl")
 include("abstract_slu.jl")
 include("chordal_slu.jl")

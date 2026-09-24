@@ -69,34 +69,37 @@ end
 
 # ===== sgetrf2! =====
 
-function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix)
+function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix{T}) where {T}
     @assert size(A, 2) == size(A, 1)
 
     n = size(A, 1)
 
-    @inbounds for i in 1:n
-        #
-        #   A = [ Aii Ain ]
-        #       [ Ani Ann ]
-        #
-        if !isintegral(s)
-            #
-            #   Ani ← Ani Aii*
-            #
-            sAii = sstar(s, A[i, i])
+    Z = sizeof(T)
+    sA = stride(A, 2)
 
-            for k in i + 1:n
-                A[k, i] = sprod(s, A[k, i], sAii, Val(:N), Val(:N))
+    @preserve A begin
+        pA = pointer(A)
+
+        @inbounds for i in 1:n
+            #
+            #   A = [ Aii Ain ]
+            #       [ Ani Ann ]
+            #
+            if !isintegral(s)
+                #
+                #   Ani ← Ani Aii*
+                #
+                sAii = sstar(s, A[i, i])
+
+                for k in i + 1:n
+                    A[k, i] = sprod(s, A[k, i], sAii, Val(:N), Val(:N))
+                end
             end
-        end
-        #
-        #   Ann ← Ani Ain + Ann
-        #
-        for j in i + 1:n
-            Aij = A[i, j]
-
-            for k in i + 1:n
-                A[k, j] = smuladd(s, A[k, i], Aij, A[k, j], Val(:N), Val(:N))
+            #
+            #   Ann ← Ani Ain + Ann
+            #
+            for j in i + 1:n
+                saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + i) * Z, pA + ((i - 1) * sA + i) * Z, A[i, j], n - i)
             end
         end
     end

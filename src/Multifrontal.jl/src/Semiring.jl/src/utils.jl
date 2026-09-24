@@ -114,3 +114,11 @@ function permutecols!(A::AbstractVecOrMat, work::AbstractVector, perm::AbstractV
 
     return A
 end
+
+function intriangle(::Val{:L}, i, j)
+    return i >= j
+end
+
+function intriangle(::Val{:U}, i, j)
+    return i <= j
+end

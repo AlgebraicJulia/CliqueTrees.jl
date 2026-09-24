@@ -1,4 +1,5 @@
 const STRSX_WORK = 8192
+const STRSX_CH = 16
 
 # ===== strsx! =====
 
@@ -127,20 +128,56 @@ end
 
 # ===== strsx2! =====
 
-function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat) where {T, DIAG}
     n = size(A, 1)
     m = size(B, 2)
 
-    @inbounds for j in 1:m
-        for i in 1:n
-            if DIAG === :N && !isintegral(s)
-                B[i, j] = sprod(s, sstar(s, A[i, i]), B[i, j], trans, Val(:N))
+    Z = sizeof(T)
+    sA = stride(A, 2)
+    sB = stride(B, 2)
+
+    @preserve A B begin
+        pA = pointer(A)
+        pB = pointer(B)
+
+        if m == 1 || !(DIAG === :N && !isintegral(s))
+            @inbounds for j in 1:m
+                pBj = pB + (j - 1) * sB * Z
+
+                for i in 1:n
+                    if DIAG === :N && !isintegral(s)
+                        B[i, j] = sprod(s, sstar(s, A[i, i]), B[i, j], trans, Val(:N))
+                    end
+
+                    Bij = B[i, j]
+                    saxpy_kern!(s, trans, Val(:N), Val(:R), pBj + i * Z, pA + ((i - 1) * sA + i) * Z, Bij, n - i)
+                end
             end
 
-            Bij = B[i, j]
+            return B
+        end
 
-            for k in i + 1:n
-                B[k, j] = smuladd(s, A[k, i], Bij, B[k, j], trans, Val(:N))
+        z = szero(s, T, Val(:N))
+
+        @inbounds for cstrt in 1:STRSX_CH:n
+            cstop = min(cstrt + STRSX_CH - 1, n)
+            csize = cstop - cstrt + 1
+
+            stars = ntuple(Val(STRSX_CH)) do t
+                if t <= csize
+                    sstar(s, A[cstrt + t - 1, cstrt + t - 1])
+                else
+                    z
+                end
+            end
+
+            for j in 1:m
+                pBj = pB + (j - 1) * sB * Z
+
+                for i in cstrt:cstop
+                    Bij = B[i, j] = sprod(s, stars[i - cstrt + 1], B[i, j], trans, Val(:N))
+                    saxpy_kern!(s, trans, Val(:N), Val(:R), pBj + i * Z, pA + ((i - 1) * sA + i) * Z, Bij, n - i)
+                end
             end
         end
     end
@@ -148,20 +185,57 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:L}, ::Val
     return B
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractVecOrMat) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat) where {T, DIAG}
     n = size(A, 1)
     m = size(B, 2)
 
-    @inbounds for i in 1:m
-        for j in n:-1:1
-            if DIAG === :N && !isintegral(s)
-                Bji = B[j, i] = sprod(s, sstar(s, A[j, j]), B[j, i], trans, Val(:N))
-            else
-                Bji = B[j, i]
+    Z = sizeof(T)
+    sA = stride(A, 2)
+    sB = stride(B, 2)
+
+    @preserve A B begin
+        pA = pointer(A)
+        pB = pointer(B)
+
+        if m == 1 || !(DIAG === :N && !isintegral(s))
+            @inbounds for i in 1:m
+                pBi = pB + (i - 1) * sB * Z
+
+                for j in n:-1:1
+                    if DIAG === :N && !isintegral(s)
+                        Bji = B[j, i] = sprod(s, sstar(s, A[j, j]), B[j, i], trans, Val(:N))
+                    else
+                        Bji = B[j, i]
+                    end
+
+                    saxpy_kern!(s, trans, Val(:N), Val(:R), pBi, pA + (j - 1) * sA * Z, Bji, j - 1)
+                end
             end
 
-            for k in 1:j - 1
-                B[k, i] = smuladd(s, A[k, j], Bji, B[k, i], trans, Val(:N))
+            return B
+        end
+
+        z = szero(s, T, Val(:N))
+
+        @inbounds for cstop in n:-STRSX_CH:1
+            csize = min(STRSX_CH, cstop)
+            cstrt = cstop - csize + 1
+
+            stars = ntuple(Val(STRSX_CH)) do t
+                if t <= csize
+                    sstar(s, A[cstrt + t - 1, cstrt + t - 1])
+                else
+                    z
+                end
+            end
+
+            for i in 1:m
+                pBi = pB + (i - 1) * sB * Z
+
+                for j in cstop:-1:cstrt
+                    Bji = B[j, i] = sprod(s, stars[j - cstrt + 1], B[j, i], trans, Val(:N))
+                    saxpy_kern!(s, trans, Val(:N), Val(:R), pBi, pA + (j - 1) * sA * Z, Bji, j - 1)
+                end
             end
         end
     end
@@ -173,20 +247,55 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::T_OR_C, ::Val{:L}, ::Val
     n = size(A, 1)
     m = size(B, 2)
 
-    @inbounds for j in 1:m
-        for k in n:-1:1
-            Δ = szero(s, T, trans)
+    Z = sizeof(T)
+    sA = stride(A, 2)
+    sB = stride(B, 2)
 
-            @simd for i in k + 1:n
-                Δ = smuladd(s, A[i, k], B[i, j], Δ, trans, Val(:N))
+    op = compose(trans, Val(:N))
+
+    @preserve A B begin
+        pA = pointer(A)
+        pB = pointer(B)
+
+        if m == 1 || !(DIAG === :N && !isintegral(s))
+            @inbounds for j in 1:m
+                pBj = pB + (j - 1) * sB * Z
+
+                for k in n:-1:1
+                    Bkj = splus(s, B[k, j], sdot_kern!(s, trans, Val(:N), op, pA + ((k - 1) * sA + k) * Z, pBj + k * Z, n - k), trans)
+
+                    if DIAG === :N && !isintegral(s)
+                        B[k, j] = sprod(s, sstar(s, A[k, k]), Bkj, trans, Val(:N))
+                    else
+                        B[k, j] = Bkj
+                    end
+                end
             end
 
-            Bk = splus(s, B[k, j], Δ, trans)
+            return B
+        end
 
-            if DIAG === :N && !isintegral(s)
-                B[k, j] = sprod(s, sstar(s, A[k, k]), Bk, trans, Val(:N))
-            else
-                B[k, j] = Bk
+        z = szero(s, T, Val(:N))
+
+        @inbounds for cstop in n:-STRSX_CH:1
+            csize = min(STRSX_CH, cstop)
+            cstrt = cstop - csize + 1
+
+            stars = ntuple(Val(STRSX_CH)) do t
+                if t <= csize
+                    sstar(s, A[cstrt + t - 1, cstrt + t - 1])
+                else
+                    z
+                end
+            end
+
+            for j in 1:m
+                pBj = pB + (j - 1) * sB * Z
+
+                for k in cstop:-1:cstrt
+                    Bkj = splus(s, B[k, j], sdot_kern!(s, trans, Val(:N), op, pA + ((k - 1) * sA + k) * Z, pBj + k * Z, n - k), trans)
+                    B[k, j] = sprod(s, stars[k - cstrt + 1], Bkj, trans, Val(:N))
+                end
             end
         end
     end
@@ -198,197 +307,276 @@ function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::T_OR_C, ::Val{:U}, ::Val
     n = size(A, 1)
     m = size(B, 2)
 
-    @inbounds for j in 1:m
-        for k in 1:n
-            Δ = szero(s, T, trans)
+    Z = sizeof(T)
+    sA = stride(A, 2)
+    sB = stride(B, 2)
 
-            @simd for i in 1:k - 1
-                Δ = smuladd(s, A[i, k], B[i, j], Δ, trans, Val(:N))
+    op = compose(trans, Val(:N))
+
+    @preserve A B begin
+        pA = pointer(A)
+        pB = pointer(B)
+
+        if m == 1 || !(DIAG === :N && !isintegral(s))
+            @inbounds for j in 1:m
+                pBj = pB + (j - 1) * sB * Z
+
+                for k in 1:n
+                    Bkj = splus(s, B[k, j], sdot_kern!(s, trans, Val(:N), op, pA + (k - 1) * sA * Z, pBj, k - 1), trans)
+
+                    if DIAG === :N && !isintegral(s)
+                        B[k, j] = sprod(s, sstar(s, A[k, k]), Bkj, trans, Val(:N))
+                    else
+                        B[k, j] = Bkj
+                    end
+                end
             end
 
-            Bk = splus(s, B[k, j], Δ, trans)
+            return B
+        end
+
+        z = szero(s, T, Val(:N))
+
+        @inbounds for cstrt in 1:STRSX_CH:n
+            cstop = min(cstrt + STRSX_CH - 1, n)
+            csize = cstop - cstrt + 1
+
+            stars = ntuple(Val(STRSX_CH)) do t
+                if t <= csize
+                    sstar(s, A[cstrt + t - 1, cstrt + t - 1])
+                else
+                    z
+                end
+            end
+
+            for j in 1:m
+                pBj = pB + (j - 1) * sB * Z
+
+                for k in cstrt:cstop
+                    Bkj = splus(s, B[k, j], sdot_kern!(s, trans, Val(:N), op, pA + (k - 1) * sA * Z, pBj, k - 1), trans)
+                    B[k, j] = sprod(s, stars[k - cstrt + 1], Bkj, trans, Val(:N))
+                end
+            end
+        end
+    end
+
+    return B
+end
+
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractMatrix) where {T, DIAG}
+    n = size(A, 1)
+    m = size(B, 1)
+
+    Z = sizeof(T)
+    sB = stride(B, 2)
+
+    @preserve B begin
+        pB = pointer(B)
+
+        @inbounds for j in 1:n
+            pBj = pB + (j - 1) * sB * Z
+
+            for k in 1:j - 1
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pBj, pB + (k - 1) * sB * Z, A[k, j], m)
+            end
 
             if DIAG === :N && !isintegral(s)
-                B[k, j] = sprod(s, sstar(s, A[k, k]), Bk, trans, Val(:N))
+                sAjj = sstar(s, A[j, j])
+
+                for i in 1:m
+                    B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), trans)
+                end
+            end
+        end
+    end
+
+    return B
+end
+
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractMatrix) where {T, DIAG}
+    n = size(A, 1)
+    m = size(B, 1)
+
+    Z = sizeof(T)
+    sB = stride(B, 2)
+
+    @preserve B begin
+        pB = pointer(B)
+
+        @inbounds for j in n:-1:1
+            pBj = pB + (j - 1) * sB * Z
+
+            for k in j + 1:n
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pBj, pB + (k - 1) * sB * Z, A[k, j], m)
+            end
+
+            if DIAG === :N && !isintegral(s)
+                sAjj = sstar(s, A[j, j])
+
+                for i in 1:m
+                    B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), trans)
+                end
+            end
+        end
+    end
+
+    return B
+end
+
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractMatrix) where {T, DIAG}
+    n = size(A, 1)
+    m = size(B, 1)
+
+    Z = sizeof(T)
+    sB = stride(B, 2)
+
+    @preserve B begin
+        pB = pointer(B)
+
+        @inbounds for k in 1:n
+            pBk = pB + (k - 1) * sB * Z
+
+            if DIAG === :N && !isintegral(s)
+                sAkk = sstar(s, A[k, k])
+
+                for i in 1:m
+                    B[i, k] = sprod(s, B[i, k], sAkk, Val(:N), trans)
+                end
+            end
+
+            for j in k + 1:n
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pB + (j - 1) * sB * Z, pBk, A[j, k], m)
+            end
+        end
+    end
+
+    return B
+end
+
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractMatrix) where {T, DIAG}
+    n = size(A, 1)
+    m = size(B, 1)
+
+    Z = sizeof(T)
+    sB = stride(B, 2)
+
+    @preserve B begin
+        pB = pointer(B)
+
+        @inbounds for k in n:-1:1
+            pBk = pB + (k - 1) * sB * Z
+
+            if DIAG === :N && !isintegral(s)
+                sAkk = sstar(s, A[k, k])
+
+                for i in 1:m
+                    B[i, k] = sprod(s, B[i, k], sAkk, Val(:N), trans)
+                end
+            end
+
+            for j in 1:k - 1
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pB + (j - 1) * sB * Z, pBk, A[j, k], m)
+            end
+        end
+    end
+
+    return B
+end
+
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}, b::AbstractVector) where {T, DIAG}
+    n = size(A, 1)
+
+    Z = sizeof(T)
+    sA = stride(A, 2)
+
+    op = compose(Val(:N), trans)
+
+    @preserve A b begin
+        pA = pointer(A)
+        pb = pointer(b)
+
+        @inbounds for j in 1:n
+            bj = splus(s, b[j], sdot_kern!(s, Val(:N), trans, op, pb, pA + (j - 1) * sA * Z, j - 1), op)
+
+            if DIAG === :N && !isintegral(s)
+                b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), trans)
             else
-                B[k, j] = Bk
+                b[j] = bj
             end
-        end
-    end
-
-    return B
-end
-
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
-    n = size(A, 1)
-    m = size(B, 1)
-
-    @inbounds for j in 1:n
-        for k in 1:j - 1
-            Akj = A[k, j]
-
-            for i in 1:m
-                B[i, j] = smuladd(s, B[i, k], Akj, B[i, j], Val(:N), trans)
-            end
-        end
-
-        if DIAG === :N && !isintegral(s)
-            sAjj = sstar(s, A[j, j])
-
-            for i in 1:m
-                B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), trans)
-            end
-        end
-    end
-
-    return B
-end
-
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
-    n = size(A, 1)
-    m = size(B, 1)
-
-    @inbounds for j in n:-1:1
-        for k in j + 1:n
-            Akj = A[k, j]
-
-            for i in 1:m
-                B[i, j] = smuladd(s, B[i, k], Akj, B[i, j], Val(:N), trans)
-            end
-        end
-
-        if DIAG === :N && !isintegral(s)
-            sAjj = sstar(s, A[j, j])
-
-            for i in 1:m
-                B[i, j] = sprod(s, B[i, j], sAjj, Val(:N), trans)
-            end
-        end
-    end
-
-    return B
-end
-
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
-    n = size(A, 1)
-    m = size(B, 1)
-
-    @inbounds for k in 1:n
-        if DIAG === :N && !isintegral(s)
-            sAkk = sstar(s, A[k, k])
-
-            for i in 1:m
-                B[i, k] = sprod(s, B[i, k], sAkk, Val(:N), trans)
-            end
-        end
-
-        for j in k + 1:n
-            Ajk = A[j, k]
-
-            for i in 1:m
-                B[i, j] = smuladd(s, B[i, k], Ajk, B[i, j], Val(:N), trans)
-            end
-        end
-    end
-
-    return B
-end
-
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, B::AbstractMatrix) where {DIAG}
-    n = size(A, 1)
-    m = size(B, 1)
-
-    @inbounds for k in n:-1:1
-        if DIAG === :N && !isintegral(s)
-            sAkk = sstar(s, A[k, k])
-
-            for i in 1:m
-                B[i, k] = sprod(s, B[i, k], sAkk, Val(:N), trans)
-            end
-        end
-
-        for j in 1:k - 1
-            Ajk = A[j, k]
-
-            for i in 1:m
-                B[i, j] = smuladd(s, B[i, k], Ajk, B[i, j], Val(:N), trans)
-            end
-        end
-    end
-
-    return B
-end
-
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
-    n = size(A, 1)
-
-    @inbounds for j in 1:n
-        bj = b[j]
-
-        @simd for k in 1:j - 1
-            bj = smuladd(s, b[k], A[k, j], bj, Val(:N), trans)
-        end
-
-        if DIAG === :N && !isintegral(s)
-            b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), trans)
-        else
-            b[j] = bj
         end
     end
 
     return b
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}, b::AbstractVector) where {T, DIAG}
     n = size(A, 1)
 
-    @inbounds for j in n:-1:1
-        bj = b[j]
+    Z = sizeof(T)
+    sA = stride(A, 2)
 
-        @simd for k in j + 1:n
-            bj = smuladd(s, b[k], A[k, j], bj, Val(:N), trans)
-        end
+    op = compose(Val(:N), trans)
 
-        if DIAG === :N && !isintegral(s)
-            b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), trans)
-        else
-            b[j] = bj
+    @preserve A b begin
+        pA = pointer(A)
+        pb = pointer(b)
+
+        @inbounds for j in n:-1:1
+            bj = splus(s, b[j], sdot_kern!(s, Val(:N), trans, op, pb + j * Z, pA + ((j - 1) * sA + j) * Z, n - j), op)
+
+            if DIAG === :N && !isintegral(s)
+                b[j] = sprod(s, bj, sstar(s, A[j, j]), Val(:N), trans)
+            else
+                b[j] = bj
+            end
         end
     end
 
     return b
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}, b::AbstractVector) where {T, DIAG}
     n = size(A, 1)
 
-    @inbounds for k in 1:n
-        if DIAG === :N && !isintegral(s)
-            bk = b[k] = sprod(s, b[k], sstar(s, A[k, k]), Val(:N), trans)
-        else
-            bk = b[k]
-        end
+    Z = sizeof(T)
+    sA = stride(A, 2)
 
-        @simd for j in k + 1:n
-            b[j] = smuladd(s, bk, A[j, k], b[j], Val(:N), trans)
+    @preserve A b begin
+        pA = pointer(A)
+        pb = pointer(b)
+
+        @inbounds for k in 1:n
+            if DIAG === :N && !isintegral(s)
+                bk = b[k] = sprod(s, b[k], sstar(s, A[k, k]), Val(:N), trans)
+            else
+                bk = b[k]
+            end
+
+            saxpy_kern!(s, Val(:N), trans, Val(:L), pb + k * Z, pA + ((k - 1) * sA + k) * Z, bk, n - k)
         end
     end
 
     return b
 end
 
-function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix, b::AbstractVector) where {DIAG}
+function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::T_OR_C, ::Val{:U}, ::Val{DIAG}, A::AbstractMatrix{T}, b::AbstractVector) where {T, DIAG}
     n = size(A, 1)
 
-    @inbounds for k in n:-1:1
-        if DIAG === :N && !isintegral(s)
-            bk = b[k] = sprod(s, b[k], sstar(s, A[k, k]), Val(:N), trans)
-        else
-            bk = b[k]
-        end
+    Z = sizeof(T)
+    sA = stride(A, 2)
 
-        @simd for j in 1:k - 1
-            b[j] = smuladd(s, bk, A[j, k], b[j], Val(:N), trans)
+    @preserve A b begin
+        pA = pointer(A)
+        pb = pointer(b)
+
+        @inbounds for k in n:-1:1
+            if DIAG === :N && !isintegral(s)
+                bk = b[k] = sprod(s, b[k], sstar(s, A[k, k]), Val(:N), trans)
+            else
+                bk = b[k]
+            end
+
+            saxpy_kern!(s, Val(:N), trans, Val(:L), pb, pA + (k - 1) * sA * Z, bk, k - 1)
         end
     end
 

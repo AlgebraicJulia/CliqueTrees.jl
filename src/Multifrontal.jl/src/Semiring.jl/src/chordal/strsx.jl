@@ -294,37 +294,38 @@ function strsx_fwd_upd_small!(
     #
     fsep = neighbors(sep, f)
 
-    @inbounds for j in oneto(nn)
-        c = Rp + j - one(I)
+    Z = sizeof(T)
+    sC = stride(C, 2)
 
-        for i in oneto(j - one(I))
-            v = D₁₁[i, j]
-            d = Rp + i - one(I)
+    @preserve C begin
+        pC = pointer(C)
 
-            for k in oneto(nrhs)
-                C[k, c] = smuladd(s, C[k, d], v, C[k, c], Val(:N), trans)
-            end
-        end
+        @inbounds for j in oneto(nn)
+            c = Rp + j - one(I)
+            pc = pC + (c - one(I)) * sC * Z
 
-        if !isintegral(s) && diag === Val(:N)
-            v = sstar(s, D₁₁[j, j])
-
-            for k in oneto(nrhs)
-                C[k, c] = sprod(s, C[k, c], v, Val(:N), trans)
-            end
-        end
-    end
-
-    if ispositive(na)
-        @inbounds for j in oneto(na)
-            c = fsep[j]
-
-            for i in oneto(nn)
-                v = L₂₁[i, j]
+            for i in oneto(j - one(I))
                 d = Rp + i - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, D₁₁[i, j], nrhs)
+            end
+
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[j, j])
 
                 for k in oneto(nrhs)
-                    C[k, c] = smuladd(s, C[k, d], v, C[k, c], Val(:N), trans)
+                    C[k, c] = sprod(s, C[k, c], v, Val(:N), trans)
+                end
+            end
+        end
+
+        if ispositive(na)
+            @inbounds for j in oneto(na)
+                c = fsep[j]
+                pc = pC + (c - one(I)) * sC * Z
+
+                for i in oneto(nn)
+                    d = Rp + i - one(I)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, L₂₁[i, j], nrhs)
                 end
             end
         end
@@ -522,37 +523,38 @@ function strsx_fwd_upd_small!(
     #
     fsep = neighbors(sep, f)
 
-    @inbounds for i in oneto(nn)
-        ci = Rp + i - one(I)
+    Z = sizeof(T)
+    sC = stride(C, 2)
 
-        if !isintegral(s) && diag === Val(:N)
-            v = sstar(s, D₁₁[i, i])
+    @preserve C begin
+        pC = pointer(C)
 
-            for k in oneto(nrhs)
-                C[k, ci] = sprod(s, C[k, ci], v, Val(:N), trans)
-            end
-        end
+        @inbounds for i in oneto(nn)
+            ci = Rp + i - one(I)
+            pci = pC + (ci - one(I)) * sC * Z
 
-        for j in i + one(I):nn
-            cj = Rp + j - one(I)
-            v = D₁₁[j, i]
-
-            for k in oneto(nrhs)
-                C[k, cj] = smuladd(s, C[k, ci], v, C[k, cj], Val(:N), trans)
-            end
-        end
-    end
-
-    if ispositive(na)
-        @inbounds for i in oneto(na)
-            c = fsep[i]
-
-            for j in oneto(nn)
-                v = L₂₁[i, j]
-                d = Rp + j - one(I)
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[i, i])
 
                 for k in oneto(nrhs)
-                    C[k, c] = smuladd(s, C[k, d], v, C[k, c], Val(:N), trans)
+                    C[k, ci] = sprod(s, C[k, ci], v, Val(:N), trans)
+                end
+            end
+
+            for j in i + one(I):nn
+                cj = Rp + j - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (cj - one(I)) * sC * Z, pci, D₁₁[j, i], nrhs)
+            end
+        end
+
+        if ispositive(na)
+            @inbounds for i in oneto(na)
+                c = fsep[i]
+                pc = pC + (c - one(I)) * sC * Z
+
+                for j in oneto(nn)
+                    d = Rp + j - one(I)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, L₂₁[i, j], nrhs)
                 end
             end
         end
@@ -587,18 +589,16 @@ function strsx_fwd_upd_small!(
 
     @inbounds for i in oneto(nn)
         r = Rp + i - one(I)
-        Δ = szero(s, T, trans)
+        v = C[r]
 
         @simd for j in oneto(i - one(I))
-            Δ = smuladd(s, D₁₁[j, i], C[Rp + j - one(I)], Δ, trans, Val(:N))
+            v = smuladd(s, D₁₁[j, i], C[Rp + j - one(I)], v, trans, Val(:N))
         end
 
-        Bk = splus(s, C[r], Δ, trans)
-
         if !isintegral(s) && diag === Val(:N)
-            C[r] = sprod(s, sstar(s, D₁₁[i, i]), Bk, trans, Val(:N))
+            C[r] = sprod(s, sstar(s, D₁₁[i, i]), v, trans, Val(:N))
         else
-            C[r] = Bk
+            C[r] = v
         end
     end
 
@@ -645,18 +645,16 @@ function strsx_fwd_upd_small!(
     @inbounds for k in oneto(nrhs)
         for i in oneto(nn)
             r = Rp + i - one(I)
-            Δ = szero(s, T, trans)
+            v = C[r, k]
 
             @simd for j in oneto(i - one(I))
-                Δ = smuladd(s, D₁₁[j, i], C[Rp + j - one(I), k], Δ, trans, Val(:N))
+                v = smuladd(s, D₁₁[j, i], C[Rp + j - one(I), k], v, trans, Val(:N))
             end
 
-            Bk = splus(s, C[r, k], Δ, trans)
-
             if !isintegral(s) && diag === Val(:N)
-                C[r, k] = sprod(s, sstar(s, D₁₁[i, i]), Bk, trans, Val(:N))
+                C[r, k] = sprod(s, sstar(s, D₁₁[i, i]), v, trans, Val(:N))
             else
-                C[r, k] = Bk
+                C[r, k] = v
             end
         end
     end
@@ -995,35 +993,37 @@ function strsx_bwd_upd_small!(
     #
     fsep = neighbors(sep, f)
 
-    @inbounds for j in oneto(nn)
-        c = Rp + j - one(I)
+    Z = sizeof(T)
+    sC = stride(C, 2)
 
-        for i in oneto(na)
-            v = U₁₂[i, j]
-            d = fsep[i]
+    @preserve C begin
+        pC = pointer(C)
 
-            for k in oneto(nrhs)
-                C[k, c] = smuladd(s, C[k, d], v, C[k, c], Val(:N), trans)
-            end
-        end
-    end
-    @inbounds for j in reverse(oneto(nn))
-        c = Rp + j - one(I)
+        @inbounds for j in oneto(nn)
+            c = Rp + j - one(I)
+            pc = pC + (c - one(I)) * sC * Z
 
-        for i in j + one(I):nn
-            v = D₁₁[i, j]
-            d = Rp + i - one(I)
-
-            for k in oneto(nrhs)
-                C[k, c] = smuladd(s, C[k, d], v, C[k, c], Val(:N), trans)
+            for i in oneto(na)
+                d = fsep[i]
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, U₁₂[i, j], nrhs)
             end
         end
 
-        if !isintegral(s) && diag === Val(:N)
-            v = sstar(s, D₁₁[j, j])
+        @inbounds for j in reverse(oneto(nn))
+            c = Rp + j - one(I)
+            pc = pC + (c - one(I)) * sC * Z
 
-            for k in oneto(nrhs)
-                C[k, c] = sprod(s, C[k, c], v, Val(:N), trans)
+            for i in j + one(I):nn
+                d = Rp + i - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, D₁₁[i, j], nrhs)
+            end
+
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[j, j])
+
+                for k in oneto(nrhs)
+                    C[k, c] = sprod(s, C[k, c], v, Val(:N), trans)
+                end
             end
         end
     end
@@ -1220,38 +1220,39 @@ function strsx_bwd_upd_small!(
     #
     fsep = neighbors(sep, f)
 
-    if ispositive(na)
-        @inbounds for j in oneto(nn)
-            cj = Rp + j - one(I)
+    Z = sizeof(T)
+    sC = stride(C, 2)
 
-            for i in oneto(na)
-                v = U₁₂[j, i]
-                d = fsep[i]
+    @preserve C begin
+        pC = pointer(C)
 
-                for k in oneto(nrhs)
-                    C[k, cj] = smuladd(s, C[k, d], v, C[k, cj], Val(:N), trans)
+        if ispositive(na)
+            @inbounds for j in oneto(nn)
+                cj = Rp + j - one(I)
+                pcj = pC + (cj - one(I)) * sC * Z
+
+                for i in oneto(na)
+                    d = fsep[i]
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pcj, pC + (d - one(I)) * sC * Z, U₁₂[j, i], nrhs)
                 end
             end
         end
-    end
 
-    @inbounds for i in reverse(oneto(nn))
-        ci = Rp + i - one(I)
+        @inbounds for i in reverse(oneto(nn))
+            ci = Rp + i - one(I)
+            pci = pC + (ci - one(I)) * sC * Z
 
-        if !isintegral(s) && diag === Val(:N)
-            v = sstar(s, D₁₁[i, i])
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[i, i])
 
-            for k in oneto(nrhs)
-                C[k, ci] = sprod(s, C[k, ci], v, Val(:N), trans)
+                for k in oneto(nrhs)
+                    C[k, ci] = sprod(s, C[k, ci], v, Val(:N), trans)
+                end
             end
-        end
 
-        for j in oneto(i - one(I))
-            cj = Rp + j - one(I)
-            v = D₁₁[j, i]
-
-            for k in oneto(nrhs)
-                C[k, cj] = smuladd(s, C[k, ci], v, C[k, cj], Val(:N), trans)
+            for j in oneto(i - one(I))
+                cj = Rp + j - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (cj - one(I)) * sC * Z, pci, D₁₁[j, i], nrhs)
             end
         end
     end
@@ -1298,18 +1299,16 @@ function strsx_bwd_upd_small!(
 
     @inbounds for i in reverse(oneto(nn))
         r = Rp + i - one(I)
-        Δ = szero(s, T, trans)
+        v = C[r]
 
         @simd for j in i + one(I):nn
-            Δ = smuladd(s, D₁₁[j, i], C[Rp + j - one(I)], Δ, trans, Val(:N))
+            v = smuladd(s, D₁₁[j, i], C[Rp + j - one(I)], v, trans, Val(:N))
         end
 
-        Bk = splus(s, C[r], Δ, trans)
-
         if !isintegral(s) && diag === Val(:N)
-            C[r] = sprod(s, sstar(s, D₁₁[i, i]), Bk, trans, Val(:N))
+            C[r] = sprod(s, sstar(s, D₁₁[i, i]), v, trans, Val(:N))
         else
-            C[r] = Bk
+            C[r] = v
         end
     end
 
@@ -1358,18 +1357,16 @@ function strsx_bwd_upd_small!(
     @inbounds for k in oneto(nrhs)
         for i in reverse(oneto(nn))
             r = Rp + i - one(I)
-            Δ = szero(s, T, trans)
+            v = C[r, k]
 
             @simd for j in i + one(I):nn
-                Δ = smuladd(s, D₁₁[j, i], C[Rp + j - one(I), k], Δ, trans, Val(:N))
+                v = smuladd(s, D₁₁[j, i], C[Rp + j - one(I), k], v, trans, Val(:N))
             end
 
-            Bk = splus(s, C[r, k], Δ, trans)
-
             if !isintegral(s) && diag === Val(:N)
-                C[r, k] = sprod(s, sstar(s, D₁₁[i, i]), Bk, trans, Val(:N))
+                C[r, k] = sprod(s, sstar(s, D₁₁[i, i]), v, trans, Val(:N))
             else
-                C[r, k] = Bk
+                C[r, k] = v
             end
         end
     end

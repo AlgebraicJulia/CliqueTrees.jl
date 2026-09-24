@@ -39,3 +39,7 @@ const MinProdLaw = NegativeQuantale{MinProd}
 const MaxProdLaw = NegativeQuantale{MaxProd}
 
 const LawvereQuantale = Union{MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw}
+
+function sprod(n::LawvereQuantale, a, b, ::Val{:N}, ::Val{:N})
+    return sprod_unsafe(n.s, a, b, Val(:N), Val(:N))
+end

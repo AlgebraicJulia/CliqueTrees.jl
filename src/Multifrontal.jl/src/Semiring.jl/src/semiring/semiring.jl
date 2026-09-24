@@ -46,6 +46,27 @@ function sgte(s::AbstractSemiring, a, b)
     return slte(s, b, a)
 end
 
+function compose(::Val{TA}, ::Val{TB}) where {TA, TB}
+    tflag = (TA === :T) ⊻ (TA === :C) ⊻ (TB === :T) ⊻ (TB === :C)
+    rflag = (TA === :R) ⊻ (TA === :C) ⊻ (TB === :R) ⊻ (TB === :C)
+
+    if tflag
+        if rflag
+            tC = Val(:C)
+        else
+            tC = Val(:T)
+        end
+    else
+        if rflag
+            tC = Val(:R)
+        else
+            tC = Val(:N)
+        end
+    end
+
+    return tC
+end
+
 function szero(s::AbstractSemiring, a::T, op::Val) where {T}
     return szero(s, T, op)
 end
@@ -148,6 +169,14 @@ end
 
 function splus(s::AbstractSemiring, a, b, ::Val{:R})
     return splus(s, a, b, Val(:C))
+end
+
+function splus(s::AbstractSemiring, a, b, c, op::Val)
+    return splus(s, splus(s, a, b, op), c, op)
+end
+
+function splus(s::AbstractSemiring, a, b, c, d, op::Val)
+    return splus(s, splus(s, a, b, op), splus(s, c, d, op), op)
 end
 
 function splus(d::DualQuantale, a, b, ::Val{:N})
