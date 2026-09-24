@@ -84,10 +84,10 @@ function sgetrf_loop!(
 
     Dp = Dptr[j]
     Lp = Lptr[j]
-    LD = reshape(view(LDval, Dp:Dp + nn * nn - one(I)), nn, nn)
-    UD = reshape(view(UDval, Dp:Dp + nn * nn - one(I)), nn, nn)
-    LL = reshape(view(LLval, Lp:Lp + nn * na - one(I)), na, nn)
-    UL = reshape(view(ULval, Lp:Lp + nn * na - one(I)), nn, na)
+    L₁₁ = reshape(view(LDval, Dp:Dp + nn * nn - one(I)), nn, nn)
+    U₁₁ = reshape(view(UDval, Dp:Dp + nn * nn - one(I)), nn, nn)
+    L₂₁ = reshape(view(LLval, Lp:Lp + nn * na - one(I)), na, nn)
+    U₁₂ = reshape(view(ULval, Lp:Lp + nn * na - one(I)), nn, na)
     #
     #     F ← 0
     #
@@ -104,15 +104,15 @@ function sgetrf_loop!(
     @inbounds for j in oneto(nn)
         for i in oneto(nn)
             if i > j
-                LD[i, j] = splus(s, F₁₁[i, j], LD[i, j], Val(:N))
+                L₁₁[i, j] = splus(s, F₁₁[i, j], L₁₁[i, j], Val(:N))
             else
-                LD[i, j] = splus(s, F₁₁[i, j], UD[i, j], Val(:N))
+                L₁₁[i, j] = splus(s, F₁₁[i, j], U₁₁[i, j], Val(:N))
             end
         end
     end
 
-    sgetrf_mt!(s, LD, pool, nt)
-    copytri!(UD, LD, Val(:U))
+    sgetrf_mt!(s, L₁₁, pool, nt)
+    copytri!(U₁₁, L₁₁, Val(:U))
 
     if ispositive(na)
         #
@@ -120,21 +120,21 @@ function sgetrf_loop!(
         #
         @inbounds for c in oneto(nn)
             for r in oneto(na)
-                LL[r, c] = splus(s, LL[r, c], F₂₁[r, c], Val(:N))
+                L₂₁[r, c] = splus(s, L₂₁[r, c], F₂₁[r, c], Val(:N))
             end
         end
 
         @inbounds for c in oneto(na)
             for r in oneto(nn)
-                UL[r, c] = splus(s, UL[r, c], F₁₂[r, c], Val(:N))
+                U₁₂[r, c] = splus(s, U₁₂[r, c], F₁₂[r, c], Val(:N))
             end
         end
         #
         #     L₂₁ ← L₂₁ U₁₁*
         #     U₁₂ ← L₁₁* U₁₂
         #
-        strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), LD, LL, pool, nt)
-        strsx_mt!(s, Val(:L), Val(:N), Val(:L), Val(:U), LD, UL, pool, nt)
+        strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), L₁₁, L₂₁, pool, nt)
+        strsx_mt!(s, Val(:L), Val(:N), Val(:L), Val(:U), L₁₁, U₁₂, pool, nt)
         #
         #     M₂₂ ← F₂₂
         #     M₂₂ ← L₂₁ U₁₂ + M₂₂
@@ -144,7 +144,7 @@ function sgetrf_loop!(
         stop = Mptr[ns + one(I)] = strt + na * na
         M₂₂ = reshape(view(Mval, strt:stop - one(I)), na, na)
         copyrec!(M₂₂, F₂₂)
-        sgemx_mt!(s, Val(:N), Val(:N), M₂₂, LL, UL, pool, nt)
+        sgemx_mt!(s, Val(:N), Val(:N), M₂₂, L₂₁, U₁₂, pool, nt)
     end
 
     return ns
@@ -168,7 +168,9 @@ function sgetrf_loop_1!(
         j::I,
     ) where {T, I}
     #
-    # nn = 1 (the size of the residual at node j)
+    # nn is the size of the residual at node j
+    #
+    #     nn = | res(j) |
     #
     nn = one(I)
     #

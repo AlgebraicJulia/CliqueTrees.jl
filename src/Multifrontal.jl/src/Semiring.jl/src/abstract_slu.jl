@@ -44,6 +44,15 @@ function mstar(s::AbstractSemiring, A::AbstractMatrix)
     return Matrix(mlu(s, A))
 end
 
+# ===== pstar =====
+
+function pstar(s::AbstractSemiring, A::SparseMatrixCSC)
+    F = mlu(s, A); sgetrp!(F)
+    L = sparse(F.L); tril!(L, -1)
+    U = sparse(F.U)
+    return permute(L + U, F.rinvp, F.cinvp)
+end
+
 # ===== lu! =====
 
 function LinearAlgebra.lu!(F::AbstractSLU)

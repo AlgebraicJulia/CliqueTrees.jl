@@ -5,10 +5,10 @@ using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, nthreads
 using Graphs: AbstractGraph, neighbors, vertices
-using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, lu!, mul!, ldiv!, rdiv!, lmul!, rmul!
+using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, lu!, mul!, ldiv!, rdiv!, lmul!, rmul!, tril!
 import LinearAlgebra
 using SIMD: Vec, vload, vstore, vifelse, shufflevector
-using SparseArrays: SparseMatrixCSC, getcolptr, nonzeros, nzrange, permute, rowvals
+using SparseArrays: SparseMatrixCSC, getcolptr, nonzeros, nzrange, permute, rowvals, sparse
 
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
