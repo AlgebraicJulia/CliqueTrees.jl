@@ -22,12 +22,15 @@ export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sdot, saxpy!, sger!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, UnsafePred, UnsafeSucc
-export RelProd
+export Relative, Cyclic, Elementary, Dihedral, Dicyclic, Semidihedral, Modular
 
 abstract type AbstractSemiring end
 
 const N_OR_R = Union{Val{:N}, Val{:R}}
+const N_OR_T = Union{Val{:N}, Val{:T}}
+const N_OR_C = Union{Val{:N}, Val{:C}}
 const T_OR_C = Union{Val{:T}, Val{:C}}
+const R_OR_C = Union{Val{:R}, Val{:C}}
 
 include("semiring/semiring.jl")
 

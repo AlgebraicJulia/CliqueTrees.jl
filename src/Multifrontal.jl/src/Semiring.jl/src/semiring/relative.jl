@@ -1,62 +1,44 @@
-struct RelProd <: AbstractSemiring end
-
-function isidempotent(::Type{RelProd})
-    return true
-end
-
-# ----- pack / unpack -----
-
-function pack(s::RelProd, M::AbstractMatrix)
-    @assert size(M) == (8, 8)
-
-    w = 0x0000000000000000
-
-    for j in 1:8
-        for i in 1:8
-            if !iszero(M[i, j])
-                w |= 0x0000000000000001 << (8(j - 1) + (i - 1))
-            end
-        end
-    end
-
-    return w
-end
-
-function unpack(s::RelProd, w::UInt64)
-    M = BitMatrix(undef, 8, 8)
-
-    for j in 1:8
-        for i in 1:8
-            M[i, j] = isodd(w >> (8(j - 1) + (i - 1)))
-        end
-    end
-
-    return M
-end
+struct Relative <: AbstractSemiring end
 
 # ----- semiring interface -----
 
-function szero(s::RelProd, ::Type{UInt64}, ::Val{:C})
-    return 0xffffffffffffffff
+function sid(s::Relative, a, ::Val{:T})
+    return btr(a)
 end
 
-function szero(s::RelProd, ::Type{UInt64}, ::Val{:N})
+function sid(s::Relative, a, ::Val{:R})
+    return ~a
+end
+
+function sid(s::Relative, a, ::Val{:C})
+    return ~btr(a)
+end
+
+function slte(s::Relative, a, b)
+    return splus(s, a, b, Val(:N)) == b
+end
+
+function szero(s::Relative, ::Type{UInt64}, ::Val{:N})
     return 0x0000000000000000
 end
 
-function sone(s::RelProd, ::Type{UInt64}, ::Val{:N})
+function szero(s::Relative, ::Type{UInt64}, ::Val{:C})
+    return 0xffffffffffffffff
+end
+
+function sone(s::Relative, ::Type{UInt64}, ::Val{:N})
     return 0x8040201008040201
 end
 
-function splus(s::RelProd, a, b, ::Val{:N})
+function splus(s::Relative, a, b, ::Val{:N})
     return a | b
 end
 
-function splus(s::RelProd, a, b, ::Val{:C})
+function splus(s::Relative, a, b, ::Val{:C})
     return a & b
 end
 
-function sprod(s::RelProd, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N})
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N})
     COL = 0x00000000000000ff
     ROW = 0x0101010101010101
 
@@ -72,33 +54,23 @@ function sprod(s::RelProd, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N})
     return c
 end
 
-function sprod(s::RelProd, a::UInt64, b::UInt64, ::Val{:C}, ::Val{:N})
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:C}, ::Val{:N})
     return ~sprod(s, btr(a), ~b, Val(:N), Val(:N))
 end
 
-function sprod(s::RelProd, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:C})
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:C})
     return ~sprod(s, ~a, btr(b), Val(:N), Val(:N))
 end
 
-function sstar(s::RelProd, a::UInt64)
-    COL = 0x00000000000000ff
-    ROW = 0x0101010101010101
-    I   = 0x8040201008040201
-
-    a |= I
-    a |= (ROW &  a)       * (COL &  a)
-    a |= (ROW & (a >> 1)) * (COL & (a >> 8))
-    a |= (ROW & (a >> 2)) * (COL & (a >> 16))
-    a |= (ROW & (a >> 3)) * (COL & (a >> 24))
-    a |= (ROW & (a >> 4)) * (COL & (a >> 32))
-    a |= (ROW & (a >> 5)) * (COL & (a >> 40))
-    a |= (ROW & (a >> 6)) * (COL & (a >> 48))
-    a |= (ROW & (a >> 7)) * (COL & (a >> 56))
-
-    return a
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, tA::N_OR_T, tB::N_OR_T)
+    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
 end
 
-@inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, tA::Val, tB::Val)
+    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
     ROW = 0x0101010101010101
 
     a8 = reinterpret(Vec{8W, UInt8}, a)
@@ -116,30 +88,83 @@ end
     return reinterpret(Vec{W, UInt64}, c8)
 end
 
-@inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
     return c & ~smuladd(s, btr(a), ~b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
 end
 
-@inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
     return c & ~smuladd(s, ~a, btr(b), zero(Vec{W, UInt64}), Val(:N), Val(:N))
 end
 
-@inline function smuladd(s::RelProd, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
-    lo, hi = luts(a)
-    return alut(lo, hi, b, c)
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
+    return alut(luts(a)..., b, c)
 end
 
-@inline function smuladd(s::RelProd, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
     return c & ~smuladd(s, btr(a), ~b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
 end
 
-@inline function smuladd(s::RelProd, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
     return c & ~smuladd(s, ~a, btr(b), zero(Vec{W, UInt64}), Val(:N), Val(:N))
 end
 
-@inline function smuladd(s::RelProd, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, tA::Union{Val{:N}, Val{:C}}, tB::Union{Val{:N}, Val{:C}}) where {W}
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, tA::N_OR_C, tB::N_OR_C) where {W}
     return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], tA, tB), Val(W)))
 end
+
+function sstar(s::Relative, a::UInt64)
+    COL = 0x00000000000000ff
+    ROW = 0x0101010101010101
+    I   = 0x8040201008040201
+
+    a |= I
+    a |= (ROW &  a)       * (COL &  a)
+    a |= (ROW & (a >> 1)) * (COL & (a >> 8))
+    a |= (ROW & (a >> 2)) * (COL & (a >> 16))
+    a |= (ROW & (a >> 3)) * (COL & (a >> 24))
+    a |= (ROW & (a >> 4)) * (COL & (a >> 32))
+    a |= (ROW & (a >> 5)) * (COL & (a >> 40))
+    a |= (ROW & (a >> 6)) * (COL & (a >> 48))
+    a |= (ROW & (a >> 7)) * (COL & (a >> 56))
+
+    return a
+end
+
+function isidempotent(::Type{Relative})
+    return true
+end
+
+# ----- pack / unpack -----
+
+function pack(s::Relative, M::AbstractMatrix)
+    @assert size(M) == (8, 8)
+
+    w = 0x0000000000000000
+
+    for j in 1:8
+        for i in 1:8
+            if !iszero(M[i, j])
+                w |= 0x0000000000000001 << (8(j - 1) + (i - 1))
+            end
+        end
+    end
+
+    return w
+end
+
+function unpack(s::Relative, w::UInt64)
+    M = BitMatrix(undef, 8, 8)
+
+    for j in 1:8
+        for i in 1:8
+            M[i, j] = isodd(w >> (8(j - 1) + (i - 1)))
+        end
+    end
+
+    return M
+end
+
+# ----- helpers -----
 
 function btr(a)
     b = ((a >> 7)  ⊻ a) & 0x00aa00aa00aa00aa
@@ -163,9 +188,20 @@ end
     return :(shufflevector(v, Val($(ntuple(f, W)))))
 end
 
-function tbl1(t::Vec{16, UInt8}, v::Vec{16, UInt8})
-    return Vec(ccall("llvm.aarch64.neon.tbl1.v16i8", llvmcall, NTuple{16, VecElement{UInt8}},
-        (NTuple{16, VecElement{UInt8}}, NTuple{16, VecElement{UInt8}}), t.data, v.data))
+@static if Sys.ARCH === :aarch64
+    function tbl1(t::Vec{16, UInt8}, v::Vec{16, UInt8})
+        return Vec(ccall("llvm.aarch64.neon.tbl1.v16i8", llvmcall, NTuple{16, VecElement{UInt8}},
+            (NTuple{16, VecElement{UInt8}}, NTuple{16, VecElement{UInt8}}), t.data, v.data))
+    end
+elseif Sys.ARCH === :x86_64
+    function tbl1(t::Vec{16, UInt8}, v::Vec{16, UInt8})
+        return Vec(ccall("llvm.x86.ssse3.pshuf.b.128", llvmcall, NTuple{16, VecElement{UInt8}},
+            (NTuple{16, VecElement{UInt8}}, NTuple{16, VecElement{UInt8}}), t.data, v.data))
+    end
+else
+    function tbl1(t::Vec{16, UInt8}, v::Vec{16, UInt8})
+        return Vec{16, UInt8}(ntuple(i -> t[(v[i] & 0x0f) + 1], Val(16)))
+    end
 end
 
 @inline function luts(a::UInt64)

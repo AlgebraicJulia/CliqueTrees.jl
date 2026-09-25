@@ -442,3 +442,8 @@ function sstar(s::MaybeSafePredSucc{MinProd}, a::UInt64)
 
     return w
 end
+
+# the predecessor and successor semirings keep today's mode forwarding
+function issymmetric(::Type{<:Union{Pred, Succ, UnsafePred, UnsafeSucc}})
+    return true
+end

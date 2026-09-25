@@ -40,20 +40,12 @@ const MaxProd = DualQuantale{MinProd}
 
 const TropicalSemiring = Union{MinPlus, MaxPlus, MinProd, MaxProd}
 
-function iscommutative(::Type{MinPlus})
-    return true
+function sid(s::MinPlus, a, ::Val{:C})
+    return -a
 end
 
-function iscommutative(::Type{MinProd})
-    return true
-end
-
-function isidempotent(::Type{MinPlus})
-    return true
-end
-
-function isidempotent(::Type{MinProd})
-    return true
+function sid(s::MinProd, a, ::Val{:C})
+    return inv(a)
 end
 
 function slte(::Union{MinPlus, MinProd}, a, b)
@@ -100,38 +92,48 @@ function splus(::Union{MinPlus, MinProd}, a, b, ::Val{:C})
     return max(a, b)
 end
 
-function sprod_unsafe(::Union{MinPlus, MaxPlus}, a, b, ::Val{:N}, ::Val{:N})
+function sprod(s::Union{MinPlus, MaxPlus}, a, b, ::Val{:N}, ::Val{:N})
     return a + b
 end
 
-function sprod_unsafe(::Union{MinProd, MaxProd}, a, b, ::Val{:N}, ::Val{:N})
+function sprod(s::Union{MinProd, MaxProd}, a, b, ::Val{:N}, ::Val{:N})
     return a * b
 end
 
-function sprod_unsafe(::Union{MinPlus, MaxPlus}, a, b, ::Val{:C}, ::Val{:N})
+function sprod(s::Union{MinPlus, MaxPlus}, a, b, ::Val{:C}, ::Val{:N})
     return b - a
 end
 
-function sprod_unsafe(::Union{MinProd, MaxProd}, a, b, ::Val{:C}, ::Val{:N})
+function sprod(s::Union{MinProd, MaxProd}, a, b, ::Val{:C}, ::Val{:N})
     return b / a
 end
 
-function sprod(s::TropicalSemiring, a, b, tA::Val{:N}, tB::Val{:N})
-    return sprod_unsafe(s, a, b, tA, tB)
-end
-
-function sprod(s::TropicalSemiring, a, b, tA::Val{:C}, tB::Val{:N})
-    return sprod_unsafe(s, a, b, tA, tB)
-end
-
-function sprod(s::TropicalSemiring, a::AbstractFloat, b::AbstractFloat, tA::Val{:N}, tB::Val{:N})
-    c = sprod_unsafe(s, a, b, tA, tB)
+function sprod(s::Union{MinPlus, MaxPlus}, a::AbstractFloat, b::AbstractFloat, tA::Val{:N}, tB::Val{:N})
+    c = a + b
     return ifelse(isnan(c), szero(s, c, tA), c)
 end
 
-function sprod(s::TropicalSemiring, a::AbstractFloat, b::AbstractFloat, tA::Val{:C}, tB::Val{:N})
-    c = sprod_unsafe(s, a, b, tA, tB)
+function sprod(s::Union{MinProd, MaxProd}, a::AbstractFloat, b::AbstractFloat, tA::Val{:N}, tB::Val{:N})
+    c = a * b
     return ifelse(isnan(c), szero(s, c, tA), c)
+end
+
+function sprod(s::Union{MinPlus, MaxPlus}, a::AbstractFloat, b::AbstractFloat, tA::Val{:C}, tB::Val{:N})
+    c = b - a
+    return ifelse(isnan(c), szero(s, c, tA), c)
+end
+
+function sprod(s::Union{MinProd, MaxProd}, a::AbstractFloat, b::AbstractFloat, tA::Val{:C}, tB::Val{:N})
+    c = b / a
+    return ifelse(isnan(c), szero(s, c, tA), c)
+end
+
+function smuladd(s::TropicalSemiring, a, b, c, tA::N_OR_T, tB::N_OR_T)
+    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
+end
+
+function smuladd(s::TropicalSemiring, a, b, c, tA::Val, tB::Val)
+    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
 end
 
 #
@@ -146,4 +148,28 @@ function sstar(s::TropicalSemiring, a::T) where {T}
     end
 
     return b
+end
+
+function issymmetric(::Type{MinPlus})
+    return true
+end
+
+function issymmetric(::Type{MinProd})
+    return true
+end
+
+function iscommutative(::Type{MinPlus})
+    return true
+end
+
+function iscommutative(::Type{MinProd})
+    return true
+end
+
+function isidempotent(::Type{MinPlus})
+    return true
+end
+
+function isidempotent(::Type{MinProd})
+    return true
 end

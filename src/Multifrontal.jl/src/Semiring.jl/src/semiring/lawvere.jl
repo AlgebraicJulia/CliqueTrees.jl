@@ -40,6 +40,22 @@ const MaxProdLaw = NegativeQuantale{MaxProd}
 
 const LawvereQuantale = Union{MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw}
 
-function sprod(n::LawvereQuantale, a, b, ::Val{:N}, ::Val{:N})
-    return sprod_unsafe(n.s, a, b, Val(:N), Val(:N))
+function sprod(n::Union{MinPlusLaw, MaxPlusLaw}, a, b, ::Val{:N}, ::Val{:N})
+    return a + b
+end
+
+function sprod(n::Union{MinProdLaw, MaxProdLaw}, a, b, ::Val{:N}, ::Val{:N})
+    return a * b
+end
+
+function smuladd(n::LawvereQuantale, a, b, c, tA::N_OR_T, tB::N_OR_T)
+    return splus(n, sprod(n, a, b, tA, tB), c, Val(:N))
+end
+
+function smuladd(n::LawvereQuantale, a, b, c, tA::Val, tB::Val)
+    return splus(n, sprod(n, a, b, tA, tB), c, Val(:C))
+end
+
+function sstar(n::LawvereQuantale, a)
+    return sone(n, a, Val(:N))
 end

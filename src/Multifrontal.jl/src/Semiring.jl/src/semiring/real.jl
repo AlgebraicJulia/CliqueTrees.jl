@@ -8,20 +8,16 @@
 #
 struct PlusProd <: AbstractSemiring end
 
-function iscommutative(::Type{PlusProd})
-    return true
-end
-
 function slte(::PlusProd, a, b)
     return a <= b
 end
 
-function szero(::PlusProd, ::Type{T}, ::Val{:C}) where {T}
-    return typemax(T)
-end
-
 function szero(::PlusProd, ::Type{T}, ::Val{:N}) where {T}
     return zero(T)
+end
+
+function szero(::PlusProd, ::Type{T}, ::Val{:C}) where {T}
+    return typemax(T)
 end
 
 function sone(::PlusProd, ::Type{T}, ::Val{:N}) where {T}
@@ -34,6 +30,10 @@ end
 
 function sprod(::PlusProd, a, b, ::Val{:N}, ::Val{:N})
     return a * b
+end
+
+function smuladd(::PlusProd, a, b, c, ::Val{:N}, ::Val{:N})
+    return muladd(a, b, c)
 end
 
 #
@@ -50,6 +50,10 @@ function sstar(::PlusProd, a::T) where {T}
     return b
 end
 
-function smuladd(::PlusProd, a, b, c, ::Val{:N}, ::Val{:N})
-    return muladd(a, b, c)
+function issymmetric(::Type{PlusProd})
+    return true
+end
+
+function iscommutative(::Type{PlusProd})
+    return true
 end

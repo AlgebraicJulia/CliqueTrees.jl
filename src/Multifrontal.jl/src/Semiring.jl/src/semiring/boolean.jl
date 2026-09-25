@@ -18,8 +18,12 @@ struct AndOr <: AbstractSemiring end
 #
 const OrAnd = DualQuantale{AndOr}
 
-function islattice(::Type{AndOr})
-    return true
+function sid(::AndOr, a, ::Val{:C})
+    return ~a
+end
+
+function slte(s::AndOr, a, b)
+    return splus(s, a, b, Val(:N)) == b
 end
 
 function szero(::AndOr, ::Type{T}, ::Val{:N}) where {T}
@@ -40,4 +44,24 @@ end
 
 function sprod(s::Union{AndOr, OrAnd}, a, b, ::Val{:C}, ::Val{:N})
     return splus(s, ~a, b, Val(:N))
+end
+
+function smuladd(s::Union{AndOr, OrAnd}, a, b, c, tA::N_OR_T, tB::N_OR_T)
+    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
+end
+
+function smuladd(s::Union{AndOr, OrAnd}, a, b, c, tA::Val, tB::Val)
+    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
+end
+
+function sstar(s::Union{AndOr, OrAnd}, a)
+    return sone(s, a, Val(:N))
+end
+
+function issymmetric(::Type{AndOr})
+    return true
+end
+
+function islattice(::Type{AndOr})
+    return true
 end
