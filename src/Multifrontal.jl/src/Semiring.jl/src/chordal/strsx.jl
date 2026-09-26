@@ -1,3 +1,5 @@
+const STRSX_NB = 8
+
 const STRSX_1_NB = 12
 
 # ===== strsx! =====
@@ -122,7 +124,11 @@ function strsx_fwd!(
         L₂₁ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
     end
 
-    strsx_fwd_upd!(s, C, Mval, D₁₁, L₂₁, res, sep, na, nrhs, pool, nt, f, trans, uplo, diag, side)
+    if SIDE === :R && nn < STRSX_NB
+        strsx_fwd_upd_small!(s, C, D₁₁, L₂₁, res, sep, nn, na, nrhs, f, diag, trans, uplo, side)
+    else
+        strsx_fwd_upd!(s, C, Mval, D₁₁, L₂₁, res, sep, na, nrhs, pool, nt, f, trans, uplo, diag, side)
+    end
 
     return
 end
@@ -209,6 +215,234 @@ function strsx_fwd_upd!(
             sscatteradd!(s, trans, C, M₂, fsep)
         else
             sscatteradd!(s, trans, C, M₂, fsep, side)
+        end
+    end
+
+    return
+end
+
+function strsx_fwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractVector{T},
+        D₁₁::AbstractMatrix{T},
+        L₂₁::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::N_OR_R,
+        ::Val{:U},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    @inbounds for j in oneto(nn)
+        c = Rp + j - one(I)
+
+        for i in oneto(j - one(I))
+            C[c] = smuladd(s, C[Rp + i - one(I)], D₁₁[i, j], C[c], Val(:N), trans)
+        end
+
+        if !isintegral(s) && diag === Val(:N)
+            C[c] = sprod(s, C[c], sstar(s, D₁₁[j, j]), Val(:N), trans)
+        end
+    end
+
+    if ispositive(na)
+        @inbounds for j in oneto(na)
+            c = fsep[j]
+
+            for i in oneto(nn)
+                C[c] = smuladd(s, C[Rp + i - one(I)], L₂₁[i, j], C[c], Val(:N), trans)
+            end
+        end
+    end
+
+    return
+end
+
+function strsx_fwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractMatrix{T},
+        D₁₁::AbstractMatrix{T},
+        L₂₁::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::N_OR_R,
+        ::Val{:U},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    Z = sizeof(T)
+    sC = stride(C, 2)
+
+    @preserve C begin
+        pC = pointer(C)
+
+        @inbounds for j in oneto(nn)
+            c = Rp + j - one(I)
+            pc = pC + (c - one(I)) * sC * Z
+
+            for i in oneto(j - one(I))
+                d = Rp + i - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, D₁₁[i, j], nrhs)
+            end
+
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[j, j])
+
+                for k in oneto(nrhs)
+                    C[k, c] = sprod(s, C[k, c], v, Val(:N), trans)
+                end
+            end
+        end
+
+        if ispositive(na)
+            @inbounds for j in oneto(na)
+                c = fsep[j]
+                pc = pC + (c - one(I)) * sC * Z
+
+                for i in oneto(nn)
+                    d = Rp + i - one(I)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, L₂₁[i, j], nrhs)
+                end
+            end
+        end
+    end
+
+    return
+end
+
+function strsx_fwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractVector{T},
+        D₁₁::AbstractMatrix{T},
+        L₂₁::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::T_OR_C,
+        ::Val{:L},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    @inbounds for i in oneto(nn)
+        ci = Rp + i - one(I)
+
+        if !isintegral(s) && diag === Val(:N)
+            C[ci] = sprod(s, C[ci], sstar(s, D₁₁[i, i]), Val(:N), trans)
+        end
+
+        for j in i + one(I):nn
+            cj = Rp + j - one(I)
+            C[cj] = smuladd(s, C[ci], D₁₁[j, i], C[cj], Val(:N), trans)
+        end
+    end
+
+    if ispositive(na)
+        @inbounds for i in oneto(na)
+            c = fsep[i]
+
+            for j in oneto(nn)
+                d = Rp + j - one(I)
+                C[c] = smuladd(s, C[d], L₂₁[i, j], C[c], Val(:N), trans)
+            end
+        end
+    end
+
+    return
+end
+
+function strsx_fwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractMatrix{T},
+        D₁₁::AbstractMatrix{T},
+        L₂₁::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::T_OR_C,
+        ::Val{:L},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    Z = sizeof(T)
+    sC = stride(C, 2)
+
+    @preserve C begin
+        pC = pointer(C)
+
+        @inbounds for i in oneto(nn)
+            ci = Rp + i - one(I)
+            pci = pC + (ci - one(I)) * sC * Z
+
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[i, i])
+
+                for k in oneto(nrhs)
+                    C[k, ci] = sprod(s, C[k, ci], v, Val(:N), trans)
+                end
+            end
+
+            for j in i + one(I):nn
+                cj = Rp + j - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (cj - one(I)) * sC * Z, pci, D₁₁[j, i], nrhs)
+            end
+        end
+
+        if ispositive(na)
+            @inbounds for i in oneto(na)
+                c = fsep[i]
+                pc = pC + (c - one(I)) * sC * Z
+
+                for j in oneto(nn)
+                    d = Rp + j - one(I)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, L₂₁[i, j], nrhs)
+                end
+            end
         end
     end
 
@@ -367,7 +601,11 @@ function strsx_bwd!(
         U₁₂ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
     end
 
-    strsx_bwd_upd!(s, C, Mval, D₁₁, U₁₂, res, sep, na, nrhs, pool, nt, f, trans, uplo, diag, side)
+    if SIDE === :R && nn < STRSX_NB
+        strsx_bwd_upd_small!(s, C, D₁₁, U₁₂, res, sep, nn, na, nrhs, f, diag, trans, uplo, side)
+    else
+        strsx_bwd_upd!(s, C, Mval, D₁₁, U₁₂, res, sep, na, nrhs, pool, nt, f, trans, uplo, diag, side)
+    end
 
     return
 end
@@ -458,6 +696,230 @@ function strsx_bwd_upd!(
     return
 end
 
+function strsx_bwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractVector{T},
+        D₁₁::AbstractMatrix{T},
+        U₁₂::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::N_OR_R,
+        ::Val{:L},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    @inbounds for j in oneto(nn)
+        c = Rp + j - one(I)
+
+        for i in oneto(na)
+            d = fsep[i]
+            C[c] = smuladd(s, C[d], U₁₂[i, j], C[c], Val(:N), trans)
+        end
+    end
+    @inbounds for j in reverse(oneto(nn))
+        c = Rp + j - one(I)
+
+        for i in j + one(I):nn
+            d = Rp + i - one(I)
+            C[c] = smuladd(s, C[d], D₁₁[i, j], C[c], Val(:N), trans)
+        end
+
+        if !isintegral(s) && diag === Val(:N)
+            C[c] = sprod(s, C[c], sstar(s, D₁₁[j, j]), Val(:N), trans)
+        end
+    end
+
+    return
+end
+
+function strsx_bwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractMatrix{T},
+        D₁₁::AbstractMatrix{T},
+        U₁₂::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::N_OR_R,
+        ::Val{:L},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    Z = sizeof(T)
+    sC = stride(C, 2)
+
+    @preserve C begin
+        pC = pointer(C)
+
+        @inbounds for j in oneto(nn)
+            c = Rp + j - one(I)
+            pc = pC + (c - one(I)) * sC * Z
+
+            for i in oneto(na)
+                d = fsep[i]
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, U₁₂[i, j], nrhs)
+            end
+        end
+
+        @inbounds for j in reverse(oneto(nn))
+            c = Rp + j - one(I)
+            pc = pC + (c - one(I)) * sC * Z
+
+            for i in j + one(I):nn
+                d = Rp + i - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pc, pC + (d - one(I)) * sC * Z, D₁₁[i, j], nrhs)
+            end
+
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[j, j])
+
+                for k in oneto(nrhs)
+                    C[k, c] = sprod(s, C[k, c], v, Val(:N), trans)
+                end
+            end
+        end
+    end
+
+    return
+end
+
+function strsx_bwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractVector{T},
+        D₁₁::AbstractMatrix{T},
+        U₁₂::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::T_OR_C,
+        ::Val{:U},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    if ispositive(na)
+        @inbounds for j in oneto(nn)
+            cj = Rp + j - one(I)
+
+            for i in oneto(na)
+                d = fsep[i]
+                C[cj] = smuladd(s, C[d], U₁₂[j, i], C[cj], Val(:N), trans)
+            end
+        end
+    end
+
+    @inbounds for i in reverse(oneto(nn))
+        ci = Rp + i - one(I)
+
+        if !isintegral(s) && diag === Val(:N)
+            C[ci] = sprod(s, C[ci], sstar(s, D₁₁[i, i]), Val(:N), trans)
+        end
+
+        for j in oneto(i - one(I))
+            cj = Rp + j - one(I)
+            C[cj] = smuladd(s, C[ci], D₁₁[j, i], C[cj], Val(:N), trans)
+        end
+    end
+
+    return
+end
+
+function strsx_bwd_upd_small!(
+        s::AbstractSemiring,
+        C::AbstractMatrix{T},
+        D₁₁::AbstractMatrix{T},
+        U₁₂::AbstractMatrix{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        nn::I,
+        na::I,
+        nrhs::I,
+        f::I,
+        diag::Val,
+        trans::T_OR_C,
+        ::Val{:U},
+        ::Val{:R},
+    ) where {T, I}
+    Rp = pointers(res)[f]
+    #
+    # fsep is the separator at node f
+    #
+    #     fsep = sep(f)
+    #
+    fsep = neighbors(sep, f)
+
+    Z = sizeof(T)
+    sC = stride(C, 2)
+
+    @preserve C begin
+        pC = pointer(C)
+
+        if ispositive(na)
+            @inbounds for j in oneto(nn)
+                cj = Rp + j - one(I)
+                pcj = pC + (cj - one(I)) * sC * Z
+
+                for i in oneto(na)
+                    d = fsep[i]
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pcj, pC + (d - one(I)) * sC * Z, U₁₂[j, i], nrhs)
+                end
+            end
+        end
+
+        @inbounds for i in reverse(oneto(nn))
+            ci = Rp + i - one(I)
+            pci = pC + (ci - one(I)) * sC * Z
+
+            if !isintegral(s) && diag === Val(:N)
+                v = sstar(s, D₁₁[i, i])
+
+                for k in oneto(nrhs)
+                    C[k, ci] = sprod(s, C[k, ci], v, Val(:N), trans)
+                end
+            end
+
+            for j in oneto(i - one(I))
+                cj = Rp + j - one(I)
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (cj - one(I)) * sC * Z, pci, D₁₁[j, i], nrhs)
+            end
+        end
+    end
+
+    return
+end
 
 # ===== strsx_bwd_1! =====
 
