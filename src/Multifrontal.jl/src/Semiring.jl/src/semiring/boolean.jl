@@ -46,12 +46,12 @@ function sprod(s::Union{AndOr, OrAnd}, a, b, ::Val{:C}, ::Val{:N})
     return splus(s, ~a, b, Val(:N))
 end
 
-function smuladd(s::Union{AndOr, OrAnd}, a, b, c, tA::N_OR_T, tB::N_OR_T)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
+function smuladd(s::Union{AndOr, OrAnd}, a, b, c, ::Val{:N}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
 end
 
-function smuladd(s::Union{AndOr, OrAnd}, a, b, c, tA::Val, tB::Val)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
+function smuladd(s::Union{AndOr, OrAnd}, a, b, c, ::Val{:C}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:C), Val(:N)), c, Val(:C))
 end
 
 function sstar(s::Union{AndOr, OrAnd}, a)

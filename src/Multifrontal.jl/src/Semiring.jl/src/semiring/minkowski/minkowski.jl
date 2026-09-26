@@ -10,12 +10,8 @@
 #
 abstract type MinkowskiQuantale <: AbstractSemiring end
 
-function sid(s::MinkowskiQuantale, a::T, ::Val{:R}) where {T <: Unsigned}
-    return a ⊻ szero(s, T, Val(:C))
-end
-
-function sid(s::MinkowskiQuantale, a::Vec{W, T}, ::Val{:R}) where {W, T}
-    return a ⊻ Vec{W, T}(szero(s, T, Val(:C)))
+function sid(s::MinkowskiQuantale, a, ::Val{:R})
+    return a ⊻ szero(s, a, Val(:C))
 end
 
 function sid(s::MinkowskiQuantale, a, ::Val{:C})
@@ -68,12 +64,88 @@ function sprod(s::MinkowskiQuantale, a, b, ::Val{:N}, ::Val{:C})
     return sid(s, sprod(s, sid(s, a, Val(:R)), sid(s, b, Val(:T)), Val(:N), Val(:N)), Val(:R))
 end
 
-@inline function smuladd(s::MinkowskiQuantale, a, b, c, tA::N_OR_T, tB::N_OR_T)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:T}, ::Val{:N})
+    return sprod(s, sid(s, a, Val(:T)), b, Val(:N), Val(:N))
 end
 
-@inline function smuladd(s::MinkowskiQuantale, a, b, c, tA::Val, tB::Val)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:N}, ::Val{:T})
+    return sprod(s, a, sid(s, b, Val(:T)), Val(:N), Val(:N))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:R}, ::Val{:N})
+    return sid(s, sprod(s, a, sid(s, b, Val(:R)), Val(:N), Val(:N)), Val(:R))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:N}, ::Val{:R})
+    return sid(s, sprod(s, sid(s, a, Val(:R)), b, Val(:N), Val(:N)), Val(:R))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:T}, ::Val{:T})
+    return sid(s, sprod(s, b, a, Val(:N), Val(:N)), Val(:T))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:T}, ::Val{:R})
+    return sid(s, sprod(s, sid(s, a, Val(:C)), b, Val(:N), Val(:N)), Val(:R))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:T}, ::Val{:C})
+    return sid(s, sprod(s, b, sid(s, a, Val(:R)), Val(:N), Val(:N)), Val(:C))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:R}, ::Val{:T})
+    return sid(s, sprod(s, a, sid(s, b, Val(:C)), Val(:N), Val(:N)), Val(:R))
+end
+
+function sprod(s::MinkowskiQuantale, a, b, ::Val{:C}, ::Val{:T})
+    return sid(s, sprod(s, sid(s, b, Val(:R)), a, Val(:N), Val(:N)), Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:N}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:C}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:C), Val(:N)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:N}, ::Val{:C})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:C)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:T}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:N)), c, Val(:N))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:N}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:T)), c, Val(:N))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:R}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:R), Val(:N)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:N}, ::Val{:R})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:R)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:T}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:T)), c, Val(:N))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:T}, ::Val{:R})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:R)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:T}, ::Val{:C})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:C)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:R}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:R), Val(:T)), c, Val(:C))
+end
+
+@inline function smuladd(s::MinkowskiQuantale, a, b, c, ::Val{:C}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:C), Val(:T)), c, Val(:C))
 end
 
 function isidempotent(::Type{<:MinkowskiQuantale})
@@ -85,12 +157,12 @@ function iscommutative(::Type{<:MinkowskiQuantale})
 end
 
 @inline function sgemx_kern!(s::MinkowskiQuantale, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
-    if tA isa N_OR_T && tB isa N_OR_T
-        mA, mB = Val(:N), Val(:N)
-    elseif tA isa R_OR_C
-        mA, mB = Val(:T), Val(:R)
+    op = compose(tA, tB)
+
+    if op isa N_OR_T
+        mA, mB = tA, tB
     else
-        mA, mB = Val(:R), Val(:T)
+        mA, mB = compose(tA, Val(:R)), compose(tB, Val(:R))
     end
 
     w = ldC * sizeof(T)
@@ -107,7 +179,7 @@ end
         q4 |= gprod(s, TT, UU, sid(s, BP[kpj + 3], mB))
     end
 
-    if tA isa N_OR_T && tB isa N_OR_T
+    if op isa N_OR_T
         vstore(vload(Vec{MR, T}, pC     ) | q1, pC     )
         vstore(vload(Vec{MR, T}, pC +  w) | q2, pC +  w)
         vstore(vload(Vec{MR, T}, pC + 2w) | q3, pC + 2w)

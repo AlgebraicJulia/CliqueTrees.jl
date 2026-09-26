@@ -33,6 +33,11 @@ function mlu(s::AbstractSemiring, A::SparseMatrixCSC)
     return lu!(F)
 end
 
+#
+# Factorize the closure of a matrix A:
+#
+#   A* = U* L*
+#
 function mlu(s::AbstractSemiring, A::AbstractMatrix)
     F = DenseSLU(s, A)
     return lu!(F)
@@ -40,12 +45,24 @@ end
 
 # ===== mstar =====
 
+#
+# Compute the closure off a matrix A:
+#
+#   A*
+#
 function mstar(s::AbstractSemiring, A::AbstractMatrix)
     return Matrix(mlu(s, A))
 end
 
 # ===== pstar =====
 
+#
+# Project the closure of a matrix A
+#
+#   A*
+#
+# onto the sparsity pattern of A.
+#
 function pstar(s::AbstractSemiring, A::SparseMatrixCSC)
     F = mlu(s, A); sgetrp!(F)
     L = sparse(F.L); tril!(L, -1)

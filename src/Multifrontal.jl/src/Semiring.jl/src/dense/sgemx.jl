@@ -26,6 +26,10 @@ function sgemx!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix
     return C
 end
 
+function sgemx!(s::AbstractSemiring, tA::R_OR_C, tB::R_OR_C, C::AbstractMatrix{T}, A::AbstractMatrix{T}, B::AbstractMatrix{T}; nt::Integer = nthreads()) where {T}
+    return error("not supported")
+end
+
 function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::Val, c::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector; nt::Integer = nthreads()) where {T}
     ni = size(A, 1)
     nj = size(A, 2)

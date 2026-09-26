@@ -42,5 +42,6 @@ include("abstract_slu.jl")
 include("chordal_slu.jl")
 include("chordal/chordal.jl")
 include("dense_slu.jl")
+include("bellman.jl")
 
 end

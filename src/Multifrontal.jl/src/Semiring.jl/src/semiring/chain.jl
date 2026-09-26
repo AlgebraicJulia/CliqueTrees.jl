@@ -44,12 +44,12 @@ end
     return (b | c) & d
 end
 
-@inline function smuladd(s::Chain, a, b, c, tA::N_OR_T, tB::N_OR_T)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
+@inline function smuladd(s::Chain, a, b, c, ::Val{:N}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
 end
 
-@inline function smuladd(s::Chain, a, b, c, tA::Val, tB::Val)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
+@inline function smuladd(s::Chain, a, b, c, ::Val{:C}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:C), Val(:N)), c, Val(:C))
 end
 
 function sstar(s::Chain, a::T) where {T}

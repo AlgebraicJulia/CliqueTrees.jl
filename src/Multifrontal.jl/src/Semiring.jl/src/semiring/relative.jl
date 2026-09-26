@@ -54,6 +54,18 @@ function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:N})
     return c
 end
 
+@inline function sprod(s::Relative, a::Vec{W, UInt64}, b::UInt64, ::Val{:N}, ::Val{:N}) where {W}
+    return smuladd(s, a, b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+end
+
+@inline function sprod(s::Relative, a::UInt64, b::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
+    return smuladd(s, a, b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+end
+
+@inline function sprod(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
+    return smuladd(s, a, b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+end
+
 function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:C}, ::Val{:N})
     return ~sprod(s, btr(a), ~b, Val(:N), Val(:N))
 end
@@ -62,12 +74,88 @@ function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:C})
     return ~sprod(s, ~a, btr(b), Val(:N), Val(:N))
 end
 
-function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, tA::N_OR_T, tB::N_OR_T)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:N))
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:T}, ::Val{:N})
+    return sprod(s, btr(a), b, Val(:N), Val(:N))
 end
 
-function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, tA::Val, tB::Val)
-    return splus(s, sprod(s, a, b, tA, tB), c, Val(:C))
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:T})
+    return sprod(s, a, btr(b), Val(:N), Val(:N))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:R}, ::Val{:N})
+    return ~sprod(s, a, ~b, Val(:N), Val(:N))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:N}, ::Val{:R})
+    return ~sprod(s, ~a, b, Val(:N), Val(:N))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:T}, ::Val{:T})
+    return btr(sprod(s, b, a, Val(:N), Val(:N)))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:T}, ::Val{:R})
+    return ~sprod(s, ~btr(a), b, Val(:N), Val(:N))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:T}, ::Val{:C})
+    return ~btr(sprod(s, b, ~a, Val(:N), Val(:N)))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:R}, ::Val{:T})
+    return ~sprod(s, a, ~btr(b), Val(:N), Val(:N))
+end
+
+function sprod(s::Relative, a::UInt64, b::UInt64, ::Val{:C}, ::Val{:T})
+    return ~btr(sprod(s, ~b, a, Val(:N), Val(:N)))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:C}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:C), Val(:N)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::Val{:C})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:C)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:T}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:N)), c, Val(:N))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:T)), c, Val(:N))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:R}, ::Val{:N})
+    return splus(s, sprod(s, a, b, Val(:R), Val(:N)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:N}, ::Val{:R})
+    return splus(s, sprod(s, a, b, Val(:N), Val(:R)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:T}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:T)), c, Val(:N))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:T}, ::Val{:R})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:R)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:T}, ::Val{:C})
+    return splus(s, sprod(s, a, b, Val(:T), Val(:C)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:R}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:R), Val(:T)), c, Val(:C))
+end
+
+function smuladd(s::Relative, a::UInt64, b::UInt64, c::UInt64, ::Val{:C}, ::Val{:T})
+    return splus(s, sprod(s, a, b, Val(:C), Val(:T)), c, Val(:C))
 end
 
 @inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
@@ -88,28 +176,144 @@ end
     return reinterpret(Vec{W, UInt64}, c8)
 end
 
-@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
-    return c & ~smuladd(s, btr(a), ~b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
-end
-
-@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
-    return c & ~smuladd(s, ~a, btr(b), zero(Vec{W, UInt64}), Val(:N), Val(:N))
-end
-
 @inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
     return alut(luts(a)..., b, c)
 end
 
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:N)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
+    return c & ~sprod(s, btr(a), ~b, Val(:N), Val(:N))
+end
+
 @inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
-    return c & ~smuladd(s, btr(a), ~b, zero(Vec{W, UInt64}), Val(:N), Val(:N))
+    return c & ~sprod(s, btr(a), ~b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:C), Val(:N)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
+    return c & ~sprod(s, ~a, btr(b), Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
-    return c & ~smuladd(s, ~a, btr(b), zero(Vec{W, UInt64}), Val(:N), Val(:N))
+    return c & ~sprod(s, ~a, btr(b), Val(:N), Val(:N))
 end
 
-@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, tA::N_OR_C, tB::N_OR_C) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], tA, tB), Val(W)))
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:C)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:N}) where {W}
+    return smuladd(s, btr(a), b, c, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:N}) where {W}
+    return smuladd(s, btr(a), b, c, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:N}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:N)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:T}) where {W}
+    return smuladd(s, a, btr(b), c, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:T}) where {W}
+    return smuladd(s, a, btr(b), c, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:T}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:T)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:N}) where {W}
+    return c & ~sprod(s, a, ~b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:N}) where {W}
+    return c & ~sprod(s, a, ~b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:N}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:R), Val(:N)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:R}) where {W}
+    return c & ~sprod(s, ~a, b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:R}) where {W}
+    return c & ~sprod(s, ~a, b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:R}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:R)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:T}) where {W}
+    return c | btr(sprod(s, b, a, Val(:N), Val(:N)))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:T}) where {W}
+    return c | btr(sprod(s, b, a, Val(:N), Val(:N)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:T}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:T)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:R}) where {W}
+    return c & ~sprod(s, ~btr(a), b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:R}) where {W}
+    return c & ~sprod(s, ~btr(a), b, Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:R}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:R)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:C}) where {W}
+    return c & ~btr(sprod(s, b, ~a, Val(:N), Val(:N)))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:C}) where {W}
+    return c & ~btr(sprod(s, b, ~a, Val(:N), Val(:N)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:C}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:C)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:T}) where {W}
+    return c & ~sprod(s, a, ~btr(b), Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:T}) where {W}
+    return c & ~sprod(s, a, ~btr(b), Val(:N), Val(:N))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:T}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:R), Val(:T)), Val(W)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:T}) where {W}
+    return c & ~btr(sprod(s, ~b, a, Val(:N), Val(:N)))
+end
+
+@inline function smuladd(s::Relative, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:T}) where {W}
+    return c & ~btr(sprod(s, ~b, a, Val(:N), Val(:N)))
+end
+
+@inline function smuladd(s::Relative, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:T}) where {W}
+    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:C), Val(:T)), Val(W)))
 end
 
 function sstar(s::Relative, a::UInt64)

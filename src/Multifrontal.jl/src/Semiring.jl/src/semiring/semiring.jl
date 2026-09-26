@@ -287,6 +287,52 @@ function sprod(d::DualQuantale, a, b, ::Val{:N}, ::Val{:N})
     end
 end
 
+# ===== smuladd =====
+
+function smuladd(s::AbstractSemiring, a, b, c, ::R_OR_C, ::R_OR_C)
+    return error("not supported")
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, ::Val{:N}, ::Val{:C})
+    if iscommutative(s)
+        return smuladd(s, b, a, c, Val(:C), Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:T}, tB::Val)
+    if issymmetric(s)
+        return smuladd(s, a, b, c, Val(:N), tB)
+    else
+        return error("not implemented")
+    end
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::N_OR_C, tB::Val{:T})
+    if issymmetric(s)
+        return smuladd(s, a, b, c, tA, Val(:N))
+    else
+        return error("not implemented")
+    end
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:R}, tB::N_OR_T)
+    if issymmetric(s)
+        return smuladd(s, a, b, c, Val(:C), tB)
+    else
+        return error("not implemented")
+    end
+end
+
+function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:N}, tB::Val{:R})
+    if issymmetric(s)
+        return smuladd(s, a, b, c, Val(:N), Val(:C))
+    else
+        return error("not implemented")
+    end
+end
+
 # ===== isintegral =====
 #
 # An idempotent semiring is *integral* if ever element

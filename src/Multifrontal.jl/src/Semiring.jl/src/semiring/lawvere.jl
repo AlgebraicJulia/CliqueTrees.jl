@@ -48,12 +48,28 @@ function sprod(n::Union{MinProdLaw, MaxProdLaw}, a, b, ::Val{:N}, ::Val{:N})
     return a * b
 end
 
-function smuladd(n::LawvereQuantale, a, b, c, tA::N_OR_T, tB::N_OR_T)
-    return splus(n, sprod(n, a, b, tA, tB), c, Val(:N))
+function sprod(n::MinPlusLaw, a, b, ::Val{:C}, ::Val{:N})
+    return ifelse(b > a, b - a, zero(b))
 end
 
-function smuladd(n::LawvereQuantale, a, b, c, tA::Val, tB::Val)
-    return splus(n, sprod(n, a, b, tA, tB), c, Val(:C))
+function sprod(n::MaxPlusLaw, a, b, ::Val{:C}, ::Val{:N})
+    return ifelse(b < a, b - a, zero(b))
+end
+
+function sprod(n::MinProdLaw, a, b, ::Val{:C}, ::Val{:N})
+    return ifelse(b > a, b / a, one(b))
+end
+
+function sprod(n::MaxProdLaw, a, b, ::Val{:C}, ::Val{:N})
+    return ifelse(b < a, b / a, one(b))
+end
+
+function smuladd(n::LawvereQuantale, a, b, c, ::Val{:N}, ::Val{:N})
+    return splus(n, sprod(n, a, b, Val(:N), Val(:N)), c, Val(:N))
+end
+
+function smuladd(n::LawvereQuantale, a, b, c, ::Val{:C}, ::Val{:N})
+    return splus(n, sprod(n, a, b, Val(:C), Val(:N)), c, Val(:C))
 end
 
 function sstar(n::LawvereQuantale, a)
