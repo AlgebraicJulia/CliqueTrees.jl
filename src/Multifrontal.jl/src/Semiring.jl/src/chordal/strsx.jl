@@ -16,18 +16,49 @@ function strsx!(
     S = A.S
 
     if B isa AbstractVector
-        nrhs = one(I)
-        pool = nothing
+        nrhs = 1
     elseif SIDE === :L
-        nrhs = convert(I, size(B, 2))
-        pool = spool_mt(T, nt)
+        nrhs = size(B, 2)
     else
-        nrhs = convert(I, size(B, 1))
-        pool = spool_mt(T, nt)
+        nrhs = size(B, 1)
     end
 
-    W = DivisionWorkspace{T}(S, nrhs)
-    return strsx_mt!(s, side, trans, diag, A, B, W, pool, nt)
+    if B isa AbstractMatrix && nt > 1 && nrhs >= 4nt
+        tsize = fld(nrhs, nt)
+
+        @threads for t in 1:nt
+            tstrt = (t - 1) * tsize + 1
+
+            if t < nt
+                tstop = t * tsize
+            else
+                tstop = nrhs
+            end
+
+            trhs = tstop - tstrt + 1
+
+            if SIDE === :L
+                Bt = view(B, :, tstrt:tstop)
+            else
+                Bt = view(B, tstrt:tstop, :)
+            end
+
+            Wt = DivisionWorkspace{T}(S, trhs)
+            poolt = spool_mt(T, 1)
+            strsx_mt!(s, side, trans, diag, A, Bt, Wt, poolt, 1)
+        end
+    else
+        if B isa AbstractVector
+            pool = nothing
+        else
+            pool = spool_mt(T, nt)
+        end
+
+        W = DivisionWorkspace{T}(S, nrhs)
+        strsx_mt!(s, side, trans, diag, A, B, W, pool, nt)
+    end
+
+    return B
 end
 
 function strsx_mt!(

@@ -2,31 +2,33 @@
 
 function strtri!(
         s::AbstractSemiring,
-        U::ChordalTriangular{<:Any, :U, T, I},
+        diag::Val,
+        A::ChordalTriangular{<:Any, UPLO, T, I},
         X::AbstractMatrix;
         nt::Integer = nthreads(),
-    ) where {T, I}
-    S = U.S
+    ) where {UPLO, T, I}
+    S = A.S
 
     fdesc = FVector{I}(undef, nfr(S))
     Tval = FVector{T}(undef, S.nFval * S.nFval)
     Mval = FVector{T}(undef, S.nFval * ncl(S))
     pool = spool_mt(T, nt)
 
-    return strtri_mt!(s, U, X, fdesc, Tval, Mval, pool, nt)
+    return strtri_mt!(s, diag, A, X, fdesc, Tval, Mval, pool, nt)
 end
 
 function strtri_mt!(
         s::AbstractSemiring,
-        U::ChordalTriangular{<:Any, :U, T, I},
+        diag::Val,
+        A::ChordalTriangular{<:Any, UPLO, T, I},
         X::AbstractMatrix,
         fdesc::AbstractVector{I},
         Tval::AbstractVector{T},
         Mval::AbstractVector{T},
         pool,
         nt::Integer,
-    ) where {T, I}
-    S = U.S
+    ) where {UPLO, T, I}
+    S = A.S
     #
     # fdesc: F → F maps each front f ∈ F to its
     # first descendant fdesc(f) ∈ F.
@@ -46,7 +48,7 @@ function strtri_mt!(
     szerorec!(s, X, Val(:N))
 
     for f in vertices(S.res)
-        strtri_fwd!(s, X, Mval, Tval, U.Dval, U.Lval, S.Dptr, S.Lptr, S.res, S.sep, fdesc, pool, nt, f)
+        strtri_fwd!(s, X, Mval, Tval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, fdesc, pool, nt, f, A.uplo, diag)
     end
 
     return X
@@ -69,7 +71,9 @@ function strtri_fwd!(
         pool,
         nt::Integer,
         f::I,
-    ) where {T, I}
+        uplo::Val{UPLO},
+        diag::Val,
+    ) where {T, I, UPLO}
     #
     # nn is the size of the residual at node f
     #
@@ -116,37 +120,61 @@ function strtri_fwd!(
     #     U = [ D₁₁    U₁₂ ] res(f)
     #
     D₁₁ = reshape(view(Dval, Dp:Dp + nn * nn - one(I)), nn, nn)
-    U₁₂ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
+
+    if UPLO === :L
+        U₁₂ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), na, nn)
+    else
+        U₁₂ = reshape(view(Lval, Lp:Lp + nn * na - one(I)), nn, na)
+    end
     #
     #          res(f) sep(f)
     #     X = [ X₀₁    X₀₂ ] dsc(f)
     #         [ X₁₁    X₁₂ ] res(f)
     #
-    X₁ = view(X, fdsc, fres)
+    if UPLO === :L
+        X₁ = view(X, fres, fdsc)
+    else
+        X₁ = view(X, fdsc, fres)
+    end
 
     Y₁₁ = reshape(view(Tval, oneto(nn * nn)), nn, nn)
     #
     #   Y₁₁ ← D₁₁
     #
-    copytri!(Y₁₁, D₁₁, Val(:U))
+    copytri!(Y₁₁, D₁₁, uplo)
     #
     #   Y₁₁ ← Y₁₁*
     #
-    strtri!(s, Val(:U), Val(:N), Y₁₁; nt)
+    strtri!(s, uplo, diag, Y₁₁; nt)
     #
     #   X₁₁ ← Y₁₁
     #
-    copyscattertri!(X, Y₁₁, fres, Val(:U))
+    copyscattertri!(X, Y₁₁, fres, uplo)
+
+    if diag === Val(:U)
+        @inbounds for v in fres
+            X[v, v] = sone(s, T, Val(:N))
+        end
+    end
     #
     #   X₀₁ ← X₀₁ D₁₁*
     #
     if Qp < Rp
-        X₀₁ = view(X, Qp:Rp - one(I), fres)
-        strsx_mt!(s, Val(:R), Val(:N), Val(:U), Val(:N), D₁₁, X₀₁, pool, nt)
+        if UPLO === :L
+            X₀₁ = view(X, fres, Qp:Rp - one(I))
+            strsx_mt!(s, Val(:L), Val(:N), uplo, diag, D₁₁, X₀₁, pool, nt)
+        else
+            X₀₁ = view(X, Qp:Rp - one(I), fres)
+            strsx_mt!(s, Val(:R), Val(:N), uplo, diag, D₁₁, X₀₁, pool, nt)
+        end
     end
 
     if ispositive(na)
-        M₂ = reshape(view(Mval, oneto(nd * na)), nd, na)
+        if UPLO === :L
+            M₂ = reshape(view(Mval, oneto(nd * na)), na, nd)
+        else
+            M₂ = reshape(view(Mval, oneto(nd * na)), nd, na)
+        end
         #
         #   M₂ ← 0
         #
@@ -154,11 +182,19 @@ function strtri_fwd!(
         #
         #   M₂ ← X₁ U₁₂
         #
-        sgemx_mt!(s, Val(:N), Val(:N), M₂, X₁, U₁₂, pool, nt)
+        if UPLO === :L
+            sgemx_mt!(s, Val(:N), Val(:N), M₂, U₁₂, X₁, pool, nt)
+        else
+            sgemx_mt!(s, Val(:N), Val(:N), M₂, X₁, U₁₂, pool, nt)
+        end
         #
         #   X₂ ← X₂ + M₂
         #
-        sscatteradd!(s, view(X, fdsc, axes(X, 2)), M₂, fsep, Val(:R))
+        if UPLO === :L
+            sscatteradd!(s, view(X, axes(X, 1), fdsc), M₂, fsep, Val(:L))
+        else
+            sscatteradd!(s, view(X, fdsc, axes(X, 2)), M₂, fsep, Val(:R))
+        end
     end
 
     return

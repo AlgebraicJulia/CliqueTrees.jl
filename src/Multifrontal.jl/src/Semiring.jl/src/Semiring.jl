@@ -3,7 +3,7 @@ module Semiring
 using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational
 using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
-using Base.Threads: @spawn, nthreads
+using Base.Threads: @spawn, @threads, nthreads
 using Graphs: AbstractGraph, neighbors, vertices
 using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, lu!, mul!, ldiv!, rdiv!, lmul!, rmul!, tril!
 import LinearAlgebra
@@ -23,6 +23,7 @@ export splus, sprod, sstar, szero, sone, smuladd, sdot, saxpy!, sger!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, UnsafePred, UnsafeSucc
 export Relative, Cyclic, Elementary, Dihedral, Dicyclic, Semidihedral, Modular
+export Chain
 
 abstract type AbstractSemiring end
 
