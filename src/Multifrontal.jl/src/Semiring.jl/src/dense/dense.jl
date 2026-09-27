@@ -7,7 +7,7 @@ end
 # ===== workspace pool =====
 
 function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
-    mr = vecwidth(T)
+    mr = SGEMX_MV * vecwidth(T)
 
     nic = min(ni, SGEMX_LEAF)
     njc = min(nj, SGEMX_LEAF)

@@ -1,6 +1,7 @@
 module Semiring
 
 using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational, IEEEFloat
+using Base.BinaryPlatforms.CPUID: test_cpu_feature, JL_X86_avx512f, JL_X86_avx2, JL_X86_fma
 using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, @threads, nthreads

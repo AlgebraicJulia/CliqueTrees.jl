@@ -1,5 +1,25 @@
-const SGEMX_NR   = 4
 const SGEMX_LEAF = 256
+
+# ===== register tile =====
+
+if test_cpu_feature(JL_X86_avx512f)
+    const SGEMX_ISA = :avx512
+elseif test_cpu_feature(JL_X86_avx2) && test_cpu_feature(JL_X86_fma)
+    const SGEMX_ISA = :avx2
+else
+    const SGEMX_ISA = :other
+end
+
+@static if SGEMX_ISA === :avx512
+    const SGEMX_MV = 2
+    const SGEMX_NR = 8
+elseif SGEMX_ISA === :avx2
+    const SGEMX_MV = 1
+    const SGEMX_NR = 6
+else
+    const SGEMX_MV = 1
+    const SGEMX_NR = 4
+end
 
 # ===== sgemx! =====
 
@@ -138,7 +158,7 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             #   [ C₁ ] = [ A₁ ] B
             #   [ C₂ ]   [ A₂ ]
             #
-            mr = vecwidth(T)
+            mr = SGEMX_MV * vecwidth(T)
 
             hi = ni >> 1
             hi -= hi % mr
@@ -239,7 +259,7 @@ function sgemx_st!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             #   [ C₁ ] = [ A₁ ] B
             #   [ C₂ ]   [ A₂ ]
             #
-            mr = vecwidth(T)
+            mr = SGEMX_MV * vecwidth(T)
 
             hi = ni >> 1
             hi -= hi % mr
@@ -312,7 +332,7 @@ end
 
 # ===== sgemx2! =====
 
-function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(vecwidth(T))) where {T, MR, TA, TB}
+function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(SGEMX_MV * vecwidth(T))) where {T, MR, TA, TB}
     ni = size(C, 1)
     nk = size(C, 2)
 
@@ -418,33 +438,57 @@ end
 
 # ===== sgemx_kern! =====
 
-function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
-    w = ldC * sizeof(T)
+@generated function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
+    W = vecwidth(T)
+    MV = MR ÷ W
+    NR = SGEMX_NR
+    Z = sizeof(T)
 
-    p1 = pC
-    p2 = p1 + w
-    p3 = p2 + w
-    p4 = p3 + w
+    @assert MR == MV * W
 
-    c1 = vload(Vec{MR, T}, p1)
-    c2 = vload(Vec{MR, T}, p2)
-    c3 = vload(Vec{MR, T}, p3)
-    c4 = vload(Vec{MR, T}, p4)
+    c(v, k) = Symbol(:c_, v, :_, k)
+    a(v) = Symbol(:a_, v)
+    b(k) = Symbol(:b_, k)
 
-    @inbounds for jp in 1:nj
-        a = vload(Vec{MR, T}, AP, ip0 + (jp - 1) * MR)
-        kpj = kp0 + (jp - 1) * SGEMX_NR
-        c1 = @inline smuladd(s, a, BP[kpj],     c1, tA, tB)
-        c2 = @inline smuladd(s, a, BP[kpj + 1], c2, tA, tB)
-        c3 = @inline smuladd(s, a, BP[kpj + 2], c3, tA, tB)
-        c4 = @inline smuladd(s, a, BP[kpj + 3], c4, tA, tB)
+    init = Expr(:block)
+    body = Expr(:block)
+    term = Expr(:block)
+
+    for k in 1:NR, v in 1:MV
+        off = :(($(k - 1) * ldC + $((v - 1) * W)) * $Z)
+        push!(init.args, :($(c(v, k)) = vload(Vec{$W, $T}, pC + $off)))
+        push!(term.args, :(vstore($(c(v, k)), pC + $off)))
     end
 
-    vstore(c1, p1)
-    vstore(c2, p2)
-    vstore(c3, p3)
-    vstore(c4, p4)
-    return
+    for v in 1:MV
+        push!(body.args, :($(a(v)) = vload(Vec{$W, $T}, pA + $((v - 1) * W * Z))))
+    end
+
+    for k in 1:NR
+        push!(body.args, :($(b(k)) = unsafe_load(pB, $k)))
+
+        for v in 1:MV
+            push!(body.args, :($(c(v, k)) = @inline smuladd(s, $(a(v)), $(b(k)), $(c(v, k)), tA, tB)))
+        end
+    end
+
+    return quote
+        Base.GC.@preserve AP BP begin
+            pA = pointer(AP, ip0)
+            pB = pointer(BP, kp0)
+            $init
+
+            for _ in 1:nj
+                $body
+                pA += $(MR * Z)
+                pB += $(NR * Z)
+            end
+
+            $term
+        end
+
+        return
+    end
 end
 
 function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, C::AbstractMatrix{T}, i0::Int, k0::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, mr::Val{MR}) where {T, MR}
