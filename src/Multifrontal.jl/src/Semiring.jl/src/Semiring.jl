@@ -12,7 +12,7 @@ using SparseArrays: SparseMatrixCSC, getcolptr, nonzeros, nzrange, permute, rowv
 
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
-    copy_scatter!, copygatherrec!, copyrec!, copyscattertri!, copytri!, eltypedegree, isforward, ispositive, ncl, nfr, pointers,
+    copy_scatter!, copygatherrec!, copyrec!, copyscattertri!, copytri!, eltypedegree, four, isforward, ispositive, ncl, nfr, pointers, two,
     symbolic, symmetric, unwrap
 
 export AbstractSemiring, DualQuantale, NegativeQuantale, Lattice
@@ -43,5 +43,6 @@ include("chordal_slu.jl")
 include("chordal/chordal.jl")
 include("dense_slu.jl")
 include("bellman.jl")
+include("dijkstra.jl")
 
 end

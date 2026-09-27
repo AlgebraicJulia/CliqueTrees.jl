@@ -4,17 +4,17 @@
 #
 #   Ax + b = x.
 #
-function bellman!(f, s::AbstractSemiring, side::Val, trans::Val, A::AbstractMatrix, b::AbstractVecOrMat; itmax::Integer = size(A, 1))
+function bellman!(f, s::AbstractSemiring, side::Val, trans::Val, A::AbstractMatrix, b::AbstractVecOrMat; itmax::Integer = size(A, 1), nt::Integer = nthreads())
     if isidempotent(s)
-        bellman_i!(f, s, side, trans, A, similar(b), b; itmax)
+        bellman_i!(f, s, side, trans, A, similar(b), b; itmax, nt)
     else
-        bellman!(f, s, side, trans, A, similar(b), similar(b), b; itmax)
+        bellman!(f, s, side, trans, A, similar(b), similar(b), b; itmax, nt)
     end
 
     return b
 end
 
-function bellman!(f, s::AbstractSemiring, side::Val{SIDE}, trans::Val, A::AbstractMatrix, u::AbstractVecOrMat, v::AbstractVecOrMat, b::AbstractVecOrMat; itmax::Integer = size(A, 1)) where {SIDE}
+function bellman!(f, s::AbstractSemiring, side::Val{SIDE}, trans::Val, A::AbstractMatrix, u::AbstractVecOrMat, v::AbstractVecOrMat, b::AbstractVecOrMat; itmax::Integer = size(A, 1), nt::Integer = nthreads()) where {SIDE}
     i = 1
     #
     #   v ← b
@@ -37,16 +37,16 @@ function bellman!(f, s::AbstractSemiring, side::Val{SIDE}, trans::Val, A::Abstra
         copyto!(b, v)
 
         if SIDE === :L
-            sgemx!(s, trans, Val(:N), b, A, u)
+            sgemx!(s, trans, Val(:N), b, A, u; nt)
         else
-            sgemx!(s, Val(:N), trans, b, u, A)
+            sgemx!(s, Val(:N), trans, b, u, A; nt)
         end
     end
 
     return b
 end
 
-function bellman_i!(f, s::AbstractSemiring, side::Val{SIDE}, trans::Val, A::AbstractMatrix, u::AbstractVecOrMat, b::AbstractVecOrMat; itmax::Integer = size(A, 1)) where {SIDE}
+function bellman_i!(f, s::AbstractSemiring, side::Val{SIDE}, trans::Val, A::AbstractMatrix, u::AbstractVecOrMat, b::AbstractVecOrMat; itmax::Integer = size(A, 1), nt::Integer = nthreads()) where {SIDE}
     i = 1
     #
     #   u ← 0
@@ -63,9 +63,9 @@ function bellman_i!(f, s::AbstractSemiring, side::Val{SIDE}, trans::Val, A::Abst
         #   b ← A u ⊕ b
         #
         if SIDE === :L
-            sgemx!(s, trans, Val(:N), b, A, u)
+            sgemx!(s, trans, Val(:N), b, A, u; nt)
         else
-            sgemx!(s, Val(:N), trans, b, u, A)
+            sgemx!(s, Val(:N), trans, b, u, A; nt)
         end
     end
 

@@ -49,18 +49,34 @@ function sprod(n::Union{MinProdLaw, MaxProdLaw}, a, b, ::Val{:N}, ::Val{:N})
 end
 
 function sprod(n::MinPlusLaw, a, b, ::Val{:C}, ::Val{:N})
-    return ifelse(b > a, b - a, zero(b))
+    return max(b - a, zero(b))
 end
 
 function sprod(n::MaxPlusLaw, a, b, ::Val{:C}, ::Val{:N})
-    return ifelse(b < a, b - a, zero(b))
+    return min(b - a, zero(b))
 end
 
 function sprod(n::MinProdLaw, a, b, ::Val{:C}, ::Val{:N})
-    return ifelse(b > a, b / a, one(b))
+    return max(b / a, one(b))
 end
 
 function sprod(n::MaxProdLaw, a, b, ::Val{:C}, ::Val{:N})
+    return min(b / a, one(b))
+end
+
+function sprod(n::MinPlusLaw, a::AbstractFloat, b::AbstractFloat, ::Val{:C}, ::Val{:N})
+    return ifelse(b > a, b - a, zero(b))
+end
+
+function sprod(n::MaxPlusLaw, a::AbstractFloat, b::AbstractFloat, ::Val{:C}, ::Val{:N})
+    return ifelse(b < a, b - a, zero(b))
+end
+
+function sprod(n::MinProdLaw, a::AbstractFloat, b::AbstractFloat, ::Val{:C}, ::Val{:N})
+    return ifelse(b > a, b / a, one(b))
+end
+
+function sprod(n::MaxProdLaw, a::AbstractFloat, b::AbstractFloat, ::Val{:C}, ::Val{:N})
     return ifelse(b < a, b / a, one(b))
 end
 
