@@ -18,7 +18,7 @@ end
 
 # ===== sgetrf_mt! =====
 
-function sgetrf_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::Channel, nt::Integer)
+function sgetrf_mt!(s::AbstractSemiring, A::AbstractMatrix, pool::AbstractVector, nt::Integer)
     @assert size(A, 2) == size(A, 1)
 
     n = size(A, 1)

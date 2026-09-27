@@ -29,10 +29,12 @@ function spool_st(::Type{T}) where {T}
 end
 
 function spool_mt(::Type{T}, nt::Integer, ni::Integer, nj::Integer, nk::Integer) where {T}
-    pool = Channel{Tuple{FVector{T}, FVector{T}, FVector{T}}}(nt)
+    @assert nt >= 1
 
-    for _ in 1:nt
-        put!(pool, spool_st(T, ni, nj, nk))
+    pool = FVector{Tuple{FVector{T}, FVector{T}, FVector{T}}}(undef, nt)
+
+    for t in 1:nt
+        pool[t] = spool_st(T, ni, nj, nk)
     end
 
     return pool

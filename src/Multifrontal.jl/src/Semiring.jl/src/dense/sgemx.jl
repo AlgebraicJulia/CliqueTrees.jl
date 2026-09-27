@@ -132,7 +132,7 @@ end
 
 # ===== sgemx_mt! =====
 
-function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, pool::Channel, nt::Integer) where {T, TA, TB}
+function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, pool::AbstractVector, nt::Integer) where {T, TA, TB}
     ni = size(C, 1)
     nk = size(C, 2)
 
@@ -143,13 +143,8 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
     end
 
     if nt <= 1 || max(ni, nk) <= SGEMX_LEAF || ni * nj * nk < SGEMX_LEAF * max(ni, nj, nk)
-        AP, BP, CP = take!(pool)
-
-        try
-            sgemx_st!(s, tA, tB, C, A, B, AP, BP, CP)
-        finally
-            put!(pool, (AP, BP, CP))
-        end
+        AP, BP, CP = pool[1]
+        sgemx_st!(s, tA, tB, C, A, B, AP, BP, CP)
     else
         mx = max(ni, nj, nk)
 
@@ -176,8 +171,10 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             end
 
             nt₁ = nt >> 1
-            task = @spawn sgemx_mt!(s, tA, tB, C₁, A₁, B, pool, nt₁)
-            sgemx_mt!(s, tA, tB, C₂, A₂, B, pool, nt - nt₁)
+            pool₁ = view(pool, 1:nt₁)
+            pool₂ = view(pool, nt₁ + 1:nt)
+            task = @spawn sgemx_mt!(s, tA, tB, $C₁, $A₁, B, $pool₁, $nt₁)
+            sgemx_mt!(s, tA, tB, C₂, A₂, B, pool₂, nt - nt₁)
             wait(task)
         elseif nk == mx
             #
@@ -199,8 +196,10 @@ function sgemx_mt!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMat
             end
 
             nt₁ = nt >> 1
-            task = @spawn sgemx_mt!(s, tA, tB, C₁, A, B₁, pool, nt₁)
-            sgemx_mt!(s, tA, tB, C₂, A, B₂, pool, nt - nt₁)
+            pool₁ = view(pool, 1:nt₁)
+            pool₂ = view(pool, nt₁ + 1:nt)
+            task = @spawn sgemx_mt!(s, tA, tB, $C₁, A, $B₁, $pool₁, $nt₁)
+            sgemx_mt!(s, tA, tB, C₂, A, B₂, pool₂, nt - nt₁)
             wait(task)
         else
             #

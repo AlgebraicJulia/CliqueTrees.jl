@@ -55,17 +55,12 @@ end
 
 # ===== strtri_mt! =====
 
-function strtri_mt!(s::AbstractSemiring, uplo::Val{UPLO}, diag::Val, A::AbstractMatrix, pool::Channel, nt::Integer) where {UPLO}
+function strtri_mt!(s::AbstractSemiring, uplo::Val{UPLO}, diag::Val, A::AbstractMatrix, pool::AbstractVector, nt::Integer) where {UPLO}
     n = size(A, 1)
 
     if nt <= 1 || n <= STRTRI_LEAF
-        AP, BP, CP = take!(pool)
-
-        try
-            strtri_st!(s, uplo, diag, A, AP, BP, CP)
-        finally
-            put!(pool, (AP, BP, CP))
-        end
+        AP, BP, CP = pool[1]
+        strtri_st!(s, uplo, diag, A, AP, BP, CP)
     else
         m = n >> 1
         A₁₁ = view(A, 1:m,     1:m)
@@ -90,8 +85,10 @@ function strtri_mt!(s::AbstractSemiring, uplo::Val{UPLO}, diag::Val, A::Abstract
         end
 
         nt₁ = nt >> 1
-        task = @spawn strtri_mt!(s, uplo, diag, A₁₁, pool, nt₁)
-        strtri_mt!(s, uplo, diag, A₂₂, pool, nt - nt₁)
+        pool₁ = view(pool, 1:nt₁)
+        pool₂ = view(pool, nt₁ + 1:nt)
+        task = @spawn strtri_mt!(s, uplo, diag, $A₁₁, $pool₁, $nt₁)
+        strtri_mt!(s, uplo, diag, A₂₂, pool₂, nt - nt₁)
         wait(task)
     end
 

@@ -46,7 +46,7 @@ function sgetrf_loop!(
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
-        pool::Channel,
+        pool::AbstractVector,
         nt::Integer,
         ns::I,
         j::I,

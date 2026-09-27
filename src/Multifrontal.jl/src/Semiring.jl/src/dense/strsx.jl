@@ -33,7 +33,7 @@ end
 
 # ===== strsx_mt! =====
 
-function strsx_mt!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, diag::Val, A::AbstractMatrix, B::AbstractMatrix, pool::Channel, nt::Integer) where {SIDE}
+function strsx_mt!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, diag::Val, A::AbstractMatrix, B::AbstractMatrix, pool::AbstractVector, nt::Integer) where {SIDE}
     m = size(B, 1)
     n = size(B, 2)
 
@@ -44,13 +44,8 @@ function strsx_mt!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, 
     end
 
     if nt <= 1 || c <= THRESHOLD || size(A, 1) * c < STRSX_WORK
-        AP, BP, CP = take!(pool)
-
-        try
-            strsx_st!(s, side, trans, uplo, diag, A, B, AP, BP, CP)
-        finally
-            put!(pool, (AP, BP, CP))
-        end
+        AP, BP, CP = pool[1]
+        strsx_st!(s, side, trans, uplo, diag, A, B, AP, BP, CP)
     else
         h = c >> 1
 
@@ -63,8 +58,10 @@ function strsx_mt!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, 
         end
 
         nt₁ = nt >> 1
-        task = @spawn strsx_mt!(s, side, trans, uplo, diag, A, B₁, pool, nt₁)
-        strsx_mt!(s, side, trans, uplo, diag, A, B₂, pool, nt - nt₁)
+        pool₁ = view(pool, 1:nt₁)
+        pool₂ = view(pool, nt₁ + 1:nt)
+        task = @spawn strsx_mt!(s, side, trans, uplo, diag, A, $B₁, $pool₁, $nt₁)
+        strsx_mt!(s, side, trans, uplo, diag, A, B₂, pool₂, nt - nt₁)
         wait(task)
     end
 

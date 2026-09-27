@@ -24,7 +24,7 @@ function sgetrp_mt!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
         Fval::AbstractVector{T},
-        pool::Channel,
+        pool::AbstractVector,
         nt::Integer,
     ) where {T, I <: Integer}
     S = L.S
@@ -70,7 +70,7 @@ function sgetrp_loop!(
         res::AbstractGraph{I},
         rel::AbstractGraph{I},
         chd::AbstractGraph{I},
-        pool::Channel,
+        pool::AbstractVector,
         nt::Integer,
         ns::I,
         j::I,
