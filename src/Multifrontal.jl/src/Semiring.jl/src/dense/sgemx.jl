@@ -59,10 +59,18 @@ function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::Val, c::AbstractVector{T}, 
 
     @preserve c A begin
         pc = pointer(c)
+        pA = pointer(A)
+        j = 1
 
-        @inbounds for j in 1:nj
-            pa = pointer(A) + (j - 1) * sj * Z
-            saxpy_kern!(s, tA, tB, Val(:R), pc, pa, b[j], ni)
+        @inbounds while j + 3 <= nj
+            x = (b[j], b[j + 1], b[j + 2], b[j + 3])
+            saxpy_kern!(s, tA, tB, Val(:R), pc, pA + (j - 1) * sj * Z, sj, x, ni)
+            j += 4
+        end
+
+        @inbounds while j <= nj
+            saxpy_kern!(s, tA, tB, Val(:R), pc, pA + (j - 1) * sj * Z, b[j], ni)
+            j += 1
         end
     end
 
@@ -80,10 +88,21 @@ function sgemx!(s::AbstractSemiring, tA::T_OR_C, tB::Val, c::AbstractVector, A::
 
     @preserve A b begin
         pb = pointer(b)
+        pA = pointer(A)
+        i = 1
 
-        @inbounds for i in 1:ni
-            pa = pointer(A) + (i - 1) * sj * Z
-            c[i] = splus(s, c[i], sdot_kern!(s, tA, tB, op, pa, pb, nj), op)
+        @inbounds while i + 3 <= ni
+            r = sdot_kern!(s, tA, tB, op, Val(:R), pA + (i - 1) * sj * Z, sj, pb, nj, Val(4))
+            c[i]     = splus(s, c[i],     r[1], op)
+            c[i + 1] = splus(s, c[i + 1], r[2], op)
+            c[i + 2] = splus(s, c[i + 2], r[3], op)
+            c[i + 3] = splus(s, c[i + 3], r[4], op)
+            i += 4
+        end
+
+        @inbounds while i <= ni
+            c[i] = splus(s, c[i], sdot_kern!(s, tA, tB, op, pA + (i - 1) * sj * Z, pb, nj), op)
+            i += 1
         end
     end
 
@@ -101,10 +120,21 @@ function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::N_OR_R, c::AbstractVector, 
 
     @preserve a B begin
         pa = pointer(a)
+        pB = pointer(B)
+        i = 1
 
-        @inbounds for i in 1:ni
-            pb = pointer(B) + (i - 1) * sj * Z
-            c[i] = splus(s, c[i], sdot_kern!(s, tA, tB, op, pa, pb, nj), op)
+        @inbounds while i + 3 <= ni
+            r = sdot_kern!(s, tA, tB, op, Val(:L), pB + (i - 1) * sj * Z, sj, pa, nj, Val(4))
+            c[i]     = splus(s, c[i],     r[1], op)
+            c[i + 1] = splus(s, c[i + 1], r[2], op)
+            c[i + 2] = splus(s, c[i + 2], r[3], op)
+            c[i + 3] = splus(s, c[i + 3], r[4], op)
+            i += 4
+        end
+
+        @inbounds while i <= ni
+            c[i] = splus(s, c[i], sdot_kern!(s, tA, tB, op, pa, pB + (i - 1) * sj * Z, nj), op)
+            i += 1
         end
     end
 
@@ -120,10 +150,18 @@ function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::T_OR_C, c::AbstractVector{T
 
     @preserve c B begin
         pc = pointer(c)
+        pB = pointer(B)
+        j = 1
 
-        @inbounds for j in 1:nj
-            pb = pointer(B) + (j - 1) * sj * Z
-            saxpy_kern!(s, tA, tB, Val(:L), pc, pb, a[j], ni)
+        @inbounds while j + 3 <= nj
+            x = (a[j], a[j + 1], a[j + 2], a[j + 3])
+            saxpy_kern!(s, tA, tB, Val(:L), pc, pB + (j - 1) * sj * Z, sj, x, ni)
+            j += 4
+        end
+
+        @inbounds while j <= nj
+            saxpy_kern!(s, tA, tB, Val(:L), pc, pB + (j - 1) * sj * Z, a[j], ni)
+            j += 1
         end
     end
 
