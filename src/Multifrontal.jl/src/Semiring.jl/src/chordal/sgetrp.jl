@@ -1,5 +1,5 @@
-function sgetrp!(F::ChordalSLU)
-    sgetrp!(F.s, lowertriangular(F), uppertriangular(F))
+function sgetrp!(F::ChordalSLU; nt::Integer = nthreads())
+    sgetrp!(F.s, lowertriangular(F), uppertriangular(F); nt)
     return F
 end
 

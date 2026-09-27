@@ -434,10 +434,10 @@ function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int
     @inbounds for jp in 1:nj
         a = vload(Vec{MR, T}, AP, ip0 + (jp - 1) * MR)
         kpj = kp0 + (jp - 1) * SGEMX_NR
-        c1 = smuladd(s, a, BP[kpj],     c1, tA, tB)
-        c2 = smuladd(s, a, BP[kpj + 1], c2, tA, tB)
-        c3 = smuladd(s, a, BP[kpj + 2], c3, tA, tB)
-        c4 = smuladd(s, a, BP[kpj + 3], c4, tA, tB)
+        c1 = @inline smuladd(s, a, BP[kpj],     c1, tA, tB)
+        c2 = @inline smuladd(s, a, BP[kpj + 1], c2, tA, tB)
+        c3 = @inline smuladd(s, a, BP[kpj + 2], c3, tA, tB)
+        c4 = @inline smuladd(s, a, BP[kpj + 3], c4, tA, tB)
     end
 
     vstore(c1, p1)

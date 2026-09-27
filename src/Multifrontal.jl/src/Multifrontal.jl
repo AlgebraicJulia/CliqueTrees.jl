@@ -16,7 +16,7 @@ using SparseArrays: getcolptr
 import ..BipartiteGraph, ..FBipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
     ..eltypedegree, ..etype, ..residual, ..half, ..ispositive, ..isnegative, ..two, ..four, ..twice,
-    ..cliquetree, ..residuals, ..separators, ..childindices, ..AbstractScalar, ..DEFAULT_ELIMINATION_ALGORITHM
+    ..cliquetree, ..residuals, ..separators, ..childindices, ..AbstractScalar, ..DEFAULT_ELIMINATION_ALGORITHM, ..PermutationOrAlgorithm
 
 export ChordalSymbolic
 export ChordalCholesky, FChordalCholesky

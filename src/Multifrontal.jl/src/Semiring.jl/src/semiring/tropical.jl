@@ -84,12 +84,36 @@ function sone(::MinProd, ::Type{T}, ::Val{:C}) where {T}
     return one(T)
 end
 
-function splus(::Union{MinPlus, MinProd}, a, b, ::Val{:N})
+@inline function splus(::Union{MinPlus, MinProd}, a, b, ::Val{:N})
     return min(a, b)
 end
 
-function splus(::Union{MinPlus, MinProd}, a, b, ::Val{:C})
+@inline function splus(::Union{MinPlus, MinProd}, a, b, ::Val{:C})
     return max(a, b)
+end
+
+@inline function splus(::Union{MinPlus, MinProd}, a::T, b::T, ::Val{:N}) where {T <: IEEEFloat}
+    return vmin(a, b)
+end
+
+@inline function splus(::Union{MinPlus, MinProd}, a::T, b::T, ::Val{:C}) where {T <: IEEEFloat}
+    return vmax(a, b)
+end
+
+@inline function splus(::Union{MinPlus, MinProd}, a::Vec{W, T}, b::Union{T, Vec{W, T}}, ::Val{:N}) where {W, T <: IEEEFloat}
+    return vmin(a, b)
+end
+
+@inline function splus(::Union{MinPlus, MinProd}, a::T, b::Vec{W, T}, ::Val{:N}) where {W, T <: IEEEFloat}
+    return vmin(b, a)
+end
+
+@inline function splus(::Union{MinPlus, MinProd}, a::Vec{W, T}, b::Union{T, Vec{W, T}}, ::Val{:C}) where {W, T <: IEEEFloat}
+    return vmax(a, b)
+end
+
+@inline function splus(::Union{MinPlus, MinProd}, a::T, b::Vec{W, T}, ::Val{:C}) where {W, T <: IEEEFloat}
+    return vmax(b, a)
 end
 
 function sprod(s::Union{MinPlus, MaxPlus}, a, b, ::Val{:N}, ::Val{:N})
@@ -128,11 +152,25 @@ function sprod(s::Union{MinProd, MaxProd}, a::AbstractFloat, b::AbstractFloat, t
     return ifelse(isnan(c), szero(s, c, tA), c)
 end
 
-function smuladd(s::TropicalSemiring, a, b, c, ::Val{:N}, ::Val{:N})
+@inline function smuladd(s::TropicalSemiring, a, b, c, ::Val{:N}, ::Val{:N})
     return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
 end
 
-function smuladd(s::TropicalSemiring, a, b, c, ::Val{:C}, ::Val{:N})
+@inline function smuladd(s::TropicalSemiring, a::T, b::T, c::T, ::Val{:N}, ::Val{:N}) where {T <: IEEEFloat}
+    @static if X86
+        if s isa Union{MinPlus, MaxPlus}
+            p = a + b
+        else
+            p = a * b
+        end
+
+        return splus(s, p, c, Val(:N))
+    else
+        return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
+    end
+end
+
+@inline function smuladd(s::TropicalSemiring, a, b, c, ::Val{:C}, ::Val{:N})
     return splus(s, sprod(s, a, b, Val(:C), Val(:N)), c, Val(:C))
 end
 

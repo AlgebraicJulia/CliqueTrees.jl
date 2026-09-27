@@ -51,8 +51,8 @@ const DChordalSLU{Sem, T, I} = ChordalSLU{
     Vector{I},
 }
 
-function ChordalSLU(s::AbstractSemiring, A::SparseMatrixCSC{T}) where {T}
-    P, S = symbolic(symmetric(A, 'N'))
+function ChordalSLU(s::AbstractSemiring, A::SparseMatrixCSC{T}; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM) where {T}
+    P, S = symbolic(symmetric(A, 'N'); alg)
     return ChordalSLU(s, T, S, P.perm, P.invp, P.perm, P.invp)
 end
 
@@ -110,8 +110,8 @@ end
 
 # ===== sgetrf! =====
 
-function sgetrf!(F::ChordalSLU)
-    sgetrf!(F.s, F.L, F.U)
+function sgetrf!(F::ChordalSLU; nt::Integer = nthreads())
+    sgetrf!(F.s, F.L, F.U; nt)
     return F
 end
 

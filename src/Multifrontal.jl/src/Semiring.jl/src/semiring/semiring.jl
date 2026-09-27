@@ -1,3 +1,5 @@
+const X86 = Sys.ARCH === :x86_64 || Sys.ARCH === :i686
+
 # ===== quantales =====
 
 struct DualQuantale{S <: AbstractSemiring} <: AbstractSemiring
@@ -22,6 +24,60 @@ end
 
 function Lattice{S}() where {S <: AbstractSemiring}
     return Lattice{S}(S())
+end
+
+# ===== vmin / vmax =====
+
+function vmin(x, y)
+    return min(x, y)
+end
+
+function vmax(x, y)
+    return max(x, y)
+end
+
+@inline function vmin(x::Vec{W, T}, y::Union{T, Vec{W, T}}) where {W, T <: IEEEFloat}
+    v = vsplat(Vec{W, T}, y)
+
+    @static if X86
+        return vifelse(x < v, x, v)
+    else
+        return min(x, v)
+    end
+end
+
+@inline function vmax(x::Vec{W, T}, y::Union{T, Vec{W, T}}) where {W, T <: IEEEFloat}
+    v = vsplat(Vec{W, T}, y)
+
+    @static if X86
+        return vifelse(x > v, x, v)
+    else
+        return max(x, v)
+    end
+end
+
+@inline function vmin(x::T, y::T) where {T <: IEEEFloat}
+    @static if X86
+        return ifelse(x < y, x, y)
+    else
+        return min(x, y)
+    end
+end
+
+@inline function vmax(x::T, y::T) where {T <: IEEEFloat}
+    @static if X86
+        return ifelse(x > y, x, y)
+    else
+        return max(x, y)
+    end
+end
+
+@inline function vsplat(::Type{V}, y::V) where {V <: Vec}
+    return y
+end
+
+@inline function vsplat(::Type{Vec{W, T}}, y::T) where {W, T}
+    return Vec{W, T}(y)
 end
 
 # ===== slte / sgte =====
@@ -181,19 +237,19 @@ end
 
 # ===== splus =====
 
-function splus(s::AbstractSemiring, a, b, c, op::Val)
+@inline function splus(s::AbstractSemiring, a, b, c, op::Val)
     return splus(s, splus(s, a, b, op), c, op)
 end
 
-function splus(s::AbstractSemiring, a, b, c, d, op::Val)
+@inline function splus(s::AbstractSemiring, a, b, c, d, op::Val)
     return splus(s, splus(s, a, b, op), splus(s, c, d, op), op)
 end
 
-function splus(s::AbstractSemiring, a, b, ::Val{:T})
+@inline function splus(s::AbstractSemiring, a, b, ::Val{:T})
     return splus(s, a, b, Val(:N))
 end
 
-function splus(s::AbstractSemiring, a, b, ::Val{:C})
+@inline function splus(s::AbstractSemiring, a, b, ::Val{:C})
     if islattice(s)
         return sprod(s, a, b, Val(:N), Val(:N))
     else
@@ -201,27 +257,27 @@ function splus(s::AbstractSemiring, a, b, ::Val{:C})
     end
 end
 
-function splus(s::AbstractSemiring, a, b, ::Val{:R})
+@inline function splus(s::AbstractSemiring, a, b, ::Val{:R})
     return splus(s, a, b, Val(:C))
 end
 
-function splus(d::DualQuantale, a, b, ::Val{:N})
+@inline function splus(d::DualQuantale, a, b, ::Val{:N})
     return splus(d.s, a, b, Val(:C))
 end
 
-function splus(d::DualQuantale, a, b, ::Val{:C})
+@inline function splus(d::DualQuantale, a, b, ::Val{:C})
     return splus(d.s, a, b, Val(:N))
 end
 
-function splus(n::NegativeQuantale, a, b, ::Val{:N})
+@inline function splus(n::NegativeQuantale, a, b, ::Val{:N})
     return splus(n.s, a, b, Val(:N))
 end
 
-function splus(n::NegativeQuantale, a, b, ::Val{:C})
+@inline function splus(n::NegativeQuantale, a, b, ::Val{:C})
     return splus(n.s, a, b, Val(:C))
 end
 
-function splus(s::Lattice, a, b, ::Val{:N})
+@inline function splus(s::Lattice, a, b, ::Val{:N})
     return splus(s.s, a, b, Val(:N))
 end
 
@@ -289,11 +345,11 @@ end
 
 # ===== smuladd =====
 
-function smuladd(s::AbstractSemiring, a, b, c, ::R_OR_C, ::R_OR_C)
+@inline function smuladd(s::AbstractSemiring, a, b, c, ::R_OR_C, ::R_OR_C)
     return error("not supported")
 end
 
-function smuladd(s::AbstractSemiring, a, b, c, ::Val{:N}, ::Val{:C})
+@inline function smuladd(s::AbstractSemiring, a, b, c, ::Val{:N}, ::Val{:C})
     if iscommutative(s)
         return smuladd(s, b, a, c, Val(:C), Val(:N))
     else
@@ -301,7 +357,7 @@ function smuladd(s::AbstractSemiring, a, b, c, ::Val{:N}, ::Val{:C})
     end
 end
 
-function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:T}, tB::Val)
+@inline function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:T}, tB::Val)
     if issymmetric(s)
         return smuladd(s, a, b, c, Val(:N), tB)
     else
@@ -309,7 +365,7 @@ function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:T}, tB::Val)
     end
 end
 
-function smuladd(s::AbstractSemiring, a, b, c, tA::N_OR_C, tB::Val{:T})
+@inline function smuladd(s::AbstractSemiring, a, b, c, tA::N_OR_C, tB::Val{:T})
     if issymmetric(s)
         return smuladd(s, a, b, c, tA, Val(:N))
     else
@@ -317,7 +373,7 @@ function smuladd(s::AbstractSemiring, a, b, c, tA::N_OR_C, tB::Val{:T})
     end
 end
 
-function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:R}, tB::N_OR_T)
+@inline function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:R}, tB::N_OR_T)
     if issymmetric(s)
         return smuladd(s, a, b, c, Val(:C), tB)
     else
@@ -325,7 +381,7 @@ function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:R}, tB::N_OR_T)
     end
 end
 
-function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:N}, tB::Val{:R})
+@inline function smuladd(s::AbstractSemiring, a, b, c, tA::Val{:N}, tB::Val{:R})
     if issymmetric(s)
         return smuladd(s, a, b, c, Val(:N), Val(:C))
     else
@@ -453,5 +509,3 @@ include("bottleneck.jl")
 include("boolean.jl")
 include("predecessor.jl")
 include("relative.jl")
-include("minkowski/minkowski.jl")
-include("chain.jl")

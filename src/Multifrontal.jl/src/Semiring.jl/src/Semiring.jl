@@ -1,6 +1,6 @@
 module Semiring
 
-using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational
+using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational, IEEEFloat
 using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, @threads, nthreads
@@ -13,7 +13,7 @@ using SparseArrays: SparseMatrixCSC, getcolptr, nonzeros, nzrange, permute, rowv
 using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
     FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
     copy_scatter!, copygatherrec!, copyrec!, copyscattertri!, copytri!, eltypedegree, four, isforward, ispositive, ncl, nfr, pointers, two,
-    symbolic, symmetric, unwrap
+    symbolic, symmetric, unwrap, DEFAULT_ELIMINATION_ALGORITHM, PermutationOrAlgorithm
 
 export AbstractSemiring, DualQuantale, NegativeQuantale, Lattice
 export PlusProd, MinPlus, MaxPlus, MinProd, MaxProd, MinMax, MaxMin
@@ -22,8 +22,7 @@ export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sdot, saxpy!, sger!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, UnsafePred, UnsafeSucc
-export Relative, Cyclic, Elementary, Dihedral, Dicyclic, Semidihedral, Modular
-export Chain
+export Relative
 
 abstract type AbstractSemiring end
 

@@ -24,7 +24,7 @@ function sone(::PlusProd, ::Type{T}, ::Val{:N}) where {T}
     return one(T)
 end
 
-function splus(::PlusProd, a, b, ::Val{:N})
+@inline function splus(::PlusProd, a, b, ::Val{:N})
     return a + b
 end
 
@@ -32,7 +32,7 @@ function sprod(::PlusProd, a, b, ::Val{:N}, ::Val{:N})
     return a * b
 end
 
-function smuladd(::PlusProd, a, b, c, ::Val{:N}, ::Val{:N})
+@inline function smuladd(::PlusProd, a, b, c, ::Val{:N}, ::Val{:N})
     return muladd(a, b, c)
 end
 
