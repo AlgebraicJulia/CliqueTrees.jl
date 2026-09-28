@@ -125,57 +125,54 @@ end
 
 # ===== strsx2! =====
 
+@inline function strsx_fwd!(s::AbstractSemiring, trans::Val, ::Val{SCALE}, A::AbstractMatrix{T}, B::AbstractVecOrMat, pA::Ptr{T}, pBj::Ptr{T}, n::Int, j::Int) where {T, SCALE}
+    Z = sizeof(T)
+    sA = stride(A, 2)
+    i = 1
+
+    @inbounds while i + 3 <= n
+        for p in i:i + 3
+            if SCALE
+                B[p, j] = sprod(s, sstar(s, A[p, p]), B[p, j], trans, Val(:N))
+            end
+
+            Bpj = B[p, j]
+
+            for q in p + 1:i + 3
+                B[q, j] = smul(s, trans, Val(:N), Val(:R), A[q, p], Bpj, B[q, j])
+            end
+        end
+
+        saxpy_kern!(s, trans, Val(:N), Val(:R), pBj + (i + 3) * Z, pA + ((i - 1) * sA + i + 3) * Z, sA, n - i - 3, B[i, j], B[i + 1, j], B[i + 2, j], B[i + 3, j])
+        i += 4
+    end
+
+    @inbounds while i <= n
+        if SCALE
+            B[i, j] = sprod(s, sstar(s, A[i, i]), B[i, j], trans, Val(:N))
+        end
+
+        saxpy_kern!(s, trans, Val(:N), Val(:R), pBj + i * Z, pA + ((i - 1) * sA + i) * Z, B[i, j], n - i)
+        i += 1
+    end
+
+    return
+end
+
 function strsx2!(s::AbstractSemiring, ::Val{:L}, trans::N_OR_R, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix{T}, B::AbstractVecOrMat) where {T, DIAG}
     n = size(A, 1)
     m = size(B, 2)
 
     Z = sizeof(T)
-    sA = stride(A, 2)
     sB = stride(B, 2)
+    scale = Val(DIAG === :N && !isintegral(s))
 
     @preserve A B begin
         pA = pointer(A)
         pB = pointer(B)
 
-        if m == 1 || !(DIAG === :N && !isintegral(s))
-            @inbounds for j in 1:m
-                pBj = pB + (j - 1) * sB * Z
-
-                for i in 1:n
-                    if DIAG === :N && !isintegral(s)
-                        B[i, j] = sprod(s, sstar(s, A[i, i]), B[i, j], trans, Val(:N))
-                    end
-
-                    Bij = B[i, j]
-                    saxpy_kern!(s, trans, Val(:N), Val(:R), pBj + i * Z, pA + ((i - 1) * sA + i) * Z, Bij, n - i)
-                end
-            end
-
-            return B
-        end
-
-        z = szero(s, T, Val(:N))
-
-        @inbounds for cstrt in 1:STRSX_CH:n
-            cstop = min(cstrt + STRSX_CH - 1, n)
-            csize = cstop - cstrt + 1
-
-            stars = ntuple(Val(STRSX_CH)) do t
-                if t <= csize
-                    sstar(s, A[cstrt + t - 1, cstrt + t - 1])
-                else
-                    z
-                end
-            end
-
-            for j in 1:m
-                pBj = pB + (j - 1) * sB * Z
-
-                for i in cstrt:cstop
-                    Bij = B[i, j] = sprod(s, stars[i - cstrt + 1], B[i, j], trans, Val(:N))
-                    saxpy_kern!(s, trans, Val(:N), Val(:R), pBj + i * Z, pA + ((i - 1) * sA + i) * Z, Bij, n - i)
-                end
-            end
+        @inbounds for j in 1:m
+            strsx_fwd!(s, trans, scale, A, B, pA, pB + (j - 1) * sB * Z, n, j)
         end
     end
 
@@ -373,8 +370,16 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:U}, ::Val
         @inbounds for j in 1:n
             pBj = pB + (j - 1) * sB * Z
 
-            for k in 1:j - 1
+            k = 1
+
+            while k + 3 <= j - 1
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pBj, pB + (k - 1) * sB * Z, sB, m, A[k, j], A[k + 1, j], A[k + 2, j], A[k + 3, j])
+                k += 4
+            end
+
+            while k <= j - 1
                 saxpy_kern!(s, Val(:N), trans, Val(:R), pBj, pB + (k - 1) * sB * Z, A[k, j], m)
+                k += 1
             end
 
             if DIAG === :N && !isintegral(s)
@@ -403,8 +408,16 @@ function strsx2!(s::AbstractSemiring, ::Val{:R}, trans::N_OR_R, ::Val{:L}, ::Val
         @inbounds for j in n:-1:1
             pBj = pB + (j - 1) * sB * Z
 
-            for k in j + 1:n
+            k = j + 1
+
+            while k + 3 <= n
+                saxpy_kern!(s, Val(:N), trans, Val(:R), pBj, pB + (k - 1) * sB * Z, sB, m, A[k, j], A[k + 1, j], A[k + 2, j], A[k + 3, j])
+                k += 4
+            end
+
+            while k <= n
                 saxpy_kern!(s, Val(:N), trans, Val(:R), pBj, pB + (k - 1) * sB * Z, A[k, j], m)
+                k += 1
             end
 
             if DIAG === :N && !isintegral(s)
