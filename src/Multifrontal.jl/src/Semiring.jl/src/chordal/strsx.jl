@@ -45,7 +45,7 @@ function strsx!(
 
             Wt = DivisionWorkspace{T}(S, trhs)
             poolt = spool_mt(T, 1)
-            strsx_mt!(s, side, trans, diag, A, Bt, Wt, poolt, 1)
+            strsx_mt!(s, side, trans, diag, A, Bt, Wt, poolt, 1, one(I), nv(A.S.res))
         end
     else
         if B isa AbstractVector
@@ -55,7 +55,7 @@ function strsx!(
         end
 
         W = DivisionWorkspace{T}(S, nrhs)
-        strsx_mt!(s, side, trans, diag, A, B, W, pool, nt)
+        strsx_mt!(s, side, trans, diag, A, B, W, pool, nt, one(I), nv(A.S.res))
     end
 
     return B
@@ -71,6 +71,8 @@ function strsx_mt!(
         W::DivisionWorkspace{T},
         pool,
         nt::Integer,
+        fstrt::I,
+        fstop::I,
     ) where {SIDE, TRANS, UPLO, T, I}
     S = A.S
 
@@ -83,7 +85,7 @@ function strsx_mt!(
     end
 
     if isforward(UPLO, TRANS, SIDE)
-        for f in vertices(S.res)
+        for f in fstrt:fstop
             nn = eltypedegree(S.res, f)
 
             if isone(nn)
@@ -93,7 +95,7 @@ function strsx_mt!(
             end
         end
     else
-        for f in reverse(vertices(S.res))
+        for f in reverse(fstrt:fstop)
             nn = eltypedegree(S.res, f)
 
             if isone(nn)

@@ -13,7 +13,7 @@ using Random: rand!
 using SparseArrays
 using SparseArrays: getcolptr
 
-import ..BipartiteGraph, ..FBipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree,
+import ..BipartiteGraph, ..FBipartiteGraph, ..CliqueTree, ..FArray, ..FMatrix, ..FScalar, ..FVector, ..Scalar, ..Tree, ..Parent, ..SupernodeTree,
     ..incident, ..nov, ..ne, ..nv, ..outvertices, ..vertices, ..neighbors, ..pointers, ..targets,
     ..eltypedegree, ..etype, ..residual, ..half, ..ispositive, ..isnegative, ..two, ..four, ..twice,
     ..cliquetree, ..residuals, ..separators, ..childindices, ..AbstractScalar, ..DEFAULT_ELIMINATION_ALGORITHM, ..PermutationOrAlgorithm

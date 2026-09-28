@@ -1,3 +1,110 @@
+# ===== sccs =====
+
+function sccs(A::SparseMatrixCSC)
+    return sccs(BipartiteGraph(A))
+end
+
+function sccs(graph::BipartiteGraph{I}) where {I}
+    n = nv(graph); np1 = n + one(I)
+
+    low  = FVector{I}(undef, n)
+    arc  = FVector{I}(undef, n)
+    ptr  = FVector{I}(undef, np1)
+    tgt  = FVector{I}(undef, n)
+
+    return sccs!(low, arc, ptr, tgt, graph)
+end
+
+function sccs!(low::AbstractVector{I}, arc::AbstractVector{I}, ptr::AbstractVector{I}, tgt::AbstractVector{I}, graph::BipartiteGraph{I}) where {I}
+    n = nv(graph); np1 = n + one(I)
+
+    fill!(low, zero(I))
+
+    r = np1; c = zero(I); i = one(I)
+
+    @inbounds for u in vertices(graph)
+        if iszero(low[u])
+            r -= one(I); tgt[r] = u; l = low[u] = np1 - r
+            d  = one(I); ptr[np1 - d] = r
+            v  = u; p = pointers(graph)[v]; pstop = pointers(graph)[v + one(I)]
+
+            while true
+                if p < pstop
+                    w = targets(graph)[p]; p += one(I); m = low[w]
+
+                    if iszero(m)
+                        low[v] = l; arc[d] = p
+                        r -= one(I); tgt[r] = w; l = low[w] = np1 - r
+                        d += one(I); ptr[np1 - d] = r
+                        v  = w; p = pointers(graph)[v]; pstop = pointers(graph)[v + one(I)]
+                    else
+                        l = min(l, m)
+                    end
+                else
+                    rstop = ptr[np1 - d]
+
+                    if l + rstop == np1
+                        c += one(I); ptr[c] = i
+
+                        for j in r:rstop
+                            w = tgt[i] = tgt[j]; low[w] = np1; i += one(I)
+                        end
+
+                        r = rstop + one(I)
+                    else
+                        low[v] = l
+                    end
+
+                    d -= one(I); iszero(d) && break
+
+                    v  = tgt[ptr[np1 - d]]
+                    l  = min(low[v], l)
+                    p  = arc[d]; pstop = pointers(graph)[v + one(I)]
+                end
+            end
+        end
+    end
+
+    ptr[c + one(I)] = i
+    return BipartiteGraph{I, I}(n, c, n, ptr, tgt)
+end
+
+function subgraph(graph::BipartiteGraph{I}, strt::I, stop::I) where {I}
+    @assert one(I) <= strt <= stop <= nv(graph)
+
+    n = stop - strt + one(I)
+
+    ptr = FVector{I}(undef, n + one(I))
+
+    p = one(I)
+
+    @inbounds for j in oneto(n)
+        ptr[j] = p
+
+        for i in neighbors(graph, strt + j - one(I))
+            if strt <= i <= stop
+                p += one(I)
+            end
+        end
+    end
+
+    ptr[n + one(I)] = p; m = p - one(I)
+
+    tgt = FVector{I}(undef, m)
+
+    @inbounds for j in oneto(n)
+        p = ptr[j]
+
+        for i in neighbors(graph, strt + j - one(I))
+            if strt <= i <= stop
+                tgt[p] = i - strt + one(I); p += one(I)
+            end
+        end
+    end
+
+    return BipartiteGraph{I, I}(n, n, m, ptr, tgt)
+end
+
 function szerorec!(s::AbstractSemiring, A::AbstractVecOrMat{T}, trans::Val) where {T}
     fill!(A, szero(s, T, trans))
     return A

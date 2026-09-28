@@ -6,17 +6,19 @@ struct ChordalSLU{
         LLvl <: AbstractVector{T},
         UDvl <: AbstractVector{T},
         ULvl <: AbstractVector{T},
+        NVal <: AbstractVector{T},
         RPrm <: AbstractVector{I},
         RIvp <: AbstractVector{I},
         CPrm <: AbstractVector{I},
         CIvp <: AbstractVector{I},
     } <: AbstractSLU{T}
     s::Sem
-    S::ChordalSymbolic{I}
+    S::ChordalSSymbolic{I}
     LDval::LDvl
     LLval::LLvl
     UDval::UDvl
     ULval::ULvl
+    Nval::NVal
     rperm::RPrm
     rinvp::RIvp
     cperm::CPrm
@@ -27,6 +29,7 @@ const FChordalSLU{Sem, T, I} = ChordalSLU{
     Sem,
     T,
     I,
+    FVector{T},
     FVector{T},
     FVector{T},
     FVector{T},
@@ -45,6 +48,7 @@ const DChordalSLU{Sem, T, I} = ChordalSLU{
     Vector{T},
     Vector{T},
     Vector{T},
+    Vector{T},
     Vector{I},
     Vector{I},
     Vector{I},
@@ -52,26 +56,35 @@ const DChordalSLU{Sem, T, I} = ChordalSLU{
 }
 
 function ChordalSLU(s::AbstractSemiring, A::SparseMatrixCSC{T}; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM) where {T}
-    P, S = symbolic(symmetric(A, 'N'); alg)
+    P, S = ssymbolic(A; alg)
     return ChordalSLU(s, T, S, P.perm, P.invp, P.perm, P.invp)
 end
 
-function ChordalSLU(s::AbstractSemiring, ::Type{T}, S::ChordalSymbolic{I}, rperm, rinvp, cperm, cinvp) where {T, I}
-    L = FChordalTriangular{:N, :L, T, I}(S)
-    U = FChordalTriangular{:N, :U, T, I}(S)
-    return ChordalSLU(s, S, L.Dval, L.Lval, U.Dval, U.Lval, rperm, rinvp, cperm, cinvp)
+function ChordalSLU(s::AbstractSemiring, ::Type{T}, S::ChordalSSymbolic{I}, rperm, rinvp, cperm, cinvp) where {T, I}
+    L = FChordalTriangular{:N, :L, T, I}(S.S)
+    U = FChordalTriangular{:N, :U, T, I}(S.S)
+    Nval = FVector{T}(undef, ne(S.N))
+    return ChordalSLU(s, S, L.Dval, L.Lval, U.Dval, U.Lval, Nval, rperm, rinvp, cperm, cinvp)
 end
 
 function ChordalSLU{Sem}(F::ChordalSLU) where {Sem}
-    return ChordalSLU(Sem(), F.S, F.LDval, F.LLval, F.UDval, F.ULval, F.rperm, F.rinvp, F.cperm, F.cinvp)
+    return ChordalSLU(Sem(), F.S, F.LDval, F.LLval, F.UDval, F.ULval, F.Nval, F.rperm, F.rinvp, F.cperm, F.cinvp)
+end
+
+function ncc(F::ChordalSLU)
+    return ncc(F.S)
+end
+
+function components(F::ChordalSLU)
+    return components(F.S)
 end
 
 function lowertriangular(F::ChordalSLU)
-    return ChordalTriangular{:N, :L}(F.S, F.LDval, F.LLval)
+    return ChordalTriangular{:N, :L}(F.S.S, F.LDval, F.LLval)
 end
 
 function uppertriangular(F::ChordalSLU)
-    return ChordalTriangular{:N, :U}(F.S, F.UDval, F.ULval)
+    return ChordalTriangular{:N, :U}(F.S.S, F.UDval, F.ULval)
 end
 
 function Base.size(F::ChordalSLU)
@@ -98,9 +111,62 @@ end
 
 function Base.copyto!(F::ChordalSLU, A::SparseMatrixCSC)
     A = permute(A, F.rperm, F.cperm)
+    scopyto_offd!(F, A)
     scopyto!(F.s, F.L, A)
     scopyto!(F.s, F.U, A)
     return F
+end
+
+function scopyto_offd!(F::ChordalSLU{<:Any, T, I}, A::SparseMatrixCSC) where {T, I}
+    n = convert(I, size(A, 2))
+
+    Bptr = F.S.Bptr
+    nBptr = F.S.nBptr
+    Nptr = pointers(F.S.N)
+    Ntgt = targets(F.S.N)
+    Nval = F.Nval
+
+    Aptr = getcolptr(A)
+    Atgt = rowvals(A)
+    Aval = nonzeros(A)
+
+    fill!(Nval, szero(F.s, T, Val(:N)))
+
+    q = one(I)
+
+    @inbounds for c in oneto(nBptr)
+        jstrt = Bptr[c]
+        jstop = Bptr[c + one(I)] - one(I)
+
+        for j in jstrt:jstop
+            pstrt = Aptr[j]
+            pstop = Aptr[j + one(I)] - one(I)
+            Aptr[j] = q
+
+            r = Nptr[j]
+
+            for p in pstrt:pstop
+                i = Atgt[p]
+
+                if i < jstrt
+                    while Ntgt[r] < i
+                        r += one(I)
+                    end
+
+                    Nval[r] = Aval[p]
+                else
+                    Atgt[q] = i
+                    Aval[q] = Aval[p]
+                    q += one(I)
+                end
+            end
+        end
+    end
+
+    Aptr[n + one(I)] = q
+    resize!(Atgt, q - one(I))
+    resize!(Aval, q - one(I))
+    return A
 end
 
 function scopyto!(s::AbstractSemiring, A::ChordalTriangular{<:Any, <:Any, T}, B::SparseMatrixCSC) where {T}
@@ -117,7 +183,7 @@ end
 
 # ===== sgetrs! =====
 
-function sgetrs!(F::ChordalSLU{<:Any, T}, side::Val{SIDE}, trans::Val{TRANS}, B::AbstractVecOrMat; nt::Integer = nthreads()) where {T, SIDE, TRANS}
+function sgetrs!(F::ChordalSLU{<:Any, T, I}, side::Val{SIDE}, trans::Val{TRANS}, B::AbstractVecOrMat; nt::Integer = nthreads()) where {T, I, SIDE, TRANS}
     if SIDE === :L
         m = size(B, 1)
         n = size(B, 2)
@@ -142,7 +208,19 @@ function sgetrs!(F::ChordalSLU{<:Any, T}, side::Val{SIDE}, trans::Val{TRANS}, B:
         permutecols!(B, work, invp)
     end
 
-    sgetrs!(F.s, side, trans, F.L, F.U, B; nt)
+    if B isa AbstractVector
+        nrhs = one(I)
+        pool = nothing
+    elseif SIDE === :L
+        nrhs = convert(I, size(B, 2))
+        pool = spool_mt(T, nt)
+    else
+        nrhs = convert(I, size(B, 1))
+        pool = spool_mt(T, nt)
+    end
+
+    W = DivisionWorkspace{T}(F.S.S, nrhs)
+    sgetrs!(F.s, side, trans, F.L, F.U, F.S.Bptr, F.S.Fptr, F.S.nBptr, pointers(F.S.N), targets(F.S.N), F.Nval, B, W, pool, nt)
 
     if SIDE === :L
         permuterows!(B, work, perm)
@@ -160,7 +238,7 @@ function sgetri!(F::ChordalSLU{<:Any, T}, C::AbstractMatrix; nt::Integer = nthre
     #
     #   C ← U* L*
     #
-    sgetri!(F.s, F.L, F.U, C; nt)
+    sgetri!(F.s, F.L, F.U, F.S.Bptr, F.S.Fptr, F.S.nBptr, pointers(F.S.N), targets(F.S.N), F.Nval, C; nt)
     #
     #   C ← P⁻¹ C Q⁻¹
     #

@@ -9,12 +9,27 @@ function strtri!(
     ) where {UPLO, T, I}
     S = A.S
 
-    fdesc = FVector{I}(undef, nfr(S))
-    Tval = FVector{T}(undef, S.nFval * S.nFval)
-    Mval = FVector{T}(undef, S.nFval * ncl(S))
+    W = DivisionWorkspace{T}(S, ncl(S))
     pool = spool_mt(T, nt)
 
-    return strtri_mt!(s, diag, A, X, fdesc, Tval, Mval, pool, nt)
+    return strtri_mt!(s, diag, A, X, W, pool, nt)
+end
+
+function strtri_mt!(
+        s::AbstractSemiring,
+        diag::Val,
+        A::ChordalTriangular{<:Any, UPLO, T, I},
+        X::AbstractMatrix,
+        W::DivisionWorkspace{T},
+        pool::AbstractVector,
+        nt::Integer,
+    ) where {UPLO, T, I}
+    S = A.S
+
+    fdesc = FVector{I}(undef, nfr(S))
+    Tval = FVector{T}(undef, S.nFval * S.nFval)
+
+    return strtri_mt!(s, diag, A, X, fdesc, Tval, W.Mval, pool, nt)
 end
 
 function strtri_mt!(
@@ -25,7 +40,7 @@ function strtri_mt!(
         fdesc::AbstractVector{I},
         Tval::AbstractVector{T},
         Mval::AbstractVector{T},
-        pool,
+        pool::AbstractVector,
         nt::Integer,
     ) where {UPLO, T, I}
     S = A.S
@@ -68,7 +83,7 @@ function strtri_fwd!(
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
         fdesc::AbstractVector{I},
-        pool,
+        pool::AbstractVector,
         nt::Integer,
         f::I,
         uplo::Val{UPLO},

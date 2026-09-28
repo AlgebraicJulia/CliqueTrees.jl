@@ -9,11 +9,11 @@ using Graphs: AbstractGraph, neighbors, vertices
 using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, lu!, mul!, ldiv!, rdiv!, lmul!, rmul!, tril!
 import LinearAlgebra
 using SIMD: Vec, vload, vstore, vifelse, shufflevector
-using SparseArrays: SparseMatrixCSC, getcolptr, nonzeros, nzrange, permute, rowvals, sparse
+using SparseArrays: SparseMatrixCSC, findnz, getcolptr, nonzeros, nzrange, permute, rowvals, sparse
 
-using ...Multifrontal: ChordalSymbolic, ChordalTriangular, DivisionWorkspace,
-    FactorizationWorkspace, FChordalTriangular, FArray, FMatrix, FVector, Permutation, THRESHOLD,
-    copy_scatter!, copygatherrec!, copyrec!, copyscattertri!, copytri!, eltypedegree, four, isforward, ispositive, ncl, nfr, pointers, two,
+using ...Multifrontal: BipartiteGraph, ChordalSymbolic, ChordalTriangular, CliqueTree, DivisionWorkspace,
+    FactorizationWorkspace, FBipartiteGraph, FChordalTriangular, FArray, FMatrix, FVector, Parent, Permutation, SupernodeTree, THRESHOLD, Tree,
+    cliquetree, copy_scatter!, copygatherrec!, copyrec!, copyscattertri!, copytri!, eltypedegree, four, isforward, ispositive, ncl, ne, nfr, nov, nv, pointers, residuals, separators, targets, two, vertices,
     symbolic, symmetric, unwrap, DEFAULT_ELIMINATION_ALGORITHM, PermutationOrAlgorithm
 
 export AbstractSemiring, DualQuantale, NegativeQuantale, Lattice
@@ -39,8 +39,10 @@ include("dense/dense.jl")
 include("sparse/sparse.jl")
 include("utils.jl")
 include("abstract_slu.jl")
+include("chordal_ssymbolic.jl")
 include("chordal_slu.jl")
 include("chordal/chordal.jl")
+include("blocked/blocked.jl")
 include("dense_slu.jl")
 include("bellman.jl")
 include("dijkstra.jl")

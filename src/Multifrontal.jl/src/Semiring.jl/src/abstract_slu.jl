@@ -46,7 +46,7 @@ end
 # ===== mstar =====
 
 #
-# Compute the closure off a matrix A:
+# Compute the closure of a matrix A:
 #
 #   A*
 #
@@ -61,17 +61,18 @@ end
 # ===== pstar =====
 
 #
-# Project the closure of a matrix A
+# Compute the partial closure of a matrix A
 #
 #   A*
-#
-# onto the sparsity pattern of A.
 #
 function pstar(s::AbstractSemiring, A::SparseMatrixCSC; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, nt::Integer = nthreads())
     F = mlu(s, A; alg, nt); sgetrp!(F; nt)
     L = sparse(F.L); tril!(L, -1)
     U = sparse(F.U)
-    return permute(L + U, F.rinvp, F.cinvp)
+    IL, JL, VL = findnz(L)
+    IU, JU, VU = findnz(U)
+    C = sparse(vcat(IL, IU), vcat(JL, JU), vcat(VL, VU), size(L)...)
+    return permute(C, F.rinvp, F.cinvp)
 end
 
 # ===== lu! =====

@@ -23,7 +23,7 @@ function sgetrs!(
     end
 
     W = DivisionWorkspace{T}(S, nrhs)
-    return sgetrs_mt!(s, side, trans, L, U, B, W, pool, nt)
+    return sgetrs_mt!(s, side, trans, L, U, B, W, pool, nt, one(I), nv(S.res))
 end
 
 function sgetrs_mt!(
@@ -36,13 +36,15 @@ function sgetrs_mt!(
         W::DivisionWorkspace{T},
         pool,
         nt::Integer,
+        fstrt::I,
+        fstop::I,
     ) where {T, I, SIDE, TRANS}
     if isforward(:L, TRANS, SIDE)
-        strsx_mt!(s, side, trans, Val(:U), L, B, W, pool, nt)
-        strsx_mt!(s, side, trans, Val(:N), U, B, W, pool, nt)
+        strsx_mt!(s, side, trans, Val(:U), L, B, W, pool, nt, fstrt, fstop)
+        strsx_mt!(s, side, trans, Val(:N), U, B, W, pool, nt, fstrt, fstop)
     else
-        strsx_mt!(s, side, trans, Val(:N), U, B, W, pool, nt)
-        strsx_mt!(s, side, trans, Val(:U), L, B, W, pool, nt)
+        strsx_mt!(s, side, trans, Val(:N), U, B, W, pool, nt, fstrt, fstop)
+        strsx_mt!(s, side, trans, Val(:U), L, B, W, pool, nt, fstrt, fstop)
     end
 
     return B
