@@ -63,8 +63,7 @@ function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::Val, c::AbstractVector{T}, 
         j = 1
 
         @inbounds while j + 3 <= nj
-            x = (b[j], b[j + 1], b[j + 2], b[j + 3])
-            saxpy_kern!(s, tA, tB, Val(:R), pc, pA + (j - 1) * sj * Z, sj, x, ni)
+            saxpy_kern!(s, tA, tB, Val(:R), pc, pA + (j - 1) * sj * Z, sj, ni, b[j], b[j + 1], b[j + 2], b[j + 3])
             j += 4
         end
 
@@ -154,8 +153,7 @@ function sgemx!(s::AbstractSemiring, tA::N_OR_R, tB::T_OR_C, c::AbstractVector{T
         j = 1
 
         @inbounds while j + 3 <= nj
-            x = (a[j], a[j + 1], a[j + 2], a[j + 3])
-            saxpy_kern!(s, tA, tB, Val(:L), pc, pB + (j - 1) * sj * Z, sj, x, ni)
+            saxpy_kern!(s, tA, tB, Val(:L), pc, pB + (j - 1) * sj * Z, sj, ni, a[j], a[j + 1], a[j + 2], a[j + 3])
             j += 4
         end
 

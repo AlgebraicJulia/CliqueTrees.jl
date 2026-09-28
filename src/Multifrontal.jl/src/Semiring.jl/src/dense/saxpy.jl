@@ -8,8 +8,9 @@ end
     return smuladd(s, v, x, c, tA, tB)
 end
 
-@generated function saxpy_kern!(s::AbstractSemiring, tA::Val, tB::Val, side::Val, pc::Ptr{T}, pv::Ptr{T}, sv::Integer, x::Tuple, ni::Integer) where {T}
-    N = fieldcount(x)
+@generated function saxpy_kern!(s::AbstractSemiring, tA::Val, tB::Val, side::Val, pc::Ptr{T}, pv::Ptr{T}, sv::Integer, ni::Integer, x₁, x::Vararg{Any, M}) where {T, M}
+    N = M + 1
+    xs = [:x₁; [:(x[$k]) for k in 1:M]]
     W = vecwidth(T)
     Z = sizeof(T)
 
@@ -22,9 +23,9 @@ end
     p(k) = Symbol(:p_, k)
     c(u) = Symbol(:c_, u)
 
-    init = Expr(:block)
+    init = Expr(:block, :(p_1 = pv))
 
-    for k in 1:N
+    for k in 2:N
         push!(init.args, :($(p(k)) = pv + $(k - 1) * sv * $Z))
     end
 
@@ -36,7 +37,7 @@ end
         end
 
         for k in 1:N, u in 1:m
-            push!(ex.args, :($(c(u)) = smul(s, tA, tB, side, vload(Vec{$W, $T}, $(p(k)) + o + $((u - 1) * W * Z)), x[$k], $(c(u)))))
+            push!(ex.args, :($(c(u)) = smul(s, tA, tB, side, vload(Vec{$W, $T}, $(p(k)) + o + $((u - 1) * W * Z)), $(xs[k]), $(c(u)))))
         end
 
         for u in 1:m
@@ -49,7 +50,7 @@ end
     tail = Expr(:block, :(e = unsafe_load(pc, i)))
 
     for k in 1:N
-        push!(tail.args, :(e = smul(s, tA, tB, side, unsafe_load($(p(k)), i), x[$k], e)))
+        push!(tail.args, :(e = smul(s, tA, tB, side, unsafe_load($(p(k)), i), $(xs[k]), e)))
     end
 
     push!(tail.args, :(unsafe_store!(pc, e, i)))
@@ -78,7 +79,7 @@ end
 end
 
 @inline function saxpy_kern!(s::AbstractSemiring, tA::Val, tB::Val, side::Val, pc::Ptr{T}, pv::Ptr{T}, x, ni::Integer) where {T}
-    return saxpy_kern!(s, tA, tB, side, pc, pv, 0, (x,), ni)
+    return saxpy_kern!(s, tA, tB, side, pc, pv, 0, ni, x)
 end
 
 # ===== saxpy! =====
