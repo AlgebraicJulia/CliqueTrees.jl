@@ -79,8 +79,50 @@ function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix{T}) where {T}
 
     @preserve A begin
         pA = pointer(A)
+        i = 1
 
-        @inbounds for i in 1:n
+        #
+        #   pivots four at a time
+        #
+        @inbounds while i + 3 <= n
+            #
+            #   the columns i:i + 3, one pivot at a time
+            #
+            for p in i:i + 3
+                if !isintegral(s)
+                    sApp = sstar(s, A[p, p])
+
+                    for k in p + 1:n
+                        A[k, p] = sprod(s, A[k, p], sApp, Val(:N), Val(:N))
+                    end
+                end
+
+                for j in p + 1:i + 3
+                    saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + p) * Z, pA + ((p - 1) * sA + p) * Z, A[p, j], n - p)
+                end
+            end
+            #
+            #   each column j to the right: rows i:i + 3 receive the four
+            #   pivots with scalars, then rows i + 4:n with one 4-column axpy
+            #
+            for j in i + 4:n
+                for p in i:i + 2
+                    Apj = A[p, j]
+
+                    for q in p + 1:i + 3
+                        A[q, j] = smul(s, Val(:N), Val(:N), Val(:R), A[q, p], Apj, A[q, j])
+                    end
+                end
+
+                saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + i + 3) * Z, pA + ((i - 1) * sA + i + 3) * Z, sA, n - i - 3, A[i, j], A[i + 1, j], A[i + 2, j], A[i + 3, j])
+            end
+
+            i += 4
+        end
+        #
+        #   the remaining pivots one at a time
+        #
+        @inbounds while i <= n
             #
             #   A = [ Aii Ain ]
             #       [ Ani Ann ]
@@ -101,6 +143,8 @@ function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix{T}) where {T}
             for j in i + 1:n
                 saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + i) * Z, pA + ((i - 1) * sA + i) * Z, A[i, j], n - i)
             end
+
+            i += 1
         end
     end
 

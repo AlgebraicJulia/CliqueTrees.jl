@@ -121,7 +121,31 @@ function strtri2!(s::AbstractSemiring, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix
                 end
             end
 
-            for k in j + 1:n
+            #
+            #   rows j + 1:n of column j, four at a time: the 4 × 4
+            #   diagonal block with scalars, then the rows below it
+            #   with one 4-column axpy
+            #
+            k = j + 1
+
+            while k + 3 <= n
+                for p in k:k + 3
+                    if DIAG === :N && !isintegral(s)
+                        A[p, j] = sprod(s, A[p, p], A[p, j], Val(:N), Val(:N))
+                    end
+
+                    Apj = A[p, j]
+
+                    for q in p + 1:k + 3
+                        A[q, j] = smul(s, Val(:N), Val(:N), Val(:R), A[q, p], Apj, A[q, j])
+                    end
+                end
+
+                saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + k + 3) * Z, pA + ((k - 1) * sA + k + 3) * Z, sA, n - k - 3, A[k, j], A[k + 1, j], A[k + 2, j], A[k + 3, j])
+                k += 4
+            end
+
+            while k <= n
                 if DIAG === :N && !isintegral(s)
                     Akj = A[k, j] = sprod(s, A[k, k], A[k, j], Val(:N), Val(:N))
                 else
@@ -129,6 +153,7 @@ function strtri2!(s::AbstractSemiring, ::Val{:L}, ::Val{DIAG}, A::AbstractMatrix
                 end
 
                 saxpy_kern!(s, Val(:N), Val(:N), Val(:R), pA + ((j - 1) * sA + k) * Z, pA + ((k - 1) * sA + k) * Z, Akj, n - k)
+                k += 1
             end
         end
     end
