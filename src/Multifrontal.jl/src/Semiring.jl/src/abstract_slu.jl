@@ -39,7 +39,7 @@ end
 #   A* = U* L*
 #
 function mlu(s::AbstractSemiring, A::AbstractMatrix; nt::Integer = nthreads())
-    F = DenseSLU(s, A)
+    F = DenseSLU(s, FMatrix(A))
     return lu!(F; nt)
 end
 
