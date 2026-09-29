@@ -18,7 +18,7 @@ const MinMax = Lattice{MinPlus}
 #
 const MaxMin = DualQuantale{MinMax}
 
-function sprod(s::Union{MinMax, MaxMin}, a, b, ::Val{:C}, ::Val{:N})
+@inline function sprod(s::Union{MinMax, MaxMin}, a, b, ::Val{:C}, ::Val{:N})
     if slte(s, a, b)
         c = sone(s, b, Val(:N))
     else
@@ -28,11 +28,23 @@ function sprod(s::Union{MinMax, MaxMin}, a, b, ::Val{:C}, ::Val{:N})
     return c
 end
 
-function smuladd(s::Union{MinMax, MaxMin}, a, b, c, ::Val{:N}, ::Val{:N})
+@inline function sprod(s::Union{MinMax, MaxMin}, a::Vec{W, T}, b::Vec{W, T}, ::Val{:C}, ::Val{:N}) where {W, T}
+    return vifelse(slte(s, a, b), Vec{W, T}(sone(s, T, Val(:N))), b)
+end
+
+@inline function sprod(s::Union{MinMax, MaxMin}, a::Vec{W, T}, b::T, tA::Val{:C}, tB::Val{:N}) where {W, T}
+    return sprod(s, a, Vec{W, T}(b), tA, tB)
+end
+
+@inline function sprod(s::Union{MinMax, MaxMin}, a::T, b::Vec{W, T}, tA::Val{:C}, tB::Val{:N}) where {W, T}
+    return sprod(s, Vec{W, T}(a), b, tA, tB)
+end
+
+@inline function smuladd(s::Union{MinMax, MaxMin}, a, b, c, ::Val{:N}, ::Val{:N})
     return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
 end
 
-function smuladd(s::Union{MinMax, MaxMin}, a, b, c, ::Val{:C}, ::Val{:N})
+@inline function smuladd(s::Union{MinMax, MaxMin}, a, b, c, ::Val{:C}, ::Val{:N})
     return splus(s, sprod(s, a, b, Val(:C), Val(:N)), c, Val(:C))
 end
 
