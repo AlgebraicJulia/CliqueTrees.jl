@@ -18,7 +18,7 @@ function sgetri!(
     W = DivisionWorkspace{T}(L.S, n)
     pool = spool_mt(T, nt)
 
-    sgetri_mt!(s, L, U, C, W, pool, nt)
+    sgetri_mt!(s, L, U, C, pool, nt)
 
     for c in reverse(oneto(nBptr))
         fstrt = Fptr[c]

@@ -209,18 +209,12 @@ function sgetrs!(F::ChordalSLU{<:Any, T, I}, side::Val{SIDE}, trans::Val{TRANS},
     end
 
     if B isa AbstractVector
-        nrhs = one(I)
         pool = nothing
-    elseif SIDE === :L
-        nrhs = convert(I, size(B, 2))
-        pool = spool_mt(T, nt)
     else
-        nrhs = convert(I, size(B, 1))
         pool = spool_mt(T, nt)
     end
 
-    W = DivisionWorkspace{T}(F.S.S, nrhs)
-    sgetrs!(F.s, side, trans, F.L, F.U, F.S.Bptr, F.S.Fptr, F.S.nBptr, pointers(F.S.N), targets(F.S.N), F.Nval, B, W, pool, nt)
+    sgetrs_mt!(F.s, side, trans, F.L, F.U, F.S.Bptr, F.S.Fptr, F.S.nBptr, pointers(F.S.N), targets(F.S.N), F.Nval, B, pool, nt)
 
     if SIDE === :L
         permuterows!(B, work, perm)

@@ -13,6 +13,25 @@ function strsx!(
         B::AbstractVecOrMat;
         nt::Integer = nthreads(),
     ) where {SIDE, TRANS, UPLO, T, I}
+    if B isa AbstractVector
+        pool = nothing
+    else
+        pool = spool_mt(T, nt)
+    end
+
+    return strsx_mt!(s, side, trans, diag, A, B, pool, nt)
+end
+
+function strsx_mt!(
+        s::AbstractSemiring,
+        side::Val{SIDE},
+        trans::Val{TRANS},
+        diag::Val,
+        A::ChordalTriangular{<:Any, UPLO, T, I},
+        B::AbstractVecOrMat,
+        pool,
+        nt::Integer,
+    ) where {SIDE, TRANS, UPLO, T, I}
     S = A.S
 
     if B isa AbstractVector
@@ -48,12 +67,6 @@ function strsx!(
             strsx_mt!(s, side, trans, diag, A, Bt, Wt, poolt, 1, one(I), nv(A.S.res))
         end
     else
-        if B isa AbstractVector
-            pool = nothing
-        else
-            pool = spool_mt(T, nt)
-        end
-
         W = DivisionWorkspace{T}(S, nrhs)
         strsx_mt!(s, side, trans, diag, A, B, W, pool, nt, one(I), nv(A.S.res))
     end

@@ -7,12 +7,9 @@ function strtri!(
         X::AbstractMatrix;
         nt::Integer = nthreads(),
     ) where {UPLO, T, I}
-    S = A.S
-
-    W = DivisionWorkspace{T}(S, ncl(S))
     pool = spool_mt(T, nt)
 
-    return strtri_mt!(s, diag, A, X, W, pool, nt)
+    return strtri_mt!(s, diag, A, X, pool, nt)
 end
 
 function strtri_mt!(
@@ -20,7 +17,6 @@ function strtri_mt!(
         diag::Val,
         A::ChordalTriangular{<:Any, UPLO, T, I},
         X::AbstractMatrix,
-        W::DivisionWorkspace{T},
         pool::AbstractVector,
         nt::Integer,
     ) where {UPLO, T, I}
@@ -28,8 +24,9 @@ function strtri_mt!(
 
     fdesc = FVector{I}(undef, nfr(S))
     Tval = FVector{T}(undef, S.nFval * S.nFval)
+    Mval = FVector{T}(undef, S.nFval * ncl(S))
 
-    return strtri_mt!(s, diag, A, X, fdesc, Tval, W.Mval, pool, nt)
+    return strtri_mt!(s, diag, A, X, fdesc, Tval, Mval, pool, nt)
 end
 
 function strtri_mt!(
