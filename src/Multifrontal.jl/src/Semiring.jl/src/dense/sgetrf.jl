@@ -81,12 +81,12 @@ function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix{T}) where {T}
         pA = pointer(A)
         i = 1
 
-        #
-        #   pivots four at a time
-        #
         @inbounds while i + 3 <= n
             #
-            #   the columns i:i + 3, one pivot at a time
+            #   A = [ App Apn ]   App is 4 x 4
+            #       [ Anp Ann ]
+            #
+            #   Anp ← Anp App*
             #
             for p in i:i + 3
                 if !isintegral(s)
@@ -102,8 +102,7 @@ function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix{T}) where {T}
                 end
             end
             #
-            #   each column j to the right: rows i:i + 3 receive the four
-            #   pivots with scalars, then rows i + 4:n with one 4-column axpy
+            #   Ann ← Anp Apn + Ann
             #
             for j in i + 4:n
                 for p in i:i + 2
@@ -119,9 +118,7 @@ function sgetrf2!(s::AbstractSemiring, A::AbstractMatrix{T}) where {T}
 
             i += 4
         end
-        #
-        #   the remaining pivots one at a time
-        #
+
         @inbounds while i <= n
             #
             #   A = [ Aii Ain ]

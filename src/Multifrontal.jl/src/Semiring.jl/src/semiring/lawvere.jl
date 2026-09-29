@@ -44,6 +44,23 @@ function sprod(n::Union{MinPlusLaw, MaxPlusLaw}, a, b, ::Val{:N}, ::Val{:N})
     return a + b
 end
 
+@inline function sprod(n::MinPlusLaw, a::Vec{W, T}, b::Vec{W, T}, ::Val{:N}, ::Val{:N}) where {W, T <: Unsigned}
+    return add_saturate(a, b)
+end
+
+@inline function sprod(n::MinPlusLaw, a::Vec{W, T}, b::T, tA::Val{:N}, tB::Val{:N}) where {W, T <: Unsigned}
+    return sprod(n, a, Vec{W, T}(b), tA, tB)
+end
+
+@inline function sprod(n::MinPlusLaw, a::T, b::Vec{W, T}, tA::Val{:N}, tB::Val{:N}) where {W, T <: Unsigned}
+    return sprod(n, Vec{W, T}(a), b, tA, tB)
+end
+
+@inline function sprod(n::MinPlusLaw, a::T, b::T, ::Val{:N}, ::Val{:N}) where {T <: Unsigned}
+    c, o = add_with_overflow(a, b)
+    return ifelse(o, typemax(T), c)
+end
+
 function sprod(n::Union{MinProdLaw, MaxProdLaw}, a, b, ::Val{:N}, ::Val{:N})
     return a * b
 end

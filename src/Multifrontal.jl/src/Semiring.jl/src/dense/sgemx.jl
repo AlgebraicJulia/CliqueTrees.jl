@@ -378,18 +378,36 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
     end
 
     z = szero(s, T, Val(:N))
+    Z = sizeof(T)
 
-    sgemx_pack_A!(s, tA, tB, AP, A, ni, nj, z, mr)
+    direct = (TA === :N || TA === :R) && nk <= SGEMX_NR
+    ie = ni - ni % MR
+
+    if !direct
+        sgemx_pack_A!(s, tA, tB, AP, A, ni, nj, z, mr)
+    elseif ie < ni
+        sgemx_pack_A!(s, tA, tB, AP, view(A, ie + 1:ni, :), ni - ie, nj, z, mr)
+    end
+
     sgemx_pack_B!(s, tA, tB, BP, B, nk, nj, z)
 
-    @inbounds for k0 in 0:SGEMX_NR:nk - 1
-        kt = min(SGEMX_NR, nk - k0); kp0 = k0 * nj
+    @preserve A AP BP @inbounds for k0 in 0:SGEMX_NR:nk - 1
+        kt = min(SGEMX_NR, nk - k0)
+        pB = pointer(BP) + k0 * nj * Z
 
         for i0 in 0:MR:ni - 1
-            it = min(MR, ni - i0); ip0 = i0 * nj
+            it = min(MR, ni - i0)
+
+            if direct && it == MR
+                pA = pointer(A) + i0 * Z; sA = stride(A, 2)
+            elseif direct
+                pA = pointer(AP); sA = MR
+            else
+                pA = pointer(AP) + i0 * nj * Z; sA = MR
+            end
 
             if it == MR && kt == SGEMX_NR
-                sgemx_kern!(s, tA, tB, C, i0, k0, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
+                sgemx_kern!(s, tA, tB, C, i0, k0, pA, sA, pB, nj, mr)
             else
                 for kp in 1:kt
                     for ip in 1:it
@@ -408,7 +426,7 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
                 end
 
                 @preserve CP begin
-                    sgemx_kern!(s, tA, tB, pointer(CP), MR, AP, ip0 + 1, BP, kp0 + 1, nj, mr)
+                    sgemx_kern!(s, tA, tB, pointer(CP), MR, pA, sA, pB, nj, mr)
                 end
 
                 for kp in 1:kt
@@ -425,21 +443,55 @@ end
 
 # ===== sgemx_pack_A! =====
 
-function sgemx_pack_A!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, AP::AbstractVector, A::AbstractMatrix, ni::Int, nj::Int, z, ::Val{MR}) where {TA, TB, MR}
+function sgemx_pack_A!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, AP::AbstractVector{T}, A::AbstractMatrix{T}, ni::Int, nj::Int, z, ::Val{MR}) where {T, TA, TB, MR}
+    WT = min(vecwidth(T), 16)
+    Z = sizeof(T)
+    fast = TA === :T || TA === :C
+
+    if fast
+        @assert stride(A, 1) == 1
+    end
+
     @inbounds for i0 in 0:MR:ni - 1
         it = min(MR, ni - i0); ip0 = i0 * nj
 
-        for j in 1:nj
-            for ip in 1:it
-                if TA === :N || TA === :R
-                    AP[ip0 + (j - 1) * MR + ip] = A[i0 + ip, j]
-                else
-                    AP[ip0 + (j - 1) * MR + ip] = A[j, i0 + ip]
+        if it == MR && fast
+            @preserve A AP begin
+                pA = pointer(A); ldA = stride(A, 2)
+                pP = pointer(AP, ip0 + 1)
+
+                for v in 0:MR ÷ WT - 1
+                    pAv = pA + (i0 + v * WT) * ldA * Z
+                    pPv = pP + v * WT * Z
+                    j = 1
+
+                    while j + WT - 1 <= nj
+                        sgemx_trans!(pPv + (j - 1) * MR * Z, MR, pAv + (j - 1) * Z, ldA, Val(WT), Val(WT))
+                        j += WT
+                    end
+
+                    while j <= nj
+                        for ip in 1:WT
+                            unsafe_store!(pPv, unsafe_load(pAv, (ip - 1) * ldA + j), (j - 1) * MR + ip)
+                        end
+
+                        j += 1
+                    end
                 end
             end
+        else
+            for j in 1:nj
+                for ip in 1:it
+                    if TA === :N || TA === :R
+                        AP[ip0 + (j - 1) * MR + ip] = A[i0 + ip, j]
+                    else
+                        AP[ip0 + (j - 1) * MR + ip] = A[j, i0 + ip]
+                    end
+                end
 
-            for ip in it + 1:MR
-                AP[ip0 + (j - 1) * MR + ip] = z
+                for ip in it + 1:MR
+                    AP[ip0 + (j - 1) * MR + ip] = z
+                end
             end
         end
     end
@@ -449,21 +501,53 @@ end
 
 # ===== sgemx_pack_B! =====
 
-function sgemx_pack_B!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, BP::AbstractVector, B::AbstractMatrix, nk::Int, nj::Int, z) where {TA, TB}
-    @inbounds for k0 in 0:SGEMX_NR:nk - 1
-        kt = min(SGEMX_NR, nk - k0); kp0 = k0 * nj
+function sgemx_pack_B!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, BP::AbstractVector{T}, B::AbstractMatrix{T}, nk::Int, nj::Int, z) where {T, TA, TB}
+    NR = SGEMX_NR
+    WT = min(vecwidth(T), 16)
+    Z = sizeof(T)
+    fast = TB === :N || TB === :R
 
-        for j in 1:nj
-            for kp in 1:kt
-                if TB === :N || TB === :R
-                    BP[kp0 + (j - 1) * SGEMX_NR + kp] = B[j, k0 + kp]
-                else
-                    BP[kp0 + (j - 1) * SGEMX_NR + kp] = B[k0 + kp, j]
+    if fast
+        @assert stride(B, 1) == 1
+    end
+
+    @inbounds for k0 in 0:NR:nk - 1
+        kt = min(NR, nk - k0); kp0 = k0 * nj
+
+        if kt == NR && fast
+            @preserve B BP begin
+                pB = pointer(B); ldB = stride(B, 2)
+                pP = pointer(BP, kp0 + 1)
+
+                pBk = pB + k0 * ldB * Z
+                j = 1
+
+                while j + WT - 1 <= nj
+                    sgemx_trans!(pP + (j - 1) * NR * Z, NR, pBk + (j - 1) * Z, ldB, Val(WT), Val(NR))
+                    j += WT
+                end
+
+                while j <= nj
+                    for kp in 1:NR
+                        unsafe_store!(pP, unsafe_load(pBk, (kp - 1) * ldB + j), (j - 1) * NR + kp)
+                    end
+
+                    j += 1
                 end
             end
+        else
+            for j in 1:nj
+                for kp in 1:kt
+                    if TB === :N || TB === :R
+                        BP[kp0 + (j - 1) * NR + kp] = B[j, k0 + kp]
+                    else
+                        BP[kp0 + (j - 1) * NR + kp] = B[k0 + kp, j]
+                    end
+                end
 
-            for kp in kt + 1:SGEMX_NR
-                BP[kp0 + (j - 1) * SGEMX_NR + kp] = z
+                for kp in kt + 1:NR
+                    BP[kp0 + (j - 1) * NR + kp] = z
+                end
             end
         end
     end
@@ -471,9 +555,58 @@ function sgemx_pack_B!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, BP::Abstra
     return BP
 end
 
+# ===== sgemx_trans! =====
+
+@generated function sgemx_trans!(pdst::Ptr{T}, ldd::Int, psrc::Ptr{T}, lds::Int, ::Val{W}, ::Val{N}) where {T, W, N}
+    @assert ispow2(W) && N <= W
+    Z = sizeof(T)
+    V = :(Vec{$W, $T})
+    r(q) = Symbol(:r_, q)
+
+    ex = Expr(:block)
+
+    for q in 0:W - 1
+        if q < N
+            push!(ex.args, :($(r(q)) = vload($V, psrc + $q * lds * $Z)))
+        else
+            push!(ex.args, :($(r(q)) = zero($V)))
+        end
+    end
+
+    d = 1
+
+    while d < W
+        lo = Tuple(p & d == 0 ? p : W + p - d for p in 0:W - 1)
+        hi = Tuple(p & d == 0 ? p + d : W + p for p in 0:W - 1)
+
+        for q in 0:W - 1
+            if q & d == 0
+                push!(ex.args, :(($(r(q)), $(r(q + d))) = (shufflevector($(r(q)), $(r(q + d)), Val($lo)), shufflevector($(r(q)), $(r(q + d)), Val($hi)))))
+            end
+        end
+
+        d <<= 1
+    end
+
+    for q in 0:W - 1
+        if N == W
+            push!(ex.args, :(vstore($(r(q)), pdst + $q * ldd * $Z)))
+        else
+            idx = Tuple(0:N - 1)
+            push!(ex.args, :(vstore(shufflevector($(r(q)), Val($idx)), pdst + $q * ldd * $Z)))
+        end
+    end
+
+    return quote
+        $(Expr(:meta, :inline))
+        $ex
+        return
+    end
+end
+
 # ===== sgemx_kern! =====
 
-@generated function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, ::Val{MR}) where {T, MR}
+@generated function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, pC::Ptr{T}, ldC::Int, pA::Ptr{T}, sA::Int, pB::Ptr{T}, nj::Int, ::Val{MR}) where {T, MR}
     W = vecwidth(T)
     MV = MR ÷ W
     NR = SGEMX_NR
@@ -508,28 +641,23 @@ end
     end
 
     return quote
-        Base.GC.@preserve AP BP begin
-            pA = pointer(AP, ip0)
-            pB = pointer(BP, kp0)
-            $init
+        $init
 
-            for _ in 1:nj
-                $body
-                pA += $(MR * Z)
-                pB += $(NR * Z)
-            end
-
-            $term
+        for _ in 1:nj
+            $body
+            pA += sA * $Z
+            pB += $(NR * Z)
         end
 
+        $term
         return
     end
 end
 
-function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, C::AbstractMatrix{T}, i0::Int, k0::Int, AP::AbstractVector, ip0::Int, BP::AbstractVector, kp0::Int, nj::Int, mr::Val{MR}) where {T, MR}
+function sgemx_kern!(s::AbstractSemiring, tA::Val, tB::Val, C::AbstractMatrix{T}, i0::Int, k0::Int, pA::Ptr{T}, sA::Int, pB::Ptr{T}, nj::Int, mr::Val{MR}) where {T, MR}
     @preserve C begin
         pC = unsafe_convert(Ptr{T}, C) + (k0 * stride(C, 2) + i0) * sizeof(T)
-        sgemx_kern!(s, tA, tB, pC, stride(C, 2), AP, ip0, BP, kp0, nj, mr)
+        sgemx_kern!(s, tA, tB, pC, stride(C, 2), pA, sA, pB, nj, mr)
     end
 
     return
