@@ -1,6 +1,7 @@
 module Semiring
 
 using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational, IEEEFloat
+using Base.Cartesian: @nexprs
 using Base.BinaryPlatforms.CPUID: test_cpu_feature, JL_X86_avx512f, JL_X86_avx2, JL_X86_fma
 using Base.Checked: add_with_overflow, mul_with_overflow
 using Base.GC: @preserve
@@ -23,7 +24,7 @@ export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sdot, saxpy!, sger!
 export slte, sgte, TropicalSemiring
 export Pred, Succ, UnsafePred, UnsafeSucc
-export BoolMatrix, DualBoolMatrix, QualMatrix
+export BoolMatrix, DualBoolMatrix, IdemBoolMatrix, QualMatrix
 
 abstract type AbstractSemiring end
 

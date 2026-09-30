@@ -112,7 +112,8 @@ end
 end
 
 @inline function smuladd(s::QualMatrix, a::Vec{W, UInt32}, b::Vec{W, UInt32}, c::Vec{W, UInt32}, ::Val{:N}, ::Val{:N}) where {W}
-    return Vec{W, UInt32}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:N)), Val(W)))
+    t = rmuladd4(convert(Vec{W, UInt64}, b), sexpand(a))
+    return scompress(t | (nibswap(t) >> 32)) | c
 end
 
 @inline function sprod(s::QualMatrix, a::Vec{W, UInt32}, b::UInt32, ::Val{:N}, ::Val{:N}) where {W}

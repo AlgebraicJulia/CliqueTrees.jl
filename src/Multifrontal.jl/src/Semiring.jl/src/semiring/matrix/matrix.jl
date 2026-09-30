@@ -139,6 +139,18 @@ end
 # `QualMatrix` and `DualBoolMatrix` store a 4 × 4 matrix as two
 # 4 × 4 bit planes, one per nibble: bit 8i + j and bit 8i + j + 4.
 
+@inline function rmuladd4(x::Vec{W, UInt64}, y::Vec{W, UInt64}) where {W}
+    x8 = reinterpret(Vec{8W, UInt8}, x)
+    y8 = reinterpret(Vec{8W, UInt8}, y)
+    t8 = zero(Vec{8W, UInt8})
+
+    @nexprs 4 k -> begin
+        t8 = vifelse((y8 & (0x01 << (k - 1))) != 0x00, t8 | rbc(x8, Val(k - 1)), t8)
+    end
+
+    return reinterpret(Vec{W, UInt64}, t8)
+end
+
 #
 # Transpose both planes in place: they are 4 × 4 blocks in the
 # 8 × 8 view of `btr`, and its first two delta-swap rounds
@@ -170,4 +182,5 @@ end
 
 include("relative.jl")
 include("dualbool.jl")
+include("idembool.jl")
 include("qualitative.jl")

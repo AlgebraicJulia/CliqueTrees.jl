@@ -204,7 +204,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:N)), Val(W)))
+    return bmuladd(a, b, c)
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
@@ -216,7 +216,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:N}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:C), Val(:N)), Val(W)))
+    return c & ~sprod(s, btr(a), ~b, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
@@ -228,7 +228,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:C}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:C)), Val(W)))
+    return c & ~sprod(s, ~a, btr(b), Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:N}) where {W}
@@ -240,7 +240,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:N}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:N)), Val(W)))
+    return smuladd(s, btr(a), b, c, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:T}) where {W}
@@ -252,7 +252,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:T}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:T)), Val(W)))
+    return smuladd(s, a, btr(b), c, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:N}) where {W}
@@ -264,7 +264,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:N}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:R), Val(:N)), Val(W)))
+    return c & ~sprod(s, a, ~b, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:R}) where {W}
@@ -276,7 +276,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:R}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:N), Val(:R)), Val(W)))
+    return c & ~sprod(s, ~a, b, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:T}) where {W}
@@ -288,7 +288,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:T}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:T)), Val(W)))
+    return smuladd(s, btr(a), btr(b), c, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:R}) where {W}
@@ -300,7 +300,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:R}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:R)), Val(W)))
+    return c & ~sprod(s, ~btr(a), b, Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:C}) where {W}
@@ -312,7 +312,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:T}, ::Val{:C}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:T), Val(:C)), Val(W)))
+    return c & ~sprod(s, ~btr(a), btr(b), Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:T}) where {W}
@@ -324,7 +324,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:R}, ::Val{:T}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:R), Val(:T)), Val(W)))
+    return c & ~sprod(s, a, ~btr(b), Val(:N), Val(:N))
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:T}) where {W}
@@ -336,7 +336,7 @@ end
 end
 
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:C}, ::Val{:T}) where {W}
-    return Vec{W, UInt64}(ntuple(l -> smuladd(s, a[l], b[l], c[l], Val(:C), Val(:T)), Val(W)))
+    return c & ~sprod(s, btr(a), ~btr(b), Val(:N), Val(:N))
 end
 
 #
@@ -408,6 +408,22 @@ end
     a = a ⊻ b ⊻ (b << 28)
 
     return a
+end
+
+#
+# c ⊕ a b for two vectors of matrices: row i of each product takes row k
+# of b wherever bit k of row i of a is set, the row selected by a byte test
+#
+@inline function bmuladd(a::Vec{W, UInt64}, b::Vec{W, UInt64}, c::Vec{W, UInt64}) where {W}
+    a8 = reinterpret(Vec{8W, UInt8}, a)
+    b8 = reinterpret(Vec{8W, UInt8}, b)
+    c8 = reinterpret(Vec{8W, UInt8}, c)
+
+    @nexprs 8 k -> begin
+        c8 = vifelse((a8 & (0x01 << (k - 1))) != 0x00, c8 | rbc(b8, Val(k - 1)), c8)
+    end
+
+    return reinterpret(Vec{W, UInt64}, c8)
 end
 
 @generated function rbc(v::Vec{W, UInt8}, ::Val{K}) where {W, K}
