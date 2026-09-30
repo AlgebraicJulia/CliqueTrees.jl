@@ -1267,7 +1267,7 @@ function strsx_tp_tmp!(
         nrhs = convert(I, size(B, 1))
     end
 
-    if B isa AbstractMatrix && nrhs >= 4nt
+    if B isa AbstractMatrix && nrhs >= 4nt && SIDE === :L
         return false
     end
 
@@ -1374,7 +1374,7 @@ function strsx_tp_tmp!(
     #
     # wide right-hand sides are split by column instead
     #
-    if B isa AbstractMatrix && nrhs >= 4nt
+    if B isa AbstractMatrix && nrhs >= 4nt && SIDE === :L
         return false
     end
 
