@@ -42,3 +42,34 @@ end
 function sgetri!(F::DenseSLU, C::AbstractMatrix; nt::Integer = nthreads())
     return sgetri!(F.s, C, F.A; nt)
 end
+
+# ===== stpqxt! =====
+#
+# Given the factorization of A*, compute the factorization of
+#
+#     (A ⊕ X Y)*
+#
+# where X is n × m (or a vector: m = 1) and Y is m × n (or a vector: the row y).
+#
+function stpqxt!(F::DenseSLU{Sem, T}, X::AbstractVecOrMat, Y::AbstractVecOrMat; nt::Integer = nthreads()) where {Sem, T}
+    @assert size(X, 1) == size(F, 1)
+
+    if Y isa AbstractVector
+        @assert size(X, 2) == 1
+        @assert length(Y) == size(F, 1)
+    else
+        @assert size(Y, 1) == size(X, 2)
+        @assert size(Y, 2) == size(F, 1)
+    end
+
+    n = size(F, 1)
+    m = size(X, 2)
+
+    X₁ = FMatrix{T}(undef, n, m)
+    Y₁ = FMatrix{T}(undef, m, n)
+    copyto!(X₁, X)
+    copyto!(Y₁, Y)
+
+    stpqxt!(F.s, F.A, X₁, Y₁; nt)
+    return F
+end

@@ -421,6 +421,51 @@ end
     return d
 end
 
+@inline function smuladd(s::PredSucc{S}, a::UInt64, b::Vec{W, UInt64}, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {S <: Union{MinPlusLaw, MinProdLaw, MinPlus, MinProd}, W}
+    V = 0xffffffff00000000
+    H = 0x00000000ffff0000
+    I = 0x000000000000ffff
+
+    if a & V == szero(s, UInt64, Val(:N))
+        d = c
+    else
+        au = Vec{W, UInt64}(a)
+        bu = b
+
+        if S <: MinPlus
+            au = unflip(au)
+            bu = unflip(bu)
+        end
+
+        av = reinterpret(Vec{2W, Float32}, au & V)
+        bv = reinterpret(Vec{2W, Float32}, bu & V)
+        du = reinterpret(Vec{W, UInt64}, sprod(s.s, av, bv, Val(:N), Val(:N)))
+
+        if S <: MinPlus
+            du = flip(du)
+        end
+
+        d = (du & V) | ((Vec{W, UInt64}(a & H) + (b & H)) & H)
+
+        a &= I
+        b &= I
+
+        if s isa Pred
+            w = vifelse(b == Vec{W, UInt64}(0x0000000000000000), Vec{W, UInt64}(a), b)
+        else
+            if iszero(a)
+                w = b
+            else
+                w = Vec{W, UInt64}(a)
+            end
+        end
+
+        d = min(d | w, c)
+    end
+
+    return d
+end
+
 # ----- sstar -----
 
 function sstar(s::MaybeSafePredSucc{MinPlus}, a::UInt64)
