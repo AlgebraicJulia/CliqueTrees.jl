@@ -184,3 +184,5 @@ include("relative.jl")
 include("dualbool.jl")
 include("idembool.jl")
 include("qualitative.jl")
+
+const TableSemiring = Union{BoolMatrix, QualMatrix, DualBoolMatrix, IdemBoolMatrix}

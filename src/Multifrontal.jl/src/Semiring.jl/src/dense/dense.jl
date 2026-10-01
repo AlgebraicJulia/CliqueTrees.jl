@@ -6,6 +6,10 @@ end
 
 # ===== workspace pool =====
 
+function sgemx_tablesize(::Type{T}, nj::Integer) where {T}
+    return cld(32, sizeof(T)) * SGEMX_NR * nj
+end
+
 function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
     mr = SGEMX_MV * vecwidth(T)
 
@@ -14,7 +18,7 @@ function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
     nkc = min(nk, SGEMX_LEAF)
 
     apn = cld(nic, mr) * mr * njc
-    bpn = cld(nkc, SGEMX_NR) * SGEMX_NR * njc
+    bpn = cld(nkc, SGEMX_NR) * SGEMX_NR * njc + sgemx_tablesize(T, njc)
     cpn = mr * SGEMX_NR
 
     AP = FVector{T}(undef, apn)

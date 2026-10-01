@@ -74,8 +74,12 @@ function smuladd(s::QualMatrix, a::UInt32, b::UInt32, c::UInt32, ::Val{:N}, ::Va
     return sprod(s, a, b, Val(:N), Val(:N)) | c
 end
 
+@inline function stables(s::QualMatrix, b::UInt32)
+    return qtables(b)
+end
+
 @inline function smuladd(s::QualMatrix, a::Vec{W, UInt32}, b::UInt32, c::Vec{W, UInt32}, ::Val{:N}, ::Val{:N}) where {W}
-    lo, hi = qtables(b)
+    lo, hi = stables(s, b)
 
     il = reinterpret(Vec{4W, UInt8},  a       & 0x0f0f0f0f)
     ih = reinterpret(Vec{4W, UInt8}, (a >> 4) & 0x0f0f0f0f)

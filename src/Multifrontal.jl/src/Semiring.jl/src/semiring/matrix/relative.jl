@@ -166,13 +166,16 @@ function smuladd(s::BoolMatrix, a::UInt64, b::UInt64, c::UInt64, ::Val{:C}, ::Va
     return splus(s, sprod(s, a, b, Val(:C), Val(:T)), c, Val(:C))
 end
 
+@inline function stables(s::BoolMatrix, b::UInt64)
+    return ortable(b % UInt32), ortable((b >> 32) % UInt32)
+end
+
 #
 # Vector A, scalar B (the GEMM micro-kernel): two table
 # lookups per byte.
 #
 @inline function smuladd(s::BoolMatrix, a::Vec{W, UInt64}, b::UInt64, c::Vec{W, UInt64}, ::Val{:N}, ::Val{:N}) where {W}
-    lo = ortable(b % UInt32)
-    hi = ortable((b >> 32) % UInt32)
+    lo, hi = stables(s, b)
 
     il = reinterpret(Vec{8W, UInt8},  a       & 0x0f0f0f0f0f0f0f0f)
     ih = reinterpret(Vec{8W, UInt8}, (a >> 4) & 0x0f0f0f0f0f0f0f0f)

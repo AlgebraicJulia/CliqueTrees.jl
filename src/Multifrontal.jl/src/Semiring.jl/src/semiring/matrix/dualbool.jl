@@ -58,9 +58,14 @@ function smuladd(s::DualBoolMatrix, a::UInt32, b::UInt32, c::UInt32, ::Val{:N}, 
     return sprod(s, a, b, Val(:N), Val(:N)) | c
 end
 
-@inline function smuladd(s::DualBoolMatrix, a::Vec{W, UInt32}, b::UInt32, c::Vec{W, UInt32}, ::Val{:N}, ::Val{:N}) where {W}
+@inline function stables(s::DualBoolMatrix, b::UInt32)
     lo = ortable(b)
     hi = reinterpret(Vec{16, UInt8}, dtau(reinterpret(Vec{2, UInt64}, lo)))
+    return lo, hi
+end
+
+@inline function smuladd(s::DualBoolMatrix, a::Vec{W, UInt32}, b::UInt32, c::Vec{W, UInt32}, ::Val{:N}, ::Val{:N}) where {W}
+    lo, hi = stables(s, b)
 
     il = reinterpret(Vec{4W, UInt8},  a       & 0x0f0f0f0f)
     ih = reinterpret(Vec{4W, UInt8}, (a >> 4) & 0x0f0f0f0f)

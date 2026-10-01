@@ -391,9 +391,17 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
 
     sgemx_pack_B!(s, tA, tB, BP, B, nk, nj, z)
 
+    tables = sgemx_usetables(s, tA, tB) && ni >= 2MR && length(BP) >= cld(nk, SGEMX_NR) * SGEMX_NR * nj + sgemx_tablesize(T, nj)
+
     @preserve A AP BP @inbounds for k0 in 0:SGEMX_NR:nk - 1
         kt = min(SGEMX_NR, nk - k0)
         pB = pointer(BP) + k0 * nj * Z
+        pT = Ptr{UInt8}(C_NULL)
+
+        if tables
+            pT = reinterpret(Ptr{UInt8}, pointer(BP, length(BP) - sgemx_tablesize(T, nj) + 1))
+            sgemx_tables!(s, pT, BP, k0 * nj, SGEMX_NR * nj)
+        end
 
         for i0 in 0:MR:ni - 1
             it = min(MR, ni - i0)
@@ -407,7 +415,11 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
             end
 
             if it == MR && kt == SGEMX_NR
-                sgemx_kern!(s, tA, tB, C, i0, k0, pA, sA, pB, nj, mr)
+                if tables
+                    @preserve C sgemx_kern_tables!(s, tA, tB, unsafe_convert(Ptr{T}, C) + (k0 * stride(C, 2) + i0) * Z, stride(C, 2), pA, sA, pT, nj, mr)
+                else
+                    sgemx_kern!(s, tA, tB, C, i0, k0, pA, sA, pB, nj, mr)
+                end
             else
                 for kp in 1:kt
                     for ip in 1:it
@@ -426,7 +438,11 @@ function sgemx2!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatri
                 end
 
                 @preserve CP begin
-                    sgemx_kern!(s, tA, tB, pointer(CP), MR, pA, sA, pB, nj, mr)
+                    if tables
+                        sgemx_kern_tables!(s, tA, tB, pointer(CP), MR, pA, sA, pT, nj, mr)
+                    else
+                        sgemx_kern!(s, tA, tB, pointer(CP), MR, pA, sA, pB, nj, mr)
+                    end
                 end
 
                 for kp in 1:kt
@@ -600,6 +616,79 @@ end
     return quote
         $(Expr(:meta, :inline))
         $ex
+        return
+    end
+end
+
+# ===== sgemx_tables! =====
+
+function sgemx_usetables(s::AbstractSemiring, tA::Val, tB::Val)
+    return false
+end
+
+function sgemx_usetables(s::TableSemiring, tA::Val{:N}, tB::Val{:N})
+    return true
+end
+
+# the two 16-byte tables of the n packed B elements from BP[o + 1], 32 bytes each from pT
+function sgemx_tables!(s::AbstractSemiring, pT::Ptr{UInt8}, BP::AbstractVector, o::Int, n::Int)
+    @inbounds for i in 1:n
+        lo, hi = stables(s, BP[o + i])
+        vstore(lo, pT + 32(i - 1))
+        vstore(hi, pT + 32(i - 1) + 16)
+    end
+
+    return
+end
+
+# ===== sgemx_kern_tables! =====
+
+@generated function sgemx_kern_tables!(s::AbstractSemiring, tA::Val{:N}, tB::Val{:N}, pC::Ptr{T}, ldC::Int, pA::Ptr{T}, sA::Int, pT::Ptr{UInt8}, nj::Int, ::Val{MR}) where {T, MR}
+    W = vecwidth(T)
+    MV = MR ÷ W
+    NR = SGEMX_NR
+    Z = sizeof(T)
+    M = 0x0f0f0f0f0f0f0f0f % T
+
+    c(v, k) = Symbol(:c_, v, :_, k)
+    il(v) = Symbol(:il_, v)
+    ih(v) = Symbol(:ih_, v)
+
+    init = Expr(:block)
+    body = Expr(:block)
+    term = Expr(:block)
+
+    for k in 1:NR, v in 1:MV
+        off = :(($(k - 1) * ldC + $((v - 1) * W)) * $Z)
+        push!(init.args, :($(c(v, k)) = vload(Vec{$W, $T}, pC + $off)))
+        push!(term.args, :(vstore($(c(v, k)), pC + $off)))
+    end
+
+    for v in 1:MV
+        push!(body.args, :(a = vload(Vec{$W, $T}, pA + $((v - 1) * W * Z))))
+        push!(body.args, :($(il(v)) = reinterpret(Vec{$(Z * W), UInt8}, a & $M)))
+        push!(body.args, :($(ih(v)) = reinterpret(Vec{$(Z * W), UInt8}, (a >> 4) & $M)))
+    end
+
+    for k in 1:NR
+        push!(body.args, :(lo = vload(Vec{16, UInt8}, pT + $(32(k - 1)))))
+        push!(body.args, :(hi = vload(Vec{16, UInt8}, pT + $(32(k - 1) + 16))))
+
+        for v in 1:MV
+            push!(body.args, :($(c(v, k)) = $(c(v, k)) | reinterpret(Vec{$W, $T}, lookup(lo, $(il(v))) | lookup(hi, $(ih(v))))))
+        end
+    end
+
+    return quote
+        $init
+
+        for _ in 1:nj
+            $body
+            pA += sA * $Z
+            pT += $(32NR)
+        end
+
+        $term
         return
     end
 end
