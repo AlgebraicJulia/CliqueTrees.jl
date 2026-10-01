@@ -86,22 +86,6 @@ function LinearAlgebra.lu!(F::AbstractSLU; nt::Integer = nthreads())
     return sgetrf!(F; nt)
 end
 
-# ===== lowrankupdate! =====
-
-#
-# Given a factorization 
-#
-#   A* = U* L*,
-#
-# update L and U so.
-#
-#   (A + X Y)* = U* L*
-#
-function LinearAlgebra.lowrankupdate!(F::AbstractSLU, X::AbstractVecOrMat, Y::AbstractVecOrMat; nt::Integer = nthreads())
-    stpqxt!(F, X, Y; nt)
-    return F
-end
-
 # ===== lmul! / rmul! =====
 
 #
