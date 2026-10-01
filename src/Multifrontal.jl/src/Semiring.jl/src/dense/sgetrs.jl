@@ -25,7 +25,7 @@ function sgetrs!(s::AbstractSemiring, side::Val{SIDE}, trans::Val{TRANS}, A::Abs
     end
 
     if nt <= 1 || c <= THRESHOLD
-        AP, BP, CP = spool_st(T, m, d, n)
+        AP, BP, CP = spool_st(s, T, m, d, n)
 
         if isforward(:L, TRANS, SIDE)
             strsx_st!(s, side, trans, Val(:L), Val(:U), A, B, AP, BP, CP)
@@ -35,7 +35,7 @@ function sgetrs!(s::AbstractSemiring, side::Val{SIDE}, trans::Val{TRANS}, A::Abs
             strsx_st!(s, side, trans, Val(:L), Val(:U), A, B, AP, BP, CP)
         end
     else
-        pool = spool_mt(T, nt, m, d, n)
+        pool = spool_mt(s, T, nt, m, d, n)
 
         if isforward(:L, TRANS, SIDE)
             strsx_mt!(s, side, trans, Val(:L), Val(:U), A, B, pool, nt)

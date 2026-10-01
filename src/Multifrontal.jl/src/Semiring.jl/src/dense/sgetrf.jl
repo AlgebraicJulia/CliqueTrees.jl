@@ -10,7 +10,7 @@ function sgetrf!(s::AbstractSemiring, A::AbstractMatrix{V}; nt::Integer = nthrea
     if n <= SLU_NB
         sgetrf2!(s, A)
     else
-        sgetrf_mt!(s, A, spool_mt(V, nt, n, n, n), nt)
+        sgetrf_mt!(s, A, spool_mt(s, V, nt, n, n, n), nt)
     end
 
     return A

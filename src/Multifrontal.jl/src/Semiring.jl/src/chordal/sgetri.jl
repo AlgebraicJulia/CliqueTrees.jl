@@ -5,7 +5,7 @@ function sgetri!(
         X::AbstractMatrix;
         nt::Integer = nthreads(),
     ) where {T, I}
-    pool = spool_mt(T, nt)
+    pool = spool_mt(s, T, nt)
 
     return sgetri_mt!(s, L, U, X, pool, nt)
 end

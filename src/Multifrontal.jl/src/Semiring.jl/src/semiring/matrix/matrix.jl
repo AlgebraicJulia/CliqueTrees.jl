@@ -185,4 +185,171 @@ include("dualbool.jl")
 include("idembool.jl")
 include("qualitative.jl")
 
-const TableSemiring = Union{BoolMatrix, QualMatrix, DualBoolMatrix, IdemBoolMatrix}
+const MatrixQuantale = Union{BoolMatrix, QualMatrix, DualBoolMatrix, IdemBoolMatrix}
+
+function strsx_fwd_upd_1!(s::MatrixQuantale, C::AbstractVecOrMat{T}, fsep::AbstractVector{I}, l₂₁::AbstractVector{T}, Rp::I, na::I, nrhs::I, trans::Val, side::Val{SIDE}) where {T, I, SIDE}
+    return strsx_fwd_upd_vec_1!(s, C, fsep, l₂₁, Rp, na, nrhs, trans, side)
+end
+
+# ===== sgemx =====
+
+function stablesize(::Type{T}, nj::Integer) where {T}
+    return cld(32, sizeof(T)) * SGEMX_NR * nj
+end
+
+function spool_st(s::MatrixQuantale, ::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
+    mr = SGEMX_MV * vecwidth(T)
+
+    nic = min(ni, SGEMX_LEAF)
+    njc = min(nj, SGEMX_LEAF)
+    nkc = min(nk, SGEMX_LEAF)
+
+    apn = cld(nic, mr) * mr * njc
+    bpn = cld(nkc, SGEMX_NR) * SGEMX_NR * njc + stablesize(T, njc)
+    cpn = mr * SGEMX_NR
+
+    AP = FVector{T}(undef, apn)
+    BP = FVector{T}(undef, bpn)
+    CP = FVector{T}(undef, cpn)
+
+    return AP, BP, CP
+end
+
+function sgemx2!(s::MatrixQuantale, tA::Val{:N}, tB::Val{:N}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(SGEMX_MV * vecwidth(T))) where {T, MR}
+    ni = size(C, 1)
+    nk = size(C, 2)
+    nj = size(A, 2)
+
+    if ni >= 2MR && length(BP) >= cld(nk, SGEMX_NR) * SGEMX_NR * nj + stablesize(T, nj)
+        sgemx2_table!(s, tA, tB, C, A, B, AP, BP, CP, mr)
+    else
+        sgemx2_impl!(s, tA, tB, C, A, B, AP, BP, CP, mr)
+    end
+
+    return C
+end
+
+function sgemx2_table!(s::AbstractSemiring, tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, AP::AbstractVector, BP::AbstractVector, CP::AbstractVector, mr::Val{MR} = Val(SGEMX_MV * vecwidth(T))) where {T, MR, TA, TB}
+    ni = size(C, 1)
+    nk = size(C, 2)
+    nj = size(A, 2)
+
+    z = szero(s, T, Val(:N))
+    Z = sizeof(T)
+
+    direct = nk <= SGEMX_NR
+    ie = ni - ni % MR
+
+    if !direct
+        sgemx_pack_A!(s, tA, tB, AP, A, ni, nj, z, mr)
+    elseif ie < ni
+        sgemx_pack_A!(s, tA, tB, AP, view(A, ie + 1:ni, :), ni - ie, nj, z, mr)
+    end
+
+    sgemx_pack_B!(s, tA, tB, BP, B, nk, nj, z)
+
+    @preserve A AP BP @inbounds for k0 in 0:SGEMX_NR:nk - 1
+        kt = min(SGEMX_NR, nk - k0)
+        pT = reinterpret(Ptr{UInt8}, pointer(BP, length(BP) - stablesize(T, nj) + 1))
+
+        for i in 1:SGEMX_NR * nj
+            lo, hi = stables(s, BP[k0 * nj + i])
+            vstore(lo, pT + 32(i - 1))
+            vstore(hi, pT + 32(i - 1) + 16)
+        end
+
+        for i0 in 0:MR:ni - 1
+            it = min(MR, ni - i0)
+
+            if direct && it == MR
+                pA = pointer(A) + i0 * Z; sA = stride(A, 2)
+            elseif direct
+                pA = pointer(AP); sA = MR
+            else
+                pA = pointer(AP) + i0 * nj * Z; sA = MR
+            end
+
+            if it == MR && kt == SGEMX_NR
+                @preserve C sgemx_kern_tables!(s, tA, tB, unsafe_convert(Ptr{T}, C) + (k0 * stride(C, 2) + i0) * Z, stride(C, 2), pA, sA, pT, nj, mr)
+            else
+                for kp in 1:kt
+                    for ip in 1:it
+                        CP[(kp - 1) * MR + ip] = C[i0 + ip, k0 + kp]
+                    end
+
+                    for ip in it + 1:MR
+                        CP[(kp - 1) * MR + ip] = z
+                    end
+                end
+
+                for kp in kt + 1:SGEMX_NR
+                    for ip in 1:MR
+                        CP[(kp - 1) * MR + ip] = z
+                    end
+                end
+
+                @preserve CP begin
+                    sgemx_kern_tables!(s, tA, tB, pointer(CP), MR, pA, sA, pT, nj, mr)
+                end
+
+                for kp in 1:kt
+                    for ip in 1:it
+                        C[i0 + ip, k0 + kp] = CP[(kp - 1) * MR + ip]
+                    end
+                end
+            end
+        end
+    end
+
+    return C
+end
+
+@generated function sgemx_kern_tables!(s::AbstractSemiring, tA::Val{:N}, tB::Val{:N}, pC::Ptr{T}, ldC::Int, pA::Ptr{T}, sA::Int, pT::Ptr{UInt8}, nj::Int, ::Val{MR}) where {T, MR}
+    W = vecwidth(T)
+    MV = MR ÷ W
+    NR = SGEMX_NR
+    Z = sizeof(T)
+    M = 0x0f0f0f0f0f0f0f0f % T
+
+    c(v, k) = Symbol(:c_, v, :_, k)
+    il(v) = Symbol(:il_, v)
+    ih(v) = Symbol(:ih_, v)
+
+    init = Expr(:block)
+    body = Expr(:block)
+    term = Expr(:block)
+
+    for k in 1:NR, v in 1:MV
+        off = :(($(k - 1) * ldC + $((v - 1) * W)) * $Z)
+        push!(init.args, :($(c(v, k)) = vload(Vec{$W, $T}, pC + $off)))
+        push!(term.args, :(vstore($(c(v, k)), pC + $off)))
+    end
+
+    for v in 1:MV
+        push!(body.args, :(a = vload(Vec{$W, $T}, pA + $((v - 1) * W * Z))))
+        push!(body.args, :($(il(v)) = reinterpret(Vec{$(Z * W), UInt8}, a & $M)))
+        push!(body.args, :($(ih(v)) = reinterpret(Vec{$(Z * W), UInt8}, (a >> 4) & $M)))
+    end
+
+    for k in 1:NR
+        push!(body.args, :(lo = vload(Vec{16, UInt8}, pT + $(32(k - 1)))))
+        push!(body.args, :(hi = vload(Vec{16, UInt8}, pT + $(32(k - 1) + 16))))
+
+        for v in 1:MV
+            push!(body.args, :($(c(v, k)) = $(c(v, k)) | reinterpret(Vec{$W, $T}, lookup(lo, $(il(v))) | lookup(hi, $(ih(v))))))
+        end
+    end
+
+    return quote
+        $init
+
+        for _ in 1:nj
+            $body
+            pA += sA * $Z
+            pT += $(32NR)
+        end
+
+        $term
+        return
+    end
+end

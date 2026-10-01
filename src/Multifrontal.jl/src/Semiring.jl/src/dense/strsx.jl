@@ -21,10 +21,10 @@ function strsx!(s::AbstractSemiring, side::Val{SIDE}, trans::Val, uplo::Val, dia
     end
 
     if nt <= 1 || c <= THRESHOLD || size(A, 1) * c < STRSX_WORK
-        AP, BP, CP = spool_st(T, m, d, n)
+        AP, BP, CP = spool_st(s, T, m, d, n)
         strsx_st!(s, side, trans, uplo, diag, A, B, AP, BP, CP)
     else
-        pool = spool_mt(T, nt, m, d, n)
+        pool = spool_mt(s, T, nt, m, d, n)
         strsx_mt!(s, side, trans, uplo, diag, A, B, pool, nt)
     end
 

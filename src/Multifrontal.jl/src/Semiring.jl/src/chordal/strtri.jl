@@ -7,7 +7,7 @@ function strtri!(
         X::AbstractMatrix;
         nt::Integer = nthreads(),
     ) where {UPLO, T, I}
-    pool = spool_mt(T, nt)
+    pool = spool_mt(s, T, nt)
 
     return strtri_mt!(s, diag, A, X, pool, nt)
 end

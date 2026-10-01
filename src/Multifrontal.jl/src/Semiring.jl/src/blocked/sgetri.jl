@@ -16,7 +16,7 @@ function sgetri!(
     n = convert(I, size(C, 2))
 
     W = DivisionWorkspace{T}(L.S, n)
-    pool = spool_mt(T, nt)
+    pool = spool_mt(s, T, nt)
 
     sgetri_mt!(s, L, U, C, pool, nt)
 

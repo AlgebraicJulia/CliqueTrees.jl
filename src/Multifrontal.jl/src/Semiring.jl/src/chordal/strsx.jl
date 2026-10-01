@@ -16,7 +16,7 @@ function strsx!(
     if B isa AbstractVector
         pool = nothing
     else
-        pool = spool_mt(T, nt)
+        pool = spool_mt(s, T, nt)
     end
 
     return strsx_mt!(s, side, trans, diag, A, B, pool, nt)
@@ -63,7 +63,7 @@ function strsx_mt!(
             end
 
             Wt = DivisionWorkspace{T}(S, trhs)
-            poolt = spool_mt(T, 1)
+            poolt = spool_mt(s, T, 1)
             strsx_mt!(s, side, trans, diag, A, Bt, Wt, poolt, 1, one(I), nv(A.S.res))
         end
     else
@@ -562,36 +562,76 @@ function strsx_fwd_1!(
         #
         #   M₂ ← l₂₁ c₁       C₂ ← C₂ + M₂
         #
-        if C isa AbstractVector
-            v = C[Rp]
+        strsx_fwd_upd_1!(s, C, fsep, l₂₁, Rp, na, nrhs, trans, side)
+    end
 
-            @inbounds for i in oneto(na)
-                if SIDE === :L
-                    C[fsep[i]] = smuladd(s, l₂₁[i], v, C[fsep[i]], trans, Val(:N))
-                else
-                    C[fsep[i]] = smuladd(s, v, l₂₁[i], C[fsep[i]], Val(:N), trans)
+    return
+end
+
+function strsx_fwd_upd_1!(s::AbstractSemiring, C::AbstractVecOrMat{T}, fsep::AbstractVector{I}, l₂₁::AbstractVector{T}, Rp::I, na::I, nrhs::I, trans::Val, ::Val{SIDE}) where {T, I, SIDE}
+    if C isa AbstractVector
+        v = C[Rp]
+
+        @inbounds for i in oneto(na)
+            if SIDE === :L
+                C[fsep[i]] = smuladd(s, l₂₁[i], v, C[fsep[i]], trans, Val(:N))
+            else
+                C[fsep[i]] = smuladd(s, v, l₂₁[i], C[fsep[i]], Val(:N), trans)
+            end
+        end
+    else
+        if SIDE === :L
+            @inbounds for k in oneto(nrhs)
+                v = C[Rp, k]
+
+                for i in oneto(na)
+                    C[fsep[i], k] = smuladd(s, l₂₁[i], v, C[fsep[i], k], trans, Val(:N))
                 end
             end
         else
-            if SIDE === :L
-                @inbounds for k in oneto(nrhs)
-                    v = C[Rp, k]
+            Z = sizeof(T)
+            sC = stride(C, 2)
 
-                    for i in oneto(na)
-                        C[fsep[i], k] = smuladd(s, l₂₁[i], v, C[fsep[i], k], trans, Val(:N))
-                    end
+            @preserve C begin
+                pC = pointer(C)
+                pr = pC + (Rp - one(I)) * sC * Z
+
+                @inbounds for i in oneto(na)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (fsep[i] - one(I)) * sC * Z, pr, l₂₁[i], nrhs)
                 end
-            else
-                Z = sizeof(T)
-                sC = stride(C, 2)
+            end
+        end
+    end
 
-                @preserve C begin
-                    pC = pointer(C)
-                    pr = pC + (Rp - one(I)) * sC * Z
+    return
+end
 
-                    @inbounds for i in oneto(na)
-                        saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (fsep[i] - one(I)) * sC * Z, pr, l₂₁[i], nrhs)
-                    end
+function strsx_fwd_upd_vec_1!(s::AbstractSemiring, C::AbstractVecOrMat{T}, fsep::AbstractVector{I}, l₂₁::AbstractVector{T}, Rp::I, na::I, nrhs::I, trans::Val, ::Val{SIDE}) where {T, I, SIDE}
+    if C isa AbstractVector
+        v = C[Rp]
+
+        if SIDE === :L
+            strsx_vec_scatter!(s, trans, C, 0, fsep, l₂₁, v, na)
+        else
+            @inbounds for i in oneto(na)
+                C[fsep[i]] = smuladd(s, v, l₂₁[i], C[fsep[i]], Val(:N), trans)
+            end
+        end
+    else
+        if SIDE === :L
+            @inbounds for k in oneto(nrhs)
+                strsx_vec_scatter!(s, trans, C, (k - 1) * size(C, 1), fsep, l₂₁, C[Rp, k], na)
+            end
+        else
+            Z = sizeof(T)
+            sC = stride(C, 2)
+
+            @preserve C begin
+                pC = pointer(C)
+                pr = pC + (Rp - one(I)) * sC * Z
+
+                @inbounds for i in oneto(na)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pC + (fsep[i] - one(I)) * sC * Z, pr, l₂₁[i], nrhs)
                 end
             end
         end
@@ -1011,53 +1051,7 @@ function strsx_bwd_1!(
         #
         #   M₂ ← C₂       c₁ ← u₁₂ M₂ + c₁
         #
-        if C isa AbstractVector
-            v = C[Rp]
-
-            @inbounds for i in oneto(na)
-                if SIDE === :L
-                    v = smuladd(s, u₁₂[i], C[fsep[i]], v, trans, Val(:N))
-                else
-                    v = smuladd(s, C[fsep[i]], u₁₂[i], v, Val(:N), trans)
-                end
-            end
-
-            C[Rp] = v
-        else
-            if SIDE === :L
-                @inbounds for k in oneto(nrhs)
-                    v = C[Rp, k]
-
-                    for i in oneto(na)
-                        v = smuladd(s, u₁₂[i], C[fsep[i], k], v, trans, Val(:N))
-                    end
-
-                    C[Rp, k] = v
-                end
-            elseif nrhs <= STRSX_1_NB
-                @inbounds for k in oneto(nrhs)
-                    v = C[k, Rp]
-
-                    for i in oneto(na)
-                        v = smuladd(s, C[k, fsep[i]], u₁₂[i], v, Val(:N), trans)
-                    end
-
-                    C[k, Rp] = v
-                end
-            else
-                Z = sizeof(T)
-                sC = stride(C, 2)
-
-                @preserve C begin
-                    pC = pointer(C)
-                    pr = pC + (Rp - one(I)) * sC * Z
-
-                    @inbounds for i in oneto(na)
-                        saxpy_kern!(s, Val(:N), trans, Val(:R), pr, pC + (fsep[i] - one(I)) * sC * Z, u₁₂[i], nrhs)
-                    end
-                end
-            end
-        end
+        strsx_bwd_upd_1!(s, C, fsep, u₁₂, Rp, na, nrhs, trans, side)
     end
     #
     #   c₁ ← d₁₁* c₁
@@ -1083,4 +1077,126 @@ function strsx_bwd_1!(
     end
 
     return
+end
+
+function strsx_bwd_upd_1!(s::AbstractSemiring, C::AbstractVecOrMat{T}, fsep::AbstractVector{I}, u₁₂::AbstractVector{T}, Rp::I, na::I, nrhs::I, trans::Val, ::Val{SIDE}) where {T, I, SIDE}
+    if C isa AbstractVector
+        if SIDE === :L
+            C[Rp] = strsx_vec_gather(s, trans, C, 0, fsep, u₁₂, C[Rp], na)
+        else
+            v = C[Rp]
+
+            @inbounds for i in oneto(na)
+                v = smuladd(s, C[fsep[i]], u₁₂[i], v, Val(:N), trans)
+            end
+
+            C[Rp] = v
+        end
+    else
+        if SIDE === :L
+            @inbounds for k in oneto(nrhs)
+                C[Rp, k] = strsx_vec_gather(s, trans, C, (k - 1) * size(C, 1), fsep, u₁₂, C[Rp, k], na)
+            end
+        elseif nrhs <= STRSX_1_NB
+            @inbounds for k in oneto(nrhs)
+                v = C[k, Rp]
+
+                for i in oneto(na)
+                    v = smuladd(s, C[k, fsep[i]], u₁₂[i], v, Val(:N), trans)
+                end
+
+                C[k, Rp] = v
+            end
+        else
+            Z = sizeof(T)
+            sC = stride(C, 2)
+
+            @preserve C begin
+                pC = pointer(C)
+                pr = pC + (Rp - one(I)) * sC * Z
+
+                @inbounds for i in oneto(na)
+                    saxpy_kern!(s, Val(:N), trans, Val(:R), pr, pC + (fsep[i] - one(I)) * sC * Z, u₁₂[i], nrhs)
+                end
+            end
+        end
+    end
+
+    return
+end
+
+# ===== strsx_vec =====
+
+@inline function strsx_vec_scatter_step!(s::AbstractSemiring, trans::Val, C::AbstractVecOrMat{T}, o::Integer, idx::AbstractVector, a::AbstractVector{T}, v::T, i::Integer, ::Val{W}) where {T, W}
+    function cf(l)
+        return @inbounds(C[o + idx[i + l - 1]])
+    end
+
+    function af(l)
+        return @inbounds(a[i + l - 1])
+    end
+
+    cv = Vec{W, T}(ntuple(cf, Val(W)))
+    av = Vec{W, T}(ntuple(af, Val(W)))
+    cv = smuladd(s, av, v, cv, trans, Val(:N))
+
+    @inbounds for l in 1:W
+        C[o + idx[i + l - 1]] = cv[l]
+    end
+
+    return
+end
+
+@inline function strsx_vec_scatter!(s::AbstractSemiring, trans::Val, C::AbstractVecOrMat{T}, o::Integer, idx::AbstractVector, a::AbstractVector{T}, v::T, n::Integer) where {T}
+    i = 1
+    W = min(vecwidth(T), 8)
+
+    @inbounds while i + W - 1 <= n
+        strsx_vec_scatter_step!(s, trans, C, o, idx, a, v, i, Val(W))
+        i += W
+    end
+
+    @inbounds while i <= n
+        C[o + idx[i]] = smuladd(s, a[i], v, C[o + idx[i]], trans, Val(:N))
+        i += 1
+    end
+
+    return
+end
+
+@inline function strsx_vec_gather_step(s::AbstractSemiring, trans::Val, C::AbstractVecOrMat{T}, o::Integer, idx::AbstractVector, a::AbstractVector{T}, d::Vec{W, T}, i::Integer) where {T, W}
+    function cf(l)
+        return @inbounds(C[o + idx[i + l - 1]])
+    end
+
+    function af(l)
+        return @inbounds(a[i + l - 1])
+    end
+
+    bv = Vec{W, T}(ntuple(cf, Val(W)))
+    av = Vec{W, T}(ntuple(af, Val(W)))
+    return smuladd(s, av, bv, d, trans, Val(:N))
+end
+
+@inline function strsx_vec_gather(s::AbstractSemiring, trans::Val, C::AbstractVecOrMat{T}, o::Integer, idx::AbstractVector, a::AbstractVector{T}, v::T, n::Integer) where {T}
+    i = 1
+    W = min(vecwidth(T), 8)
+
+    if n >= W
+        d = Vec{W, T}(szero(s, T, Val(:N)))
+
+        @inbounds while i + W - 1 <= n
+            d = strsx_vec_gather_step(s, trans, C, o, idx, a, d, i)
+            i += W
+        end
+
+        v = splus(s, v, sreduce(s, d, Val(:N)), Val(:N))
+    end
+
+    @inbounds while i <= n
+        v = smuladd(s, a[i], C[o + idx[i]], v, trans, Val(:N))
+        i += 1
+    end
+
+    return v
 end

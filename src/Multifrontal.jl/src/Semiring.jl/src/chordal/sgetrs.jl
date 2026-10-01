@@ -16,10 +16,10 @@ function sgetrs!(
         pool = nothing
     elseif SIDE === :L
         nrhs = convert(I, size(B, 2))
-        pool = spool_mt(T, nt)
+        pool = spool_mt(s, T, nt)
     else
         nrhs = convert(I, size(B, 1))
-        pool = spool_mt(T, nt)
+        pool = spool_mt(s, T, nt)
     end
 
     W = DivisionWorkspace{T}(S, nrhs)

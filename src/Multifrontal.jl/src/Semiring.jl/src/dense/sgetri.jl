@@ -12,14 +12,14 @@ function sgetri!(s::AbstractSemiring, C::AbstractMatrix{T}, A::AbstractMatrix{T}
     copytri!(C, A, Val(:U))
 
     if nt <= 1
-        AP, BP, CP = spool_st(T, n, n, n)
+        AP, BP, CP = spool_st(s, T, n, n, n)
         #
         #   C ← U*        C ← C L* = U* L*
         #
         strtri_st!(s, Val(:U), Val(:N), C, AP, BP, CP)
         strsx_st!(s, Val(:R), Val(:N), Val(:L), Val(:U), A, C, AP, BP, CP)
     else
-        pool = spool_mt(T, nt, n, n, n)
+        pool = spool_mt(s, T, nt, n, n, n)
         #
         #   C ← U*        C ← C L* = U* L*
         #

@@ -6,11 +6,7 @@ end
 
 # ===== workspace pool =====
 
-function sgemx_tablesize(::Type{T}, nj::Integer) where {T}
-    return cld(32, sizeof(T)) * SGEMX_NR * nj
-end
-
-function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
+function spool_st(s::AbstractSemiring, ::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
     mr = SGEMX_MV * vecwidth(T)
 
     nic = min(ni, SGEMX_LEAF)
@@ -18,7 +14,7 @@ function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
     nkc = min(nk, SGEMX_LEAF)
 
     apn = cld(nic, mr) * mr * njc
-    bpn = cld(nkc, SGEMX_NR) * SGEMX_NR * njc + sgemx_tablesize(T, njc)
+    bpn = cld(nkc, SGEMX_NR) * SGEMX_NR * njc
     cpn = mr * SGEMX_NR
 
     AP = FVector{T}(undef, apn)
@@ -28,24 +24,24 @@ function spool_st(::Type{T}, ni::Integer, nj::Integer, nk::Integer) where {T}
     return AP, BP, CP
 end
 
-function spool_st(::Type{T}) where {T}
-    return spool_st(T, SGEMX_LEAF, SGEMX_LEAF, SGEMX_LEAF)
+function spool_st(s::AbstractSemiring, ::Type{T}) where {T}
+    return spool_st(s, T, SGEMX_LEAF, SGEMX_LEAF, SGEMX_LEAF)
 end
 
-function spool_mt(::Type{T}, nt::Integer, ni::Integer, nj::Integer, nk::Integer) where {T}
+function spool_mt(s::AbstractSemiring, ::Type{T}, nt::Integer, ni::Integer, nj::Integer, nk::Integer) where {T}
     @assert nt >= 1
 
     pool = FVector{Tuple{FVector{T}, FVector{T}, FVector{T}}}(undef, nt)
 
     for t in 1:nt
-        pool[t] = spool_st(T, ni, nj, nk)
+        pool[t] = spool_st(s, T, ni, nj, nk)
     end
 
     return pool
 end
 
-function spool_mt(::Type{T}, nt::Integer) where {T}
-    return spool_mt(T, nt, SGEMX_LEAF, SGEMX_LEAF, SGEMX_LEAF)
+function spool_mt(s::AbstractSemiring, ::Type{T}, nt::Integer) where {T}
+    return spool_mt(s, T, nt, SGEMX_LEAF, SGEMX_LEAF, SGEMX_LEAF)
 end
 
 include("sdot.jl")

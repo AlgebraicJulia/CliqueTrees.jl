@@ -211,7 +211,7 @@ function sgetrs!(F::ChordalSLU{<:Any, T, I}, side::Val{SIDE}, trans::Val{TRANS},
     if B isa AbstractVector
         pool = nothing
     else
-        pool = spool_mt(T, nt)
+        pool = spool_mt(F.s, T, nt)
     end
 
     sgetrs_mt!(F.s, side, trans, F.L, F.U, F.S.Bptr, F.S.Fptr, F.S.nBptr, pointers(F.S.N), targets(F.S.N), F.Nval, B, pool, nt)

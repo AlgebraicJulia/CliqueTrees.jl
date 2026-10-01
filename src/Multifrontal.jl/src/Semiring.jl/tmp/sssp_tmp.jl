@@ -536,7 +536,7 @@ end
 function sgetrs_elem_workspace_tmp(F::ChordalSLU{<:Any, T, I}; nt::Integer = Threads.nthreads(), nrhs::Integer = 1) where {T, I}
     W = DivisionWorkspace{T}(F.S.S, two(I))
     x = FVector{T}(undef, size(F, 1))
-    pool = spool_mt(T, nt)
+    pool = spool_mt(F.s, T, nt)
     sched = DivisionSchedule{T}(F.S.S; nt, nrhs)
     return W, x, pool, sched
 end

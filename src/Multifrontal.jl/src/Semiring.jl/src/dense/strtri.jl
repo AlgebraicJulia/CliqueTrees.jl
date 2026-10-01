@@ -6,10 +6,10 @@ function strtri!(s::AbstractSemiring, uplo::Val, diag::Val, A::AbstractMatrix{T}
     n = size(A, 1)
 
     if nt <= 1
-        AP, BP, CP = spool_st(T, n, n, n)
+        AP, BP, CP = spool_st(s, T, n, n, n)
         strtri_st!(s, uplo, diag, A, AP, BP, CP)
     else
-        pool = spool_mt(T, nt, n, n, n)
+        pool = spool_mt(s, T, nt, n, n, n)
         strtri_mt!(s, uplo, diag, A, pool, nt)
     end
 

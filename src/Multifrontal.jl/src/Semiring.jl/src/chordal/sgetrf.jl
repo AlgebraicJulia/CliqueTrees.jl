@@ -2,7 +2,7 @@
 
 function sgetrf!(s::AbstractSemiring, L::ChordalTriangular{:N, :L, T, I}, U::ChordalTriangular{:N, :U, T, I}; nt::Integer = nthreads()) where {T, I}
     W = FactorizationWorkspace(L)
-    pool = spool_mt(T, nt)
+    pool = spool_mt(s, T, nt)
     return sgetrf_mt!(s, L, U, W, pool, nt)
 end
 

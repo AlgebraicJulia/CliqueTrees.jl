@@ -47,7 +47,7 @@ function sgetrs_mt!(
             end
 
             Wt = DivisionWorkspace{T}(S, trhs)
-            poolt = spool_mt(T, 1)
+            poolt = spool_mt(s, T, 1)
             sgetrs_mt!(s, side, trans, L, U, Bptr, Fptr, nBptr, Nptr, Ntgt, Nval, Bt, Wt, poolt, 1)
         end
     else

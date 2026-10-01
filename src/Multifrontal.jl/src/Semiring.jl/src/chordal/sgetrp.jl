@@ -12,7 +12,7 @@ function sgetrp!(
     Mptr = FVector{I}(undef, L.S.nMptr)
     Mval = FVector{T}(undef, L.S.nMval)
     Fval = FVector{T}(undef, L.S.nFval * L.S.nFval)
-    pool = spool_mt(T, nt)
+    pool = spool_mt(s, T, nt)
 
     return sgetrp_mt!(s, L, U, Mptr, Mval, Fval, pool, nt)
 end
