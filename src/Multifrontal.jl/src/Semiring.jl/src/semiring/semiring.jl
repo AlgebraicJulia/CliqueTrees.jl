@@ -153,11 +153,11 @@ function szero(s::AbstractSemiring, a::T, op::Val) where {T}
     return szero(s, T, op)
 end
 
-function szero(s::AbstractSemiring, ::Type{Vec{W, T}}, op::Val{:N}) where {W, T}
+@inline function szero(s::AbstractSemiring, ::Type{Vec{W, T}}, op::Val{:N}) where {W, T}
     return Vec{W, T}(szero(s, T, op))
 end
 
-function szero(s::AbstractSemiring, ::Type{Vec{W, T}}, op::Val{:C}) where {W, T}
+@inline function szero(s::AbstractSemiring, ::Type{Vec{W, T}}, op::Val{:C}) where {W, T}
     return Vec{W, T}(szero(s, T, op))
 end
 
@@ -507,5 +507,4 @@ include("tropical.jl")
 include("lawvere.jl")
 include("bottleneck.jl")
 include("boolean.jl")
-include("predecessor.jl")
 include("matrix/matrix.jl")

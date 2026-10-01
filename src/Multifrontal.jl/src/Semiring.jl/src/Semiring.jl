@@ -23,7 +23,6 @@ export MinPlusLaw, MaxPlusLaw, MinProdLaw, MaxProdLaw, LawvereQuantale
 export AndOr, OrAnd
 export splus, sprod, sstar, szero, sone, smuladd, sdot, saxpy!, sger!
 export slte, sgte, TropicalSemiring
-export Pred, Succ, UnsafePred, UnsafeSucc
 export BoolMatrix, DualBoolMatrix, IdemBoolMatrix, QualMatrix
 
 abstract type AbstractSemiring end

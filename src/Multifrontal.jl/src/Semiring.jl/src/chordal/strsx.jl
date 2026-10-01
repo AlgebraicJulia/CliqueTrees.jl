@@ -1183,7 +1183,7 @@ end
     W = min(vecwidth(T), 8)
 
     if n >= W
-        d = Vec{W, T}(szero(s, T, Val(:N)))
+        d = szero(s, Vec{W, T}, Val(:N))
 
         @inbounds while i + W - 1 <= n
             d = strsx_vec_gather_step(s, trans, C, o, idx, a, d, i)

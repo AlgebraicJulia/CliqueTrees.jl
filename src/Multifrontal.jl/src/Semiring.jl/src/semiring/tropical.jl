@@ -153,8 +153,8 @@ function sprod(s::Union{MinProd, MaxProd}, a::AbstractFloat, b::AbstractFloat, t
 end
 
 @inline function sprod(s::Union{MinPlus, MaxPlus}, a::Vec{W, T}, b::Vec{W, T}, ::Val{:N}, ::Val{:N}) where {W, T <: Signed}
-    z = Vec{W, T}(szero(s, T, Val(:N)))
-    w = Vec{W, T}(szero(s, T, Val(:C)))
+    z = szero(s, Vec{W, T}, Val(:N))
+    w = szero(s, Vec{W, T}, Val(:C))
     c = add_saturate(a, b)
     c = vifelse(splus(s, a, b, Val(:N)) == w, w, c)
     return vifelse(splus(s, a, b, Val(:C)) == z, z, c)
@@ -181,16 +181,16 @@ end
     return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
 end
 
-@inline function smuladd(s::TropicalSemiring, a::T, b::T, c::T, ::Val{:N}, ::Val{:N}) where {T <: IEEEFloat}
-    @static if X86
-        if s isa Union{MinPlus, MaxPlus}
-            p = a + b
-        else
-            p = a * b
-        end
+@static if X86
+    @inline function smuladd(s::Union{MinPlus, MaxPlus}, a::T, b::T, c::T, ::Val{:N}, ::Val{:N}) where {T <: IEEEFloat}
+        return splus(s, a + b, c, Val(:N))
+    end
 
-        return splus(s, p, c, Val(:N))
-    else
+    @inline function smuladd(s::Union{MinProd, MaxProd}, a::T, b::T, c::T, ::Val{:N}, ::Val{:N}) where {T <: IEEEFloat}
+        return splus(s, a * b, c, Val(:N))
+    end
+else
+    @inline function smuladd(s::TropicalSemiring, a::T, b::T, c::T, ::Val{:N}, ::Val{:N}) where {T <: IEEEFloat}
         return splus(s, sprod(s, a, b, Val(:N), Val(:N)), c, Val(:N))
     end
 end
