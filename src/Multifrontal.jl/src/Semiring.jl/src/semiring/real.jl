@@ -12,11 +12,11 @@ function slte(::PlusProd, a, b)
     return a <= b
 end
 
-function szero(::PlusProd, ::Type{T}, ::Val{:N}) where {T}
+function szero(::PlusProd, ::Type{T}, ::Val{:N}) where {T <: Number}
     return zero(T)
 end
 
-function szero(::PlusProd, ::Type{T}, ::Val{:C}) where {T}
+function szero(::PlusProd, ::Type{T}, ::Val{:C}) where {T <: Number}
     return typemax(T)
 end
 

@@ -1,3 +1,6 @@
+const STRTRI_SPLIT = 4
+const STRTRI_MINBAND = 256
+
 # ===== strtri! =====
 
 function strtri!(
@@ -12,6 +15,8 @@ function strtri!(
     return strtri_mt!(s, diag, A, X, pool, nt)
 end
 
+# ===== strtri_mt! =====
+
 function strtri_mt!(
         s::AbstractSemiring,
         diag::Val,
@@ -20,16 +25,87 @@ function strtri_mt!(
         pool::AbstractVector,
         nt::Integer,
     ) where {UPLO, T, I}
+    @assert nt >= 1
+
     S = A.S
-
+    n = convert(I, ncl(S))
+    #
+    # fdesc: F → F maps each front f ∈ F to its
+    # first descendant fdesc(f) ∈ F.
+    #
     fdesc = FVector{I}(undef, nfr(S))
-    Tval = FVector{T}(undef, S.nFval * S.nFval)
-    Mval = FVector{T}(undef, S.nFval * ncl(S))
 
-    return strtri_mt!(s, diag, A, X, fdesc, Tval, Mval, pool, nt)
+    @inbounds for f in vertices(S.res)
+        fdesc[f] = f
+    end
+
+    @inbounds for f in vertices(S.res)
+        p = S.pnt[f]
+
+        if ispositive(p)
+            fdesc[p] = min(fdesc[p], fdesc[f])
+        end
+    end
+
+    nw = min(nt, max(1, ncl(S) ÷ STRTRI_MINBAND))
+
+    if nw <= 1
+        #
+        # one band: the serial algorithm, with
+        # fine-grain parallelism in the dense kernels
+        #
+        Tval = FVector{T}(undef, max(S.nFval * S.nFval, one(I)))
+        Mval = FVector{T}(undef, max(S.nFval * n, one(I)))
+        strtri_band!(s, diag, A, X, fdesc, Tval, Mval, pool, nt, one(I), n)
+    else
+        #
+        # nb bands of (nearly) equal height, dealt to
+        # nw workers cyclically: worker w gets bands
+        # w, w + nw, w + 2nw, ...
+        #
+        nb = min(STRTRI_SPLIT * nw, ncl(S) ÷ STRTRI_MINBAND)
+        bsize = convert(I, cld(n, nb))
+        nb = convert(Int, cld(n, bsize))
+
+        @threads for w in 1:nw
+            strtri_worker!(s, diag, A, X, fdesc, pool, w, nw, nb, bsize)
+        end
+    end
+
+    return X
 end
 
-function strtri_mt!(
+function strtri_worker!(
+        s::AbstractSemiring,
+        diag::Val,
+        A::ChordalTriangular{<:Any, <:Any, T, I},
+        X::AbstractMatrix,
+        fdesc::AbstractVector{I},
+        pool::AbstractVector,
+        w::Int,
+        nw::Int,
+        nb::Int,
+        bsize::I,
+    ) where {T, I}
+    S = A.S
+    n = convert(I, ncl(S))
+
+    Tval = FVector{T}(undef, max(S.nFval * S.nFval, one(I)))
+    Mval = FVector{T}(undef, max(S.nFval * bsize, one(I)))
+    poolw = view(pool, w:w)
+
+    for k in w:nw:nb
+        bstrt = convert(I, k - 1) * bsize + one(I)
+        bstop = min(convert(I, k) * bsize, n)
+        strtri_band!(s, diag, A, X, fdesc, Tval, Mval, poolw, 1, bstrt, bstop)
+    end
+
+    return
+end
+
+# ===== strtri_band! =====
+
+function strtri_band!(
         s::AbstractSemiring,
         diag::Val,
         A::ChordalTriangular{<:Any, UPLO, T, I},
@@ -39,28 +115,32 @@ function strtri_mt!(
         Mval::AbstractVector{T},
         pool::AbstractVector,
         nt::Integer,
+        bstrt::I,
+        bstop::I,
     ) where {UPLO, T, I}
     S = A.S
+    res = S.res
     #
-    # fdesc: F → F maps each front f ∈ F to its
-    # first descendant fdesc(f) ∈ F.
+    #   X[band, :] ← 0
     #
-    for f in vertices(S.res)
-        fdesc[f] = f
+    if UPLO === :L
+        szerorec!(s, view(X, axes(X, 1), bstrt:bstop), Val(:N))
+    else
+        szerorec!(s, view(X, bstrt:bstop, axes(X, 2)), Val(:N))
     end
 
-    for f in vertices(S.res)
-        p = S.pnt[f]
+    for f in vertices(res)
+        #
+        # the descendant rows of f are
+        #
+        #     dsc(f) = Qp:Rq
+        #
+        Qp = pointers(res)[fdesc[f]]
+        Rq = pointers(res)[f + one(I)] - one(I)
 
-        if ispositive(p)
-            fdesc[p] = min(fdesc[p], fdesc[f])
+        if Qp <= bstop && bstrt <= Rq
+            strtri_fwd!(s, X, Mval, Tval, A.Dval, A.Lval, S.Dptr, S.Lptr, res, S.sep, pool, nt, f, A.uplo, diag, max(Qp, bstrt), min(Rq, bstop))
         end
-    end
-
-    szerorec!(s, X, Val(:N))
-
-    for f in vertices(S.res)
-        strtri_fwd!(s, X, Mval, Tval, A.Dval, A.Lval, S.Dptr, S.Lptr, S.res, S.sep, fdesc, pool, nt, f, A.uplo, diag)
     end
 
     return X
@@ -79,13 +159,19 @@ function strtri_fwd!(
         Lptr::AbstractVector{I},
         res::AbstractGraph{I},
         sep::AbstractGraph{I},
-        fdesc::AbstractVector{I},
         pool::AbstractVector,
         nt::Integer,
         f::I,
         uplo::Val{UPLO},
         diag::Val,
+        rstrt::I,
+        rstop::I,
     ) where {T, I, UPLO}
+    if UPLO === :L
+        nrhs = convert(I, size(X, 1))
+    else
+        nrhs = convert(I, size(X, 2))
+    end
     #
     # nn is the size of the residual at node f
     #
@@ -114,19 +200,18 @@ function strtri_fwd!(
     Dp = Dptr[f]
     Lp = Lptr[f]
     Rp = pointers(res)[f]
-    Qp = pointers(res)[fdesc[f]]
     #
-    # fdsc are the descendants at node f
+    # fdsc is the set of descendant rows of f in the band
     #
-    #     fdsc = dsc(f)
+    #     fdsc = dsc(f) ∩ band
     #
-    fdsc = Qp:Rp + nn - one(I)
+    fdsc = rstrt:rstop
     #
-    # nd is the number of descendants at node f
+    # nr is the number of those rows
     #
-    #     nd = | dsc(f) |
+    #     nr = | fdsc |
     #
-    nd = length(fdsc)
+    nr = rstop - rstrt + one(I)
     #
     #          res(f) sep(f)
     #     U = [ D₁₁    U₁₂ ] res(f)
@@ -140,52 +225,61 @@ function strtri_fwd!(
     end
     #
     #          res(f) sep(f)
-    #     X = [ X₀₁    X₀₂ ] dsc(f)
+    #     X = [ X₀₁    X₀₂ ] dsc(f) ∖ res(f)
     #         [ X₁₁    X₁₂ ] res(f)
+    #
+    # restricted to the rows fdsc
     #
     if UPLO === :L
         X₁ = view(X, fres, fdsc)
     else
         X₁ = view(X, fdsc, fres)
     end
+    istrt = max(Rp, rstrt) - Rp + one(I)
+    istop = rstop - Rp + one(I)
 
-    Y₁₁ = reshape(view(Tval, oneto(nn * nn)), nn, nn)
-    #
-    #   Y₁₁ ← D₁₁
-    #
-    copytri!(Y₁₁, D₁₁, uplo)
-    #
-    #   Y₁₁ ← Y₁₁*
-    #
-    strtri!(s, uplo, diag, Y₁₁; nt)
-    #
-    #   X₁₁ ← Y₁₁
-    #
-    copyscattertri!(X, Y₁₁, fres, uplo)
+    if istrt <= istop
+        Y₁₁ = reshape(view(Tval, oneto(nn * nn)), nn, nn)
+        #
+        #   Y₁₁ ← D₁₁
+        #
+        copytri!(Y₁₁, D₁₁, uplo)
+        #
+        #   Y₁₁ ← Y₁₁*
+        #
+        strtri!(s, uplo, diag, Y₁₁; nt)
+        #
+        #   X₁₁ ← Y₁₁
+        #
+        copyscattertri!(X, Y₁₁, fres, istrt, istop, uplo)
 
-    if diag === Val(:U)
-        @inbounds for v in fres
-            X[v, v] = sone(s, T, Val(:N))
+        if diag === Val(:U)
+            @inbounds for i in istrt:istop
+                v = fres[i]
+                X[v, v] = sone(s, T, Val(:N))
+            end
         end
     end
     #
     #   X₀₁ ← X₀₁ D₁₁*
     #
-    if Qp < Rp
+    qstop = min(Rp - one(I), rstop)
+
+    if rstrt <= qstop
         if UPLO === :L
-            X₀₁ = view(X, fres, Qp:Rp - one(I))
+            X₀₁ = view(X, fres, rstrt:qstop)
             strsx_mt!(s, Val(:L), Val(:N), uplo, diag, D₁₁, X₀₁, pool, nt)
         else
-            X₀₁ = view(X, Qp:Rp - one(I), fres)
+            X₀₁ = view(X, rstrt:qstop, fres)
             strsx_mt!(s, Val(:R), Val(:N), uplo, diag, D₁₁, X₀₁, pool, nt)
         end
     end
 
     if ispositive(na)
         if UPLO === :L
-            M₂ = reshape(view(Mval, oneto(nd * na)), na, nd)
+            M₂ = reshape(view(Mval, oneto(nr * na)), na, nr)
         else
-            M₂ = reshape(view(Mval, oneto(nd * na)), nd, na)
+            M₂ = reshape(view(Mval, oneto(nr * na)), nr, na)
         end
         #
         #   M₂ ← 0
@@ -203,9 +297,9 @@ function strtri_fwd!(
         #   X₂ ← X₂ + M₂
         #
         if UPLO === :L
-            sscatteradd!(s, view(X, axes(X, 1), fdsc), M₂, fsep, Val(:L))
+            sscatteradd!(s, view(X, oneto(nrhs), fdsc), M₂, fsep, Val(:L))
         else
-            sscatteradd!(s, view(X, fdsc, axes(X, 2)), M₂, fsep, Val(:R))
+            sscatteradd!(s, view(X, fdsc, oneto(nrhs)), M₂, fsep, Val(:R))
         end
     end
 
