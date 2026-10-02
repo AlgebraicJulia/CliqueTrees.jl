@@ -42,6 +42,9 @@ macro phase(timer, name, ex)
     end
 end
 
+# merge chains of small fronts into fronts of up to this width for the solve (1 = off); see amalgamate.jl
+const AMALGAMATE = Ref(8)
+
 struct GPUSLU{Sem <: AbstractSemiring, T, I}
     s::Sem
     n::Int
@@ -91,7 +94,7 @@ end
 # reaches `large`: one thread per right-hand side would then serialize too
 # much, so it is solved with tiled dense kernels instead.
 #
-function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothing) where {Sem, T, I}
+function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothing, amalgamate::Integer = AMALGAMATE[], alpha::Real = 0.5) where {Sem, T, I}
     if !iszero(MF.ne(F.S.N))
         error("GPUSLU: coupling between strongly connected components (a directed graph whose components " *
               "reach one another) is not supported on the GPU yet; use the CPU solver")
@@ -102,10 +105,29 @@ function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothin
     end
 
     S = F.S.S
+    n = size(F, 1)
     nf = Int(MF.nv(S.res))
-    pnt = S.pnt
-    Rptr = MF.pointers(S.res)
-    Sptr = MF.pointers(S.sep)
+    pnt = Vector{I}(view(S.pnt, 1:nf))
+    idx = Vector{I}(view(S.idx, 1:n))
+    Rptr = Vector{I}(view(MF.pointers(S.res), 1:(nf + 1)))
+    Sptr = Vector{I}(view(MF.pointers(S.sep), 1:(nf + 1)))
+    Stgt = Vector{I}(view(MF.targets(S.sep), 1:(Sptr[end] - 1)))
+    Dptr = Vector{I}(view(S.Dptr, 1:(nf + 1)))
+    Lptr = Vector{I}(view(S.Lptr, 1:(nf + 1)))
+
+    if amalgamate > 1
+        #
+        # merge chains of small fronts for the solve (see amalgamate.jl): the merge is cached per
+        # symbolic factorization, and the factor is rearranged on the GPU
+        #
+        A = amalgamation(amalgamation_key(S.Dptr), I, amalgamate, alpha, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx)
+        if !isnothing(A)
+            vals = isnothing(factor) ? (upload(F.LDval), upload(F.LLval), upload(F.UDval), upload(F.ULval)) : factor
+            factor = amalgamate_values(A, F.s, vals...)
+            nf = A.nf; pnt = A.pnt; idx = A.idx
+            Rptr = A.Rptr; Sptr = A.Sptr; Stgt = A.Stgt; Dptr = A.Dptr; Lptr = A.Lptr
+        end
+    end
     #
     # height (leaves = 1) and depth (roots = 1) of every front;
     # fronts are postordered, so parents come after their children
@@ -162,11 +184,11 @@ function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothin
 
     return GPUSLU{Sem, T, I}(
         F.s, size(F, 1), nf,
-        upload(Rptr), upload(Sptr), upload(MF.targets(S.sep)), upload(S.Dptr), upload(S.Lptr),
-        Vector{I}(Rptr), Vector{I}(Sptr), Vector{I}(S.Dptr), Vector{I}(S.Lptr),
+        upload(Rptr), upload(Sptr), upload(Stgt), upload(Dptr), upload(Lptr),
+        Rptr, Sptr, Dptr, Lptr,
         (isnothing(factor) ? (upload(F.LDval), upload(F.LLval), upload(F.UDval), upload(F.ULval)) : factor)...,
         CuVector(up), upptr, uplarge, CuVector(down), downptr, downlarge, maxna,
-        upload(view(S.idx, 1:size(F, 1))), upload(view(pnt, 1:nf)),
+        upload(idx), upload(pnt),
         CuVector(Vector{Bool}(istop)), CuVector(top), topptr, toplarge,
         upload(F.cinvp), upload(F.rperm), Ref{Any}(nothing), Dict{Symbol, Any}(),
     )
@@ -234,7 +256,7 @@ function rmul_gpu!(B::CuMatrix{T}, G::GPUSLU{Sem, T, I}; W::CuMatrix{T} = simila
         nfl = G.upptr[l + 1] - strt
 
         if ispositive(nfl)
-            @phase timer :U_batched kernel(s, trans, scale, W, G.up, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, nb))
+            @phase timer :U_batched kernel(s, trans, scale, W, G.up, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, coarse_blocks(nrhs, tb)))
         end
 
         for f in G.uplarge[l]
@@ -244,7 +266,7 @@ function rmul_gpu!(B::CuMatrix{T}, G::GPUSLU{Sem, T, I}; W::CuMatrix{T} = simila
     #
     #   W ← W L*
     #
-    downward_sweep!(G, W, M, trans, tb, nb, timer)
+    downward_sweep!(G, W, M, trans, tb, coarse_blocks(nrhs, tb), timer)
     #
     #   B ← W P⁻¹
     #
@@ -292,7 +314,7 @@ function sssp_gpu!(X::CuMatrix{T}, G::GPUSLU{Sem, T, I}, sources::CuVector{<:Int
         nfl = G.topptr[l + 1] - strt
 
         if ispositive(nfl)
-            @phase timer :U_top_batched kernel(s, trans, scale, W, G.top, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, nb))
+            @phase timer :U_top_batched kernel(s, trans, scale, W, G.top, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, coarse_blocks(nrhs, tb)))
         end
 
         for f in G.toplarge[l]
@@ -302,7 +324,7 @@ function sssp_gpu!(X::CuMatrix{T}, G::GPUSLU{Sem, T, I}, sources::CuVector{<:Int
     #
     #   W ← W L*
     #
-    downward_sweep!(G, W, M, trans, tb, nb, timer)
+    downward_sweep!(G, W, M, trans, tb, coarse_blocks(nrhs, tb), timer)
     #
     #   X ← W P⁻¹   (unless the result is wanted in elimination coordinates)
     #
@@ -393,7 +415,9 @@ end
 
 function downward_sweep!(G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val, tb::Int, nb::Int, timer)
     # function barrier: each kernel variant compiles its own sweep
-    if DOWN_VARIANT[] === :simple
+    if DOWN_VARIANT[] === :reg
+        return downward_sweep!(downward_kernel_reg!, G, W, M, trans, tb, nb, timer)
+    elseif DOWN_VARIANT[] === :simple
         return downward_sweep!(downward_kernel_simple!, G, W, M, trans, tb, nb, timer)
     else
         return downward_sweep!(downward_kernel_blocked!, G, W, M, trans, tb, nb, timer)
@@ -403,6 +427,32 @@ end
 function downward_sweep!(kf::F, G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val, tb::Int, nb::Int, timer) where {F}
     s = G.s
     kernel = @cuda launch = false kf(s, trans, W, G.down, 0, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
+
+    if ROWMAJOR[] && size(W, 1) >= ROWMAJOR_MIN[]
+        plan = persistent_plan(G)
+
+        for (small, large) in plan.toplevels
+            for f in large
+                @phase timer :L_dense downward_large!(G, W, M, f, trans)
+            end
+
+            if ispositive(length(small))
+                @phase timer :L_batched kernel(s, trans, W, small, 0, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval; threads = tb, blocks = (length(small), nb))
+            end
+        end
+
+        if ispositive(plan.nrest) && LAYERED[]
+            for (regptr, regfronts, nreg) in layer_plan(G).layers
+                @phase timer :L_layered @cuda threads = ROWMAJOR_TB blocks = (cld(size(W, 1), ROWMAJOR_TB), nreg) maxregs = ROWMAJOR_MAXREGS layered_down_kernel!(s, trans, W, regptr, regfronts,
+                    G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
+            end
+        elseif ispositive(plan.nrest)
+            @phase timer :L_rowmajor @cuda threads = ROWMAJOR_TB blocks = cld(size(W, 1), ROWMAJOR_TB) maxregs = ROWMAJOR_MAXREGS rowmajor_down_kernel!(s, trans, W, plan.restdfs, plan.nrest,
+                G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
+        end
+
+        return W
+    end
 
     if PERSISTENT[]
         plan = persistent_plan(G)
@@ -422,11 +472,12 @@ function downward_sweep!(kf::F, G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val,
         #   everything below the top in one persistent launch
         #
         if ispositive(plan.nrest)
-            nchunk = cld(size(W, 1), PERSIST_TB)
+            rows = PERSIST_TB * COARSEN[]
+            nchunk = cld(size(W, 1), rows)
             nitems = plan.nrest * nchunk
             fill!(plan.counters, zero(UInt32)); fill!(plan.ticket, zero(UInt32))
             nblk = min(nitems, max(NSM[], 1) * PERSIST_BLOCKS_PER_SM)
-            @phase timer :L_persistent @cuda threads = PERSIST_TB blocks = nblk persistent_down_kernel!(s, trans, W, plan.rest, plan.nrest, nchunk,
+            @phase timer :L_persistent @cuda threads = PERSIST_TB blocks = nblk persistent_down_kernel!(s, trans, W, plan.rest, plan.nrest, nchunk, rows,
                 G.pnt, G.istop, plan.counters, plan.ticket, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
         end
 
@@ -463,13 +514,14 @@ ispositive(x) = x > zero(x)
 # block that is already running: no deadlock (as in sync-free SpTRSV with a
 # dynamic ticket counter). Same per-front operations as the level kernels.
 #
-const PERSISTENT = Ref(true)
+const PERSISTENT = Ref(false)
 const PERSIST_TB = 128
 const PERSIST_BLOCKS_PER_SM = 8
 
 struct PersistentPlan{I}
     toplevels::Vector{Tuple{CuVector{I}, Vector{I}}}   # by depth: (small top fronts, large fronts)
     rest::CuVector{I}                                   # the other fronts, by depth
+    restdfs::CuVector{I}                                # the same fronts in reverse postorder (parents first, depth-first)
     nrest::Int
     counters::CuVector{UInt32}                          # chunks finished, per front
     ticket::CuVector{UInt32}
@@ -493,11 +545,11 @@ function persistent_plan(G::GPUSLU{<:Any, <:Any, I}) where {I}
 
         counters = CUDA.zeros(UInt32, G.nf); ticket = CUDA.zeros(UInt32, 1)
         CUDA.enable_synchronization!(counters, false); CUDA.enable_synchronization!(ticket, false)
-        PersistentPlan{I}(toplevels, CuVector{I}(rest), length(rest), counters, ticket)
+        PersistentPlan{I}(toplevels, CuVector{I}(rest), CuVector{I}(sort(rest; rev = true)), length(rest), counters, ticket)
     end
 end
 
-function persistent_down_kernel!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, rest, nrest::Int, nchunk::Int,
+function persistent_down_kernel!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, rest, nrest::Int, nchunk::Int, rows::Int,
         pnt, istop, counters, ticket, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
     qs = CuStaticSharedArray(UInt32, 1)
     nitems32 = (nrest * nchunk) % UInt32
@@ -524,10 +576,12 @@ function persistent_down_kernel!(s::AbstractSemiring, trans::Val, C::AbstractMat
         end
 
         sync_threads()
-        t = c * blockDim().x + tid
+        t = c * rows + tid
+        tstop = min(size(C, 1), (c + 1) * rows)
 
-        if t <= size(C, 1)
-            downward_front!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+        while t <= tstop
+            downward_front_reg!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+            t += blockDim().x
         end
 
         threadfence()
@@ -563,6 +617,34 @@ end
             end
 
             C[t, Rp + j - 1] = acc
+        end
+    end
+
+    return
+end
+
+# ===== row-major L sweep =====
+#
+# Below the top of the tree, every row of the L sweep is independent, so one thread can carry its
+# row through all remaining fronts in reverse postorder (parents before children, depth-first),
+# in one launch with no level barriers. A child then reads its parent's freshly written columns
+# from L1/L2 instead of DRAM (in level order they are re-read a level later, after eviction).
+# Same per-front operations as the level kernels; worth it when there are many rows (the closure).
+#
+const ROWMAJOR = Ref(true)
+const ROWMAJOR_MIN = Ref(4096)       # use it for at least this many right-hand sides
+const ROWMAJOR_TB = 128
+# at most 48 registers: 10 blocks of 128 per SM instead of 9 at 56 (on sm_120: 33k rows in one wave, not 30k)
+const ROWMAJOR_MAXREGS = parse(Int, get(ENV, "RMAXREGS", "48"))
+
+function rowmajor_down_kernel!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, nord::Int,
+        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
+    t = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    if t <= size(C, 1)
+        for i in 1:nord
+            f = @inbounds order[i]
+            downward_front_reg!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
         end
     end
 
@@ -661,6 +743,25 @@ function upward_large!(G::GPUSLU{<:Any, T}, C::CuMatrix{T}, M::CuMatrix{T}, f, t
         #   [C₁ | M₂] ← C₁ [U₁₁* | U₁₁* U₁₂]      (one GEMM per part, no triangular solve)
         #
         KU = reshape(view(ops.KU, ops.off[f][2]:(ops.off[f][2] + nn * (nn + na) - 1)), nn, nn + na)
+
+        if FUSED_LARGE[]
+            #
+            #   C[:, sep] ← C[:, sep] ⊕ C₁ (U₁₁* U₁₂)   (through an index view: no buffer, no scatter)
+            #   C₁ ← C₁ U₁₁*                              (overwrite; in place when one tile wide)
+            #
+            ispositive(na) && sgemx_gpu!(s, colview(C, view(G.Stgt, Sp:(Sp + na - 1))), C₁, view(KU, :, (nn + 1):(nn + na)))
+
+            if inplace_ok(nn, choose_tiling(size(C, 1), nn))
+                sgemx_gpu!(s, C₁, C₁, view(KU, :, 1:nn); overwrite = true)
+            else
+                W₁ = ops_workspace(ops, T, size(C, 1), nn)
+                copy_gpu!(W₁, C₁)
+                sgemx_gpu!(s, C₁, W₁, view(KU, :, 1:nn); overwrite = true)
+            end
+
+            return
+        end
+
         W₁ = ops_workspace(ops, T, size(C, 1), nn)
         copy_gpu!(W₁, C₁)
         fill!(C₁, szero(s, T, trans))
@@ -707,6 +808,15 @@ function downward_large!(G::GPUSLU{<:Any, T}, C::CuMatrix{T}, M::CuMatrix{T}, f,
         #   C₁ ← [C₁ | C₂] [L₁₁* ; L₂₁ L₁₁*]      (one gather + one GEMM, no triangular solve)
         #
         KL = reshape(view(ops.KL, ops.off[f][1]:(ops.off[f][1] + (nn + na) * nn - 1)), nn + na, nn)
+
+        if FUSED_LARGE[] && inplace_ok(nn, choose_tiling(size(C, 1), nn))
+            #
+            #   C₁ ← C[:, [res; sep]] [L₁₁* ; L₂₁ L₁₁*]   (in place, through an index view)
+            #
+            sgemx_gpu!(s, C₁, colview(C, ops.cols[f]), KL; overwrite = true)
+            return
+        end
+
         W = ops_workspace(ops, T, size(C, 1), nn + na)
         copy_gpu!(view(W, :, 1:nn), C₁)
         ispositive(na) && gather_gpu!(view(W, :, (nn + 1):(nn + na)), C, G.Stgt, Sp)
@@ -746,7 +856,14 @@ struct SolveOps{T}
     KU::CuVector{T}
     off::Dict{Int, Tuple{Int, Int}}     # front → (offset in KL, offset in KU)
     work::Base.RefValue{CuVector{T}}
+    cols::Dict{Int, CuVector{Int}}      # front → its columns [res; sep]
 end
+
+# C[:, idx] without a bounds check (which would read idx on the host)
+colview(C::CuMatrix, idx::AbstractVector) = SubArray(C, (Base.Slice(axes(C, 1)), idx))
+
+# fused large fronts (no gather/scatter buffers, no fills); false: the buffered path
+const FUSED_LARGE = Ref(true)
 
 function precompute_ops!(G::GPUSLU{Sem, T}) where {Sem, T}
     s = G.s
@@ -791,7 +908,15 @@ function precompute_ops!(G::GPUSLU{Sem, T}) where {Sem, T}
         end
     end
 
-    G.ops[] = SolveOps{T}(KL, KU, off, Ref{CuVector{T}}(CuVector{T}(undef, 1)))
+    cols = Dict{Int, CuVector{Int}}()
+    hStgt = Array(G.Stgt)
+
+    for f in fronts
+        Rp = Int(G.hRptr[f]); Sp = Int(G.hSptr[f])
+        cols[f] = CuVector{Int}(vcat(Rp:(Int(G.hRptr[f + 1]) - 1), hStgt[Sp:(Int(G.hSptr[f + 1]) - 1)]))
+    end
+
+    G.ops[] = SolveOps{T}(KL, KU, off, Ref{CuVector{T}}(CuVector{T}(undef, 1)), cols)
     return G
 end
 
@@ -1042,15 +1167,22 @@ end
 #
 function upward_kernel!(s::AbstractSemiring, trans::Val, scale::Val, C::AbstractMatrix{T}, order, off::Int,
         Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
+    f = @inbounds order[off + blockIdx().x]
     t = threadIdx().x + (blockIdx().y - 1) * blockDim().x
 
-    if t <= size(C, 1)
-        f = @inbounds order[off + blockIdx().x]
+    while t <= size(C, 1)                       # each thread may own several rows (coarsening)
         upward_front!(s, trans, scale, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval, Val(true))
+        t += blockDim().x * gridDim().y
     end
 
     return
 end
+
+# Thread coarsening for the batched sweeps: a block covers COARSEN × blockDim rows, so the number of
+# (front, row-chunk) blocks per level drops by COARSEN (tiny blocks were dominated by scheduling).
+const COARSEN = Ref(1)
+
+coarse_blocks(nrhs::Integer, tb::Integer) = max(1, cld(nrhs, tb * COARSEN[]))
 
 #
 # Row t of C through front f of the U sweep. ATOMIC selects an atomic
@@ -1136,43 +1268,105 @@ end
 #
 const DOWN_NB = 8
 
-# :blocked (register chunks) or :simple (one residual column at a time)
-const DOWN_VARIANT = Ref(:simple)
+# :reg (register-blocked, exact widths; default), :simple (one residual column at a time),
+# :blocked (masked register chunks; slower, kept for reference)
+const DOWN_VARIANT = Ref(:reg)
 
 
-function downward_kernel_simple!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, off::Int,
-        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
-    t = threadIdx().x + (blockIdx().y - 1) * blockDim().x
+#
+# Register-blocked L sweep: one compile-time residual width per front (nn ≤ 8, no masked lanes),
+# the residual values of row t in registers, and four separator loads in flight. Same operations,
+# same order per entry as downward_front!. (Found by the C++ port experiment: its "reg" kernel, written
+# in Julia here, is as fast as the C++ one.)
+#
+@generated function down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, ::Val{NN}) where {NN}
+    xs = [Symbol(:x, j) for j in 1:NN]
+    loads = [:($(xs[j]) = C[t, Rp + $(j - 1)]) for j in 1:NN]
+    upd = [:($(xs[j]) = smuladd(s, c, Lval[Lp + $(j - 1) * na + r - 1], $(xs[j]), Val(:N), trans)) for j in 1:NN]
+    solve = Expr[]
 
-    if t > size(C, 1)
-        return
+    for j in NN:-1:1, k in (j + 1):NN
+        push!(solve, :($(xs[j]) = smuladd(s, $(xs[k]), Dval[Dp + $(j - 1) * NN + $(k - 1)], $(xs[j]), Val(:N), trans)))
     end
 
+    stores = [:(C[t, Rp + $(j - 1)] = $(xs[j])) for j in 1:NN]
+
+    return quote
+        $(Expr(:meta, :inline))
+        @inbounds begin
+            $(loads...)
+            r = 1
+
+            while r + 3 <= na
+                c1 = C[t, Stgt[Sp + r - 1]]; c2 = C[t, Stgt[Sp + r]]; c3 = C[t, Stgt[Sp + r + 1]]; c4 = C[t, Stgt[Sp + r + 2]]
+                c = c1; $(upd...); r += 1
+                c = c2; $(upd...); r += 1
+                c = c3; $(upd...); r += 1
+                c = c4; $(upd...); r += 1
+            end
+
+            while r <= na
+                c = C[t, Stgt[Sp + r - 1]]
+                $(upd...)
+                r += 1
+            end
+
+            $(solve...)
+            $(stores...)
+        end
+
+        return
+    end
+end
+
+@inline function downward_front_reg!(s::AbstractSemiring, trans::Val, C::AbstractMatrix, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
     @inbounds begin
-        f = order[off + blockIdx().x]
         Rp = Rptr[f]; nn = Rptr[f + 1] - Rp
         Sp = Sptr[f]; na = Sptr[f + 1] - Sp
         Dp = Dptr[f]; Lp = Lptr[f]
+    end
 
-        for j in 1:nn
-            acc = C[t, Rp + j - 1]
+    if nn == 1
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(1))
+    elseif nn == 2
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(2))
+    elseif nn == 3
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(3))
+    elseif nn == 4
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(4))
+    elseif nn <= 8
+        nn == 5 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(5)) :
+        nn == 6 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(6)) :
+        nn == 7 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(7)) :
+                  down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(8))
+    else
+        downward_front!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+    end
 
-            for r in 1:na
-                acc = smuladd(s, C[t, Stgt[Sp + r - 1]], Lval[Lp + (j - 1) * na + r - 1], acc, Val(:N), trans)
-            end
+    return
+end
 
-            C[t, Rp + j - 1] = acc
-        end
+function downward_kernel_reg!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, off::Int,
+        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
+    f = @inbounds order[off + blockIdx().x]
+    t = threadIdx().x + (blockIdx().y - 1) * blockDim().x
 
-        for j in nn:-1:1
-            acc = C[t, Rp + j - 1]
+    while t <= size(C, 1)
+        downward_front_reg!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+        t += blockDim().x * gridDim().y
+    end
 
-            for k in (j + 1):nn
-                acc = smuladd(s, C[t, Rp + k - 1], Dval[Dp + (j - 1) * nn + k - 1], acc, Val(:N), trans)
-            end
+    return
+end
 
-            C[t, Rp + j - 1] = acc
-        end
+function downward_kernel_simple!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, off::Int,
+        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
+    f = @inbounds order[off + blockIdx().x]
+    t = threadIdx().x + (blockIdx().y - 1) * blockDim().x
+
+    while t <= size(C, 1)                       # each thread may own several rows (coarsening)
+        downward_front!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+        t += blockDim().x * gridDim().y
     end
 
     return
@@ -1277,7 +1471,47 @@ end
 #
 #   C[i, j] ← C[i, j] ⊕ m, atomically
 #
-@inline function atomic_splus!(s::AbstractSemiring, trans::Val, C::CuDeviceMatrix{T}, i, j, m::T) where {T}
+# C[i, j] ← C[i, j] ⊕ m atomically. When ⊕ is min, max or + on a machine type, this is one native
+# reduction (RED: fire and forget, no returned value); otherwise a compare-and-swap loop.
+@inline atomic_splus!(s::AbstractSemiring, trans::Val, C::CuDeviceMatrix{T}, i, j, m::T) where {T} =
+    atomic_splus!(atomic_kind(s, trans, T), s, trans, C, i, j, m)
+
+atomic_kind(s, trans, T) = Val(:cas)
+atomic_kind(::Semiring.MinPlus, ::Val{:N}, ::Type{<:Union{Float32, Float64, Int32, Int64}}) = Val(:min)
+atomic_kind(::Semiring.DualQuantale{Semiring.MinPlus}, ::Val{:N}, ::Type{<:Union{Float32, Float64, Int32, Int64}}) = Val(:max)   # MaxPlus
+atomic_kind(::Semiring.DualQuantale{Semiring.MinMax}, ::Val{:N}, ::Type{<:Union{Float32, Float64, Int32, Int64}}) = Val(:max)   # MaxMin
+atomic_kind(::Semiring.PlusProd, ::Val{:N}, ::Type{<:Union{Float32, Float64}}) = Val(:add)
+
+@inline atomic_ptr(::Type{U}, C, i, j) where {U} = reinterpret(Core.LLVMPtr{U, CUDA.AS.Global}, pointer(C, i + (j - 1) * size(C, 1)))
+
+@inline function atomic_splus!(::Val{:add}, s, trans, C::CuDeviceMatrix{T}, i, j, m::T) where {T}
+    CUDA.atomic_add!(atomic_ptr(T, C, i, j), m)
+    return
+end
+
+# integers: native min / max. IEEE floats: their order is the signed-integer order of the bits for
+# x ≥ 0 and the reversed unsigned order for x < 0, so min is a signed min when m ≥ 0 and an unsigned
+# max when m < 0 (and the converse for max). Exact; a NaN m is dropped, as by minnum / maxnum.
+for (K, op, rop) in ((:min, :atomic_min!, :atomic_max!), (:max, :atomic_max!, :atomic_min!))
+    @eval @inline function atomic_splus!(::Val{$(QuoteNode(K))}, s, trans, C::CuDeviceMatrix{T}, i, j, m::T) where {T}
+        if T <: Integer
+            CUDA.$op(atomic_ptr(T, C, i, j), m)
+        elseif !isnan(m)
+            S = sizeof(T) == 4 ? Int32 : Int64
+            U = sizeof(T) == 4 ? UInt32 : UInt64
+
+            if signbit(m)
+                CUDA.$rop(atomic_ptr(U, C, i, j), reinterpret(U, m))
+            else
+                CUDA.$op(atomic_ptr(S, C, i, j), reinterpret(S, m))
+            end
+        end
+
+        return
+    end
+end
+
+@inline function atomic_splus!(::Val{:cas}, s::AbstractSemiring, trans::Val, C::CuDeviceMatrix{T}, i, j, m::T) where {T}
     U = sizeof(T) == 4 ? UInt32 : UInt64
     ptr = reinterpret(Core.LLVMPtr{U, CUDA.AS.Global}, pointer(C, i + (j - 1) * size(C, 1)))
     old = @inbounds C[i, j]

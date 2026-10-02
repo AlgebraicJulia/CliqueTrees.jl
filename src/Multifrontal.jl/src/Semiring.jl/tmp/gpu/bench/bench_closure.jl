@@ -7,7 +7,14 @@ solve_large = length(ARGS) > 2 ? parse(Int, ARGS[3]) : 8192
 length(ARGS) > 3 && (SemiringGPU.DOWN_VARIANT[] = Symbol(ARGS[4]))
 use_ops = length(ARGS) > 4 && ARGS[5] == "ops"
 # LATENCY_FIX=0 turns off the persistent L sweep and the warp-cooperative path walk
-SemiringGPU.PERSISTENT[] = SemiringGPU.PATH_WARP[] = get(ENV, "LATENCY_FIX", "1") == "1"
+SemiringGPU.PATH_WARP[] = get(ENV, "LATENCY_FIX", "1") == "1"
+haskey(ENV, "PERSIST") && (SemiringGPU.PERSISTENT[] = ENV["PERSIST"] == "1")
+haskey(ENV, "COARSEN") && (SemiringGPU.COARSEN[] = parse(Int, ENV["COARSEN"]))
+haskey(ENV, "ROWMAJOR") && (SemiringGPU.ROWMAJOR[] = ENV["ROWMAJOR"] == "1")
+haskey(ENV, "AMALG") && (SemiringGPU.AMALGAMATE[] = parse(Int, ENV["AMALG"]))
+haskey(ENV, "LAYERED") && (SemiringGPU.LAYERED[] = ENV["LAYERED"] == "1")
+haskey(ENV, "LAYER_M") && (SemiringGPU.LAYER_M[] = parse(Int, ENV["LAYER_M"]))
+haskey(ENV, "FUSED") && (SemiringGPU.FUSED_LARGE[] = ENV["FUSED"] == "1")
 A = read_mtx(joinpath(MTX, name * ".mtx")); n = size(A, 1)
 # warm up all kernels on a small graph
 let A0 = read_mtx(joinpath(MTX, "grid3d-25.mtx"))[1:2000, 1:2000]

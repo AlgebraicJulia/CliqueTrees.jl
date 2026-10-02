@@ -175,13 +175,19 @@ function run_case(seed, fails)
     SemiringGPU.GEMM_VERSION[] = rand(rng, (1, 2))
     SemiringGPU.PERSISTENT[] = rand(rng, Bool)
     SemiringGPU.PATH_WARP[] = rand(rng, Bool)
+    SemiringGPU.ROWMAJOR_MIN[] = rand(rng, (1, 4096))
+    SemiringGPU.LAYERED[] = rand(rng, Bool)
+    SemiringGPU.LAYER_M[] = rand(rng, (0, 1, 4, 32))
+    SemiringGPU.AMALGAMATE[] = rand(rng, (1, 2, 4, 8))
+    SemiringGPU.FUSED_LARGE[] = rand(rng, Bool)
     flarge = rand(rng, (1, 8, 64, typemax(Int)))
     slarge = rand(rng, (1, 16, 2048, typemax(Int)))
     ops = rand(rng, Bool)
     hybrid = rand(rng, Bool)
-    tag = @sprintf("%s %s %s n=%d neg=%d negcyc=%d loops=%d dups=%d gemm=%d pers=%d warp=%d flarge=%s slarge=%s ops=%d hybrid=%d",
+    tag = @sprintf("%s %s %s n=%d neg=%d negcyc=%d loops=%d dups=%d gemm=%d pers=%d warp=%d flarge=%s slarge=%s ops=%d hybrid=%d rmin=%d layered=%d m=%d amalg=%d",
         nameof(typeof(s)), T, kind, n, neg, negcyc, loops, dups, SemiringGPU.GEMM_VERSION[], SemiringGPU.PERSISTENT[],
-        SemiringGPU.PATH_WARP[], flarge == typemax(Int) ? "∞" : flarge, slarge == typemax(Int) ? "∞" : slarge, ops, hybrid)
+        SemiringGPU.PATH_WARP[], flarge == typemax(Int) ? "∞" : flarge, slarge == typemax(Int) ? "∞" : slarge, ops, hybrid,
+        SemiringGPU.ROWMAJOR_MIN[], SemiringGPU.LAYERED[], SemiringGPU.LAYER_M[], SemiringGPU.AMALGAMATE[])
     ok = true
 
     # factorization: CPU, or hybrid with a replayed graph after new weights

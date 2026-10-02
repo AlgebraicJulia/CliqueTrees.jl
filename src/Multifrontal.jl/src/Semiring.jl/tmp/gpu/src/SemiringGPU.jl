@@ -47,8 +47,11 @@ const TILING_SMALL = Tiling{64, 64, 8, 4, 4}()     # 256 threads
 const TILING_N16 = Tiling{256, 16, 8, 16, 1}()     # 256 threads, skinny outputs (n ≤ 16)
 const TILING_N32 = Tiling{128, 32, 8, 8, 2}()      # 256 threads, skinny outputs (n ≤ 32)
 
+# overwrite = true computes C ← A ⊗ B instead (C is not read). C may then be A itself (C = A ⊗ B in
+# place) when the output is one tile wide (size(C, 2) ≤ BN), since every block reads all of its rows
+# of A before it writes them; see inplace_ok.
 function sgemx_gpu!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix{V}, B::AbstractMatrix{V};
-        tiling::Tiling = choose_tiling(size(C, 1), size(C, 2))) where {V}
+        tiling::Tiling = choose_tiling(size(C, 1), size(C, 2)), overwrite::Bool = false) where {V}
     @assert size(C, 1) == size(A, 1)
     @assert size(C, 2) == size(B, 2)
     @assert size(A, 2) == size(B, 1)
@@ -58,7 +61,9 @@ function sgemx_gpu!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix
     k = size(A, 2)
 
     if m > 0 && n > 0 && k > 0
-        launch!(s, C, A, B, tiling)
+        launch!(s, C, A, B, tiling, Val(overwrite))
+    elseif overwrite && m > 0 && n > 0
+        fill!(C, szero(s, V, Val(:N)))
     end
 
     return C
@@ -77,6 +82,8 @@ function choose_tiling(m::Integer, n::Integer)
         return TILING_N16
     elseif n <= 32
         return TILING_N32
+    elseif n <= 64                    # a 128-wide tile would be at least half empty (2.2× slower on 27000 × 64 × 64)
+        return TILING_SMALL
     elseif cld(m, 128) * cld(n, 128) >= 2 * NSM[]
         return TILING_LARGE
     else
@@ -84,13 +91,17 @@ function choose_tiling(m::Integer, n::Integer)
     end
 end
 
-function launch!(s::AbstractSemiring, C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, ::Tiling{BM, BN, BK, TM, TN}) where {BM, BN, BK, TM, TN}
+# can C = A ⊗ B be computed in place (C === A) with this tiling?
+inplace_ok(n::Integer, ::Tiling{BM, BN}) where {BM, BN} = GEMM_VERSION[] == 2 && n <= BN
+
+function launch!(s::AbstractSemiring, C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, ::Tiling{BM, BN, BK, TM, TN}, ::Val{OW} = Val(false)) where {BM, BN, BK, TM, TN, OW}
     TX = BM ÷ TM
     TY = BN ÷ TN
     blocks = (cld(size(C, 1), BM), cld(size(C, 2), BN))
     if GEMM_VERSION[] == 2
-        @cuda threads = TX * TY blocks = blocks sgemx_kernel2!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN))
+        @cuda threads = TX * TY blocks = blocks sgemx_kernel2!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN), Val(OW))
     else
+        OW && fill!(C, szero(s, eltype(C), Val(:N)))
         @cuda threads = TX * TY blocks = blocks sgemx_kernel!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN))
     end
     return
@@ -187,7 +198,7 @@ const GEMM_VERSION = Ref(2)
 const BPAD = 4
 
 function sgemx_kernel2!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix{V}, B::AbstractMatrix{V},
-        ::Val{BM}, ::Val{BN}, ::Val{BK}, ::Val{TM}, ::Val{TN}) where {V, BM, BN, BK, TM, TN}
+        ::Val{BM}, ::Val{BN}, ::Val{BK}, ::Val{TM}, ::Val{TN}, ::Val{OW} = Val(false)) where {V, BM, BN, BK, TM, TN, OW}
     TX = BM ÷ TM
     TY = BN ÷ TN
     NT = TX * TY
@@ -246,7 +257,7 @@ function sgemx_kernel2!(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMa
         end
     end
 
-    store_tile2!(s, C, acc, i0, j0, tx, ty, Val(TX), Val(TY), Val(TM), Val(VWM), Val(VWN))
+    store_tile2!(s, C, acc, i0, j0, tx, ty, Val(TX), Val(TY), Val(TM), Val(VWM), Val(VWN), Val(OW))
     return
 end
 
@@ -297,7 +308,7 @@ end
     return :($(Expr(:meta, :inline)); @inbounds ($(loads...),))
 end
 
-@generated function store_tile2!(s, C, acc::NTuple{N}, i0, j0, tx, ty, ::Val{TX}, ::Val{TY}, ::Val{TM}, ::Val{VWM}, ::Val{VWN}) where {N, TX, TY, TM, VWM, VWN}
+@generated function store_tile2!(s, C, acc::NTuple{N}, i0, j0, tx, ty, ::Val{TX}, ::Val{TY}, ::Val{TM}, ::Val{VWM}, ::Val{VWN}, ::Val{OW} = Val(false)) where {N, TX, TY, TM, VWM, VWN, OW}
     stores = Expr[]
 
     for e in 1:N
@@ -311,7 +322,7 @@ end
             gj = j0 + $cj + $VWN * ty
 
             if gi <= m && gj <= n
-                C[gi, gj] = splus(s, acc[$e], C[gi, gj], Val(:N))
+                C[gi, gj] = $(OW ? :(acc[$e]) : :(splus(s, acc[$e], C[gi, gj], Val(:N))))
             end
         end)
     end
@@ -377,7 +388,9 @@ end
 end
 
 
+include("amalgamate.jl")
 include("sgetrs.jl")
+include("layered.jl")
 include("sgetrf.jl")
 
 end

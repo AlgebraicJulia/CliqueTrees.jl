@@ -96,14 +96,20 @@ function run_case(seed)
     SemiringGPU.GEMM_VERSION[] = rand(rng, (1, 2))
     SemiringGPU.PERSISTENT[] = rand(rng, Bool)
     SemiringGPU.PATH_WARP[] = rand(rng, Bool)
+    SemiringGPU.ROWMAJOR_MIN[] = rand(rng, (1, 4096))
+    SemiringGPU.LAYERED[] = rand(rng, Bool)
+    SemiringGPU.LAYER_M[] = rand(rng, (0, 1, 4, 32))
+    SemiringGPU.AMALGAMATE[] = rand(rng, (1, 2, 4, 8))
+    SemiringGPU.FUSED_LARGE[] = rand(rng, Bool)
     flarge = rand(rng, (16, 64, 256, typemax(Int)))
     slarge = rand(rng, (64, 2048, typemax(Int)))
     F = ChordalSLU(s, A); copyto!(F, A)
     P = FactorPlan(F; large = flarge, graph = false, nstreams = rand(rng, (1, 8))); factorize!(P)
     G = GPUSLU(P; large = slarge)
     rand(rng, Bool) && precompute_ops!(G)
-    tag = @sprintf("%s %s %s n=%d gemm=%d pers=%d warp=%d flarge=%s slarge=%s", nameof(typeof(s)), T, kind, n,
-        SemiringGPU.GEMM_VERSION[], SemiringGPU.PERSISTENT[], SemiringGPU.PATH_WARP[], flarge, slarge)
+    tag = @sprintf("%s %s %s n=%d gemm=%d pers=%d warp=%d flarge=%s slarge=%s rmin=%d layered=%d m=%d amalg=%d", nameof(typeof(s)), T, kind, n,
+        SemiringGPU.GEMM_VERSION[], SemiringGPU.PERSISTENT[], SemiringGPU.PATH_WARP[], flarge, slarge,
+        SemiringGPU.ROWMAJOR_MIN[], SemiringGPU.LAYERED[], SemiringGPU.LAYER_M[], SemiringGPU.AMALGAMATE[])
 
     k = rand(rng, (1, 63, 129, 300))
     src = rand(rng, 1:n, k)
