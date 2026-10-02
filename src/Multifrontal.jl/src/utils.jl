@@ -560,22 +560,37 @@ for (f, op) in [(:copy, :(=)), (:add, :(+=))]
             A::AbstractMatrix,
             B::AbstractMatrix,
             ind::AbstractVector,
+            uplo::Val,
+        )
+        return $(Symbol(f, :scattertri!))(A, B, ind, 1, size(B, 1), uplo)
+    end
+
+    @eval function $(Symbol(f, :scattertri!))(
+            A::AbstractMatrix,
+            B::AbstractMatrix,
+            ind::AbstractVector,
+            jstrt::Integer,
+            jstop::Integer,
             ::Val{UPLO},
         ) where {UPLO}
         @assert size(B, 1) == size(B, 2) <= length(ind)
         n = size(B, 1)
 
-        @inbounds for j in axes(B, 2)
-            indj = ind[j]
+        if UPLO === :L
+            @inbounds for j in jstrt:jstop
+                indj = ind[j]
 
-            if UPLO === :L
-                rng = j:n
-            else
-                rng = 1:j
+                for i in j:n
+                    $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+                end
             end
+        else
+            @inbounds for j in jstrt:n
+                indj = ind[j]
 
-            for i in rng
-                $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+                for i in jstrt:min(jstop, j)
+                    $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+                end
             end
         end
 

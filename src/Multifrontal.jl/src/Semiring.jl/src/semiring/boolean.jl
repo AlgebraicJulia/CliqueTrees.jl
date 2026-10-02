@@ -26,7 +26,7 @@ function slte(s::AndOr, a, b)
     return splus(s, a, b, Val(:N)) == b
 end
 
-function szero(::AndOr, ::Type{T}, ::Val{:N}) where {T}
+function szero(::AndOr, ::Type{T}, ::Val{:N}) where {T <: Number}
     return typemax(T)
 end
 

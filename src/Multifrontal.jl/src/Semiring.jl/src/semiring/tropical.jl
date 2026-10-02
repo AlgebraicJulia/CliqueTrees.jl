@@ -52,35 +52,35 @@ function slte(::Union{MinPlus, MinProd}, a, b)
     return a >= b
 end
 
-function szero(::MinPlus, ::Type{T}, ::Val{:N}) where {T <: Real}
+function szero(::MinPlus, ::Type{T}, ::Val{:N}) where {T <: Number}
     return typemax(T)
 end
 
-function szero(::MinPlus, ::Type{T}, ::Val{:C}) where {T <: Real}
+function szero(::MinPlus, ::Type{T}, ::Val{:C}) where {T <: Number}
     return typemin(T)
 end
 
-function szero(::MinProd, ::Type{T}, ::Val{:N}) where {T <: Real}
+function szero(::MinProd, ::Type{T}, ::Val{:N}) where {T <: Number}
     return typemax(T)
 end
 
-function szero(::MinProd, ::Type{T}, ::Val{:C}) where {T <: Real}
+function szero(::MinProd, ::Type{T}, ::Val{:C}) where {T <: Number}
     return zero(T)
 end
 
-function sone(::MinPlus, ::Type{T}, ::Val{:N}) where {T <: Real}
+function sone(::MinPlus, ::Type{T}, ::Val{:N}) where {T}
     return zero(T)
 end
 
-function sone(::MinPlus, ::Type{T}, ::Val{:C}) where {T <: Real}
+function sone(::MinPlus, ::Type{T}, ::Val{:C}) where {T}
     return zero(T)
 end
 
-function sone(::MinProd, ::Type{T}, ::Val{:N}) where {T <: Real}
+function sone(::MinProd, ::Type{T}, ::Val{:N}) where {T}
     return one(T)
 end
 
-function sone(::MinProd, ::Type{T}, ::Val{:C}) where {T <: Real}
+function sone(::MinProd, ::Type{T}, ::Val{:C}) where {T}
     return one(T)
 end
 
@@ -150,31 +150,6 @@ end
 function sprod(s::Union{MinProd, MaxProd}, a::AbstractFloat, b::AbstractFloat, tA::Val{:C}, tB::Val{:N})
     c = b / a
     return ifelse(isnan(c), szero(s, c, tA), c)
-end
-
-@inline function sprod(s::Union{MinPlus, MaxPlus}, a::Vec{W, T}, b::Vec{W, T}, ::Val{:N}, ::Val{:N}) where {W, T <: Signed}
-    z = szero(s, Vec{W, T}, Val(:N))
-    w = szero(s, Vec{W, T}, Val(:C))
-    c = add_saturate(a, b)
-    c = vifelse(splus(s, a, b, Val(:N)) == w, w, c)
-    return vifelse(splus(s, a, b, Val(:C)) == z, z, c)
-end
-
-@inline function sprod(s::Union{MinPlus, MaxPlus}, a::Vec{W, T}, b::T, tA::Val{:N}, tB::Val{:N}) where {W, T <: Signed}
-    return sprod(s, a, Vec{W, T}(b), tA, tB)
-end
-
-@inline function sprod(s::Union{MinPlus, MaxPlus}, a::T, b::Vec{W, T}, tA::Val{:N}, tB::Val{:N}) where {W, T <: Signed}
-    return sprod(s, Vec{W, T}(a), b, tA, tB)
-end
-
-@inline function sprod(s::Union{MinPlus, MaxPlus}, a::T, b::T, ::Val{:N}, ::Val{:N}) where {T <: Signed}
-    z = szero(s, T, Val(:N))
-    w = szero(s, T, Val(:C))
-    c, o = add_with_overflow(a, b)
-    c = ifelse(o, ifelse(a < zero(T), typemin(T), typemax(T)), c)
-    c = ifelse(splus(s, a, b, Val(:N)) == w, w, c)
-    return ifelse(splus(s, a, b, Val(:C)) == z, z, c)
 end
 
 @inline function smuladd(s::TropicalSemiring, a, b, c, ::Val{:N}, ::Val{:N})

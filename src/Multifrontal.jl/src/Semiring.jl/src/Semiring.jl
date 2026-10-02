@@ -3,13 +3,13 @@ module Semiring
 using Base: oneto, promote_eltype, BitInteger, unsafe_convert, unsafe_rational, IEEEFloat
 using Base.Cartesian: @nexprs
 using Base.BinaryPlatforms.CPUID: test_cpu_feature, JL_X86_avx512f, JL_X86_avx2, JL_X86_fma
-using Base.Checked: add_with_overflow, mul_with_overflow
+using Base.Checked: mul_with_overflow
 using Base.GC: @preserve
 using Base.Threads: @spawn, @threads, nthreads
 using Graphs: AbstractGraph, neighbors, vertices
 using LinearAlgebra: Factorization, Transpose, AdjointFactorization, TransposeFactorization, lu!, mul!, ldiv!, rdiv!, lmul!, rmul!, tril!
 import LinearAlgebra
-using SIMD: Vec, add_saturate, vload, vstore, vifelse, shufflevector
+using SIMD: Vec, vload, vstore, vifelse, shufflevector
 using SparseArrays: SparseMatrixCSC, findnz, getcolptr, nonzeros, nzrange, permute, rowvals, sparse
 
 using ...Multifrontal: BipartiteGraph, ChordalSymbolic, ChordalTriangular, CliqueTree, DivisionWorkspace,

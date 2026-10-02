@@ -177,19 +177,19 @@ function szero(s::AbstractSemiring, ::Type{T}, ::Val{:R}) where {T}
     return szero(s, T, Val(:C))
 end
 
-function szero(d::DualQuantale, ::Type{T}, ::Val{:N}) where {T}
+function szero(d::DualQuantale, ::Type{T}, ::Val{:N}) where {T <: Number}
     return szero(d.s, T, Val(:C))
 end
 
-function szero(d::DualQuantale, ::Type{T}, ::Val{:C}) where {T}
+function szero(d::DualQuantale, ::Type{T}, ::Val{:C}) where {T <: Number}
     return szero(d.s, T, Val(:N))
 end
 
-function szero(n::NegativeQuantale, ::Type{T}, ::Val{:N}) where {T}
+function szero(n::NegativeQuantale, ::Type{T}, ::Val{:N}) where {T <: Number}
     return szero(n.s, T, Val(:N))
 end
 
-function szero(s::Lattice, ::Type{T}, ::Val{:N}) where {T}
+function szero(s::Lattice, ::Type{T}, ::Val{:N}) where {T <: Number}
     return szero(s.s, T, Val(:N))
 end
 
