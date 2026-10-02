@@ -1,5 +1,4 @@
 const STRTRI_SPLIT = 4
-const STRTRI_MINBAND = 256
 
 # ===== strtri! =====
 
@@ -30,10 +29,7 @@ function strtri_mt!(
 
     nf = nfr(S)
     nc = ncl(S)
-
-    mb = max(1, nc ÷ STRTRI_MINBAND)
-    nw = min(nt, mb)
-    bs = cld(nc, min(STRTRI_SPLIT * nw, mb))
+    bs = cld(nc, STRTRI_SPLIT * nt)
 
     fdsc = FVector{I}(undef, nf)
     bptr = FVector{I}(undef, nf + 1)
@@ -75,7 +71,7 @@ function strtri_mt!(
     end
 
     nb = n - 1
-    nw = min(nw, nb)
+    nw = min(nt, nb)
 
     if nw <= 1
         Mval = FVector{T}(undef, max(S.nFval * nc, one(I)))
@@ -183,10 +179,10 @@ function strtri_fwd!(
         nt::Integer,
         f::I,
         uplo::Val{UPLO},
-        diag::Val,
+        diag::Val{DIAG},
         rstrt::I,
         rstop::I,
-    ) where {T, I, UPLO}
+    ) where {T, I, UPLO, DIAG}
     if UPLO === :L
         nrhs = convert(I, size(X, 1))
     else
@@ -267,7 +263,7 @@ function strtri_fwd!(
         #
         strtri_mt!(s, uplo, diag, X₁₁, pool, nt)
 
-        if diag === Val(:U)
+        if DIAG === :U
             @inbounds for v in fres
                 X[v, v] = sone(s, T, Val(:N))
             end
