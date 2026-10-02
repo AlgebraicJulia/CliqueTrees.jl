@@ -78,7 +78,10 @@ function strtri_mt!(
         strtri_band!(s, diag, A, X, fdsc, Mval, pool, nt, one(I), nf)
     else
         @threads for w in 1:nw
-            strtri_task!(s, diag, A, X, fdsc, pool, w, nw, bptr, nb, hmax)
+            tstrt = fld(nt * (w - 1), nw) + 1
+            tstop = fld(nt *  w,      nw)
+            poolw = view(pool, tstrt:tstop)
+            strtri_task!(s, diag, A, X, fdsc, poolw, w, nw, tstop - tstrt + 1, bptr, nb, hmax)
         end
     end
 
@@ -94,6 +97,7 @@ function strtri_task!(
         pool::AbstractVector,
         w::Int,
         nw::Int,
+        nt::Int,
         bptr::AbstractVector{I},
         nb::Int,
         hmax::I,
@@ -101,10 +105,9 @@ function strtri_task!(
     S = A.S
 
     Mval = FVector{T}(undef, max(S.nFval * hmax, one(I)))
-    poolw = view(pool, w:w)
 
     for k in w:nw:nb
-        strtri_band!(s, diag, A, X, fdsc, Mval, poolw, 1, bptr[k], bptr[k + 1] - one(I))
+        strtri_band!(s, diag, A, X, fdsc, Mval, pool, nt, bptr[k], bptr[k + 1] - one(I))
     end
 
     return
