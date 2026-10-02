@@ -77,7 +77,7 @@ function strtri_mt!(
     nb = n - 1
     nw = min(nw, nb)
 
-    if nb <= 1
+    if nw <= 1
         Mval = FVector{T}(undef, max(S.nFval * nc, one(I)))
         strtri_band!(s, diag, A, X, fdsc, Mval, pool, nt, one(I), nf)
     else
