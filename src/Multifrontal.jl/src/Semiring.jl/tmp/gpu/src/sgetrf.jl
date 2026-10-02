@@ -745,68 +745,59 @@ end
 # L₁₁[i, j] ← F[i, j] ⊕ (i > j ? L₁₁[i, j] : U₁₁[i, j])
 function combine_gpu!(s::AbstractSemiring, L::AbstractMatrix, U::AbstractMatrix, F::AbstractMatrix)
     function kernel(s, L, U, F)
-        e = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-        nl = size(L, 1)
+        i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+        j = blockIdx().y
 
-        if e <= nl * nl
-            @inbounds begin
-                i = (e - 1) % nl + 1
-                j = (e - 1) ÷ nl + 1
+        if i <= size(L, 1)
+            @inbounds while j <= size(L, 2)
                 L[i, j] = splus(s, F[i, j], i > j ? L[i, j] : U[i, j], Val(:N))
+                j += gridDim().y
             end
         end
 
         return
     end
 
-    n = size(L, 1)
-    @cuda threads = 256 blocks = cld(n * n, 256) kernel(s, L, U, F)
+    launch2d(kernel, size(L, 1), size(L, 2), s, L, U, F)
     return L
 end
 
 # U[i, j] ← L[i, j] for i ≤ j
 function copyupper_gpu!(U::AbstractMatrix, L::AbstractMatrix)
     function kernel(U, L)
-        e = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-        nl = size(L, 1)
+        i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+        j = blockIdx().y
 
-        if e <= nl * nl
-            @inbounds begin
-                i = (e - 1) % nl + 1
-                j = (e - 1) ÷ nl + 1
-
-                if i <= j
-                    U[i, j] = L[i, j]
-                end
+        if i <= size(L, 1)
+            @inbounds while j <= size(L, 2)
+                i <= j && (U[i, j] = L[i, j])
+                j += gridDim().y
             end
         end
 
         return
     end
 
-    n = size(L, 1)
-    @cuda threads = 256 blocks = cld(n * n, 256) kernel(U, L)
+    launch2d(kernel, size(L, 1), size(L, 2), U, L)
     return U
 end
 
 # X ← X ⊕ F[i0 .+ (1:m), j0 .+ (1:n)]   (or X ← F[…] with overwrite)
 function addblock_gpu!(s::AbstractSemiring, X::AbstractMatrix, F::AbstractMatrix, i0::Int, j0::Int; overwrite::Bool = false)
     function kernel(s, X, F, i0, j0, ::Val{OVERWRITE}) where {OVERWRITE}
-        e = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-        m = size(X, 1)
+        i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+        j = blockIdx().y
 
-        if e <= m * size(X, 2)
-            @inbounds begin
-                i = (e - 1) % m + 1
-                j = (e - 1) ÷ m + 1
+        if i <= size(X, 1)
+            @inbounds while j <= size(X, 2)
                 X[i, j] = OVERWRITE ? F[i0 + i, j0 + j] : splus(s, X[i, j], F[i0 + i, j0 + j], Val(:N))
+                j += gridDim().y
             end
         end
 
         return
     end
 
-    len = length(X)
-    @cuda threads = 256 blocks = cld(len, 256) kernel(s, X, F, i0, j0, Val(overwrite))
+    launch2d(kernel, size(X, 1), size(X, 2), s, X, F, i0, j0, Val(overwrite))
     return X
 end

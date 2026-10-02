@@ -14,7 +14,7 @@ using CUDA, LinearAlgebra, SparseArrays, Random, Printf, Statistics, CodecZlib
 
 const DATA = joinpath(@__DIR__, "..", "data")
 const T = Float32
-const KS = (1, 16, 64, 256)
+const KS = Tuple(parse.(Int, split(get(ENV, "KS", "1,16,64,256"), ",")))
 
 # ----- graphs -----
 
@@ -66,6 +66,7 @@ const GRAPHS = Dict(
     "roadNet-PA"     => () -> load_snap(joinpath(DATA, "roadNet-PA.txt.gz")),
     "USA-road-t.NY"  => () -> load_dimacs(joinpath(DATA, "USA-road-t.NY.gr.gz")),
     "USA-road-t.FLA" => () -> load_dimacs(joinpath(DATA, "USA-road-t.FLA.gr.gz")),
+    "USA-road-t.USA" => () -> load_dimacs(joinpath(DATA, "USA-road-t.USA.gr.gz")),
     "grid2d-500"     => () -> grid(500, 500),
 )
 

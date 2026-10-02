@@ -56,8 +56,8 @@ for (s, A) in [(MinPlus(), grid(60, 60, Float32)), (MinPlus(), grid(150, 150, Fl
                (PlusProd(), grid(30, 30, Float64) ./ 500)]
     T = eltype(A); n = size(A, 1)
     F = mlu(s, A)
-    for large in (typemax(Int), 64)
-        G = GPUSLU(F; large)
+    for large in (typemax(Int), 64), ops in (false, true)
+        G = GPUSLU(F; large); ops && precompute_ops!(G)
         oks = map((1, 7, 64, 100)) do k
             src = rand(1:n, k)
             B = fill(szero(s, T, Val(:N)), k, n)
@@ -66,7 +66,7 @@ for (s, A) in [(MinPlus(), grid(60, 60, Float32)), (MinPlus(), grid(150, 150, Fl
             out = Array(sssp_gpu!(CuMatrix{T}(undef, k, n), G, CuVector(src)))
             s isa PlusProd ? isapprox(out, ref; rtol = 1e-10) : out == ref
         end
-        println(rpad(string(nameof(typeof(s)), " ", T, " n=", n), 28), " large=", rpad(large == typemax(Int) ? "∞" : large, 5), " k=1,7,64,100: ", all(oks) ? "ok" : "FAIL $(oks)")
+        println(rpad(string(nameof(typeof(s)), " ", T, " n=", n), 28), " large=", rpad(large == typemax(Int) ? "∞" : large, 5), " ops=", rpad(ops, 5), " k=1,7,64,100: ", all(oks) ? "ok" : "FAIL $(oks)")
     end
 end
 
