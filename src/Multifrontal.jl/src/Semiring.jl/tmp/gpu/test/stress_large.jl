@@ -7,6 +7,11 @@
 # Oracle: a binary-heap Dijkstra written here (min-plus, nonnegative weights) and its widest-path
 # variant (max-min); it shares no code with the solver.
 
+# SKIP_INT=1 leaves out integer element types (upstream min-plus Int32 saturation was removed in CliqueTrees fb01ee7)
+const SKIP_INT = get(ENV, "SKIP_INT", "0") == "1"
+const REJECTED = Ref(0)
+semiring_ok(s, T) = try SemiringGPU.check_semiring(s, T); true catch e; e isa ArgumentError || rethrow(); false end
+haskey(ENV, "SEMIRINGGPU_TUNE_FILE") || (ENV["SEMIRINGGPU_TUNE_FILE"] = tempname())
 include(joinpath(@__DIR__, "..", "src", "SemiringGPU.jl"))
 using .SemiringGPU
 using .SemiringGPU: Semiring
@@ -87,29 +92,31 @@ end
 
 function run_case(seed)
     rng = Xoshiro(seed)
-    s, T = rand(rng, [(MinPlus(), Float32), (MinPlus(), Float64), (MinPlus(), Int32), (MaxMin(), Float32)])
+    s, T = rand(rng, filter(x -> !(SKIP_INT && x[2] <: Integer), [(MinPlus(), Float32), (MinPlus(), Float64), (MinPlus(), Int32), (MaxMin(), Float32)]))
     kind = rand(rng, (:grid2, :grid3, :er, :tree, :pieces))
     A = graph(rng, T, kind, rand(rng, (2_000, 5_000, 12_000, 30_000)))
     n = size(A, 1)
     widest = s isa MaxMin
 
-    SemiringGPU.GEMM_VERSION[] = rand(rng, (1, 2))
-    SemiringGPU.PERSISTENT[] = rand(rng, Bool)
-    SemiringGPU.PATH_WARP[] = rand(rng, Bool)
-    SemiringGPU.ROWMAJOR_MIN[] = rand(rng, (1, 4096))
-    SemiringGPU.LAYERED[] = rand(rng, Bool)
-    SemiringGPU.LAYER_M[] = rand(rng, (0, 1, 4, 32))
-    SemiringGPU.AMALGAMATE[] = rand(rng, (1, 2, 4, 8))
-    SemiringGPU.FUSED_LARGE[] = rand(rng, Bool)
+    settings = (gemm_kernel = rand(rng, (0, 2, 4, 6)), gemm_tune = rand(rng, Bool), skip_fill = rand(rng, Bool),
+                merge = rand(rng, (1, 2, 8, 32, 128)), layered_min_rows = rand(rng, (1, 4096)), layer_size = rand(rng, (0, 1, 4, 32)),
+                factor_merge = rand(rng, (1, 8, 128)), fused_front = rand(rng, Bool), direct_assembly = rand(rng, Bool))
     flarge = rand(rng, (16, 64, 256, typemax(Int)))
     slarge = rand(rng, (64, 2048, typemax(Int)))
     F = ChordalSLU(s, A); copyto!(F, A)
+
+    if !semiring_ok(s, T)                       # must be rejected with an ArgumentError, not answered
+        rejected = try FactorPlan(F; large = flarge, graph = false); false catch e; e isa ArgumentError || rethrow(); true end
+        rejected ? (REJECTED[] += 1) : @printf("  FAIL seed=%d: accepted an unsupported %s %s\n", seed, nameof(typeof(s)), T)
+        return rejected
+    end
+
+    return with_config(; settings...) do
     P = FactorPlan(F; large = flarge, graph = false, nstreams = rand(rng, (1, 8))); factorize!(P)
     G = GPUSLU(P; large = slarge)
     rand(rng, Bool) && precompute_ops!(G)
-    tag = @sprintf("%s %s %s n=%d gemm=%d pers=%d warp=%d flarge=%s slarge=%s rmin=%d layered=%d m=%d amalg=%d", nameof(typeof(s)), T, kind, n,
-        SemiringGPU.GEMM_VERSION[], SemiringGPU.PERSISTENT[], SemiringGPU.PATH_WARP[], flarge, slarge,
-        SemiringGPU.ROWMAJOR_MIN[], SemiringGPU.LAYERED[], SemiringGPU.LAYER_M[], SemiringGPU.AMALGAMATE[])
+    tag = @sprintf("%s %s %s n=%d flarge=%s slarge=%s %s", nameof(typeof(s)), T, kind, n, flarge, slarge,
+        join(("$k=$(Int(v))" for (k, v) in pairs(settings)), " "))
 
     k = rand(rng, (1, 63, 129, 300))
     src = rand(rng, 1:n, k)
@@ -138,6 +145,7 @@ function run_case(seed)
     ok = nbad == 0 && ndiff == 0 && nclo == 0
     ok || @printf("  FAIL seed=%d %s: oracle mismatches %d, nondeterministic %d, closure mismatches %d\n", seed, tag, nbad, ndiff, nclo)
     return ok
+    end
 end
 
 ncases = length(ARGS) > 0 ? parse(Int, ARGS[1]) : 40
@@ -154,4 +162,4 @@ for c in 0:(ncases - 1)
     GC.gc(); CUDA.reclaim()
 end
 
-@printf("stress_large: %d cases, %d failures (%.0f s)\n", ncases, nfail, time() - t0)
+@printf("stress_large: %d cases, %d failures, %d rejected as unsupported (%.0f s)\n", ncases, nfail, REJECTED[], time() - t0)

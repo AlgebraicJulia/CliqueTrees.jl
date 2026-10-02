@@ -17,9 +17,8 @@ using .Semiring: AbstractSemiring, ChordalSLU, splus, sprod, sstar, szero, isint
 # ===== dense LU =====
 
 const SGETRF_GPU_NB = 64
+const LU_DIAG_THREADS = 1024             # 256 left most of the b³/3 updates of a 64-block serial per thread
 
-# set to a Dict{Symbol, Float64} to profile the factorization kernels by type (synchronizes)
-const FTIMER = Ref{Any}(nothing)
 
 #
 # A ← L + U with A* = U* L*: right-looking and blocked, as Semiring.sgetrf_mt!
@@ -40,7 +39,7 @@ function sgetrf_gpu!(s::AbstractSemiring, A::AbstractMatrix{T}; nb::Int = SGETRF
         b = min(nb, n - k + 1)
         J = k:(k + b - 1)
         Akk = view(A, J, J)
-        @phase FTIMER[] :lu_diag @cuda threads = 256 sgetrf_diag_kernel!(s, scale, Akk)
+        @phase FTIMER[] :lu_diag @cuda threads = LU_DIAG_THREADS sgetrf_diag_kernel!(s, scale, Akk)
 
         if k + b <= n
             R = (k + b):n
@@ -139,14 +138,13 @@ function strsx_left_gpu!(s::AbstractSemiring, trans::Val, A::AbstractMatrix, X::
             Tb, W = trsm_workspace(T, b * m)
             Tj = view(Tb, 1:b, 1:b)
             identity_gpu!(s, Tj)
-            @cuda threads = 32 * cld(b, 32) strsx_left_diag_kernel!(s, trans, Tj, view(A, J, J))
+            diag_solve_left!(s, trans, Tj, view(A, J, J))
             Wj = reshape(view(W, 1:(b * m)), b, m)
             fill!(Wj, szero(s, T, Val(:N)))
             sgemx_gpu!(s, Wj, Tj, view(X, J, :))
             copy_gpu!(view(X, J, :), Wj)
         else
-            tb = min(128, 32 * cld(m, 32))
-            @cuda threads = tb blocks = cld(m, tb) strsx_left_diag_kernel!(s, trans, view(X, J, :), view(A, J, J))
+            diag_solve_left!(s, trans, view(X, J, :), view(A, J, J))
         end
 
         if i1 < n
@@ -238,11 +236,15 @@ mutable struct FactorPlan{Sem <: AbstractSemiring, T, I}
     Fbufs::Vector{CuVector{T}}
     graph::Bool
     exec::Union{Nothing, CuGraphExec}
+    # merged chains of top fronts (config().factor_merge), or nothing: the merge and the merged factor arrays
+    amal::Any
+    merged::NTuple{4, CuVector{T}}
 end
 
 function FactorPlan(F::ChordalSLU{Sem, T, I}; large::Integer = 256, nt::Integer = Threads.nthreads(), graph::Bool = true,
-        nstreams::Integer = 8, maxbytes::Integer = 2^31) where {Sem, T, I}
+        nstreams::Integer = 8, maxbytes::Integer = 2^31, merge::Integer = config().factor_merge, alpha::Real = 0.5) where {Sem, T, I}
     s = F.s
+    check_semiring(s, T)
     S = F.S.S
     nf = Int(MF.nv(S.res))
     pnt = S.pnt
@@ -331,6 +333,24 @@ function FactorPlan(F::ChordalSLU{Sem, T, I}; large::Integer = 256, nt::Integer 
 
     nbndval = base - 1
     #
+    # merge chains of top fronts (see config().factor_merge): the GPU then factors merged fronts, in a merged
+    # copy of the factor (gathered before and scattered back after the top), and every child's update
+    # is assembled at its positions in the merged front of its parent
+    #
+    amal = nothing
+
+    if merge > 1 && any(istop)
+        Stgt = MF.targets(S.sep)
+        amal = amalgamation(amalgamation_key(S.Dptr), I, merge, alpha, Vector{I}(view(Rptr, 1:(nf + 1))), Vector{I}(view(Sptr, 1:(nf + 1))),
+            Vector{I}(view(Stgt, 1:(Sptr[nf + 1] - 1))), Vector{I}(view(S.Dptr, 1:(nf + 1))), Vector{I}(view(S.Lptr, 1:(nf + 1))),
+            Vector{I}(view(pnt, 1:nf)), Vector{I}(view(S.idx, 1:size(F, 1))); allowed = istop, compact = true)     # cached per symbolic factorization
+        isnothing(amal) || amal.nf == nf && (amal = nothing)        # nothing merged
+    end
+
+    if !isnothing(amal)
+        return merged_plan(F, amal, istop, topwork, nt, workers, nbndval, bndoff, nstreams, maxbytes, graph)
+    end
+    #
     # the top fronts, in postorder, with a stack of update matrices
     #
     gstack = Tuple{Int, Int}[]; gpeak = 0
@@ -393,6 +413,7 @@ function FactorPlan(F::ChordalSLU{Sem, T, I}; large::Integer = 256, nt::Integer 
         upload(relptr), upload(MF.targets(S.rel)),
         tasks, levels, [CuStream() for _ in 1:nstreams],
         [CuVector{T}(undef, nFgpu) for _ in 1:nstreams], graph, nothing,
+        nothing, ntuple(_ -> CuVector{T}(undef, 0), 4),
     )
     #
     # the plan orders every cross-stream access itself (fork event, level
@@ -405,6 +426,135 @@ function FactorPlan(F::ChordalSLU{Sem, T, I}; large::Integer = 256, nt::Integer 
 
     return P
 end
+
+# config().factor_merge: merge chains of top fronts in the GPU factorization up to this width (1 = off).
+# The top of the elimination tree is nearly a chain (about 40 levels of 1 or 2 fronts on a 3D grid),
+# and most top fronts have 1–8 pivots, so the factorization is a sequence of ~10 tiny launches per
+# front. Merged fronts are factored as one dense front (the same eliminations; the padding is the
+# semiring zero).
+
+function merged_plan(F::ChordalSLU{Sem, T, I}, A::Amalgamation, istop, topwork, nt, workers, nbndval, bndoff, nstreams, maxbytes, graph) where {Sem, T, I}
+    S = F.S.S
+    nf = Int(MF.nv(S.res))
+    Sptr = MF.pointers(S.sep); Stgt = MF.targets(S.sep)
+    chdptr = MF.pointers(S.chd); chdtgt = MF.targets(S.chd)
+    na(f) = Int(Sptr[f + 1] - Sptr[f])
+    children(f) = (Int(chdtgt[p]) for p in chdptr[f]:(chdptr[f + 1] - 1))
+    sep(f) = view(Stgt, Sptr[f]:(Sptr[f + 1] - 1))
+    ng = A.nf; grp = A.group
+    ufirst = zeros(Int, ng); ulast = zeros(Int, ng)
+
+    for f in 1:nf
+        q = grp[f]
+        iszero(ufirst[q]) && (ufirst[q] = f)
+        ulast[q] = f
+    end
+
+    uw(q) = Int(A.Rptr[q + 1] - A.Rptr[q])
+    una(q) = Int(A.Sptr[q + 1] - A.Sptr[q])
+    utop(q) = istop[ufirst[q]]
+    newrel = I[]
+    #
+    # positions of the vertices `verts` in unit q's front: residual vertices first, then its separator
+    #
+    function positions!(q, verts)
+        r0 = Int(A.Rptr[q]); w = uw(q)
+        sg = view(A.Stgt, A.Sptr[q]:(A.Sptr[q + 1] - 1))
+
+        for u in verts
+            if r0 <= u < r0 + w
+                push!(newrel, I(u - r0 + 1))
+            else
+                k = searchsortedfirst(sg, u)
+                @assert k <= length(sg) && sg[k] == u "merged factorization: separator vertex outside the parent's front"
+                push!(newrel, I(w + k))
+            end
+        end
+    end
+
+    externals(q) = sort!([c for m in ufirst[q]:ulast[q] for c in children(m) if grp[c] != q])
+    tasks = Tuple{Int, Int, Int, Int, Int, Vector{Tuple{Bool, Int, Int, Int}}}[]
+    levels = Vector{Int}[]
+    nFgpu = 1
+    topsize = sum(q -> utop(q) ? una(q)^2 : 0, 1:ng; init = 0)
+    nstreams = (nstreams > 1 && topsize * sizeof(T) <= maxbytes) ? Int(nstreams) : 1
+
+    if nstreams > 1
+        slot = zeros(Int, ng); theight = zeros(Int, ng); qq = 1
+
+        for q in 1:ng
+            utop(q) || continue
+            slot[q] = qq; qq += una(q)^2
+            ks = externals(q)
+            theight[q] = 1 + maximum((theight[grp[c]] for c in ks if istop[c]); init = 0)
+            kids = Tuple{Bool, Int, Int, Int}[]
+
+            for c in Iterators.reverse(ks)
+                rp = length(newrel) + 1
+                positions!(q, sep(c))
+                push!(kids, istop[c] ? (true, slot[grp[c]], na(c), rp) : (false, bndoff[c], na(c), rp))
+            end
+
+            push!(tasks, (uw(q), una(q), Int(A.Dptr[q]), Int(A.Lptr[q]), slot[q], kids))
+            length(levels) < theight[q] && push!(levels, Int[])
+            push!(levels[theight[q]], length(tasks))
+            nFgpu = max(nFgpu, (uw(q) + una(q))^2)
+        end
+
+        gpeak = topsize
+    else
+        gstack = Tuple{Int, Int}[]; gpeak = 0
+
+        for q in 1:ng
+            utop(q) || continue
+            ks = externals(q)
+            offs = Dict{Int, Int}()
+
+            for c in Iterators.reverse(ks)
+                istop[c] && (offs[c] = first(pop!(gstack)))
+            end
+
+            kids = Tuple{Bool, Int, Int, Int}[]
+
+            for c in Iterators.reverse(ks)
+                rp = length(newrel) + 1
+                positions!(q, sep(c))
+                push!(kids, istop[c] ? (true, offs[c], na(c), rp) : (false, bndoff[c], na(c), rp))
+            end
+
+            out = isempty(gstack) ? 1 : sum(gstack[end])
+            push!(tasks, (uw(q), una(q), Int(A.Dptr[q]), Int(A.Lptr[q]), out, kids))
+
+            if ispositive(una(q))
+                push!(gstack, (out, una(q)^2))
+                gpeak = max(gpeak, out + una(q)^2 - 1)
+            end
+
+            nFgpu = max(nFgpu, (uw(q) + una(q))^2)
+        end
+    end
+
+    merged = (CuVector{T}(undef, length(A.mLD)), CuVector{T}(undef, length(A.mLL)), CuVector{T}(undef, length(A.mUD)), CuVector{T}(undef, length(A.mUL)))
+    P = FactorPlan{Sem, T, I}(
+        F, istop, topwork, nt, workers, nbndval,
+        CuVector{T}(undef, length(F.LDval)), CuVector{T}(undef, length(F.LLval)),
+        CuVector{T}(undef, length(F.UDval)), CuVector{T}(undef, length(F.ULval)),
+        CuVector{T}(undef, max(nbndval, 1)), CuVector{T}(undef, max(gpeak, 1)), CuVector{T}(undef, 1),
+        upload(MF.pointers(S.rel)), upload(newrel),
+        tasks, levels, [CuStream() for _ in 1:nstreams],
+        [CuVector{T}(undef, nFgpu) for _ in 1:nstreams], graph, nothing,
+        A, merged,
+    )
+
+    for x in (P.LD, P.LL, P.UD, P.UL, P.Mb, P.Mg, P.relptr, P.reltgt, P.Fbufs..., merged...)
+        CUDA.enable_synchronization!(x, false)
+    end
+
+    return P
+end
+
+# the factor arrays the top fronts are factored in: (LD, UD, LL, UL)
+top_arrays(P::FactorPlan) = isnothing(P.amal) ? (P.LD, P.UD, P.LL, P.UL) : (P.merged[1], P.merged[3], P.merged[2], P.merged[4])
 
 ntop(P::FactorPlan) = count(P.istop)
 
@@ -451,14 +601,34 @@ function upload!(P::FactorPlan)
     return P
 end
 
-# GPU: issue the top fronts, ordered after the current stream
-function factor_top!(P::FactorPlan{Sem, T}) where {Sem, T}
+# GPU: issue the top fronts, ordered after the current stream. The GEMMs here are issued on several
+# streams, so they use the heuristic kernel choice (no clean timing for the autotuner).
+function factor_top!(P::FactorPlan)
+    with(TUNING => false, SCRATCH_OWNER => P) do              # concurrent streams: no autotuning; P owns their scratch
+        if !isnothing(P.amal)
+            A = P.amal; z = szero(P.F.s, eltype(P.LD), Val(:N))
+            LDm, LLm, UDm, ULm = P.merged
+            amalgamate_gather!(LDm, P.LD, P.LL, A.mLD, z); amalgamate_gather!(LLm, P.LL, P.LL, A.mLL, z)
+            amalgamate_gather!(UDm, P.UD, P.UL, A.mUD, z); amalgamate_gather!(ULm, P.UL, P.UL, A.mUL, z)
+            factor_top_streams!(P)
+            amalgamate_scatter!(P.LD, P.LL, LDm, A.mLD); amalgamate_scatter!(P.LL, P.LL, LLm, A.mLL)
+            amalgamate_scatter!(P.UD, P.UL, UDm, A.mUD); amalgamate_scatter!(P.UL, P.UL, ULm, A.mUL)
+            return P
+        end
+
+        return factor_top_streams!(P)
+    end
+end
+
+function factor_top_streams!(P::FactorPlan{Sem, T}) where {Sem, T}
     s = P.F.s
     scale = Val(!isintegral(s))
 
+    LD, UD, LL, UL = top_arrays(P)
+
     run(t, Fbuf) = let (n₁, n₂, Dp, Lp, out, kids) = P.tasks[t]
-        factor_front_gpu!(s, scale, Fbuf, P.LD, P.UD, P.LL, P.UL, P.Mg, out, n₁, n₂, Dp, Lp,
-            ((k[1] ? P.Mg : P.Mb, k[2], k[3], k[4]) for k in kids), P.relptr, P.reltgt)
+        factor_front_gpu!(s, scale, Fbuf, LD, UD, LL, UL, P.Mg, out, n₁, n₂, Dp, Lp,
+            ((k[1] ? P.Mg : P.Mb, k[2], k[3], k[4]) for k in kids), P.relptr, P.reltgt; direct = !isempty(P.levels))
     end
 
     ns = length(P.streams)
@@ -542,11 +712,7 @@ function factorize!(P::FactorPlan; download::Bool = false)
     end
 
     if P.graph && isnothing(P.exec)
-        g = CUDA.capture() do
-            factor_top!(P)
-        end
-
-        P.exec = CUDA.instantiate(g)
+        P.exec = capture_graph(() -> factor_top!(P))
     end
 
     if download
@@ -688,8 +854,37 @@ end
 #   M ← F₂₂ ⊕ L₂₁ U₁₂, written to Mg[out:out + na² - 1]
 #
 function factor_front_gpu!(s::AbstractSemiring, scale::Val, Fbuf::CuVector{T}, LD, UD, LL, UL, Mg::CuVector{T}, out::Int,
-        n₁::Int, n₂::Int, Dp::Int, Lp::Int, kids, relptr_g, reltgt_g) where {T}
+        n₁::Int, n₂::Int, Dp::Int, Lp::Int, kids, relptr_g, reltgt_g; direct::Bool = false) where {T}
     nj = n₁ + n₂
+    L₁₁ = reshape(view(LD, Dp:(Dp + n₁ * n₁ - 1)), n₁, n₁)
+    U₁₁ = reshape(view(UD, Dp:(Dp + n₁ * n₁ - 1)), n₁, n₁)
+
+    # (only with static update slots: on the single-stream stack the parent's update may overlap its children's)
+    if direct && config().direct_assembly && config().fused_front && ispositive(n₂) && n₁ <= DIAG_NB && sizeof(T) <= 4
+        #
+        # no front matrix: the original entries are already in L₁₁/U₁₁, L₂₁ and U₁₂; the update matrix
+        # starts empty, and every child's update is added straight into the block it belongs to
+        #
+        L₂₁ = reshape(view(LL, Lp:(Lp + n₁ * n₂ - 1)), n₂, n₁)
+        U₁₂ = reshape(view(UL, Lp:(Lp + n₁ * n₂ - 1)), n₁, n₂)
+        M = reshape(view(Mg, out:(out + n₂ * n₂ - 1)), n₂, n₂)
+        @phase FTIMER[] :assemble merge_diag_gpu!(L₁₁, U₁₁)
+        @phase FTIMER[] :assemble fill!(M, szero(s, T, Val(:N)))
+
+        for (buf, off, nac, rp) in kids
+            @phase FTIMER[] :assemble extendadd_direct_gpu!(s, L₁₁, L₂₁, U₁₂, M, buf, off, nac, reltgt_g, rp)
+        end
+
+        Tb, W = trsm_workspace(T, n₁ * n₁ + 2 * n₁ * n₂)
+        TU = view(Tb, 1:n₁, 1:n₁)
+        TL = reshape(view(W, 1:(n₁ * n₁)), n₁, n₁)
+        @phase FTIMER[] :lu_diag @cuda threads = diag_threads(n₁) front_diag_kernel!(s, scale, L₁₁, TL, TU)
+        @phase FTIMER[] :assemble copyupper_gpu!(U₁₁, L₁₁)
+        front_panels!(s, L₂₁, U₁₂, TL, TU, W, n₁, n₂)
+        @phase FTIMER[] :schur_gemm sgemx_gpu!(s, M, L₂₁, U₁₂)
+        return
+    end
+
     Fj = reshape(view(Fbuf, 1:(nj * nj)), nj, nj)
     @phase FTIMER[] :assemble fill!(Fj, szero(s, T, Val(:N)))
 
@@ -697,9 +892,28 @@ function factor_front_gpu!(s::AbstractSemiring, scale::Val, Fbuf::CuVector{T}, L
         @phase FTIMER[] :assemble extendadd_gpu!(s, Fj, buf, off, nac, relptr_g, reltgt_g, rp)
     end
 
-    L₁₁ = reshape(view(LD, Dp:(Dp + n₁ * n₁ - 1)), n₁, n₁)
-    U₁₁ = reshape(view(UD, Dp:(Dp + n₁ * n₁ - 1)), n₁, n₁)
     @phase FTIMER[] :assemble combine_gpu!(s, L₁₁, U₁₁, Fj)
+
+    if config().fused_front && ispositive(n₂) && n₁ <= DIAG_NB && sizeof(T) <= 4
+        #
+        # LU and both closures of the diagonal block in one kernel; the panel solves are GEMMs
+        #
+        Tb, W = trsm_workspace(T, n₁ * n₁ + 2 * n₁ * n₂)
+        TU = view(Tb, 1:n₁, 1:n₁)
+        TL = reshape(view(W, 1:(n₁ * n₁)), n₁, n₁)
+        @phase FTIMER[] :lu_diag @cuda threads = diag_threads(n₁) front_diag_kernel!(s, scale, L₁₁, TL, TU)
+        @phase FTIMER[] :assemble copyupper_gpu!(U₁₁, L₁₁)
+        L₂₁ = reshape(view(LL, Lp:(Lp + n₁ * n₂ - 1)), n₂, n₁)
+        U₁₂ = reshape(view(UL, Lp:(Lp + n₁ * n₂ - 1)), n₁, n₂)
+        @phase FTIMER[] :assemble addblock_gpu!(s, L₂₁, Fj, n₁, 0)
+        @phase FTIMER[] :assemble addblock_gpu!(s, U₁₂, Fj, 0, n₁)
+        front_panels!(s, L₂₁, U₁₂, TL, TU, W, n₁, n₂)
+        M = reshape(view(Mg, out:(out + n₂ * n₂ - 1)), n₂, n₂)
+        @phase FTIMER[] :assemble addblock_gpu!(s, M, Fj, n₁, n₁; overwrite = true)
+        @phase FTIMER[] :schur_gemm sgemx_gpu!(s, M, L₂₁, U₁₂)
+        return
+    end
+
     sgetrf_gpu!(s, L₁₁)
     @phase FTIMER[] :assemble copyupper_gpu!(U₁₁, L₁₁)
 
@@ -715,6 +929,201 @@ function factor_front_gpu!(s::AbstractSemiring, scale::Val, Fbuf::CuVector{T}, L
         @phase FTIMER[] :schur_gemm sgemx_gpu!(s, M, L₂₁, U₁₂)
     end
 
+    return
+end
+
+# ===== fused diagonal block of a small front =====
+#
+# For a front with n₁ ≤ 64 pivots the old path issues ~11 launches for the diagonal block and the two
+# panel solves (LU kernel; for each panel identity, diagonal solve, fill, GEMM, copy). This kernel does
+# the LU of the block and both closures TL = L₁₁* (unit lower) and TU = U₁₁* in one launch, with the
+# block in shared memory, so that the panel solves are plain GEMMs: L₂₁ ← L₂₁ TU (in place) and
+# U₁₂ ← TL U₁₂. These are the same operations as the inversion path of strsx_gpu! / strsx_left_gpu!
+# (which the old path takes for panels of more than 64 rows or columns).
+#
+
+function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix{T}, TL::AbstractMatrix{T}, TU::AbstractMatrix{T}) where {SCALE, T}
+    S = CuStaticSharedArray(T, (DIAG_NB + 1, DIAG_NB))
+    X = CuStaticSharedArray(T, (DIAG_NB + 1, DIAG_NB))
+    b = size(A, 1)
+    tid = threadIdx().x - 1; nt = blockDim().x
+    z = szero(s, T, Val(:N)); o = sone(s, T, Val(:N))
+
+    @inbounds begin
+        e = tid
+        while e < b * b
+            S[e % b + 1, e ÷ b + 1] = A[e % b + 1, e ÷ b + 1]
+            e += nt
+        end
+        sync_threads()
+        #
+        # LU, as sgetrf_diag_kernel!
+        #
+        for p in 1:b
+            if SCALE
+                sp = sstar(s, S[p, p])
+                k = p + 1 + tid
+                while k <= b
+                    S[k, p] = sprod(s, S[k, p], sp, Val(:N), Val(:N))
+                    k += nt
+                end
+                sync_threads()
+            end
+
+            m = b - p
+            e = tid
+            while e < m * m
+                k = p + e % m + 1
+                j = p + e ÷ m + 1
+                S[k, j] = smuladd(s, S[k, p], S[p, j], S[k, j], Val(:N), Val(:N))
+                e += nt
+            end
+            sync_threads()
+        end
+
+        e = tid
+        while e < b * b
+            A[e % b + 1, e ÷ b + 1] = S[e % b + 1, e ÷ b + 1]
+            e += nt
+        end
+        q = tid % DIAG_KS
+        r = tid ÷ DIAG_KS + 1
+        #
+        # TU = U₁₁*: X ← I, then column by column X[r, j] ← (X[r, j] ⊕ ⊕_{k<j} X[r, k] S[k, j]) S[j, j]*
+        #
+        e = tid
+        while e < b * b
+            X[e % b + 1, e ÷ b + 1] = e % b == e ÷ b ? o : z
+            e += nt
+        end
+        sync_threads()
+
+        for j in 1:b
+            part = z
+            if r <= b
+                k = 1 + q
+                while k < j
+                    part = smuladd(s, X[r, k], S[k, j], part, Val(:N), Val(:N))
+                    k += DIAG_KS
+                end
+            end
+            part = ks_reduce(s, part)
+            if r <= b && q == 0
+                acc = splus(s, X[r, j], part, Val(:N))
+                SCALE && (acc = sprod(s, acc, sstar(s, S[j, j]), Val(:N), Val(:N)))
+                X[r, j] = acc
+            end
+            sync_threads()
+        end
+
+        e = tid
+        while e < b * b
+            TU[e % b + 1, e ÷ b + 1] = X[e % b + 1, e ÷ b + 1]
+            e += nt
+        end
+        sync_threads()
+        #
+        # TL = L₁₁*: X ← I, then row by row X[i, c] ← X[i, c] ⊕ ⊕_{k<i} S[i, k] X[k, c]
+        #
+        e = tid
+        while e < b * b
+            X[e % b + 1, e ÷ b + 1] = e % b == e ÷ b ? o : z
+            e += nt
+        end
+        sync_threads()
+        c = r
+
+        for i in 1:b
+            part = z
+            if c <= b
+                k = 1 + q
+                while k < i
+                    part = smuladd(s, S[i, k], X[k, c], part, Val(:N), Val(:N))
+                    k += DIAG_KS
+                end
+            end
+            part = ks_reduce(s, part)
+            (c <= b && q == 0) && (X[i, c] = splus(s, X[i, c], part, Val(:N)))
+            sync_threads()
+        end
+
+        e = tid
+        while e < b * b
+            TL[e % b + 1, e ÷ b + 1] = X[e % b + 1, e ÷ b + 1]
+            e += nt
+        end
+    end
+
+    return
+end
+
+# L₂₁ ← L₂₁ U₁₁* and U₁₂ ← L₁₁* U₁₂ as GEMMs with the closures TU, TL (W: scratch of n₁² + 2 n₁ n₂)
+function front_panels!(s, L₂₁, U₁₂, TL, TU, W, n₁, n₂)
+    if inplace_ok(n₁)
+        @phase FTIMER[] :panel_trsm sgemx_gpu!(s, L₂₁, L₂₁, TU; overwrite = true)        # in place, one tile wide
+    else
+        Y = reshape(view(W, (n₁ * n₁ + n₁ * n₂ + 1):(n₁ * n₁ + 2 * n₁ * n₂)), n₂, n₁)
+        @phase FTIMER[] :panel_trsm copy_gpu!(Y, L₂₁)
+        @phase FTIMER[] :panel_trsm sgemx_gpu!(s, L₂₁, Y, TU; overwrite = true)
+    end
+
+    X = reshape(view(W, (n₁ * n₁ + 1):(n₁ * n₁ + n₁ * n₂)), n₁, n₂)
+    @phase FTIMER[] :panel_trsm copy_gpu!(X, U₁₂)
+    @phase FTIMER[] :panel_trsm sgemx_gpu!(s, U₁₂, TL, X; overwrite = true)
+    return
+end
+
+
+# L₁₁[i, j] ← U₁₁[i, j] for i ≤ j: the diagonal block in one array (as combine_gpu! without a front matrix)
+function merge_diag_gpu!(L::AbstractMatrix, U::AbstractMatrix)
+    function kernel(L, U)
+        i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+        j = blockIdx().y
+
+        if i <= size(L, 1)
+            @inbounds while j <= size(L, 2)
+                i <= j && (L[i, j] = U[i, j])
+                j += gridDim().y
+            end
+        end
+
+        return
+    end
+
+    launch2d(kernel, size(L, 1), size(L, 2), L, U)
+    return L
+end
+
+# a child's update added straight into the blocks of its parent: positions reltgt[rp:rp+na-1] in the
+# parent's front (1:n₁ residual, then separator) select L₁₁, L₂₁, U₁₂ or the parent's update M
+function extendadd_direct_gpu!(s::AbstractSemiring, L11, L21, U12, M, buf::CuVector, off::Int, na::Int, reltgt, rp::Int)
+    function kernel(s, L11, L21, U12, M, buf, off, na, reltgt, rp)
+        v = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+        w = blockIdx().y
+        n₁ = size(L11, 1)
+
+        if v <= na
+            @inbounds begin
+                i = Int(reltgt[rp + v - 1]); j = Int(reltgt[rp + w - 1])
+                x = buf[off + (w - 1) * na + v - 1]
+
+                if i <= n₁ && j <= n₁
+                    L11[i, j] = splus(s, L11[i, j], x, Val(:N))
+                elseif j <= n₁
+                    L21[i - n₁, j] = splus(s, L21[i - n₁, j], x, Val(:N))
+                elseif i <= n₁
+                    U12[i, j - n₁] = splus(s, U12[i, j - n₁], x, Val(:N))
+                else
+                    M[i - n₁, j - n₁] = splus(s, M[i - n₁, j - n₁], x, Val(:N))
+                end
+            end
+        end
+
+        return
+    end
+
+    tb = min(256, 32 * cld(na, 32))
+    @cuda threads = tb blocks = (cld(na, tb), na) kernel(s, L11, L21, U12, M, buf, off, na, reltgt, rp)
     return
 end
 

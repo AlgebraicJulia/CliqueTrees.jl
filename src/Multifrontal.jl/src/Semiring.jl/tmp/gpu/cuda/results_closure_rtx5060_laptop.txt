@@ -1,0 +1,73 @@
+NVIDIA GeForce RTX 5060 Laptop GPU
+
+grid3d-25  n = 15625, 41 large fronts, maxna = 785
+  ops=false levels      Julia 0.1590 s | C++ port 0.1470 s (1.08×, =) | C++ reg 0.1463 s (1.09×, =)
+      Julia    phases (ms, synced): L_batched 57.9  U_top_dense 48.1  L_dense 37.3  U_path 21.7  U_top_batched 11.9  fill 3.6
+      C++ port phases (ms, synced): L_batched 57.1  U_top_dense 36.1  L_dense 32.9  U_top_batched 12.4  U_path 10.7  fill 3.6
+      C++ reg  phases (ms, synced): L_batched 46.0  U_top_dense 36.4  L_dense 32.8  U_path 13.6  U_top_batched 11.4  fill 3.5
+  ops=false persistent  Julia 0.1652 s | C++ port 0.1640 s (1.01×, =) | C++ reg 0.1430 s (1.16×, =)
+      Julia    phases (ms, synced): L_persistent 65.2  U_top_dense 43.9  L_dense 34.6  U_path 15.2  U_top_batched 11.8  L_batched 8.9  fill 2.6
+      C++ port phases (ms, synced): L_persistent 79.8  U_top_dense 37.0  L_dense 33.4  U_top_batched 13.9  L_batched 9.5  fill 2.7  U_path 2.4
+      C++ reg  phases (ms, synced): L_persistent 60.2  U_top_dense 40.3  L_dense 38.9  U_top_batched 12.4  L_batched 8.8  fill 2.7  U_path 2.3
+  ops=true  levels      Julia 0.1461 s | C++ port 0.1489 s (0.98×, =) | C++ reg 0.1322 s (1.11×, =)
+      Julia    phases (ms, synced): L_batched 65.4  U_top_dense 46.3  L_dense 36.6  U_path 27.4  U_top_batched 15.4  fill 3.3
+      C++ port phases (ms, synced): L_batched 58.1  U_top_dense 35.5  L_dense 31.0  U_top_batched 15.8  U_path 15.7  fill 2.9
+      C++ reg  phases (ms, synced): L_batched 44.8  L_dense 30.4  U_top_dense 30.3  U_path 16.1  U_top_batched 10.8  fill 2.7
+  ops=true  persistent  Julia 0.1570 s | C++ port 0.1618 s (0.97×, =) | C++ reg 0.1407 s (1.12×, =)
+      Julia    phases (ms, synced): L_persistent 53.3  U_top_dense 40.8  L_dense 30.0  U_top_batched 13.0  L_batched 9.1  fill 2.6  U_path 2.5
+      C++ port phases (ms, synced): L_persistent 79.8  U_top_dense 34.3  L_dense 31.9  U_top_batched 14.4  L_batched 10.0  fill 2.7  U_path 2.5
+      C++ reg  phases (ms, synced): L_persistent 60.4  L_dense 35.2  U_top_dense 35.1  U_top_batched 12.2  L_batched 8.8  fill 2.7  U_path 2.3
+
+grid2d-150  n = 22500, 7 large fronts, maxna = 196
+  ops=false levels      Julia 0.1006 s | C++ port 0.1014 s (0.99×, =) | C++ reg 0.0894 s (1.12×, =)
+      Julia    phases (ms, synced): L_batched 60.9  U_path 19.6  fill 6.1  U_top_dense 5.9  L_dense 4.7  U_top_batched 1.5
+      C++ port phases (ms, synced): L_batched 66.1  U_path 18.9  fill 6.2  U_top_dense 4.3  L_dense 3.3  U_top_batched 1.5
+      C++ reg  phases (ms, synced): L_batched 55.8  U_path 19.9  fill 6.3  U_top_dense 4.0  L_dense 3.3  U_top_batched 1.5
+  ops=false persistent  Julia 0.1214 s | C++ port 0.1270 s (0.96×, =) | C++ reg 0.1053 s (1.15×, =)
+      Julia    phases (ms, synced): L_persistent 91.9  U_path 10.1  fill 5.5  U_top_dense 5.5  L_dense 5.2  L_batched 2.1  U_top_batched 1.3
+      C++ port phases (ms, synced): L_persistent 105.6  U_path 9.2  fill 5.6  U_top_dense 3.6  L_dense 3.2  L_batched 1.9  U_top_batched 1.2
+      C++ reg  phases (ms, synced): L_persistent 76.1  U_path 7.9  fill 5.6  U_top_dense 3.5  L_dense 3.0  L_batched 1.5  U_top_batched 1.1
+  ops=true  levels      Julia 0.1188 s | C++ port 0.1068 s (1.11×, =) | C++ reg 0.0899 s (1.32×, =)
+      Julia    phases (ms, synced): L_batched 78.0  U_path 22.5  fill 6.6  U_top_dense 5.8  L_dense 5.0  U_top_batched 1.7
+      C++ port phases (ms, synced): L_batched 72.7  U_path 22.7  fill 6.7  U_top_dense 3.5  L_dense 3.2  U_top_batched 1.5
+      C++ reg  phases (ms, synced): L_batched 54.1  U_path 22.1  fill 6.7  U_top_dense 3.8  L_dense 2.7  U_top_batched 1.6
+  ops=true  persistent  Julia 0.1172 s | C++ port 0.1315 s (0.89×, =) | C++ reg 0.1028 s (1.14×, =)
+      Julia    phases (ms, synced): L_persistent 95.8  U_path 10.1  fill 5.5  U_top_dense 4.3  L_dense 3.8  L_batched 2.0  U_top_batched 1.3
+      C++ port phases (ms, synced): L_persistent 116.9  U_path 10.3  fill 5.8  U_top_dense 3.1  L_dense 2.7  L_batched 2.0  U_top_batched 1.4
+      C++ reg  phases (ms, synced): L_persistent 84.2  U_path 9.1  fill 5.6  U_top_dense 2.9  L_dense 2.6  L_batched 1.7  U_top_batched 1.2
+
+grid3d-30  n = 27000, 65 large fronts, maxna = 1173
+  ops=false levels      Julia 0.5402 s | C++ port 0.5133 s (1.05×, =) | C++ reg 0.4742 s (1.14×, =)
+      Julia    phases (ms, synced): L_batched 183.0  U_top_dense 167.2  L_dense 165.2  U_top_batched 29.4  U_path 25.7  fill 9.0
+      C++ port phases (ms, synced): L_batched 174.2  L_dense 133.9  U_top_dense 126.0  U_top_batched 35.8  U_path 25.7  fill 9.5
+      C++ reg  phases (ms, synced): L_batched 156.9  L_dense 139.4  U_top_dense 124.1  U_top_batched 28.4  U_path 25.6  fill 9.2
+  ops=false persistent  Julia 0.5913 s | C++ port 0.5802 s (1.02×, =) | C++ reg 0.5029 s (1.18×, =)
+      Julia    phases (ms, synced): L_persistent 203.4  U_top_dense 176.8  L_dense 146.5  U_top_batched 32.8  L_batched 23.5  fill 7.9  U_path 4.6
+      C++ port phases (ms, synced): L_persistent 255.5  U_top_dense 130.4  L_dense 127.1  U_top_batched 37.6  L_batched 23.2  fill 8.3  U_path 4.3
+      C++ reg  phases (ms, synced): L_persistent 183.9  U_top_dense 129.0  L_dense 127.1  U_top_batched 30.3  L_batched 19.3  fill 8.1  U_path 3.7
+  ops=true  levels      Julia 0.5113 s | C++ port 0.5188 s (0.99×, =) | C++ reg 0.4838 s (1.06×, =)
+      Julia    phases (ms, synced): L_batched 187.5  U_top_dense 154.8  L_dense 153.9  U_top_batched 29.8  U_path 28.4  fill 9.2
+      C++ port phases (ms, synced): L_batched 176.2  L_dense 136.7  U_top_dense 124.1  U_top_batched 36.5  U_path 26.4  fill 9.5
+      C++ reg  phases (ms, synced): L_batched 158.7  L_dense 139.3  U_top_dense 120.7  U_top_batched 28.6  U_path 23.8  fill 9.0
+  ops=true  persistent  Julia 0.5743 s | C++ port 0.5846 s (0.98×, =) | C++ reg 0.5011 s (1.15×, =)
+      Julia    phases (ms, synced): L_persistent 204.4  U_top_dense 167.4  L_dense 139.7  U_top_batched 33.5  L_batched 23.2  fill 7.9  U_path 4.5
+      C++ port phases (ms, synced): L_persistent 253.6  U_top_dense 128.3  L_dense 127.4  U_top_batched 38.7  L_batched 22.8  fill 8.2  U_path 4.3
+      C++ reg  phases (ms, synced): L_persistent 184.8  U_top_dense 128.6  L_dense 128.2  U_top_batched 31.4  L_batched 19.1  fill 8.1  U_path 3.7
+
+grid2d-180  n = 32400, 17 large fronts, maxna = 240
+  ops=false levels      Julia 0.1927 s | C++ port 0.1905 s (1.01×, =) | C++ reg 0.1701 s (1.13×, =)
+      Julia    phases (ms, synced): L_batched 173.7  U_top_dense 18.6  U_path 17.2  L_dense 16.4  fill 12.4  U_top_batched 1.4
+      C++ port phases (ms, synced): L_batched 174.2  U_path 26.8  U_top_dense 15.0  fill 14.4  L_dense 11.3  U_top_batched 1.6
+      C++ reg  phases (ms, synced): L_batched 118.4  U_path 21.6  fill 13.9  U_top_dense 13.5  L_dense 9.0  U_top_batched 1.6
+  ops=false persistent  Julia 0.2491 s | C++ port 0.2749 s (0.91×, =) | C++ reg 0.2134 s (1.17×, =)
+      Julia    phases (ms, synced): L_persistent 188.3  U_top_dense 17.9  L_dense 16.6  fill 11.4  U_path 10.7  L_batched 1.6  U_top_batched 1.3
+      C++ port phases (ms, synced): L_persistent 234.2  U_top_dense 12.4  fill 11.4  L_dense 10.8  U_path 9.8  L_batched 1.8  U_top_batched 1.2
+      C++ reg  phases (ms, synced): L_persistent 174.3  U_top_dense 12.5  fill 11.5  L_dense 11.1  U_path 9.5  L_batched 1.7  U_top_batched 1.2
+  ops=true  levels      Julia 0.2171 s | C++ port 0.2190 s (0.99×, =) | C++ reg 0.1884 s (1.15×, =)
+      Julia    phases (ms, synced): L_batched 150.4  U_path 19.0  U_top_dense 16.9  L_dense 14.0  fill 13.3  U_top_batched 1.4
+      C++ port phases (ms, synced): L_batched 141.1  U_path 18.4  fill 13.2  U_top_dense 12.3  L_dense 10.3  U_top_batched 1.4
+      C++ reg  phases (ms, synced): L_batched 128.7  U_path 18.8  fill 13.4  U_top_dense 11.3  L_dense 10.3  U_top_batched 1.2
+  ops=true  persistent  Julia 0.2462 s | C++ port 0.2777 s (0.89×, =) | C++ reg 0.2128 s (1.16×, =)
+      Julia    phases (ms, synced): L_persistent 195.3  U_top_dense 17.5  L_dense 14.7  U_path 12.3  fill 11.4  L_batched 1.7  U_top_batched 1.5
+      C++ port phases (ms, synced): L_persistent 230.3  fill 11.5  U_top_dense 11.1  L_dense 10.1  U_path 9.7  L_batched 1.8  U_top_batched 1.2
+      C++ reg  phases (ms, synced): L_persistent 169.3  fill 11.4  U_top_dense 11.1  L_dense 10.2  U_path 9.0  L_batched 1.7  U_top_batched 1.2

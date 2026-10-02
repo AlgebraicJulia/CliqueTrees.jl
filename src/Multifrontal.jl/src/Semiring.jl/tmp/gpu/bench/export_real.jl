@@ -7,7 +7,7 @@ const SNAP = Dict("ca-HepTh" => "ca-HepTh.txt.gz", "ca-AstroPh" => "ca-AstroPh.t
                   "ca-GrQc" => "ca-GrQc.txt.gz", "email-Enron" => "email-Enron.txt.gz",
                   "com-Amazon" => "com-amazon.ungraph.txt.gz", "com-DBLP" => "com-dblp.ungraph.txt.gz")
 
-fetch(url, path) = (isfile(path) || run(`curl -sSfL --max-time 900 -o $path $url`); path)
+fetch(url, path) = (isfile(path) || Base.run(`curl -sSfL --max-time 900 -o $path $url`); path)
 
 function edges_snap(path)
     I = Int[]; J = Int[]
@@ -55,7 +55,7 @@ for name in ARGS
         I, J, n = edges_snap(fetch("https://snap.stanford.edu/data/" * SNAP[name], joinpath(DATA, SNAP[name])))
     else                                                # DIMACS10 meshes from the SuiteSparse collection
         tgz = fetch("https://suitesparse-collection-website.herokuapp.com/MM/DIMACS10/$name.tar.gz", joinpath(DATA, "$name.tar.gz"))
-        run(`tar -xzf $tgz -C $DATA`)
+        isdir(joinpath(DATA, name)) || Base.run(`tar -xzf $tgz -C $DATA`)
         I, J, n = edges_mtx(joinpath(DATA, name, name * ".mtx"))
     end
     write_mtx(out, weighted(I, J, n))

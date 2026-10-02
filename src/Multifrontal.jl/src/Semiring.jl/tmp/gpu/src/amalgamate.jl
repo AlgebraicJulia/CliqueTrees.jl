@@ -36,16 +36,17 @@ struct Amalgamation{I}
     mUL::CuVector{Int32}
     # the structure it was computed from: a cache hit must match it
     from::NTuple{7, Vector{I}}
+    group::Vector{Int}          # original front → merged front
 end
 
-# per symbolic factorization and (nmax, alpha). Keyed on the identity of an object that lives as long
+# per symbolic factorization, (nmax, alpha) and device (the index maps live on the device). Keyed on the identity of an object that lives as long
 # as the symbolic factorization (held weakly). Not a WeakKeyDict: that compares keys with isequal, so
 # two factorizations whose separator targets are equal arrays (e.g. both empty) would share a merge.
-const AMALGAMATIONS = Dict{UInt, Tuple{WeakRef, Dict{Tuple{Int, Float64}, Any}}}()
+const AMALGAMATIONS = Dict{UInt, Tuple{WeakRef, Dict{Tuple{Int, Float64, Int, UInt}, Any}}}()
 const AMALGAMATIONS_LOCK = ReentrantLock()
 
-function amalgamation(key, ::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx) where {I}
-    isnothing(key) && return amalgamate_fronts(I, nmax, alpha, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx)
+function amalgamation(key, ::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx; allowed = nothing, compact::Bool = false) where {I}
+    isnothing(key) && return amalgamate_fronts(I, nmax, alpha, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx; allowed, compact)
 
     cache = lock(AMALGAMATIONS_LOCK) do
         filter!(kv -> !isnothing(kv[2][1].value), AMALGAMATIONS)           # forget collected factorizations
@@ -53,18 +54,19 @@ function amalgamation(key, ::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
         entry = get(AMALGAMATIONS, id, nothing)
 
         if isnothing(entry) || entry[1].value !== key
-            entry = (WeakRef(key), Dict{Tuple{Int, Float64}, Any}())
+            entry = (WeakRef(key), Dict{Tuple{Int, Float64, Int, UInt}, Any}())
             AMALGAMATIONS[id] = entry
         end
 
         entry[2]
     end
 
-    k = (Int(nmax), Float64(alpha))
-    A = get(cache, k, missing)
+    k = (Int(nmax), Float64(alpha), CUDA.deviceid(CUDA.device()), isnothing(allowed) ? UInt(0) : hash((BitVector(allowed), compact)))
+    A = lock(() -> get(cache, k, missing), AMALGAMATIONS_LOCK)
 
     if ismissing(A) || (!isnothing(A) && A.from != (Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx))
-        A = cache[k] = amalgamate_fronts(I, nmax, alpha, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx)
+        A = amalgamate_fronts(I, nmax, alpha, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx; allowed, compact)
+        lock(() -> (cache[k] = A), AMALGAMATIONS_LOCK)
     end
 
     return A::Union{Nothing, Amalgamation{I}}
@@ -78,7 +80,10 @@ function amalgamation_key(x)
     return nothing
 end
 
-function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx) where {I}
+# allowed: only fronts with allowed[f] are merged (all if nothing). compact: the merged arrays (and the
+# maps) cover only the groups of allowed fronts; the others get empty blocks (for a merge that only the
+# GPU top of the factorization uses)
+function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx; allowed = nothing, compact::Bool = false) where {I}
     nf = length(pnt)
     nn(f) = Int(Rptr[f + 1] - Rptr[f])
     na(f) = Int(Sptr[f + 1] - Sptr[f])
@@ -93,6 +98,7 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     for f in 2:nf
         c = f - 1
         pnt[c] == f || continue
+        (isnothing(allowed) || (allowed[c] && allowed[f])) || continue
         w = width[c] + nn(f)
         w <= nmax || continue
         common = length(intersect(sep(c), sep(f)))
@@ -125,13 +131,15 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     Tn = I[]
     Rn[1] = Rptr[1]; Sn[1] = 1; Dn[1] = 1; Ln[1] = 1
 
+    stored(h) = !compact || isnothing(allowed) || allowed[h]
+
     for (q, (h, g)) in enumerate(groups)
         w = Int(Rptr[g + 1] - Rptr[h]); a = na(g)
         Rn[q + 1] = Rptr[g + 1]
         append!(Tn, sep(g))
         Sn[q + 1] = Sn[q] + a
-        Dn[q + 1] = Dn[q] + w * w
-        Ln[q + 1] = Ln[q] + w * a
+        Dn[q + 1] = Dn[q] + (stored(h) ? w * w : 0)
+        Ln[q + 1] = Ln[q] + (stored(h) ? w * a : 0)
     end
 
     max(Dn[end], Ln[end], Dptr[end], Lptr[end]) < typemax(Int32) || return nothing     # too large for Int32 maps: no merge
@@ -139,6 +147,7 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     mLL = zeros(Int32, Ln[end] - 1); mUL = zeros(Int32, Ln[end] - 1)
 
     for (q, (h, g)) in enumerate(groups)
+        stored(h) || continue
         r0 = Int(Rptr[h]); r1 = Int(Rptr[g + 1]) - 1; w = r1 - r0 + 1
         sg = sep(g); a = length(sg)
         LDq = reshape(view(mLD, Dn[q]:(Dn[q + 1] - 1)), w, w); UDq = reshape(view(mUD, Dn[q]:(Dn[q + 1] - 1)), w, w)
@@ -176,7 +185,7 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
 
     idn = I[group[f] for f in idx]
     from = (copy(Rptr), copy(Sptr), copy(Stgt), copy(Dptr), copy(Lptr), copy(pnt), copy(idx))
-    return Amalgamation{I}(ng, Rn, Sn, Tn, Dn, Ln, pn, idn, upload(mLD), upload(mUD), upload(mLL), upload(mUL), from)
+    return Amalgamation{I}(ng, Rn, Sn, Tn, Dn, Ln, pn, idn, upload(mLD), upload(mUD), upload(mLL), upload(mUL), from, group)
 end
 
 function amalgamate_gather_kernel!(out, D, L, from, z)
@@ -201,4 +210,31 @@ function amalgamate_values(A::Amalgamation, s::AbstractSemiring, LD::CuVector{T}
     z = szero(s, T, Val(:N))
     return (amalgamate_gather(LD, LL, A.mLD, z), amalgamate_gather(LL, LL, A.mLL, z),
             amalgamate_gather(UD, UL, A.mUD, z), amalgamate_gather(UL, UL, A.mUL, z))
+end
+
+# out ← gather (as amalgamate_gather, into a preallocated array: usable under graph capture)
+function amalgamate_gather!(out::CuVector{T}, D::CuVector{T}, L::CuVector{T}, from::CuVector{Int32}, z::T) where {T}
+    isempty(out) || @cuda threads = 256 blocks = cld(length(out), 256) amalgamate_gather_kernel!(out, D, L, from, z)
+    return out
+end
+
+function amalgamate_scatter_kernel!(D, L, merged, from)
+    i = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+
+    @inbounds if i <= length(merged)
+        m = from[i]
+        if ispositive(m)
+            D[m] = merged[i]
+        elseif !iszero(m)
+            L[-m] = merged[i]
+        end
+    end
+
+    return
+end
+
+# the inverse of amalgamate_gather!: every original entry appears once in `from` (padding entries are 0)
+function amalgamate_scatter!(D::CuVector{T}, L::CuVector{T}, merged::CuVector{T}, from::CuVector{Int32}) where {T}
+    isempty(merged) || @cuda threads = 256 blocks = cld(length(merged), 256) amalgamate_scatter_kernel!(D, L, merged, from)
+    return D
 end

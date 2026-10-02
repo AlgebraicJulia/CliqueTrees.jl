@@ -12,6 +12,7 @@
 # (CPU mlu, hybrid FactorPlan with graph replay) against the oracle.
 # Failures print the case seed; rerun one case with `stress.jl 1 <seed>`.
 
+haskey(ENV, "SEMIRINGGPU_TUNE_FILE") || (ENV["SEMIRINGGPU_TUNE_FILE"] = tempname())
 include(joinpath(@__DIR__, "..", "src", "SemiringGPU.jl"))
 using .SemiringGPU
 using .SemiringGPU: Semiring
@@ -157,8 +158,13 @@ end
 
 # ===== one case =====
 
-const SEMIRINGS = [(MinPlus(), Float32), (MinPlus(), Float64), (MinPlus(), Int32), (MaxPlus(), Float32),
+const SEMIRINGS0 = [(MinPlus(), Float32), (MinPlus(), Float64), (MinPlus(), Int32), (MaxPlus(), Float32),
                    (MaxMin(), Float32), (PlusProd(), Float64)]
+# SKIP_INT=1 leaves out integer element types (with CliqueTrees after fb01ee7 the Int32 min-plus infinity
+# overflows, and those cases only check that the GPU solver rejects them)
+const SEMIRINGS = get(ENV, "SKIP_INT", "0") == "1" ? filter(x -> !(x[2] <: Integer), SEMIRINGS0) : SEMIRINGS0
+const REJECTED = Ref(0)
+semiring_ok(s, T) = try SemiringGPU.check_semiring(s, T); true catch e; e isa ArgumentError || rethrow(); false end
 
 function run_case(seed, fails)
     rng = Xoshiro(seed)
@@ -171,67 +177,77 @@ function run_case(seed, fails)
     n = size(A, 1)
     D = oracle(s, A)
 
-    # random switches
-    SemiringGPU.GEMM_VERSION[] = rand(rng, (1, 2))
-    SemiringGPU.PERSISTENT[] = rand(rng, Bool)
-    SemiringGPU.PATH_WARP[] = rand(rng, Bool)
-    SemiringGPU.ROWMAJOR_MIN[] = rand(rng, (1, 4096))
-    SemiringGPU.LAYERED[] = rand(rng, Bool)
-    SemiringGPU.LAYER_M[] = rand(rng, (0, 1, 4, 32))
-    SemiringGPU.AMALGAMATE[] = rand(rng, (1, 2, 4, 8))
-    SemiringGPU.FUSED_LARGE[] = rand(rng, Bool)
+    # random settings (every combination must give the same results)
+    settings = (gemm_kernel = rand(rng, (0, 2, 4, 6)), gemm_tune = rand(rng, Bool), skip_fill = rand(rng, Bool),
+                merge = rand(rng, (1, 2, 8, 32, 128)), layered_min_rows = rand(rng, (1, 4096)), layer_size = rand(rng, (0, 1, 4, 32)),
+                factor_merge = rand(rng, (1, 8, 128)), fused_front = rand(rng, Bool), direct_assembly = rand(rng, Bool))
     flarge = rand(rng, (1, 8, 64, typemax(Int)))
     slarge = rand(rng, (1, 16, 2048, typemax(Int)))
     ops = rand(rng, Bool)
     hybrid = rand(rng, Bool)
-    tag = @sprintf("%s %s %s n=%d neg=%d negcyc=%d loops=%d dups=%d gemm=%d pers=%d warp=%d flarge=%s slarge=%s ops=%d hybrid=%d rmin=%d layered=%d m=%d amalg=%d",
-        nameof(typeof(s)), T, kind, n, neg, negcyc, loops, dups, SemiringGPU.GEMM_VERSION[], SemiringGPU.PERSISTENT[],
-        SemiringGPU.PATH_WARP[], flarge == typemax(Int) ? "∞" : flarge, slarge == typemax(Int) ? "∞" : slarge, ops, hybrid,
-        SemiringGPU.ROWMAJOR_MIN[], SemiringGPU.LAYERED[], SemiringGPU.LAYER_M[], SemiringGPU.AMALGAMATE[])
-    ok = true
+    tag = @sprintf("%s %s %s n=%d neg=%d negcyc=%d loops=%d dups=%d flarge=%s slarge=%s ops=%d hybrid=%d %s",
+        nameof(typeof(s)), T, kind, n, neg, negcyc, loops, dups, flarge == typemax(Int) ? "∞" : flarge, slarge == typemax(Int) ? "∞" : slarge,
+        ops, hybrid, join(("$k=$(Int(v))" for (k, v) in pairs(settings)), " "))
+    #
+    # a semiring/type the GPU cannot compute exactly must be rejected with an ArgumentError, not answered
+    #
+    if !semiring_ok(s, T)
+        rejected = try
+            GPUSLU(mlu(s, A); large = slarge); false
+        catch e
+            e isa ArgumentError || rethrow(); true
+        end
 
-    # factorization: CPU, or hybrid with a replayed graph after new weights
-    if hybrid
-        F = ChordalSLU(s, A)
-        P = FactorPlan(F; large = flarge, graph = true, nstreams = rand(rng, (1, 8)))
-        copyto!(F, A); factorize!(P)
-        copyto!(F, A); factorize!(P; download = true)        # graph replay
-        G = GPUSLU(P; large = slarge)
-        R = mlu(s, A)
-        ok &= check!(fails, "hybrid factor == CPU factor | $tag", s, vcat(F.LDval, F.LLval, F.UDval, F.ULval), vcat(R.LDval, R.LLval, R.UDval, R.ULval), seed)
-    else
-        F = mlu(s, A)
-        G = GPUSLU(F; large = slarge)
+        rejected ? (REJECTED[] += 1) : push!(fails, (seed, "accepted an unsupported $(nameof(typeof(s))) $T"))
+        return rejected
     end
 
-    ops && precompute_ops!(G)
-    k = rand(rng, (1, 2, 7, 31, 33, 64, 65, 100))
-    src = rand(rng, 1:n, k)
-    z = szero(s, T, Val(:N)); u = sone(s, T, Val(:N))
+    return with_config(; settings...) do
+        ok = true
 
-    # queries from unit sources
-    B = fill(z, k, n); for t in 1:k; B[t, src[t]] = u; end
-    want = D[src, :]
-    ok &= check!(fails, "sssp_gpu! | $tag", s, Array(sssp_gpu!(CuMatrix{T}(undef, k, n), G, CuVector(src))), want, seed)
-    Bg = CuArray(B); rmul_gpu!(Bg, G)
-    ok &= check!(fails, "rmul_gpu! (unit) | $tag", s, Array(Bg), want, seed)
+        # factorization: CPU, or hybrid with a replayed graph after new weights
+        if hybrid
+            F = ChordalSLU(s, A)
+            P = FactorPlan(F; large = flarge, graph = true, nstreams = rand(rng, (1, 8)))
+            copyto!(F, A); factorize!(P)
+            copyto!(F, A); factorize!(P; download = true)        # graph replay
+            G = GPUSLU(P; large = slarge)
+            R = mlu(s, A)
+            ok &= check!(fails, "hybrid factor == CPU factor | $tag", s, vcat(F.LDval, F.LLval, F.UDval, F.ULval), vcat(R.LDval, R.LLval, R.UDval, R.ULval), seed)
+        else
+            F = mlu(s, A)
+            G = GPUSLU(F; large = slarge)
+        end
 
-    # a dense right-hand side
-    Bd = T <: Integer ? T.(rand(rng, 0:50, k, n)) : (s isa PlusProd ? T.(rand(rng, k, n)) : T.(rand(rng, 0:50, k, n)))
-    Bg = CuArray(Bd); rmul_gpu!(Bg, G)
-    ok &= check!(fails, "rmul_gpu! (dense) | $tag", s, Array(Bg), smul(s, Bd, D), seed)
+        ops && precompute_ops!(G)
+        k = rand(rng, (1, 2, 7, 31, 33, 64, 65, 100))
+        src = rand(rng, 1:n, k)
+        z = szero(s, T, Val(:N)); u = sone(s, T, Val(:N))
 
-    # CUDA-graph plan, two replays with new sources
-    Pl = SSSPPlan(G, k)
-    for _ in 1:2
-        src2 = rand(rng, 1:n, k)
-        ok &= check!(fails, "SSSPPlan | $tag", s, Array(Pl(src2)), D[src2, :], seed)
+        # queries from unit sources
+        B = fill(z, k, n); for t in 1:k; B[t, src[t]] = u; end
+        want = D[src, :]
+        ok &= check!(fails, "sssp_gpu! | $tag", s, Array(sssp_gpu!(CuMatrix{T}(undef, k, n), G, CuVector(src))), want, seed)
+        Bg = CuArray(B); rmul_gpu!(Bg, G)
+        ok &= check!(fails, "rmul_gpu! (unit) | $tag", s, Array(Bg), want, seed)
+
+        # a dense right-hand side
+        Bd = T <: Integer ? T.(rand(rng, 0:50, k, n)) : (s isa PlusProd ? T.(rand(rng, k, n)) : T.(rand(rng, 0:50, k, n)))
+        Bg = CuArray(Bd); rmul_gpu!(Bg, G)
+        ok &= check!(fails, "rmul_gpu! (dense) | $tag", s, Array(Bg), smul(s, Bd, D), seed)
+
+        # CUDA-graph plan, two replays with new sources
+        Pl = SSSPPlan(G, k)
+        for _ in 1:2
+            src2 = rand(rng, 1:n, k)
+            ok &= check!(fails, "SSSPPlan | $tag", s, Array(Pl(src2)), D[src2, :], seed)
+        end
+
+        # closure
+        C = Array(closure_gpu(G)); p = Array(G.rperm); H = similar(C); H[p, p] = C
+        ok &= check!(fails, "closure_gpu! | $tag", s, H, D, seed)
+        return ok
     end
-
-    # closure
-    C = Array(closure_gpu(G)); p = Array(G.rperm); H = similar(C); H[p, p] = C
-    ok &= check!(fails, "closure_gpu! | $tag", s, H, D, seed)
-    return ok
 end
 
 # ===== main =====
@@ -250,7 +266,7 @@ for c in 0:(ncases - 1)
         println("  ERROR seed=$seed: ", sprint(showerror, e)[1:min(end, 300)])
         get(ENV, "STRESS_BT", "0") == "1" && Base.display_error(stderr, e, catch_backtrace())
     end
-    (c + 1) % 50 == 0 && @printf("%d cases, %d failures, %.0f s\n", c + 1, length(fails), time() - t0)
+    (c + 1) % 50 == 0 && @printf("%d cases, %d failures, %d rejected as unsupported, %.0f s\n", c + 1, length(fails), REJECTED[], time() - t0)
 end
 
 @printf("\nstress: %d cases, %d failures (%.0f s)\n", ncases, length(fails), time() - t0)

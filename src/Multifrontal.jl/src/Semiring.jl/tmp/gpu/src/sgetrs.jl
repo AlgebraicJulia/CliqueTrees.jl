@@ -42,8 +42,6 @@ macro phase(timer, name, ex)
     end
 end
 
-# merge chains of small fronts into fronts of up to this width for the solve (1 = off); see amalgamate.jl
-const AMALGAMATE = Ref(8)
 
 struct GPUSLU{Sem <: AbstractSemiring, T, I}
     s::Sem
@@ -94,7 +92,7 @@ end
 # reaches `large`: one thread per right-hand side would then serialize too
 # much, so it is solved with tiled dense kernels instead.
 #
-function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothing, amalgamate::Integer = AMALGAMATE[], alpha::Real = 0.5) where {Sem, T, I}
+function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothing, amalgamate::Integer = config().merge, alpha::Real = config().merge_alpha) where {Sem, T, I}
     if !iszero(MF.ne(F.S.N))
         error("GPUSLU: coupling between strongly connected components (a directed graph whose components " *
               "reach one another) is not supported on the GPU yet; use the CPU solver")
@@ -103,6 +101,8 @@ function GPUSLU(F::ChordalSLU{Sem, T, I}; large::Integer = 2048, factor = nothin
     if !(isbitstype(T) && sizeof(T) in (4, 8))
         error("GPUSLU: element type $T is not supported on the GPU (the atomic ⊕ needs 4- or 8-byte isbits elements)")
     end
+
+    check_semiring(F.s, T)
 
     S = F.S.S
     n = size(F, 1)
@@ -256,7 +256,7 @@ function rmul_gpu!(B::CuMatrix{T}, G::GPUSLU{Sem, T, I}; W::CuMatrix{T} = simila
         nfl = G.upptr[l + 1] - strt
 
         if ispositive(nfl)
-            @phase timer :U_batched kernel(s, trans, scale, W, G.up, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, coarse_blocks(nrhs, tb)))
+            @phase timer :U_batched kernel(s, trans, scale, W, G.up, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, rhs_blocks(nrhs, tb)))
         end
 
         for f in G.uplarge[l]
@@ -266,7 +266,7 @@ function rmul_gpu!(B::CuMatrix{T}, G::GPUSLU{Sem, T, I}; W::CuMatrix{T} = simila
     #
     #   W ← W L*
     #
-    downward_sweep!(G, W, M, trans, tb, coarse_blocks(nrhs, tb), timer)
+    downward_sweep!(G, W, M, trans, tb, rhs_blocks(nrhs, tb), timer)
     #
     #   B ← W P⁻¹
     #
@@ -296,14 +296,16 @@ function sssp_gpu!(X::CuMatrix{T}, G::GPUSLU{Sem, T, I}, sources::CuVector{<:Int
     #
     #   W ← B Q⁻¹ U*,  B = [e_{s₁}; …; e_{s_k}]
     #
-    @phase timer :fill fill!(W, szero(s, T, trans))
-    if PATH_WARP[]
-        @phase timer :U_path @cuda threads = 128 blocks = cld(32 * nrhs, 128) upward_path_warp_kernel!(s, trans, scale, W, sources, G.cinvp, G.idx, G.pnt, G.istop,
-            G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval)
+    skip = config().skip_fill && rowmajor_path(W)
+
+    if skip
+        @phase timer :fill fill_top!(W, G)
     else
-        @phase timer :U_path @cuda threads = tb blocks = nb upward_path_kernel!(s, trans, scale, W, sources, G.cinvp, G.idx, G.pnt, G.istop,
-            G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval)
+        @phase timer :fill fill!(W, szero(s, T, trans))
     end
+
+    @phase timer :U_path @cuda threads = 128 blocks = cld(32 * nrhs, 128) upward_path_warp_kernel!(s, trans, scale, W, sources, G.cinvp, G.idx, G.pnt, G.istop,
+        G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval, Val(skip))
     #
     #   the top of the tree, for all rows at once
     #
@@ -314,7 +316,7 @@ function sssp_gpu!(X::CuMatrix{T}, G::GPUSLU{Sem, T, I}, sources::CuVector{<:Int
         nfl = G.topptr[l + 1] - strt
 
         if ispositive(nfl)
-            @phase timer :U_top_batched kernel(s, trans, scale, W, G.top, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, coarse_blocks(nrhs, tb)))
+            @phase timer :U_top_batched kernel(s, trans, scale, W, G.top, strt - 1, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.UDval, G.ULval; threads = tb, blocks = (nfl, rhs_blocks(nrhs, tb)))
         end
 
         for f in G.toplarge[l]
@@ -324,7 +326,7 @@ function sssp_gpu!(X::CuMatrix{T}, G::GPUSLU{Sem, T, I}, sources::CuVector{<:Int
     #
     #   W ← W L*
     #
-    downward_sweep!(G, W, M, trans, tb, coarse_blocks(nrhs, tb), timer)
+    downward_sweep!(G, W, M, trans, tb, rhs_blocks(nrhs, tb), timer; zr = skip ? sources : nothing)
     #
     #   X ← W P⁻¹   (unless the result is wanted in elimination coordinates)
     #
@@ -400,10 +402,8 @@ function SSSPPlan(G::GPUSLU{Sem, T, I}, k::Integer) where {Sem, T, I}
     # compile every kernel before capturing
     sssp_gpu!(X, G, sources; W, M)
     CUDA.synchronize()
-    graph = CUDA.capture() do
-        sssp_gpu!(X, G, sources; W, M)
-    end
-    return SSSPPlan{Sem, T, I}(G, X, W, M, sources, CUDA.instantiate(graph))
+    exec = capture_graph(() -> sssp_gpu!(X, G, sources; W, M))
+    return SSSPPlan{Sem, T, I}(G, X, W, M, sources, exec)
 end
 
 function (P::SSSPPlan)(sources::AbstractVector{<:Integer})
@@ -413,23 +413,21 @@ function (P::SSSPPlan)(sources::AbstractVector{<:Integer})
     return P.X
 end
 
-function downward_sweep!(G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val, tb::Int, nb::Int, timer)
-    # function barrier: each kernel variant compiles its own sweep
-    if DOWN_VARIANT[] === :reg
-        return downward_sweep!(downward_kernel_reg!, G, W, M, trans, tb, nb, timer)
-    elseif DOWN_VARIANT[] === :simple
-        return downward_sweep!(downward_kernel_simple!, G, W, M, trans, tb, nb, timer)
-    else
-        return downward_sweep!(downward_kernel_blocked!, G, W, M, trans, tb, nb, timer)
-    end
-end
-
-function downward_sweep!(kf::F, G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val, tb::Int, nb::Int, timer) where {F}
+# zr: the sources of the rows of W when W was not filled (skip_fill), so that the sweep below the top
+# treats the residual entries of fronts off a row's root path as the semiring zero; nothing otherwise
+function downward_sweep!(G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val, tb::Int, nb::Int, timer; zr = nothing)
     s = G.s
-    kernel = @cuda launch = false kf(s, trans, W, G.down, 0, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
+    kernel = @cuda launch = false downward_kernel_reg!(s, trans, W, G.down, 0, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
+    @assert isnothing(zr) || rowmajor_path(W)
+    skip = !isnothing(zr)
+    zargs = skip ? (Val(true), zr, G.cinvp, G.idx, first_descendants(G)) : (Val(false), nothing, nothing, nothing, nothing)
 
-    if ROWMAJOR[] && size(W, 1) >= ROWMAJOR_MIN[]
-        plan = persistent_plan(G)
+    if rowmajor_path(W)
+        #
+        # the top of the tree level by level (large fronts dense, small batched), then everything
+        # below it as one layered launch per layer (layered.jl)
+        #
+        plan = sweep_plan(G)
 
         for (small, large) in plan.toplevels
             for f in large
@@ -441,49 +439,21 @@ function downward_sweep!(kf::F, G::GPUSLU, W::CuMatrix, M::CuMatrix, trans::Val,
             end
         end
 
-        if ispositive(plan.nrest) && LAYERED[]
+        if ispositive(plan.nrest)
+            sp = config().layer_cache ? slot_plan(G, slot_count(eltype(W), SLOT_TB * SLOT_Q), SLOT_TB * SLOT_Q) : nothing
+            isnothing(sp) || return layered_slot_sweep!(G, W, sp, trans, timer, zr)
+
             for (regptr, regfronts, nreg) in layer_plan(G).layers
                 @phase timer :L_layered @cuda threads = ROWMAJOR_TB blocks = (cld(size(W, 1), ROWMAJOR_TB), nreg) maxregs = ROWMAJOR_MAXREGS layered_down_kernel!(s, trans, W, regptr, regfronts,
-                    G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
+                    G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval, zargs...)
             end
-        elseif ispositive(plan.nrest)
-            @phase timer :L_rowmajor @cuda threads = ROWMAJOR_TB blocks = cld(size(W, 1), ROWMAJOR_TB) maxregs = ROWMAJOR_MAXREGS rowmajor_down_kernel!(s, trans, W, plan.restdfs, plan.nrest,
-                G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
         end
 
         return W
     end
-
-    if PERSISTENT[]
-        plan = persistent_plan(G)
-        #
-        #   the top of the tree, level by level (large fronts dense, small batched)
-        #
-        for (small, large) in plan.toplevels
-            for f in large
-                @phase timer :L_dense downward_large!(G, W, M, f, trans)
-            end
-
-            if ispositive(length(small))
-                @phase timer :L_batched kernel(s, trans, W, small, 0, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval; threads = tb, blocks = (length(small), nb))
-            end
-        end
-        #
-        #   everything below the top in one persistent launch
-        #
-        if ispositive(plan.nrest)
-            rows = PERSIST_TB * COARSEN[]
-            nchunk = cld(size(W, 1), rows)
-            nitems = plan.nrest * nchunk
-            fill!(plan.counters, zero(UInt32)); fill!(plan.ticket, zero(UInt32))
-            nblk = min(nitems, max(NSM[], 1) * PERSIST_BLOCKS_PER_SM)
-            @phase timer :L_persistent @cuda threads = PERSIST_TB blocks = nblk persistent_down_kernel!(s, trans, W, plan.rest, plan.nrest, nchunk, rows,
-                G.pnt, G.istop, plan.counters, plan.ticket, G.Rptr, G.Sptr, G.Stgt, G.Dptr, G.Lptr, G.LDval, G.LLval)
-        end
-
-        return W
-    end
-
+    #
+    # few right-hand sides: every level of the tree is one batched launch
+    #
     for l in 1:(length(G.downptr) - 1)
         for f in G.downlarge[l]
             @phase timer :L_dense downward_large!(G, W, M, f, trans)
@@ -502,105 +472,44 @@ end
 
 ispositive(x) = x > zero(x)
 
-# ===== persistent L sweep =====
+# ===== sweep plan =====
 #
-# After the top of the tree (large fronts and their ancestors), the rest of
-# the L sweep is one launch instead of one per level: a persistent grid of
-# blocks takes tickets, ticket q is front rest[q ÷ nchunk + 1] (fronts in
-# depth order, so parents come first) on the row chunk q % nchunk. A block
-# waits until its parent has finished all of its chunks (a per-front
-# counter), unless the parent is in the top, which is already done. Tickets
-# are handed out in order, so every front a block waits on is held by a
-# block that is already running: no deadlock (as in sync-free SpTRSV with a
-# dynamic ticket counter). Same per-front operations as the level kernels.
+# The fronts of the top of the tree by depth (small ones batched, large ones dense), and how many
+# fronts lie below it (the layered part of the L sweep).
 #
-const PERSISTENT = Ref(false)
-const PERSIST_TB = 128
-const PERSIST_BLOCKS_PER_SM = 8
-
-struct PersistentPlan{I}
+struct SweepPlan{I}
     toplevels::Vector{Tuple{CuVector{I}, Vector{I}}}   # by depth: (small top fronts, large fronts)
-    rest::CuVector{I}                                   # the other fronts, by depth
-    restdfs::CuVector{I}                                # the same fronts in reverse postorder (parents first, depth-first)
     nrest::Int
-    counters::CuVector{UInt32}                          # chunks finished, per front
-    ticket::CuVector{UInt32}
 end
 
-function persistent_plan(G::GPUSLU{<:Any, <:Any, I}) where {I}
-    get!(G.cache, :persistent) do
+function sweep_plan(G::GPUSLU{<:Any, <:Any, I}) where {I}
+    get!(G.cache, :sweep) do
         istop = Array(G.istop)
         down = Array(G.down)
         toplevels = Tuple{CuVector{I}, Vector{I}}[]
-        rest = I[]
+        nrest = 0
 
         for l in 1:(length(G.downptr) - 1)
             fs = down[G.downptr[l]:(G.downptr[l + 1] - 1)]
             small = filter(f -> istop[f], fs)
             large = filter(f -> istop[f], G.downlarge[l])
-            append!(rest, filter(f -> !istop[f], fs))
+            nrest += count(f -> !istop[f], fs)
             @assert all(f -> istop[f], G.downlarge[l])
             (isempty(small) && isempty(large)) || push!(toplevels, (CuVector{I}(small), large))
         end
 
-        counters = CUDA.zeros(UInt32, G.nf); ticket = CUDA.zeros(UInt32, 1)
-        CUDA.enable_synchronization!(counters, false); CUDA.enable_synchronization!(ticket, false)
-        PersistentPlan{I}(toplevels, CuVector{I}(rest), CuVector{I}(sort(rest; rev = true)), length(rest), counters, ticket)
+        SweepPlan{I}(toplevels, nrest)
     end
 end
 
-function persistent_down_kernel!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, rest, nrest::Int, nchunk::Int, rows::Int,
-        pnt, istop, counters, ticket, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
-    qs = CuStaticSharedArray(UInt32, 1)
-    nitems32 = (nrest * nchunk) % UInt32
-    nchunk32 = nchunk % UInt32
-    tid = threadIdx().x
-
-    @inbounds while true
-        tid == 1 && (qs[1] = CUDA.atomic_add!(pointer(ticket, 1), one(UInt32)))
-        sync_threads()
-        q = qs[1]                                   # UInt32: 32-bit division, not the emulated 64-bit one
-        sync_threads()
-        q >= nitems32 && break
-
-        # unchecked: nchunk ≥ 1, and the checked ÷ / % would add an exception path (and spills)
-        f = rest[Core.Intrinsics.udiv_int(q, nchunk32) % Int + 1]
-        c = Core.Intrinsics.urem_int(q, nchunk32) % Int
-        p = pnt[f]
-
-        if tid == 1 && !iszero(p) && !istop[p]
-            while CUDA.atomic_add!(pointer(counters, p), zero(UInt32)) < nchunk
-            end
-
-            threadfence()
-        end
-
-        sync_threads()
-        t = c * rows + tid
-        tstop = min(size(C, 1), (c + 1) * rows)
-
-        while t <= tstop
-            downward_front_reg!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
-            t += blockDim().x
-        end
-
-        threadfence()
-        sync_threads()
-        tid == 1 && CUDA.atomic_add!(pointer(counters, f), one(UInt32))
-    end
-
-    return
-end
-
-# row t of C through front f of the L sweep: C₁ ← (C₁ ⊕ C₂ L₂₁) L₁₁*
-@inline function downward_front!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
+@inline function downward_front!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval, zi::Bool = false) where {T}
     @inbounds begin
         Rp = Rptr[f]; nn = Rptr[f + 1] - Rp
         Sp = Sptr[f]; na = Sptr[f + 1] - Sp
         Dp = Dptr[f]; Lp = Lptr[f]
 
         for j in 1:nn
-            acc = C[t, Rp + j - 1]
+            acc = zi ? szero(s, T, trans) : C[t, Rp + j - 1]
 
             for r in 1:na
                 acc = smuladd(s, C[t, Stgt[Sp + r - 1]], Lval[Lp + (j - 1) * na + r - 1], acc, Val(:N), trans)
@@ -631,26 +540,60 @@ end
 # from L1/L2 instead of DRAM (in level order they are re-read a level later, after eviction).
 # Same per-front operations as the level kernels; worth it when there are many rows (the closure).
 #
-const ROWMAJOR = Ref(true)
-const ROWMAJOR_MIN = Ref(4096)       # use it for at least this many right-hand sides
 const ROWMAJOR_TB = 128
-# at most 48 registers: 10 blocks of 128 per SM instead of 9 at 56 (on sm_120: 33k rows in one wave, not 30k)
-const ROWMAJOR_MAXREGS = parse(Int, get(ENV, "RMAXREGS", "48"))
+const ROWMAJOR_MAXREGS = 48           # 32–64 are within ±3% on L4, RTX PRO 6000, B200 (the sweep is bound by memory)
+rowmajor_path(W::AbstractMatrix) = size(W, 1) >= config().layered_min_rows
 
-function rowmajor_down_kernel!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, nord::Int,
-        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
-    t = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+# ===== skipping the fill of W =====
+#
+# After the U sweep, row t of W is nonzero only in the columns of the fronts on the root path of its
+# source's front ft (the U sweep only touches those). So instead of filling all of W with the semiring
+# zero, fill the columns of the top of the tree (where every row is processed densely), let the path
+# walk zero its own path columns, and let the L sweep below the top treat the residual entries of a
+# front f that is not an ancestor of ft as zero without reading them. f is an ancestor of ft (or ft)
+# iff fd[f] ≤ ft ≤ f, with fd[f] the first front of f's subtree in postorder. Every entry of W is
+# still written by the L sweep, with the same operations: the result is bit-identical, and one write
+# of W (the fill) and most reads of residual entries are saved.
 
-    if t <= size(C, 1)
-        for i in 1:nord
-            f = @inbounds order[i]
-            downward_front_reg!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+function first_descendants(G::GPUSLU{<:Any, <:Any, I}) where {I}
+    get!(G.cache, :firstdesc) do
+        pnt = Array(G.pnt)
+        fsz = ones(Int, G.nf)
+
+        for f in 1:G.nf
+            p = pnt[f]
+            iszero(p) || (fsz[p] += fsz[f])
         end
+
+        upload(I[f - fsz[f] + 1 for f in 1:G.nf])
+    end
+end
+
+function top_columns(G::GPUSLU)
+    get!(G.cache, :topcols) do
+        istop = Array(G.istop)
+        upload(Int32[c for f in 1:G.nf if istop[f] for c in G.hRptr[f]:(G.hRptr[f + 1] - 1)])
+    end
+end
+
+function fill_top_kernel!(W, cols, z)
+    t = threadIdx().x + (blockIdx().x - 1) * blockDim().x
+    j = blockIdx().y
+
+    @inbounds while j <= length(cols)
+        t <= size(W, 1) && (W[t, cols[j]] = z)
+        j += gridDim().y
     end
 
     return
 end
 
+function fill_top!(W::CuMatrix{T}, G::GPUSLU) where {T}
+    cols = top_columns(G)
+    launch2d(fill_top_kernel!, size(W, 1), length(cols), W, cols, szero(G.s, T, Val(:N)))
+    return W
+end
+# at most 48 registers: 10 blocks of 128 per SM instead of 9 at 56 (on sm_120: 33k rows in one wave, not 30k)
 # ===== warp-cooperative path walk =====
 #
 # One warp per source instead of one thread: lane 0 solves with the
@@ -658,10 +601,9 @@ end
 # separator update C[t, sep] ⊕= C₁ U₁₂ (distinct columns of the same row,
 # so no conflicts). Same operations as upward_path_kernel!.
 #
-const PATH_WARP = Ref(true)
 
 function upward_path_warp_kernel!(s::AbstractSemiring, trans::Val, ::Val{SCALE}, C::AbstractMatrix{T}, sources, cinvp, idx, pnt, istop,
-        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {SCALE, T}
+        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval, ::Val{ZERO} = Val(false)) where {SCALE, T, ZERO}
     lane = (threadIdx().x - 1) % 32
     t = ((blockIdx().x - 1) * blockDim().x + threadIdx().x - 1) ÷ 32 + 1
 
@@ -671,6 +613,25 @@ function upward_path_warp_kernel!(s::AbstractSemiring, trans::Val, ::Val{SCALE},
 
     @inbounds begin
         v = cinvp[sources[t]]
+
+        if ZERO                                 # W was not filled: zero this row's columns of the path below the top
+            g = idx[v]
+
+            while !iszero(g) && !istop[g]
+                Rp = Rptr[g]; nn = Rptr[g + 1] - Rp
+                j = lane
+
+                while j < nn
+                    C[t, Rp + j] = szero(s, T, trans)
+                    j += 32
+                end
+
+                g = pnt[g]
+            end
+
+            sync_warp(); threadfence_block()
+        end
+
         lane == 0 && (C[t, v] = sone(s, T, trans))
         sync_warp(); threadfence_block()
         f = idx[v]
@@ -744,34 +705,18 @@ function upward_large!(G::GPUSLU{<:Any, T}, C::CuMatrix{T}, M::CuMatrix{T}, f, t
         #
         KU = reshape(view(ops.KU, ops.off[f][2]:(ops.off[f][2] + nn * (nn + na) - 1)), nn, nn + na)
 
-        if FUSED_LARGE[]
-            #
-            #   C[:, sep] ← C[:, sep] ⊕ C₁ (U₁₁* U₁₂)   (through an index view: no buffer, no scatter)
-            #   C₁ ← C₁ U₁₁*                              (overwrite; in place when one tile wide)
-            #
-            ispositive(na) && sgemx_gpu!(s, colview(C, view(G.Stgt, Sp:(Sp + na - 1))), C₁, view(KU, :, (nn + 1):(nn + na)))
+        #
+        #   C[:, sep] ← C[:, sep] ⊕ C₁ (U₁₁* U₁₂)   (through an index view: no buffer, no scatter)
+        #   C₁ ← C₁ U₁₁*                              (overwrite; in place when one tile wide)
+        #
+        ispositive(na) && sgemx_gpu!(s, colview(C, view(G.Stgt, Sp:(Sp + na - 1))), C₁, view(KU, :, (nn + 1):(nn + na)))
 
-            if inplace_ok(nn, choose_tiling(size(C, 1), nn))
-                sgemx_gpu!(s, C₁, C₁, view(KU, :, 1:nn); overwrite = true)
-            else
-                W₁ = ops_workspace(ops, T, size(C, 1), nn)
-                copy_gpu!(W₁, C₁)
-                sgemx_gpu!(s, C₁, W₁, view(KU, :, 1:nn); overwrite = true)
-            end
-
-            return
-        end
-
-        W₁ = ops_workspace(ops, T, size(C, 1), nn)
-        copy_gpu!(W₁, C₁)
-        fill!(C₁, szero(s, T, trans))
-        sgemx_gpu!(s, C₁, W₁, view(KU, :, 1:nn))
-
-        if ispositive(na)
-            M₂ = view(M, :, 1:na)
-            fill!(M₂, szero(s, T, trans))
-            sgemx_gpu!(s, M₂, W₁, view(KU, :, (nn + 1):(nn + na)))
-            scatteradd_gpu!(s, trans, C, M₂, G.Stgt, Sp)
+        if inplace_ok(nn)
+            sgemx_gpu!(s, C₁, C₁, view(KU, :, 1:nn); overwrite = true)
+        else
+            W₁ = ops_workspace(ops, T, size(C, 1), nn)
+            copy_gpu!(W₁, C₁)
+            sgemx_gpu!(s, C₁, W₁, view(KU, :, 1:nn); overwrite = true)
         end
 
         return
@@ -809,11 +754,11 @@ function downward_large!(G::GPUSLU{<:Any, T}, C::CuMatrix{T}, M::CuMatrix{T}, f,
         #
         KL = reshape(view(ops.KL, ops.off[f][1]:(ops.off[f][1] + (nn + na) * nn - 1)), nn + na, nn)
 
-        if FUSED_LARGE[] && inplace_ok(nn, choose_tiling(size(C, 1), nn))
+        if inplace_ok(nn)
             #
             #   C₁ ← C[:, [res; sep]] [L₁₁* ; L₂₁ L₁₁*]   (in place, through an index view)
             #
-            sgemx_gpu!(s, C₁, colview(C, ops.cols[f]), KL; overwrite = true)
+            sgemx_gpu!(s, C₁, colview(C, ops.cols[f]), KL; overwrite = true, inplace = true)   # mightalias cannot see it
             return
         end
 
@@ -862,8 +807,8 @@ end
 # C[:, idx] without a bounds check (which would read idx on the host)
 colview(C::CuMatrix, idx::AbstractVector) = SubArray(C, (Base.Slice(axes(C, 1)), idx))
 
-# fused large fronts (no gather/scatter buffers, no fills); false: the buffered path
-const FUSED_LARGE = Ref(true)
+
+const PRECOMPUTE_STREAMS = 8
 
 function precompute_ops!(G::GPUSLU{Sem, T}) where {Sem, T}
     s = G.s
@@ -882,30 +827,49 @@ function precompute_ops!(G::GPUSLU{Sem, T}) where {Sem, T}
     KL = CuVector{T}(undef, max(q - 1, 1))
     KU = CuVector{T}(undef, max(q - 1, 1))
 
-    for f in fronts
-        nn = Int(G.hRptr[f + 1] - G.hRptr[f]); na = Int(G.hSptr[f + 1] - G.hSptr[f])
-        Dp = Int(G.hDptr[f]); Lp = Int(G.hLptr[f]); o = off[f][1]
-        L₁₁ = reshape(view(G.LDval, Dp:(Dp + nn * nn - 1)), nn, nn)
-        U₁₁ = reshape(view(G.UDval, Dp:(Dp + nn * nn - 1)), nn, nn)
+    # the fronts are independent: spread them over streams so their small kernels overlap. The arrays
+    # shared by the streams are ordered here (fork and join events), not by CUDA.jl's implicit sync.
+    ns = min(PRECOMPUTE_STREAMS, length(fronts))
+    streams = get!(() -> [CuStream() for _ in 1:PRECOMPUTE_STREAMS], G.cache, :streams)
+    shared = (KL, KU, G.LDval, G.UDval, G.LLval, G.ULval)
+    foreach(x -> CUDA.enable_synchronization!(x, false), shared)
+    fork = CuEvent(CUDA.EVENT_DISABLE_TIMING)
+    record(fork, CUDA.stream())
+    foreach(st -> CUDA.wait(fork, st), streams[1:ns])
+    try
+        with(TUNING => false, SCRATCH_OWNER => G.cache) do      # no clean timing on concurrent streams; G owns their scratch
+            for (i, f) in enumerate(fronts)
+                CUDA.stream!(streams[mod1(i, ns)]) do
+                    nn = Int(G.hRptr[f + 1] - G.hRptr[f]); na = Int(G.hSptr[f + 1] - G.hSptr[f])
+                    Dp = Int(G.hDptr[f]); Lp = Int(G.hLptr[f]); o = off[f][1]
+                    L₁₁ = reshape(view(G.LDval, Dp:(Dp + nn * nn - 1)), nn, nn)
+                    U₁₁ = reshape(view(G.UDval, Dp:(Dp + nn * nn - 1)), nn, nn)
 
-        Kl = reshape(view(KL, o:(o + (nn + na) * nn - 1)), nn + na, nn)
-        T₁ = view(Kl, 1:nn, :)
-        identity_gpu!(s, T₁)
-        strsx_gpu!(s, trans, Val(false), Val(:L), T₁, L₁₁)          # T₁ = L₁₁*
+                    Kl = reshape(view(KL, o:(o + (nn + na) * nn - 1)), nn + na, nn)
+                    T₁ = view(Kl, 1:nn, :)
+                    identity_gpu!(s, T₁)
+                    strsx_gpu!(s, trans, Val(false), Val(:L), T₁, L₁₁)          # T₁ = L₁₁*
 
-        Ku = reshape(view(KU, o:(o + nn * (nn + na) - 1)), nn, nn + na)
-        T₂ = view(Ku, :, 1:nn)
-        identity_gpu!(s, T₂)
-        strsx_gpu!(s, trans, scale, Val(:U), T₂, U₁₁)               # T₂ = U₁₁*
+                    Ku = reshape(view(KU, o:(o + nn * (nn + na) - 1)), nn, nn + na)
+                    T₂ = view(Ku, :, 1:nn)
+                    identity_gpu!(s, T₂)
+                    strsx_gpu!(s, trans, scale, Val(:U), T₂, U₁₁)               # T₂ = U₁₁*
 
-        if ispositive(na)
-            L₂₁ = reshape(view(G.LLval, Lp:(Lp + nn * na - 1)), na, nn)
-            U₁₂ = reshape(view(G.ULval, Lp:(Lp + nn * na - 1)), nn, na)
-            B₁ = view(Kl, (nn + 1):(nn + na), :)
-            fill!(B₁, szero(s, T, trans)); sgemx_gpu!(s, B₁, L₂₁, T₁)  # L₂₁ L₁₁*
-            B₂ = view(Ku, :, (nn + 1):(nn + na))
-            fill!(B₂, szero(s, T, trans)); sgemx_gpu!(s, B₂, T₂, U₁₂)  # U₁₁* U₁₂
+                    if ispositive(na)
+                        L₂₁ = reshape(view(G.LLval, Lp:(Lp + nn * na - 1)), na, nn)
+                        U₁₂ = reshape(view(G.ULval, Lp:(Lp + nn * na - 1)), nn, na)
+                        B₁ = view(Kl, (nn + 1):(nn + na), :)
+                        fill!(B₁, szero(s, T, trans)); sgemx_gpu!(s, B₁, L₂₁, T₁)  # L₂₁ L₁₁*
+                        B₂ = view(Ku, :, (nn + 1):(nn + na))
+                        fill!(B₂, szero(s, T, trans)); sgemx_gpu!(s, B₂, T₂, U₁₂)  # U₁₁* U₁₂
+                    end
+    
+                end
+            end
         end
+    finally
+        join_streams!(streams[1:ns])
+        foreach(x -> CUDA.enable_synchronization!(x, true), shared[3:end])
     end
 
     cols = Dict{Int, CuVector{Int}}()
@@ -966,14 +930,13 @@ function strsx_gpu!(s::AbstractSemiring, trans::Val, scale::Val, uplo::Val{UPLO}
             Tb, W = trsm_workspace(T, m * b)
             Tj = view(Tb, 1:b, 1:b)
             identity_gpu!(s, Tj)
-            @cuda threads = 32 * cld(b, 32) strsx_diag_kernel!(s, trans, scale, uplo, Tj, view(A, J, J))
+            diag_solve!(s, trans, scale, uplo, Tj, view(A, J, J))
             Wj = reshape(view(W, 1:(m * b)), m, b)
             fill!(Wj, szero(s, T, Val(:N)))
             sgemx_gpu!(s, Wj, view(X, :, J), Tj)
             copy_gpu!(view(X, :, J), Wj)
         else
-            tb = min(128, 32 * cld(m, 32))
-            @cuda threads = tb blocks = cld(m, tb) strsx_diag_kernel!(s, trans, scale, uplo, view(X, :, J), view(A, J, J))
+            diag_solve!(s, trans, scale, uplo, view(X, :, J), view(A, J, J))
         end
 
         if UPLO === :U && j1 < n
@@ -988,14 +951,28 @@ end
 
 const STRSX_INV_MIN = 64
 
-# Scratch for diagonal-block inversion, per element type and stream (so
-# that concurrent streams never share it). It only grows outside stream
+# Scratch for diagonal-block inversion, per stream (so that concurrent
+# streams never share it) and element type. It only grows outside stream
 # capture (plans warm up before capturing).
-const TRSM_WS = Dict{Tuple{DataType, UInt}, Tuple{CuMatrix, CuVector}}()
+#
+# Each table belongs to the owner of the streams that use it: the plan that
+# runs work on its own streams (SCRATCH_OWNER, set by FactorPlan and
+# precompute_ops!), else the current task, whose task-local stream it is.
+# Owners are held weakly, so the scratch is freed with its plan or task.
+# (A table keyed weakly by the stream itself would never free anything:
+# a CUDA.jl array keeps a reference to the last stream that used it. And
+# a table keyed by stream handle, as before, never freed anything and could
+# hand a reused handle a stale buffer, possibly from another device.)
+const TRSM_WS = WeakKeyDict{Any, Dict{Tuple{CuStream, DataType}, Tuple{CuMatrix, CuVector}}}()
+
+const SCRATCH_OWNER = ScopedValue{Any}(nothing)
 
 function trsm_workspace(::Type{T}, len::Int) where {T}
-    key = (T, UInt(CUDA.stream().handle))
-    Tb, W = get(TRSM_WS, key, (nothing, nothing))
+    owner = something(SCRATCH_OWNER[], current_task())
+    key = (CUDA.stream(), T)
+    Tb, W = lock(TRSM_WS) do
+        get(get!(Dict{Tuple{CuStream, DataType}, Tuple{CuMatrix, CuVector}}, TRSM_WS, owner), key, (nothing, nothing))
+    end
 
     if isnothing(Tb) || length(W) < len
         @assert !CUDA.is_capturing() "trsm workspace must grow before graph capture"
@@ -1003,10 +980,33 @@ function trsm_workspace(::Type{T}, len::Int) where {T}
         W = CuVector{T}(undef, max(len, isnothing(W) ? 0 : 2 * length(W)))
         CUDA.enable_synchronization!(Tb, false)
         CUDA.enable_synchronization!(W, false)
-        TRSM_WS[key] = (Tb, W)
+        lock(() -> (TRSM_WS[owner][key] = (Tb, W)), TRSM_WS)
     end
 
+    keep = CAPTURED[]
+    isnothing(keep) || push!(keep, Tb, W)
     return Tb::CuMatrix{T}, W::CuVector{T}
+end
+
+# ===== graph capture =====
+#
+# A CUDA graph replays raw device pointers, so every scratch buffer that a
+# recorded graph uses must live as long as the graph, even when the stream
+# that owned it (and with it its entry in TRSM_WS) is gone. While capturing,
+# trsm_workspace adds its buffers to CAPTURED[], and capture_graph ties them
+# to the executable graph.
+
+const CAPTURED = ScopedValue{Union{Nothing, Base.IdSet{Any}}}(nothing)
+
+const GRAPH_SCRATCH = WeakKeyDict{CuGraphExec, Base.IdSet{Any}}()
+
+# record f() on the current stream and instantiate it
+function capture_graph(f)
+    keep = Base.IdSet{Any}()
+    graph = with(() -> CUDA.capture(f), CAPTURED => keep)
+    exec = CUDA.instantiate(graph)
+    lock(() -> (GRAPH_SCRATCH[exec] = keep), GRAPH_SCRATCH)
+    return exec
 end
 
 # X ← semiring identity
@@ -1100,6 +1100,167 @@ function strsx_diag_kernel!(s::AbstractSemiring, trans::Val, ::Val{SCALE}, ::Val
     return
 end
 
+# ===== diagonal-block triangular solves in shared memory =====
+#
+# strsx_diag_kernel! gives each row of X one thread that walks the b ≤ 64 columns of the block in
+# order, reading X and A from global memory: a chain of ~b²/2 dependent multiply-adds per thread, with
+# only b threads (64 for the inversion of a diagonal block), ~40 µs per call. Here the block lives in
+# shared memory (padded against bank conflicts), each row gets DIAG_KS threads that split the inner
+# sum, and the partial sums are combined with warp shuffles: one barrier per column, ~b steps of a few
+# cycles. The products are the same; only the order of the ⊕ reduction differs, so the result is
+# bit-identical for idempotent ⊕ (min, max) and equal up to rounding for (+, ×).
+#
+const DIAG_KS = 16                       # threads per row (a power of 2 dividing 32)
+const DIAG_NB = 64
+
+@inline function ks_reduce(s::AbstractSemiring, x::T) where {T}
+    o = DIAG_KS ÷ 2
+    while o >= 1
+        x = splus(s, x, shfl_xor_sync(0xffffffff, x, o), Val(:N))
+        o ÷= 2
+    end
+    return x
+end
+
+# X ← X A* (UPLO = :U, upper A, columns left to right) or X ← X A (strictly lower part of A, unit
+# diagonal, columns right to left; as strsx_diag_kernel!), for size(X, 1) ≤ 64 and size(A, 1) ≤ 64
+function strsx_diag_shared_kernel!(s::AbstractSemiring, trans::Val, ::Val{SCALE}, ::Val{UPLO}, X::AbstractMatrix{T}, A::AbstractMatrix) where {SCALE, UPLO, T}
+    Xs = CuStaticSharedArray(T, (DIAG_NB + 1, DIAG_NB))
+    As = CuStaticSharedArray(T, (DIAG_NB + 1, DIAG_NB))
+    m = size(X, 1); n = size(A, 1)
+    tid = threadIdx().x - 1; nt = blockDim().x
+
+    @inbounds begin
+        e = tid
+        while e < n * n
+            As[e % n + 1, e ÷ n + 1] = A[e % n + 1, e ÷ n + 1]
+            e += nt
+        end
+        e = tid
+        while e < m * n
+            Xs[e % m + 1, e ÷ m + 1] = X[e % m + 1, e ÷ m + 1]
+            e += nt
+        end
+        sync_threads()
+
+        q = tid % DIAG_KS
+        r = tid ÷ DIAG_KS + 1                  # row of X
+        z = szero(s, T, trans)
+
+        for jj in 1:n
+            j = UPLO === :U ? jj : n - jj + 1
+            part = z
+
+            if r <= m
+                if UPLO === :U
+                    k = 1 + q
+                    while k < j
+                        part = smuladd(s, Xs[r, k], As[k, j], part, Val(:N), trans)
+                        k += DIAG_KS
+                    end
+                else
+                    k = j + 1 + q
+                    while k <= n
+                        part = smuladd(s, Xs[r, k], As[k, j], part, Val(:N), trans)
+                        k += DIAG_KS
+                    end
+                end
+            end
+
+            part = ks_reduce(s, part)
+
+            if r <= m && q == 0
+                acc = splus(s, Xs[r, j], part, Val(:N))
+                SCALE && UPLO === :U && (acc = sprod(s, acc, sstar(s, As[j, j]), Val(:N), trans))
+                Xs[r, j] = acc
+            end
+
+            sync_threads()
+        end
+
+        e = tid
+        while e < m * n
+            X[e % m + 1, e ÷ m + 1] = Xs[e % m + 1, e ÷ m + 1]
+            e += nt
+        end
+    end
+
+    return
+end
+
+# X ← A* X for a lower unit triangular A (as strsx_left_diag_kernel!), for size(X, 2) ≤ 64, size(A, 1) ≤ 64
+function strsx_left_diag_shared_kernel!(s::AbstractSemiring, trans::Val, X::AbstractMatrix{T}, A::AbstractMatrix) where {T}
+    Xs = CuStaticSharedArray(T, (DIAG_NB + 1, DIAG_NB))
+    As = CuStaticSharedArray(T, (DIAG_NB + 1, DIAG_NB))
+    n = size(A, 1); m = size(X, 2)
+    tid = threadIdx().x - 1; nt = blockDim().x
+
+    @inbounds begin
+        e = tid
+        while e < n * n
+            As[e % n + 1, e ÷ n + 1] = A[e % n + 1, e ÷ n + 1]
+            e += nt
+        end
+        e = tid
+        while e < n * m
+            Xs[e % n + 1, e ÷ n + 1] = X[e % n + 1, e ÷ n + 1]
+            e += nt
+        end
+        sync_threads()
+
+        q = tid % DIAG_KS
+        c = tid ÷ DIAG_KS + 1                  # column of X
+        z = szero(s, T, Val(:N))
+
+        for i in 1:n
+            part = z
+
+            if c <= m
+                k = 1 + q
+                while k < i
+                    part = smuladd(s, As[i, k], Xs[k, c], part, Val(:N), trans)
+                    k += DIAG_KS
+                end
+            end
+
+            part = ks_reduce(s, part)
+            (c <= m && q == 0) && (Xs[i, c] = splus(s, Xs[i, c], part, Val(:N)))
+            sync_threads()
+        end
+
+        e = tid
+        while e < n * m
+            X[e % n + 1, e ÷ n + 1] = Xs[e % n + 1, e ÷ n + 1]
+            e += nt
+        end
+    end
+
+    return
+end
+
+diag_threads(rows::Integer) = DIAG_KS * 32 * cld(max(rows, 1), 32)    # whole warps of whole row groups
+
+# the diagonal solve of strsx_gpu! / strsx_left_gpu! on one ≤ 64 × 64 block
+function diag_solve!(s::AbstractSemiring, trans::Val, scale::Val, uplo::Val, X::AbstractMatrix{T}, A::AbstractMatrix) where {T}
+    if size(X, 1) <= DIAG_NB && size(A, 1) <= DIAG_NB && sizeof(T) <= 4      # 2 padded 64² blocks: 33 KB in 32 bits
+        @cuda threads = diag_threads(size(X, 1)) strsx_diag_shared_kernel!(s, trans, scale, uplo, X, A)
+    else
+        tb = min(128, 32 * cld(size(X, 1), 32))
+        @cuda threads = tb blocks = cld(size(X, 1), tb) strsx_diag_kernel!(s, trans, scale, uplo, X, A)
+    end
+    return X
+end
+
+function diag_solve_left!(s::AbstractSemiring, trans::Val, X::AbstractMatrix{T}, A::AbstractMatrix) where {T}
+    if size(X, 2) <= DIAG_NB && size(A, 1) <= DIAG_NB && sizeof(T) <= 4
+        @cuda threads = diag_threads(size(X, 2)) strsx_left_diag_shared_kernel!(s, trans, X, A)
+    else
+        tb = min(128, 32 * cld(size(X, 2), 32))
+        @cuda threads = tb blocks = cld(size(X, 2), tb) strsx_left_diag_kernel!(s, trans, X, A)
+    end
+    return X
+end
+
 # C[:, Stgt[Sp + r - 1]] ← C[:, Stgt[Sp + r - 1]] ⊕ M[:, r]
 function scatteradd_gpu!(s::AbstractSemiring, trans::Val, C::AbstractMatrix, M::AbstractMatrix, Stgt::CuVector, Sp)
     function kernel(s, trans, C, M, Stgt, Sp)
@@ -1178,11 +1339,8 @@ function upward_kernel!(s::AbstractSemiring, trans::Val, scale::Val, C::Abstract
     return
 end
 
-# Thread coarsening for the batched sweeps: a block covers COARSEN × blockDim rows, so the number of
-# (front, row-chunk) blocks per level drops by COARSEN (tiny blocks were dominated by scheduling).
-const COARSEN = Ref(1)
-
-coarse_blocks(nrhs::Integer, tb::Integer) = max(1, cld(nrhs, tb * COARSEN[]))
+# blocks of tb rows covering nrhs rows (the batched kernels loop over rows, so fewer blocks also work)
+rhs_blocks(nrhs::Integer, tb::Integer) = max(1, cld(nrhs, tb))
 
 #
 # Row t of C through front f of the U sweep. ATOMIC selects an atomic
@@ -1230,32 +1388,6 @@ coarse_blocks(nrhs::Integer, tb::Integer) = max(1, cld(nrhs, tb * COARSEN[]))
     return
 end
 
-#
-# Path walk for unit right-hand sides: row t of C is zero except for a one
-# at vertex v, so the U sweep only touches the fronts on the path from the
-# front of v to its root (the reach of e_v, the upward search space of a
-# contraction-hierarchy query). One thread per row walks its own path and
-# owns its row, so no atomics are needed.
-#
-function upward_path_kernel!(s::AbstractSemiring, trans::Val, scale::Val, C::AbstractMatrix{T}, sources, cinvp, idx, pnt, istop,
-        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
-    t = threadIdx().x + (blockIdx().x - 1) * blockDim().x
-
-    if t <= size(C, 1)
-        @inbounds begin
-            v = cinvp[sources[t]]
-            C[t, v] = sone(s, T, trans)
-            f = idx[v]
-
-            while !iszero(f) && !istop[f]
-                upward_front!(s, trans, scale, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval, Val(false))
-                f = pnt[f]
-            end
-        end
-    end
-
-    return
-end
 
 
 #
@@ -1268,9 +1400,6 @@ end
 #
 const DOWN_NB = 8
 
-# :reg (register-blocked, exact widths; default), :simple (one residual column at a time),
-# :blocked (masked register chunks; slower, kept for reference)
-const DOWN_VARIANT = Ref(:reg)
 
 
 #
@@ -1279,9 +1408,10 @@ const DOWN_VARIANT = Ref(:reg)
 # same order per entry as downward_front!. (Found by the C++ port experiment: its "reg" kernel, written
 # in Julia here, is as fast as the C++ one.)
 #
-@generated function down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, ::Val{NN}) where {NN}
+# zi: the residual entries C[t, res] are known to be the semiring zero (not read; see skip_fill)
+@generated function down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, ::Val{NN}, zi::Bool = false) where {NN}
     xs = [Symbol(:x, j) for j in 1:NN]
-    loads = [:($(xs[j]) = C[t, Rp + $(j - 1)]) for j in 1:NN]
+    loads = [:($(xs[j]) = zi ? szero(s, eltype(C), trans) : C[t, Rp + $(j - 1)]) for j in 1:NN]
     upd = [:($(xs[j]) = smuladd(s, c, Lval[Lp + $(j - 1) * na + r - 1], $(xs[j]), Val(:N), trans)) for j in 1:NN]
     solve = Expr[]
 
@@ -1319,7 +1449,7 @@ const DOWN_VARIANT = Ref(:reg)
     end
 end
 
-@inline function downward_front_reg!(s::AbstractSemiring, trans::Val, C::AbstractMatrix, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+@inline function downward_front_reg!(s::AbstractSemiring, trans::Val, C::AbstractMatrix, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval, zi::Bool = false)
     @inbounds begin
         Rp = Rptr[f]; nn = Rptr[f + 1] - Rp
         Sp = Sptr[f]; na = Sptr[f + 1] - Sp
@@ -1327,20 +1457,20 @@ end
     end
 
     if nn == 1
-        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(1))
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(1), zi)
     elseif nn == 2
-        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(2))
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(2), zi)
     elseif nn == 3
-        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(3))
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(3), zi)
     elseif nn == 4
-        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(4))
+        down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(4), zi)
     elseif nn <= 8
-        nn == 5 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(5)) :
-        nn == 6 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(6)) :
-        nn == 7 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(7)) :
-                  down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(8))
+        nn == 5 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(5), zi) :
+        nn == 6 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(6), zi) :
+        nn == 7 ? down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(7), zi) :
+                  down_reg!(s, trans, C, t, Rp, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(8), zi)
     else
-        downward_front!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
+        downward_front!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval, zi)
     end
 
     return
@@ -1357,115 +1487,6 @@ function downward_kernel_reg!(s::AbstractSemiring, trans::Val, C::AbstractMatrix
     end
 
     return
-end
-
-function downward_kernel_simple!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, off::Int,
-        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
-    f = @inbounds order[off + blockIdx().x]
-    t = threadIdx().x + (blockIdx().y - 1) * blockDim().x
-
-    while t <= size(C, 1)                       # each thread may own several rows (coarsening)
-        downward_front!(s, trans, C, t, f, Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval)
-        t += blockDim().x * gridDim().y
-    end
-
-    return
-end
-
-function downward_kernel_blocked!(s::AbstractSemiring, trans::Val, C::AbstractMatrix{T}, order, off::Int,
-        Rptr, Sptr, Stgt, Dptr, Lptr, Dval, Lval) where {T}
-    t = threadIdx().x + (blockIdx().y - 1) * blockDim().x
-
-    if t > size(C, 1)
-        return
-    end
-
-    @inbounds begin
-        f = order[off + blockIdx().x]
-        Rp = Rptr[f]; nn = Rptr[f + 1] - Rp
-        Sp = Sptr[f]; na = Sptr[f + 1] - Sp
-        Dp = Dptr[f]; Lp = Lptr[f]
-        # the chunk width is uniform over the block (one front per block), so no divergence
-        if nn == 1
-            downward_chunks!(s, trans, C, t, Rp, nn, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(1))
-        elseif nn == 2
-            downward_chunks!(s, trans, C, t, Rp, nn, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(2))
-        elseif nn <= 4
-            downward_chunks!(s, trans, C, t, Rp, nn, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(4))
-        else
-            downward_chunks!(s, trans, C, t, Rp, nn, Sp, na, Dp, Lp, Stgt, Dval, Lval, Val(DOWN_NB))
-        end
-
-        if nn > DOWN_NB
-            for j in nn:-1:1
-                acc = C[t, Rp + j - 1]
-
-                for k in (j + 1):nn
-                    acc = smuladd(s, C[t, Rp + k - 1], Dval[Dp + (j - 1) * nn + k - 1], acc, Val(:N), trans)
-                end
-
-                C[t, Rp + j - 1] = acc
-            end
-        end
-    end
-
-    return
-end
-
-@inline function downward_chunks!(s, trans, C::AbstractMatrix{T}, t, Rp, nn, Sp, na, Dp, Lp, Stgt, Dval, Lval, ::Val{NB}) where {T, NB}
-    z = szero(s, T, Val(:N))
-
-    @inbounds for j0 in 1:NB:nn
-        acc = load_chunk(C, t, Rp + j0 - 1, nn - j0 + 1, z, Val(NB))
-
-        for r in 1:na
-            c = C[t, Stgt[Sp + r - 1]]
-            acc = gemv_chunk(s, trans, acc, c, Lval, Lp + (j0 - 1) * na + r - 1, na, nn - j0 + 1, Val(NB))
-        end
-
-        if nn <= NB
-            acc = trsm_chunk(s, trans, acc, Dval, Dp, nn, Val(NB))
-        end
-
-        store_chunk!(C, t, Rp + j0 - 1, nn - j0 + 1, acc, Val(NB))
-    end
-
-    return
-end
-
-@generated function load_chunk(C, t, c0, len, z, ::Val{NB}) where {NB}
-    return :($(Expr(:meta, :inline)); @inbounds ($((:($i <= len ? C[t, c0 + $(i - 1)] : z) for i in 1:NB)...),))
-end
-
-@generated function store_chunk!(C, t, c0, len, acc, ::Val{NB}) where {NB}
-    stores = [:($i <= len && (C[t, c0 + $(i - 1)] = acc[$i])) for i in 1:NB]
-    return :($(Expr(:meta, :inline)); @inbounds begin $(stores...) end; nothing)
-end
-
-# acc[i] ← acc[i] ⊕ c L[base + (i - 1) na]   for i ≤ len
-@generated function gemv_chunk(s, trans, acc::NTuple{NB}, c, Lval, base, na, len, ::Val{NB}) where {NB}
-    return :($(Expr(:meta, :inline)); @inbounds ($((:($i <= len ? smuladd(s, c, Lval[base + $(i - 1) * na], acc[$i], Val(:N), trans) : acc[$i]) for i in 1:NB)...),))
-end
-
-# backward unit-lower solve on the first nn entries: acc[j] ← acc[j] ⊕ Σ_{k>j} acc[k] D[k, j]
-@generated function trsm_chunk(s, trans, acc::NTuple{NB}, Dval, Dp, nn, ::Val{NB}) where {NB}
-    names = [Symbol(:a, i) for i in 1:NB]
-    body = Expr[]
-    push!(body, :(($(names...),) = acc))
-
-    for j in NB:-1:1, k in (j + 1):NB
-        push!(body, :(if $k <= nn
-            $(names[j]) = smuladd(s, $(names[k]), Dval[Dp + ($j - 1) * nn + $k - 1], $(names[j]), Val(:N), trans)
-        end))
-    end
-
-    return quote
-        $(Expr(:meta, :inline))
-        @inbounds begin
-            $(body...)
-        end
-        return ($(names...),)
-    end
 end
 
 #

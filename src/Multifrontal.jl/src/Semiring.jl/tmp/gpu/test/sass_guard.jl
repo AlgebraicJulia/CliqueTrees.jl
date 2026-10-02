@@ -21,7 +21,6 @@ A = CUDA.ones(Float32, 512, 512)
 
 for (name, tiling) in (("gemm v2 large", SemiringGPU.TILING_LARGE), ("gemm v2 small", SemiringGPU.TILING_SMALL),
                        ("gemm v2 n16", SemiringGPU.TILING_N16), ("gemm v2 n32", SemiringGPU.TILING_N32))
-    SemiringGPU.GEMM_VERSION[] = 2
     push!(checks, name => () -> sgemx_gpu!(s, A, A, A; tiling))
 end
 

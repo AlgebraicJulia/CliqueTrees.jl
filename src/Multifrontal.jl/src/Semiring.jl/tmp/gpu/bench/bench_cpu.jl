@@ -1,6 +1,7 @@
 # CPU-only benchmarks (no GPU needed), with Threads.nthreads() threads:
 #   julia -t 128 bench/bench_cpu.jl closure grid3d-25 ...       numeric factorization + full closure Matrix(F) (graphs in data/mtx)
 #   julia -t 128 bench/bench_cpu.jl queries USA-road-t.NY ...   numeric factorization + single (fast path) and blocked queries
+#   julia -t 128 bench/bench_cpu.jl dijkstra grid3d-25 ...      all-pairs by Dijkstra from every source (Semiring.dijkstra!, threads over sources)
 include(joinpath(@__DIR__, "bench_solve.jl"))
 const SR = Semiring
 const TMP = joinpath(pkgdir(SemiringGPU.CliqueTrees), "src", "Multifrontal.jl", "src", "Semiring.jl", "tmp")
@@ -44,7 +45,27 @@ if abspath(PROGRAM_FILE) == @__FILE__
         @printf("%-15s n=%9d m=%9d fill=%6.1f thr=%3d | symbolic %8.3f s  numeric %8.3f s", name, n, nnz(A), fr, NT, tsym, tnum)
 
         if mode == "closure"
-            @printf("  closure %8.3f s\n", best(() -> @elapsed(Matrix(F; nt = NT)), R))
+            # into a preallocated output, as for dijkstra below (Matrix(F) would also time allocating and
+            # first touching n² values); the time with allocation is printed too
+            # sgetri!(F, C) = the closure in elimination coordinates, then (single-threaded) C ← P⁻¹ C Q⁻¹;
+            # "core" is the first part alone, comparable to the GPU's closure_gpu! and ROME's computing time
+            C = Matrix{T}(undef, n, n); SR.sgetri!(F, C; nt = NT)
+            core!(C) = SR.sgetri!(F.s, F.L, F.U, F.S.Bptr, F.S.Fptr, F.S.nBptr, SR.pointers(F.S.N), SR.targets(F.S.N), F.Nval, C; nt = NT)
+            tcore = best(() -> @elapsed(core!(C)), R)
+            tc = best(() -> @elapsed(SR.sgetri!(F, C; nt = NT)), R)
+            C = nothing; GC.gc()
+            @printf("  closure %8.3f s  (core %8.3f s, permutation %8.3f s; with allocation %8.3f s)\n", tc, tcore, tc - tcore, best(() -> @elapsed(Matrix(F; nt = NT)), R))
+        elseif mode == "dijkstra"
+            # every source at once: column v of B starts as the unit vector e_v (in the semiring)
+            B = Matrix{T}(undef, n, n)
+            init!(B) = (fill!(B, szero(s, T, Val(:N))); for v in 1:n; B[v, v] = sone(s, T, Val(:N)); end; B)
+            init!(B); SR.dijkstra!(s, A, B; nt = NT)
+            td = minimum(begin init!(B); @elapsed(SR.dijkstra!(s, A, B; nt = NT)) end for _ in 1:R)
+            # agreement with the closure on a few sources
+            C = Matrix(F; nt = NT); cols = rand(Xoshiro(4), 1:n, 8)
+            ok = all(v -> view(B, :, v) == view(C, v, :) || view(B, :, v) == view(C, :, v), cols)
+            @printf("  dijkstra (all %d sources) %8.3f s  agrees with closure: %s\n", n, td, ok)
+            B = C = nothing; GC.gc()
         else
             W, x, pool, sched = SR.sgetrs_elem_workspace_tmp(F; nt = NT)
             b = Vector{T}(undef, n); srcs = rand(Xoshiro(3), 1:n, 50)

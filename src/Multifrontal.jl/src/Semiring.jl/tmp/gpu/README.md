@@ -67,29 +67,77 @@ julia --project=. -t auto bench/bench_closure.jl grid3d-30 256 8192 simple ops  
 
 ## API
 
+### All pairs in one call: `apsp_gpu`
+
 ```julia
-F = mlu(MinPlus(), A)                    # CPU factorization (upstream)
-G = GPUSLU(F)                            # upload the factor and the level schedule
-precompute_ops!(G)                       # optional: fold the large fronts' triangular solves into one operator each
+using SemiringGPU, CUDA
+D = apsp_gpu(A)                          # A: n × n SparseMatrixCSC{Float32}, A[i, j] = weight of the arc i → j;
+                                         # D[i, j] = A*[i, j] = distance i → j, a CuMatrix in the labels of A
+H = apsp_gpu(A; output = :host)          # the same, as a Matrix
+X = apsp_gpu(A, sources)                 # k × n: X[t, :] = A*[sources[t], :] (any order, repeats allowed)
 
-rmul_gpu!(B, G)                          # B ← B A*, B is k × n on the GPU (row layout)
-sssp_gpu!(X, G, sources)                 # rows of A* for the given sources (fast path: U sweep along root paths)
-P = SSSPPlan(G, k); P(sources)           # the same, recorded as a CUDA graph
-D = closure_gpu(G)                       # all of A*, n × n, in elimination coordinates: D[i, j] = A*[p[i], p[j]], p = G.rperm
+using SemiringGPU.Semiring: MinPlus, MaxPlus, MaxMin, PlusProd
+B = apsp_gpu(A; semiring = MaxMin())     # widest paths; any semiring of CliqueTrees.Multifrontal.Semiring
 
-P = FactorPlan(F; large = 256)           # hybrid factorization plan (F must hold A: copyto!(F, A))
-factorize!(P); G = GPUSLU(P)             # CPU bottom subtrees ∥ GPU top fronts; later calls replay a CUDA graph
-sgetrf_gpu!(MinPlus(), A_gpu)            # dense semiring LU on the GPU
+devs = collect(CUDA.devices())
+H = apsp_gpu(A; devices = devs, output = :host)   # rows split over the GPUs, assembled on the host
+blocks = apsp_gpu(A; devices = devs)              # [(sources_g, D_g)]: D_g[t, j] = A*[sources_g[t], j] on devs[g]
 
-# switches (for experiments; defaults shown)
-SemiringGPU.GEMM_VERSION[] = 2           # 1 = original GEMM, 2 = pipelined
-SemiringGPU.PERSISTENT[] = false         # persistent L sweep below the top of the tree (slower; see "Status of the kernels")
-SemiringGPU.PATH_WARP[] = true           # one warp per source in the path walk
-SemiringGPU.ROWMAJOR[] = true            # with ≥ ROWMAJOR_MIN[] = 4096 rows, run the L sweep below the top as one walk per row...
-SemiringGPU.LAYERED[] = true             # ...split into layers of subtree regions, one thread per (row, region)
-SemiringGPU.LAYER_M[] = 0                # region size in fronts (0: √(2 nf))
-SemiringGPU.AMALGAMATE[] = 8             # merge chains of small fronts up to this width for the solve (1 = off)
-SemiringGPU.FUSED_LARGE[] = true         # large fronts (with precompute_ops!) read and write C through index views
+with_config(() -> apsp_gpu(A); merge = 1)         # solver settings (see below)
+```
+
+- **What a call does:** the whole pipeline with the tuned settings of `bench/portable.jl`: symbolic phase on
+  the CPU, hybrid numeric factorization, and the closure. It then relabels the result from elimination order
+  in place on the GPU, through a buffer of at most 5% of free memory and 1 GiB, and frees its workspace and
+  the factor before returning.
+- **Memory:** n² elements on one GPU (about n²/g each with g devices), plus the factor. `:host` also needs n²
+  on the host. If the result can't fit, the call fails before doing any work and suggests more devices or
+  blocks of `sources`.
+- **Input:** Float32 or Float64 weights for min-plus and max-plus (Int32 and Int64 are rejected because their
+  infinity overflows), Float64 for plus-times. `ArgumentError`s cover a non-square `A`, an unsupported element
+  type or semiring, and a directed graph whose strongly connected components reach one another.
+
+### Lower level: keep the factorization
+
+Use this for repeated solves on one graph, such as new sources or new weights on the same pattern. Results of
+the closure are in elimination coordinates.
+
+```julia
+F = ChordalSLU(MinPlus(), A); copyto!(F, A)        # symbolic phase; F holds the entries of A
+P = FactorPlan(F; large = 256, graph = false, nstreams = 8)
+factorize!(P)                                      # CPU bottom subtrees ∥ GPU top fronts
+G = GPUSLU(P; large = 8192)                        # the factor and the level schedule on the GPU
+precompute_ops!(G)                                 # fold the large fronts' triangular solves into one operator each
+closure_gpu!(D, G; M)                              # all of A*, n × n, in elimination coordinates (M: n × G.maxna):
+                                                   #   D[i, j] = A*[p[i], p[j]], p = F.rperm (= Array(G.rperm))
+copyto!(F, A₂); factorize!(P)                      # new weights, same pattern (with graph = true: CUDA graph replay)
+
+sssp_gpu!(X, G, sources)                           # rows of A* for sources::CuVector, in the labels of A (fast path:
+                                                   #   U sweep along root paths)
+S = SSSPPlan(G, k); S(sources)                     # the same, recorded as a CUDA graph
+rmul_gpu!(B, G)                                    # B ← B A*, B is k × n on the GPU (row layout)
+D = closure_gpu(G)                                 # closure_gpu! with its own D and M
+MG = MultiGPUSLU(P; devices)                       # a copy of the factor on every device
+closure_multigpu!(MG)                              # [(rows_g, D_g)]: D_g = D[rows_g, :] (elimination coordinates)
+
+F = mlu(MinPlus(), A); G = GPUSLU(F)               # or: CPU factorization (upstream), then upload
+sgetrf_gpu!(MinPlus(), A_gpu)                      # dense semiring LU on the GPU
+```
+
+### Settings
+
+Every tunable choice lives in `GPUConfig` (`?GPUConfig` lists them and their defaults). `with_config(f; kw...)`
+changes settings only for the code inside `f`, and `SEMIRINGGPU_<SETTING>` environment variables set the
+process defaults:
+
+```julia
+with_config(merge = 1, skip_fill = false) do      # e.g. no solve amalgamation, fill the result first
+    apsp_gpu(A)
+end
+```
+
+```
+SEMIRINGGPU_TUNE=off julia --project=. script.jl  # no GEMM autotuning (heuristic kernel choice)
 ```
 
 ## How it works
