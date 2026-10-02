@@ -1,0 +1,5 @@
+  graph            n | symbolic  numeric   solves  GPU tot |       D→H   GPU+D→H | CPU closure | check
+  grid3d-25    15625 |    0.05s    0.09s    0.88s    1.02s |     0.46s     1.48s |     3.42s | ok
+  grid2d-150   22500 |    0.02s    0.01s    0.26s    0.28s |     0.88s     1.16s |     4.07s | ok
+  grid3d-30    27000 |    0.06s    0.63s    1.71s    2.40s |     0.42s     2.82s |      NaNs | -
+  grid2d-180   32400 |    0.02s    0.02s    0.61s    0.65s |     0.58s     1.23s |      NaNs | -

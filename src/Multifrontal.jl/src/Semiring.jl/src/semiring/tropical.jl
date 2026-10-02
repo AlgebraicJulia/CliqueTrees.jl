@@ -52,35 +52,35 @@ function slte(::Union{MinPlus, MinProd}, a, b)
     return a >= b
 end
 
-function szero(::MinPlus, ::Type{T}, ::Val{:N}) where {T}
+function szero(::MinPlus, ::Type{T}, ::Val{:N}) where {T <: Real}
     return typemax(T)
 end
 
-function szero(::MinPlus, ::Type{T}, ::Val{:C}) where {T}
+function szero(::MinPlus, ::Type{T}, ::Val{:C}) where {T <: Real}
     return typemin(T)
 end
 
-function szero(::MinProd, ::Type{T}, ::Val{:N}) where {T}
+function szero(::MinProd, ::Type{T}, ::Val{:N}) where {T <: Real}
     return typemax(T)
 end
 
-function szero(::MinProd, ::Type{T}, ::Val{:C}) where {T}
+function szero(::MinProd, ::Type{T}, ::Val{:C}) where {T <: Real}
     return zero(T)
 end
 
-function sone(::MinPlus, ::Type{T}, ::Val{:N}) where {T}
+function sone(::MinPlus, ::Type{T}, ::Val{:N}) where {T <: Real}
     return zero(T)
 end
 
-function sone(::MinPlus, ::Type{T}, ::Val{:C}) where {T}
+function sone(::MinPlus, ::Type{T}, ::Val{:C}) where {T <: Real}
     return zero(T)
 end
 
-function sone(::MinProd, ::Type{T}, ::Val{:N}) where {T}
+function sone(::MinProd, ::Type{T}, ::Val{:N}) where {T <: Real}
     return one(T)
 end
 
-function sone(::MinProd, ::Type{T}, ::Val{:C}) where {T}
+function sone(::MinProd, ::Type{T}, ::Val{:C}) where {T <: Real}
     return one(T)
 end
 

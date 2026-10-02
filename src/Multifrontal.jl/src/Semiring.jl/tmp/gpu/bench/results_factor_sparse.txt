@@ -1,0 +1,48 @@
+NVIDIA GeForce RTX 5060 Laptop GPU, 16 CPU threads, BLAS threads 8
+
+== sparse numeric factorization, MinPlus Float32 (symbolic phase excluded; same AMF ordering) ==
+
+  USA-road-t.NY: n = 264346; CPU (16 threads) 25.7 ms
+     large |   #top   work | CPU part   upload GPU part |    total speedup
+        64 |     36  15.5% |     25.7      3.9      1.5 |     31.1   0.83×
+       128 |      0   0.0% |     25.9      3.1      0.2 |     29.1   0.88×
+       256 |      0   0.0% |     26.0      3.1      0.2 |     29.3   0.88×
+       512 |      0   0.0% |     25.9      3.0      0.2 |     29.0   0.88×
+
+  grid2d-500: n = 250000; CPU (16 threads) 156.5 ms
+     large |   #top   work | CPU part   upload GPU part |    total speedup
+        64 |   1271  97.3% |     40.6     26.7     83.6 |    150.9   1.04×
+       128 |    369  92.4% |     52.6     22.2     57.4 |    132.2   1.18×
+       256 |    136  83.9% |     67.2     22.2     43.1 |    132.5   1.18×
+       512 |     23  57.3% |    105.5     21.5     23.9 |    150.9   1.04×
+
+  grid2d-1000: n = 1000000; CPU (16 threads) 680.5 ms
+     large |   #top   work | CPU part   upload GPU part |    total speedup
+        64 |   5150  98.8% |    164.0    117.5    403.2 |    684.7   0.99×
+       128 |   1284  96.0% |    264.2    113.3    266.6 |    644.1   1.06×
+       256 |    563  92.6% |    273.5    120.1    193.0 |    586.6   1.16×
+       512 |    131  81.6% |    424.0     98.1    121.9 |    643.9   1.06×
+
+  grid3d-30: n = 27000; CPU (16 threads) 153.1 ms
+     large |   #top   work | CPU part   upload GPU part |    total speedup
+        64 |   1401  99.9% |      6.3      8.6     50.8 |     65.7   2.33×
+       128 |    533  99.5% |     13.0      8.6     35.6 |     57.2   2.68×
+       256 |    188  97.9% |     23.4      9.2     28.7 |     61.3   2.50×
+       512 |     70  92.4% |     52.2     11.6     23.9 |     87.8   1.74×
+
+  grid3d-40: n = 64000; CPU (16 threads) 551.2 ms
+     large |   #top   work | CPU part   upload GPU part |    total speedup
+        64 |   3009 100.0% |     14.8     54.5    155.6 |    224.9   2.45×
+       128 |   1315  99.8% |     28.6     49.3    107.4 |    185.3   2.97×
+       256 |    507  99.3% |     52.7     50.6     92.0 |    195.3   2.82×
+       512 |    168  97.4% |    137.1     69.7     79.7 |    286.5   1.92×
+
+== sparse numeric factorization, real arithmetic: M = I − W (ours factor W in PlusProd) ==
+   each solver uses its own ordering; times are numeric factorization only (refactorization with the analysis reused)
+                 |  ours CPU  ours GPU  ours GPU |   UMFPACK   CHOLMOD |  cuDSS LU  cuDSS LU cuDSS LLᵀ
+  graph (ms)     |       F64       F64       F32 |       F64       F64 |       F64       F32       F64
+  USA-road-t.NY  |      25.1      31.2      28.3 |     204.3      34.2 |       8.0       6.5       7.5   (ours vs cuDSS rel. err 6.4e-16)
+  grid2d-500     |     162.7     211.7     122.0 |     297.8      91.1 |      36.2      21.9      24.9   (ours vs cuDSS rel. err 1.5e-15)
+  grid2d-1000    |     844.9    1032.2     561.7 |    1814.4     533.4 |     222.2      94.1     131.1   (ours vs cuDSS rel. err 1.3e-15)
+  grid3d-30      |     205.4     132.9      62.5 |     213.3      54.4 |      44.1      16.5      25.7   (ours vs cuDSS rel. err 4.7e-15)
+  grid3d-40      |     795.0     527.3     170.4 |    1297.1     281.5 |     206.7      61.3     114.4   (ours vs cuDSS rel. err 6.0e-15)

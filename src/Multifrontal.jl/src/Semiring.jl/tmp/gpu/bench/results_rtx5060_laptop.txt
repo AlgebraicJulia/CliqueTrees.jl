@@ -1,0 +1,26 @@
+NVIDIA GeForce RTX 5060 Laptop GPU, 16 CPU threads, math mode DEFAULT_MATH
+
+correctness vs CPU sgemx!
+  MinPlus    Float32  ok
+  MaxPlus    Float32  ok
+  MaxMin     Float32  ok
+  PlusProd   Float32  ok
+  MinPlus    Int32    ok
+  MinPlus    Float64  ok
+
+square, G multiply-adds/s
+       n   MinPlus32   MaxMin32 MinPlusI32  MinPlus64 PlusProd32   cuBLAS32 | CPU MinPl32    GPU/CPU
+     256         899        904        905         18        931        786 |       10.8      83.0×
+     512        1829       1816       1824         19       1963       3629 |       19.5      93.7×
+    1024        2235       2176       2191         25       2625       4726 |       44.5      50.2×
+    2048        2211       2184       2326         30       2698       4282 |       59.9      36.9×
+    4096        1938       1757       2082         30       2209       2649 |        NaN       NaN×
+
+frontal update F22 ← F22 ⊕ L21 ⊗ U12 (a × nj times nj × a), MinPlus Float32, G multiply-adds/s
+       a    nj         GPU        CPU    GPU/CPU
+     256    16         249        3.6      69.9×
+     512    32        1100        8.2     133.4×
+    1024    32        1432       22.1      64.6×
+    1024   128        2002        7.1     281.6×
+    2048    64        2368       24.5      96.6×
+    4096   128        1210       40.6      29.8×

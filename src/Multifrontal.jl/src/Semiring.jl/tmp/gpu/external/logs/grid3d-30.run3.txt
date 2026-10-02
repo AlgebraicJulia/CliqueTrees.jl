@@ -1,0 +1,18 @@
+Input graph size: 27000
+Scotch nested dissection success
+Depth:10
+Number of supernodes: 377
+SupernodeScotch 0: from 26100 to 27000, size 900, parent -1
+Time elapsed of tree build: 0.076299 seconds
+Allocated GPU memory for permDistance with pitch: 108032 bytes
+Time elapsed for GPU memory allocation and initialization: 0.021813 seconds
+Time elapsed of computing: 0.676650 seconds
+Time elapsed of data transfer to host: 0.205529 seconds
+GPU: NVIDIA GeForce RTX 5060 Laptop GPU, SM number: 26, frequency: 1560.00 MHz
+Performance: 1.459400 TFlops
+Theoretical performance: 2.595840 TFlops, achieved 56.220717%
+ROME work: 987503241252, FW work 19683000000000, only 5.017036 %
+[GATAS] End-to-end (read+CSR+host alloc+APSP incl. ordering, H2D, compute, D2H, unpermute): 3.691464 seconds
+[GATAS] Skipping CPU reference check (ROME_SKIP_CHECK set)
+MAXRSS_KB 5881292
+PROCESS_WALL 4.284450948 rc=0

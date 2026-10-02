@@ -1,0 +1,7 @@
+NVIDIA GeForce RTX 5060 Laptop GPU, 16 CPU threads, Float32; median of 100 random sources, ms per query
+  CPU fast = tmp/sssp_tmp.jl (path forward solve + subtree-parallel backward solve); CPU dense = rmul! with the subtree overlay
+  graph                  n | fast 1thr fast 16thr     dense |       GPU | CPU/GPU | check
+  USA-road-t.NY     264346 |     3.241     0.832     9.399 |     3.178 |   0.26× | ok
+  USA-road-t.FLA   1070376 |    13.228     3.272    32.713 |     6.873 |   0.48× | ok
+  roadNet-PA       1090920 |    14.829     8.237    43.885 |    30.646 |   0.27× | ok
+  grid2d-500        250000 |     5.501     2.231    30.639 |    84.866 |   0.03× | ok

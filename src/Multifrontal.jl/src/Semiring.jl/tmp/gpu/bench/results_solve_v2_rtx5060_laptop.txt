@@ -1,0 +1,37 @@
+NVIDIA GeForce RTX 5060 Laptop GPU, 16 CPU threads, Float32
+
+USA-road-t.NY: n = 264346, m = 730100, fill nnz(L+U)/m = 3.5, tree levels = 202, dense fronts = 4
+  CPU factorization (16 threads) 0.40 s; factor upload 0.35 s
+  ms per query. CPU = best of rmul!/lmul! at 1 or 16 threads (dense B). GPU: rmul_gpu! (dense B), sssp_gpu! (path-walk U sweep), plan (sssp + CUDA graph)
+      k |  CPU best |  rmul_gpu  sssp_gpu      plan |  speedup | check
+      1 |    9.6358 |   10.7127    3.2985    3.2645 |     3.0× | ok
+     16 |    1.4796 |    0.7450    0.5076    0.5065 |     2.9× | ok
+     64 |    1.3823 |    0.2047    0.1538    0.1422 |     9.7× | ok
+    256 |    1.1392 |    0.0857    0.0524    0.0520 |    21.9× | ok
+
+grid2d-500: n = 250000, m = 998000, fill nnz(L+U)/m = 17.7, tree levels = 86, dense fronts = 583
+  CPU factorization (16 threads) 0.45 s; factor upload 0.03 s
+  ms per query. CPU = best of rmul!/lmul! at 1 or 16 threads (dense B). GPU: rmul_gpu! (dense B), sssp_gpu! (path-walk U sweep), plan (sssp + CUDA graph)
+      k |  CPU best |  rmul_gpu  sssp_gpu      plan |  speedup | check
+      1 |   23.7014 |   78.9282   75.5685   75.6785 |     0.3× | ok
+     16 |    2.8740 |    4.9268    4.7265    4.6960 |     0.6× | ok
+     64 |    1.9495 |    1.3158    1.2217    1.2158 |     1.6× | ok
+    256 |    1.2824 |    0.3630    0.3271    0.3258 |     3.9× | ok
+
+roadNet-PA: n = 1090920, m = 3083796, fill nnz(L+U)/m = 4.2, tree levels = 104, dense fronts = 174
+  CPU factorization (16 threads) 1.56 s; factor upload 0.12 s
+  ms per query. CPU = best of rmul!/lmul! at 1 or 16 threads (dense B). GPU: rmul_gpu! (dense B), sssp_gpu! (path-walk U sweep), plan (sssp + CUDA graph)
+      k |  CPU best |  rmul_gpu  sssp_gpu      plan |  speedup | check
+      1 |   44.9627 |   40.0933   28.7947   28.8078 |     1.6× | ok
+     16 |    7.1161 |    2.5117    1.9789    1.9673 |     3.6× | ok
+     64 |    6.0253 |    0.7277    0.5455    0.5430 |    11.1× | ok
+    256 |    4.6984 |    0.3660    0.2486    0.2631 |    17.9× | ok
+
+USA-road-t.FLA: n = 1070376, m = 2687902, fill nnz(L+U)/m = 2.6, tree levels = 178, dense fronts = 3
+  CPU factorization (16 threads) 1.15 s; factor upload 0.08 s
+  ms per query. CPU = best of rmul!/lmul! at 1 or 16 threads (dense B). GPU: rmul_gpu! (dense B), sssp_gpu! (path-walk U sweep), plan (sssp + CUDA graph)
+      k |  CPU best |  rmul_gpu  sssp_gpu      plan |  speedup | check
+      1 |   32.8922 |   17.8443    6.9686    6.9514 |     4.7× | ok
+     16 |    5.7478 |    1.2468    0.6388    0.5928 |     9.7× | ok
+     64 |    5.2707 |    0.3777    0.1986    0.2017 |    26.1× | ok
+    256 |    4.3712 |    0.2644    0.1543    0.1415 |    30.9× | ok

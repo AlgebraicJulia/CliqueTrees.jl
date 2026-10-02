@@ -1,0 +1,4 @@
+grid3d-25   simple  n= 15625 | symbolic 0.017  numeric 0.027  closure 0.161  → total 0.205 s | phases (synced): L_batched 53  L_dense 45  U_top_dense 44  U_path 21  U_top_batched 10  fill 3  ms
+grid2d-150  simple  n= 22500 | symbolic 0.008  numeric 0.011  closure 0.084  → total 0.103 s | phases (synced): L_batched 57  U_path 22  fill 5  L_dense 4  U_top_dense 4  U_top_batched 1  ms
+grid3d-30   simple  n= 27000 | symbolic 0.031  numeric 0.049  closure 0.644  → total 0.724 s | phases (synced): U_top_dense 203  L_dense 177  L_batched 153  U_top_batched 28  U_path 27  fill 8  ms
+grid2d-180  simple  n= 32400 | symbolic 0.013  numeric 0.014  closure 0.182  → total 0.209 s | phases (synced): L_batched 127  U_path 23  L_dense 15  U_top_dense 13  fill 11  U_top_batched 1  ms

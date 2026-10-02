@@ -1,0 +1,37 @@
+NVIDIA GeForce RTX 5060 Laptop GPU, 16 CPU threads, Float32
+
+USA-road-t.NY: n = 264346, m = 730100, fill nnz(L+U)/m = 3.5, tree levels = 202
+  CPU factorization (symbolic + numeric, 16 threads) 0.42 s; factor upload to GPU 0.25 s
+  ms per query; CPU = best of row layout (rmul!) and column layout (lmul!); r/c marks the winner
+      k |    CPU 1 thr   CPU 16 thr        GPU |   vs CPU1  vs CPU16 |      H→D D→H pinned | check
+      1 |      9.566 r      9.646 r    10.5823 |      0.9×      0.9× |   40.7ms      0.1ms | ok
+     16 |      1.417 r      1.373 r     0.8333 |      1.7×      1.6× |    1.7ms      1.4ms | ok
+     64 |      1.278 r      1.366 c     0.2048 |      6.2×      6.7× |    6.3ms      4.8ms | ok
+    256 |      1.563 r      0.991 c     0.0894 |     17.5×     11.1× |   22.8ms     18.8ms | ok
+
+grid2d-500: n = 250000, m = 998000, fill nnz(L+U)/m = 17.7, tree levels = 86
+  CPU factorization (symbolic + numeric, 16 threads) 0.47 s; factor upload to GPU 0.03 s
+  ms per query; CPU = best of row layout (rmul!) and column layout (lmul!); r/c marks the winner
+      k |    CPU 1 thr   CPU 16 thr        GPU |   vs CPU1  vs CPU16 |      H→D D→H pinned | check
+      1 |     23.410 c     23.867 c    78.9556 |      0.3×      0.3× |    0.3ms      0.2ms | ok
+     16 |      2.737 r      3.104 r     4.9218 |      0.6×      0.6× |    1.7ms      1.3ms | ok
+     64 |      1.808 r      1.839 c     1.2949 |      1.4×      1.4× |    5.9ms      4.8ms | ok
+    256 |      1.993 r      1.280 c     0.3656 |      5.5×      3.5× |   21.3ms     18.0ms | ok
+
+roadNet-PA: n = 1090920, m = 3083796, fill nnz(L+U)/m = 4.2, tree levels = 104
+  CPU factorization (symbolic + numeric, 16 threads) 1.54 s; factor upload to GPU 0.12 s
+  ms per query; CPU = best of row layout (rmul!) and column layout (lmul!); r/c marks the winner
+      k |    CPU 1 thr   CPU 16 thr        GPU |   vs CPU1  vs CPU16 |      H→D D→H pinned | check
+      1 |     45.586 r     45.337 r    37.4654 |      1.2×      1.2× |    0.7ms      0.4ms | ok
+     16 |      7.128 r      7.149 r     2.6260 |      2.7×      2.7× |    6.2ms      5.1ms | ok
+     64 |      6.048 r      5.471 c     0.7006 |      8.6×      7.8× |   23.3ms     19.6ms | ok
+    256 |      7.059 r      4.387 c     0.3684 |     19.2×     11.9× |  115.1ms     78.6ms | ok
+
+USA-road-t.FLA: n = 1070376, m = 2687902, fill nnz(L+U)/m = 2.6, tree levels = 178
+  CPU factorization (symbolic + numeric, 16 threads) 1.31 s; factor upload to GPU 0.03 s
+  ms per query; CPU = best of row layout (rmul!) and column layout (lmul!); r/c marks the winner
+      k |    CPU 1 thr   CPU 16 thr        GPU |   vs CPU1  vs CPU16 |      H→D D→H pinned | check
+      1 |     33.686 r     33.139 r    17.8438 |      1.9×      1.9× |    0.5ms      0.4ms | ok
+     16 |      5.973 r      5.769 r     1.2481 |      4.8×      4.6× |    6.1ms      5.1ms | ok
+     64 |      5.266 r      5.736 c     0.3735 |     14.1×     15.4× |   22.8ms     19.3ms | ok
+    256 |      6.621 r      4.128 c     0.2832 |     23.4×     14.6× |  111.8ms     77.2ms | ok

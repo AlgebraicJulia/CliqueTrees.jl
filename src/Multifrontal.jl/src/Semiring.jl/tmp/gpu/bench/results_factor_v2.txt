@@ -1,0 +1,31 @@
+NVIDIA GeForce RTX 5060 Laptop GPU, 16 CPU threads, BLAS threads 8
+
+== dense LU, G multiply-adds/s (n³/3 per factorization) ==
+      n |   ours CPU   ours GPU |   ours GPU   cuSOLVER     LAPACK   ours CPU
+        |  MinPlus32  MinPlus32 |   real F32   real F32   real F32   real F64
+    512 |         25         28 |         28         34         61         12
+   1024 |         42        101 |        105        155        135         12
+   2048 |         63        332 |        356        552        206         66
+   4096 |        113        649 |        697       1331        293         82
+
+== sparse numeric factorization, MinPlus Float32 (symbolic phase excluded; same AMF ordering for all) ==
+   upstream CPU: CliqueTrees sgetrf! (fronts in sequence, multithreaded dense kernels)
+   ours CPU ∥: same fronts, bottom subtrees in parallel (factorize_cpu!)
+   hybrid: bottom subtrees in parallel on the CPU, top on the GPU (8 streams); first call / refactorization (CUDA graph)
+  graph                 n |  upstream ours CPU ∥ | hyb first hyb refac |  refac: cpu+upload+gpu | vs upstr vs CPU ∥
+  USA-road-t.NY    264346 |     25.2ms      12.3ms |   1789.8ms     13.6ms |   10.7 +   1.8 +    1.1 |    1.85×    0.90×   (top=36, 15% of work, large=64)
+  grid2d-500       250000 |    152.9ms      89.2ms |     57.0ms     47.5ms |   10.1 +   8.5 +   28.9 |    3.22×    1.88×   (top=369, 92% of work, large=128)
+  grid2d-1000     1000000 |    720.9ms     507.9ms |    186.3ms    183.6ms |   55.1 +  36.3 +   92.2 |    3.93×    2.77×   (top=563, 93% of work, large=256)
+  grid3d-30         27000 |    155.8ms     129.8ms |     36.7ms     33.2ms |    4.4 +   5.3 +   23.4 |    4.70×    3.91×   (top=188, 98% of work, large=256)
+  grid3d-40         64000 |    561.1ms     512.8ms |    127.9ms     96.9ms |    6.5 +  15.2 +   75.2 |    5.79×    5.29×   (top=1315, 100% of work, large=128)
+
+== sparse numeric factorization, real arithmetic: M = I − W (ours factor W in PlusProd) ==
+   each solver uses its own ordering; times are numeric factorization only (refactorization with the analysis reused)
+   ours GPU = hybrid refactorization (CUDA graph replay); ours CPU ∥ = subtree-parallel CPU
+                 |  upstream ours CPU∥  ours GPU  ours GPU |   UMFPACK   CHOLMOD |  cuDSS LU  cuDSS LU cuDSS LLᵀ
+  graph (ms)     |       F64       F64       F64       F32 |       F64       F64 |       F64       F32       F64
+  USA-road-t.NY  |      24.9      11.3      12.3      10.1 |     203.7      33.7 |       7.8       6.6       6.7   (ours vs cuDSS rel. err 5.1e-16)
+  grid2d-500     |     173.2     108.3      95.1      47.2 |     295.1      83.6 |      36.2      21.9      25.4   (ours vs cuDSS rel. err 1.5e-15)
+  grid2d-1000    |     865.9     653.6     431.9     183.3 |    2083.1     565.5 |     221.6      94.3     131.7   (ours vs cuDSS rel. err 1.3e-15)
+  grid3d-30      |     193.9     154.4      86.5      32.6 |     289.3      53.9 |      44.4      16.6      25.9   (ours vs cuDSS rel. err 4.7e-15)
+  grid3d-40      |     797.8     689.5     369.0      93.4 |    1231.3     314.2 |     208.6      59.6     113.8   (ours vs cuDSS rel. err 6.0e-15)

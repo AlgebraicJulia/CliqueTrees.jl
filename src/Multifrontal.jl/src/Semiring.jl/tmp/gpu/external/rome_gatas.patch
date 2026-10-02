@@ -1,0 +1,142 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4860d18..6ede7a5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,7 @@ project(ROME LANGUAGES CXX CUDA)
+ 
+ find_package(CUDA REQUIRED)
+ include_directories("${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}")
+-set(CMAKE_CUDA_ARCHITECTURES 80 86 89 90)
++set(CMAKE_CUDA_ARCHITECTURES 120)
+ 
+ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+ message(STATUS "CUDA version: ${CUDA_VERSION}")
+diff --git a/src/APSP/rome.cu b/src/APSP/rome.cu
+index 8dd05b7..55beea4 100644
+--- a/src/APSP/rome.cu
++++ b/src/APSP/rome.cu
+@@ -784,6 +784,9 @@ void APSP(const CSRGraph& input_graph, weight_t* distance, weight_t* permDistanc
+ 
+ 
+     // Prepare vertification
++    // [GATAS] distance == nullptr (ROME_LOWMEM=1 in the driver) skips the host-side un-permutation
++    // so that only one n^2 host buffer is needed; the GPU computation is unchanged.
++    if (distance != nullptr)
+     for(dataSize_t i = 0; i < size; ++i){
+         for(dataSize_t j = 0; j < size; ++j){
+             distance[i * size + j] = permDistance[iperm[i] * size + iperm[j]];
+diff --git a/src/App/APSP.cu b/src/App/APSP.cu
+index 37d1941..7aa2c9e 100644
+--- a/src/App/APSP.cu
++++ b/src/App/APSP.cu
+@@ -1,6 +1,8 @@
+ #include <fstream>
+ #include <time.h>
+ #include <string>
++#include <cstdlib>
++#include <cstdio>
+ 
+ #include "Graph/Graph.hpp"
+ #include "Graph/Converter.hpp"
+@@ -22,14 +24,24 @@ int main(int argc, char* argv[]){
+ 
+     // warm_up_cuda();
+ 
++    // [GATAS] in-process end-to-end timer: mtx read + CSR + pinned host alloc + APSP()
++    struct timespec e2e_start, e2e_finish;
++    clock_gettime(CLOCK_MONOTONIC, &e2e_start);
++
+     Graph g = MtxReader::Instance().Read(argv[1]);
+ 
+     CSRGraph csr = Converter::Instance().ToCSR(g);
+     weight_t* buffer = nullptr;
+     weight_t* result = nullptr;
++    // [GATAS] ROME_LOWMEM=1: allocate only the permuted-distance host buffer (no un-permuted result
++    // buffer, no CPU check, no dump). Needed when 2*n^2*4 bytes of pinned host memory do not fit.
++    const bool lowmem = std::getenv("ROME_LOWMEM") != nullptr;
+     #ifdef PINNED_MEMORY
+-    cudaMallocHost((void**)&buffer, csr.Size() * csr.Size() * sizeof(weight_t));
+-    cudaMallocHost((void**)&result, csr.Size() * csr.Size() * sizeof(weight_t));
++    DebugAssert(__FILE__, __LINE__, "cudaMallocHost(buffer) failed",
++                cudaMallocHost((void**)&buffer, csr.Size() * csr.Size() * sizeof(weight_t)) == cudaSuccess);
++    if (!lowmem)
++    DebugAssert(__FILE__, __LINE__, "cudaMallocHost(result) failed",
++                cudaMallocHost((void**)&result, csr.Size() * csr.Size() * sizeof(weight_t)) == cudaSuccess);
+     #else
+     result = new weight_t[csr.Size() * csr.Size()];
+     buffer = new weight_t[csr.Size() * csr.Size()];
+@@ -38,10 +50,39 @@ int main(int argc, char* argv[]){
+ 
+     APSP(csr, result, buffer);
+ 
++    clock_gettime(CLOCK_MONOTONIC, &e2e_finish);
++    printf("[GATAS] End-to-end (read+CSR+host alloc+APSP incl. ordering, H2D, compute, D2H, unpermute): %.6f seconds\n",
++           (e2e_finish.tv_sec - e2e_start.tv_sec) + (e2e_finish.tv_nsec - e2e_start.tv_nsec) / 1e9);
++
++    // [GATAS] optional dump of the first ROME_DUMP_NROWS (default 3) rows of the result
++    // (original vertex labeling; row r = source r+1 in 1-based ids). Outside all timed regions.
++    const char* dumpPath = lowmem ? nullptr : std::getenv("ROME_DUMP_ROWS");
++    if (dumpPath) {
++        dataSize_t N = csr.Size();
++        int nrows = std::getenv("ROME_DUMP_NROWS") ? std::atoi(std::getenv("ROME_DUMP_NROWS")) : 3;
++        FILE* f = std::fopen(dumpPath, "w");
++        DebugAssert(__FILE__, __LINE__, "Dump file can not be opened", f != nullptr);
++        for (int r = 0; r < nrows && r < N; ++r) {
++            for (dataSize_t c = 0; c < N; ++c) {
++                weight_t v = result[r * N + c];
++                if (v == kWeightInf) std::fprintf(f, c ? " Inf" : "Inf");
++                else std::fprintf(f, c ? " %.0f" : "%.0f", (double)v);
++            }
++            std::fprintf(f, "\n");
++        }
++        std::fclose(f);
++        printf("[GATAS] Dumped %d rows to %s\n", nrows, dumpPath);
++    }
++
++    // [GATAS] ROME_SKIP_CHECK=1 skips the CPU SuperFW reference check (slow, needs another n^2 host buffer)
++    if (!lowmem && std::getenv("ROME_SKIP_CHECK") == nullptr) {
+     printf("Checking result...\n");
+     CheckResult(csr, result, buffer);
++    } else {
++        printf("[GATAS] Skipping CPU reference check (ROME_SKIP_CHECK set)\n");
++    }
+ 
+-    if(!StringFunc::Instance().StrCmp(argv[2], "ignore")){
++    if(!lowmem && !StringFunc::Instance().StrCmp(argv[2], "ignore")){
+         std::ofstream reportFile;
+         reportFile.open(argv[2]);
+         DebugAssert(__FILE__, __LINE__,"File can not be opend", reportFile.is_open());
+@@ -62,7 +103,7 @@ int main(int argc, char* argv[]){
+     }
+     #ifdef PINNED_MEMORY
+     cudaFreeHost(buffer);
+-    cudaFreeHost(result);
++    if (result) cudaFreeHost(result);
+     #else
+     delete[] result;
+     delete[] buffer;
+diff --git a/src/Matrix/MtxReader.cpp b/src/Matrix/MtxReader.cpp
+index 164217a..d4df976 100644
+--- a/src/Matrix/MtxReader.cpp
++++ b/src/Matrix/MtxReader.cpp
+@@ -6,6 +6,7 @@
+ #include <cstring>
+ #include <climits>
+ #include <cmath>
++#include <cstdlib>
+ #include "Common/DebugAssert.hpp"
+ 
+ 
+@@ -93,7 +94,11 @@ Graph MtxReader::Read(const char* path){
+         else{
+             i = std::stoi(line_parsed[0]) - 1;
+             j = std::stoi(line_parsed[1]) - 1;
+-            value = std::rand() % 10 + 1;  // Random value between 1 and 100. Alternative to floating-point precision verification
++            // [GATAS build change] upstream ignored the file's weights and used random ones:
++            //   value = std::rand() % 10 + 1;
++            // We read the weight from the file instead (set ROME_RANDOM_WEIGHTS=1 for upstream behavior).
++            if (std::getenv("ROME_RANDOM_WEIGHTS") != nullptr) value = std::rand() % 10 + 1;
++            else value = static_cast<weight_t>(std::stod(line_parsed[2]));
+         }
+         if (i != j) {
+             g.Connect(i,j,value);
