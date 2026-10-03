@@ -22,7 +22,7 @@ Defaults can be set per process with environment variables `SEMIRINGGPU_<SETTING
 Dense GEMM
 - `gemm_tune = true`: pick the GEMM kernel per GPU and shape class by timing candidates once, and
   cache the choice on disk (`SEMIRINGGPU_TUNE=off` in the environment turns the default off).
-- `gemm_kernel = 0`: 0 lets the solver choose; 2, 4 or 6 forces that kernel version (testing).
+- `gemm_kernel = 0`: 0 lets the solver choose; 2, 4, 6, 7 or 8 forces that kernel version (testing).
 
 Solve and closure
 - `merge = 128`, `merge_alpha = 0.5`: merge chains of fronts into fronts of up to `merge` pivots for
@@ -64,7 +64,7 @@ function GPUConfig(c::GPUConfig; kw...)
 end
 
 function check(c::GPUConfig)
-    c.gemm_kernel in (0, 2, 4, 6) || throw(ArgumentError("gemm_kernel must be 0 (automatic), 2, 4 or 6, not $(c.gemm_kernel)"))
+    c.gemm_kernel in (0, 2, 4, 6, 7, 8) || throw(ArgumentError("gemm_kernel must be 0 (automatic), 2, 4, 6, 7 or 8, not $(c.gemm_kernel)"))
     c.merge >= 1 && c.factor_merge >= 1 || throw(ArgumentError("merge widths must be at least 1"))
     0 <= c.merge_alpha || throw(ArgumentError("merge_alpha must be nonnegative"))
     c.layered_min_rows >= 1 && c.layer_size >= 0 || throw(ArgumentError("layered_min_rows must be ≥ 1 and layer_size ≥ 0"))
@@ -114,6 +114,80 @@ without_tuning(f) = with(f, TUNING => false)
 
 # internal: a Dict{Symbol, Float64} to time the factorization kernels by phase (synchronizes), or nothing
 const FTIMER = ScopedValue{Any}(nothing)
+
+# ===== step timer =====
+#
+# with_steps(f) runs f() and returns (f(), steps): the wall time of every step of the call that is marked
+# with @step, by name, nested steps under their parent ("plan/top merge"). Each step synchronizes the
+# device before and after, so GPU work is charged to the step that issued it (and work that would have
+# overlapped across steps no longer does). Off (one null test per step) outside with_steps.
+
+mutable struct StepTimer
+    times::Dict{String, Float64}
+    gc::Dict{String, Float64}           # of which garbage collection
+    bytes::Dict{String, Int}            # host memory allocated
+    counts::Dict{String, Int}
+    order::Vector{String}               # in order of first start (parents before their steps)
+    stack::Vector{Tuple{String, UInt64, UInt64, Int}}
+end
+
+StepTimer() = StepTimer(Dict{String, Float64}(), Dict{String, Float64}(), Dict{String, Int}(), Dict{String, Int}(), String[],
+    Tuple{String, UInt64, UInt64, Int}[])
+
+const STEPS = ScopedValue{Union{Nothing, StepTimer}}(nothing)
+
+function step_begin!(tm::StepTimer, name::AbstractString)
+    CUDA.device_synchronize()
+    path = join((first.(tm.stack)..., name), "/")
+    haskey(tm.times, path) || (push!(tm.order, path); tm.times[path] = 0.0)
+    push!(tm.stack, (String(name), time_ns(), Base.gc_time_ns(), Base.gc_bytes()))
+    return
+end
+
+function step_end!(tm::StepTimer)
+    CUDA.device_synchronize()
+    t1 = time_ns(); g1 = Base.gc_time_ns(); b1 = Base.gc_bytes()
+    name, t0, g0, b0 = pop!(tm.stack)
+    path = join((first.(tm.stack)..., name), "/")
+    tm.times[path] += (t1 - t0) / 1e9
+    tm.gc[path] = get(tm.gc, path, 0.0) + (g1 - g0) / 1e9
+    tm.bytes[path] = get(tm.bytes, path, 0) + (b1 - b0)
+    tm.counts[path] = get(tm.counts, path, 0) + 1
+    return
+end
+
+# `@step name expr`: expr, timed as step `name` when a StepTimer is active (no closure: assignments in
+# expr, e.g. a begin … end block, stay in the caller's scope)
+macro step(name, ex)
+    return quote
+        local tm = STEPS[]
+        local on = tm !== nothing && !CUDA.is_capturing()      # (no synchronization while a graph is recorded)
+        on && step_begin!(tm, $(esc(name)))
+        local r = $(esc(ex))
+        on && step_end!(tm)
+        r
+    end
+end
+
+with_steps(f) = (tm = StepTimer(); r = with(f, STEPS => tm); (r, tm))
+
+# the steps as an indented tree: ms, share of the total, calls, and the time of each parent not in a child
+function print_steps(io::IO, tm::StepTimer; total = sum(v for (k, v) in tm.times if !occursin('/', k); init = 0.0))
+    for path in tm.order
+        depth = count(==('/'), path)
+        t = tm.times[path]
+        kids = [k for k in tm.order if startswith(k, path * "/") && count(==('/'), k) == depth + 1]
+        rest = isempty(kids) ? "" : string("   (other ", round(1e3 * (t - sum(tm.times[k] for k in kids)); digits = 1), " ms)")
+        calls = tm.counts[path] > 1 ? string("  ×", tm.counts[path]) : ""
+        gc = get(tm.gc, path, 0.0) >= 5e-4 ? string("  [GC ", round(1e3 * tm.gc[path]; digits = 1), " ms]") : ""
+        mb = get(tm.bytes, path, 0) / 2^20
+        gc *= mb >= 1 ? string("  {", round(mb; digits = 1), " MiB}") : ""
+        println(io, rpad("  "^depth * last(split(path, '/')), 34), lpad(round(1e3t; digits = 1), 9), " ms ",
+            lpad(round(100t / total; digits = 1), 5), "%", calls, gc, rest)
+    end
+end
+
+print_steps(tm::StepTimer; kw...) = print_steps(stdout, tm; kw...)
 
 # ===== input checks =====
 

@@ -29,6 +29,18 @@ G = let A = grid3(10, Float32), F = ChordalSLU(s, A)
 end
 n = G.n
 push!(checks, "closure (sweeps, path walk, dense path)" => () -> closure_gpu(G))
+# the L sweep below the top as the slot-cached layered walk (layered.jl), and the plain layered walk
+push!(checks, "closure, layered slot sweep" => () -> with_config(() -> closure_gpu(G); layered_min_rows = 1))
+push!(checks, "closure, layered walk" => () -> with_config(() -> closure_gpu(G); layered_min_rows = 1, layer_cache = false))
+
+# kernel v7 (CUTLASS structure), the tilings the tuner may pick, strided and through an index view
+if SemiringGPU.v7_ok(Float32, 128, 64, 8, 8)
+    for (BM, BN, BK, TN) in ((128, 128, 8, 8), (128, 64, 8, 8), (64, 64, 8, 8), (64, 128, 8, 8), (128, 64, 16, 4), (64, 64, 8, 4))
+        push!(checks, "gemm v7 $(BM)×$(BN)×$(BK) 8×$TN" => () -> SemiringGPU.launch7!(s, A, A, A, Val(BM), Val(BN), Val(BK), Val(false); tn = TN))
+    end
+    idx = CuVector(collect(1:2:512))
+    push!(checks, "gemm v7 128×64 indexed" => () -> SemiringGPU.launch7!(s, view(A, :, 1:256), SubArray(A, (Base.Slice(axes(A, 1)), idx)), view(A, 1:256, 1:256), Val(128), Val(64), Val(8), Val(false)))
+end
 
 bad = 0
 for (name, f) in checks

@@ -66,7 +66,7 @@ rootcause(e) = e isa CompositeException ? rootcause(first(e.exceptions)) : e isa
         @test config() == d                                 # in effect at the top level
         # the values themselves (bench/portable.jl's measured best); settings added later are covered by
         # the docstring check above
-        for (f, v) in KNOWN_DEFAULTS
+        for (f, v) in pairs(KNOWN_DEFAULTS)
             @test hasfield(GPUConfig, f) && getfield(d, f) == v
         end
     end
@@ -94,7 +94,7 @@ rootcause(e) = e isa CompositeException ? rootcause(first(e.exceptions)) : e isa
     end
 
     @testset "invalid values are rejected" begin
-        bad = [(gemm_kernel = 3,), (gemm_kernel = 1,), (gemm_kernel = 5,), (gemm_kernel = -1,), (gemm_kernel = 8,),
+        bad = [(gemm_kernel = 3,), (gemm_kernel = 1,), (gemm_kernel = 5,), (gemm_kernel = -1,), (gemm_kernel = 9,),
                (merge = 0,), (merge = -2,), (factor_merge = 0,), (merge_alpha = -0.1,), (merge_alpha = NaN,),
                (layered_min_rows = 0,), (layer_size = -1,)]
         has(:layer_slots) && push!(bad, (layer_slots = -1,))
@@ -106,7 +106,7 @@ rootcause(e) = e isa CompositeException ? rootcause(first(e.exceptions)) : e isa
             @test config() == GPUConfig()
         end
         # the edges of the valid ranges
-        for kw in [(gemm_kernel = 0,), (gemm_kernel = 2,), (gemm_kernel = 4,), (gemm_kernel = 6,), (merge = 1,), (factor_merge = 1,),
+        for kw in [(gemm_kernel = 0,), (gemm_kernel = 2,), (gemm_kernel = 4,), (gemm_kernel = 6,), (gemm_kernel = 7,), (gemm_kernel = 8,), (merge = 1,), (factor_merge = 1,),
                    (merge_alpha = 0.0,), (merge_alpha = 1.0,), (layered_min_rows = 1,), (layer_size = 0,), (layer_size = 1,)]
             @test with_config(() -> config(); kw...) == GPUConfig(GPUConfig(); kw...)
         end

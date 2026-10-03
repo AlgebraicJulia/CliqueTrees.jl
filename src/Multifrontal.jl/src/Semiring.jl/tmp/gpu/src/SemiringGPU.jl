@@ -113,8 +113,12 @@ end
 GemmConfig(v::Integer, ::Tiling{BM, BN, BK, TM, TN}) where {BM, BN, BK, TM, TN} = GemmConfig(v, BM, BN, BK, TM, TN)
 tiling(c::GemmConfig) = Tiling{c.bm, c.bn, c.bk, c.tm, c.tn}()
 
-# tuned choices are keyed by a hash of this file: any change to the kernels invalidates them
-const GEMM_TUNE_KEY = "gemm-" * string(hash(read(@__FILE__, String)); base = 16)
+# a configuration some kernel can run (entries of the tuning file are checked before use)
+valid_config(c::GemmConfig) = c.version in (2, 4, 6, 7, 8) && all(>(0), (c.bm, c.bn, c.bk, c.tm, c.tn)) &&
+    c.bm % c.tm == 0 && c.bn % c.tn == 0 && c.bm * c.bn ÷ (c.tm * c.tn) <= 1024 && c.bm <= 256 && c.bn <= 256 && c.bk <= 32
+
+# tuned choices are keyed by a hash of the kernels' source files: any change to them invalidates them
+const GEMM_TUNE_KEY = "gemm-" * string(hash((read(@__FILE__, String), read(joinpath(@__DIR__, "gemm_simt.jl"), String))); base = 16)
 const TUNE_ROUNDS = 5
 const GEMM_TABLE = Dict{String, GemmConfig}()
 const GEMM_TABLE_LOCK = ReentrantLock()
@@ -126,9 +130,14 @@ const BUCKETS = (16, 32, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048,
 bucket(x::Integer) = (i = findfirst(>=(x), BUCKETS); isnothing(i) ? 8192 : BUCKETS[i])
 mbucket(m::Integer) = m <= 2048 ? 2048 : m <= 8192 ? 8192 : m <= 32768 ? 32768 : 131072
 
+# the full name of a type, the same in every session (string(T) leaves out the modules of names that the
+# session has imported, so two processes could key the same semiring differently); with parameters, as
+# MaxPlus, MaxMin and MaxProd are all DualQuantale{…}
+type_name(T) = sprint(show, T; context = :module => Core)
+
 function gemm_key(s, ::Type{V}, m, n, k, overwrite, inplace) where {V}
     p = device_profile()
-    return join((GEMM_TUNE_KEY, p.name, "sm_$(p.capability.major)$(p.capability.minor)", "$(p.nsm)SM", nameof(typeof(s)), V,
+    return join((GEMM_TUNE_KEY, p.name, "sm_$(p.capability.major)$(p.capability.minor)", "$(p.nsm)SM", type_name(typeof(s)), V,
         overwrite ? "ow" : "acc", inplace ? "inplace" : "out", mbucket(m), bucket(n), bucket(k)), "|")
 end
 
@@ -143,7 +152,8 @@ function load_gemm_table!()
             f = split(line, '\t')
             v = length(f) == 7 ? tryparse.(Int, f[2:7]) : nothing
             (isnothing(v) || any(isnothing, v)) && continue
-            GEMM_TABLE[f[1]] = GemmConfig(v...)
+            c = GemmConfig(v...)
+            valid_config(c) && (GEMM_TABLE[f[1]] = c)
         end
     catch e
         @warn "SemiringGPU: could not read the GEMM tuning file $path; kernels will be retimed" exception = e maxlog = 1
@@ -168,7 +178,7 @@ function save_gemm_entry(key, c::GemmConfig)
     end
 end
 
-function gemm_candidates(n::Integer, inplace::Bool, min3::Bool = false)
+function gemm_candidates(n::Integer, inplace::Bool, min3::Bool = false, v7::Bool = false, pair::Bool = false)
     c = if n <= 16
         [GemmConfig(2, TILING_N16), GemmConfig(2, TILING_N32)]
     elseif n <= 32
@@ -180,6 +190,14 @@ function gemm_candidates(n::Integer, inplace::Bool, min3::Bool = false)
          GemmConfig(2, TILING_SMALL), GemmConfig(2, TILING_N32)]
     end
 
+    if v7 && n > 32                              # CUTLASS SIMT structure (Float32, strided operands)
+        vs = pair ? (7, 8) : (7,)                # and with packed adds and 3-input mins (sm_100)
+        for v in vs
+            append!(c, [GemmConfig(v, 128, 64, 8, 8, 8), GemmConfig(v, 64, 64, 8, 8, 8), GemmConfig(v, 128, 64, 16, 8, 4), GemmConfig(v, 64, 64, 8, 8, 4)])
+            n > 64 && append!(c, [GemmConfig(v, 128, 128, 8, 8, 8), GemmConfig(v, 64, 128, 8, 8, 8), GemmConfig(v, 128, 128, 16, 8, 4)])
+        end
+    end
+
     if min3 && n > 32                            # v2's layout with an explicit 3-input min (sm_100+)
         push!(c, GemmConfig(6, TILING_MID))
         n > 64 && push!(c, GemmConfig(6, TILING_LARGE))
@@ -189,8 +207,15 @@ function gemm_candidates(n::Integer, inplace::Bool, min3::Bool = false)
     return c
 end
 
-# without tuning: from the shape and the GPU size only
-function heuristic_gemm(s, ::Type{V}, m::Integer, n::Integer, k::Integer, inplace::Bool) where {V}
+# without tuning: from the shape and the GPU size only. With strided Float32 operands, kernel v7 in
+# 128 × 64 tiles (64 × 64 for n ≤ 64) is the fastest or within a few percent of it on the closure's
+# shapes on an RTX 5060 Laptop, L4 and RTX PRO 6000 (bench/gemm_shapes.jl), except for small k
+# (≤ 64), where the 8 × 4 thread tiles of TILING_MID win.
+function heuristic_gemm(s, ::Type{V}, m::Integer, n::Integer, k::Integer, inplace::Bool, strided::Bool = false) where {V}
+    if config().gemm_kernel == 0 && strided && V === Float32 && 32 < n && 64 < k && !(inplace && n > 64)
+        return n <= 64 ? GemmConfig(7, 64, 64, 8, 8, 8) : GemmConfig(7, 128, 64, 8, 8, 8)
+    end
+
     v = forced_version(s, V)
     t = if n <= 16
         TILING_N16
@@ -225,13 +250,24 @@ function forced_version(s, ::Type{V}) where {V}
         return 2
     end
 
+    if v == 7 && V !== Float32
+        @warn "SemiringGPU: gemm_kernel = 7 needs Float32; using kernel 2" maxlog = 1
+        return 2
+    end
+
+    if v == 8 && !pair_ok(s, V)
+        @warn "SemiringGPU: gemm_kernel = 8 needs Float32 min-plus or max-plus on compute capability 10.x; using kernel 7" maxlog = 1
+        return V === Float32 ? 7 : 2
+    end
+
     return v == 0 ? 2 : v
 end
 
 function select_gemm(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatrix, B::AbstractMatrix, overwrite::Bool, inplace::Bool = Base.mightalias(C, A)) where {V}
     m, n = size(C); k = size(A, 2)
     cf = config()
-    (cf.gemm_tune && cf.gemm_kernel == 0 && TUNING[] && !CUDA.is_capturing()) || return heuristic_gemm(s, V, m, n, k, inplace)
+    v7 = V === Float32 && !isnothing(gemm_layout(C)) && !isnothing(gemm_layout(A)) && !isnothing(strided_layout(B))
+    (cf.gemm_tune && cf.gemm_kernel == 0 && TUNING[] && !CUDA.is_capturing()) || return heuristic_gemm(s, V, m, n, k, inplace, v7)
     key = gemm_key(s, V, m, n, k, overwrite, inplace)
 
     c = lock(GEMM_TABLE_LOCK) do
@@ -239,9 +275,9 @@ function select_gemm(s::AbstractSemiring, C::AbstractMatrix{V}, A::AbstractMatri
         get(GEMM_TABLE, key, nothing)
     end
 
-    isnothing(c) || return c
-    c = tune_gemm(s, C, A, B, overwrite, gemm_candidates(n, inplace, min3_ok(s, V)))
-    isnothing(c) && return heuristic_gemm(s, V, m, n, k, inplace)
+    isnothing(c) || (inplace && c.bn < n) || return c          # (a damaged entry can not be in place)
+    c = tune_gemm(s, C, A, B, overwrite, gemm_candidates(n, inplace, min3_ok(s, V), v7, v7 && pair_ok(s, V)))
+    isnothing(c) && return heuristic_gemm(s, V, m, n, k, inplace, v7)
 
     lock(GEMM_TABLE_LOCK) do
         GEMM_TABLE[key] = c
@@ -258,9 +294,17 @@ function tune_gemm(s, C::AbstractMatrix{V}, A, B, overwrite::Bool, cands) where 
     m * n * sizeof(V) <= CUDA.free_memory() ÷ 4 || return nothing
     W = CuMatrix{V}(undef, m, n)
     overwrite ? fill!(W, szero(s, V, Val(:N))) : (W .= C)
-    for c in cands
-        launch!(s, W, A, B, c, Val(overwrite))             # compile and warm up
+    # compile and warm up; a candidate this GPU cannot launch (resources) is dropped, not fatal
+    cands = filter(cands) do c
+        try
+            launch!(s, W, A, B, c, Val(overwrite)); true
+        catch e
+            e isa CUDA.CuError || e isa ArgumentError || occursin("exceeds", sprint(showerror, e)) || rethrow()
+            @debug "SemiringGPU: GEMM candidate $c cannot launch here" exception = e
+            false
+        end
     end
+    isempty(cands) && (CUDA.unsafe_free!(W); return nothing)
 
     CUDA.synchronize()
     # round-robin, best of rounds: clocks drift (power caps, boost), so candidates timed one after
@@ -293,7 +337,14 @@ function launch!(s::AbstractSemiring, C::AbstractMatrix, A::AbstractMatrix, B::A
     #
     blocks = (cld(size(C, 2), BN), cld(size(C, 1), BM))
     blocks[2] <= 65535 || throw(ArgumentError("sgemx_gpu!: $(size(C, 1)) rows need more than 65535 row tiles of $BM"))
-    if VER == 6
+    if VER == 8
+        launch7!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(OW); tn = TN, pair = true) && return
+        launch7!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(OW); tn = TN) && return
+        @cuda threads = TX * TY blocks = blocks sgemx_kernel2!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN), Val(OW))
+    elseif VER == 7
+        launch7!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(OW); tn = TN) && return     # else (layout, type, tile): kernel v2
+        @cuda threads = TX * TY blocks = blocks sgemx_kernel2!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN), Val(OW))
+    elseif VER == 6
         @cuda threads = TX * TY blocks = blocks sgemx_kernel6!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN), Val(OW))
     elseif VER == 4
         @cuda threads = TX * TY blocks = blocks sgemx_kernel4!(s, C, A, B, Val(BM), Val(BN), Val(BK), Val(TM), Val(TN), Val(OW))
@@ -793,6 +844,7 @@ end
 end
 
 
+include("gemm_simt.jl")
 include("amalgamate.jl")
 include("sgetrs.jl")
 include("layered.jl")

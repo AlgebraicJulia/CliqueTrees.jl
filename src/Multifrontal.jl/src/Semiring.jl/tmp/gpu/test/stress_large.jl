@@ -98,7 +98,7 @@ function run_case(seed)
     n = size(A, 1)
     widest = s isa MaxMin
 
-    settings = (gemm_kernel = rand(rng, (0, 2, 4, 6)), gemm_tune = rand(rng, Bool), skip_fill = rand(rng, Bool),
+    settings = (gemm_kernel = rand(rng, (0, 2, 4, 6, 7, 8)), gemm_tune = rand(rng, Bool), skip_fill = rand(rng, Bool),
                 merge = rand(rng, (1, 2, 8, 32, 128)), layered_min_rows = rand(rng, (1, 4096)), layer_size = rand(rng, (0, 1, 4, 32)),
                 factor_merge = rand(rng, (1, 8, 128)), fused_front = rand(rng, Bool), direct_assembly = rand(rng, Bool))
     flarge = rand(rng, (16, 64, 256, typemax(Int)))

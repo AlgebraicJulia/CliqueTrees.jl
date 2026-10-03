@@ -80,7 +80,7 @@ lock(SemiringGPU.GEMM_TABLE_LOCK) do; SemiringGPU.load_gemm_table!(); end   # no
 if MODE == "race"
     for (m, n, k, ow, inplace) in SHAPES                        # compile every candidate before the start signal
         A = operand(m, k); B = operand(k, n); W = CUDA.zeros(Float32, m, n)
-        for c in gemm_candidates(n, Bool(inplace), min3_ok(s, Float32))
+        for c in gemm_candidates(n, Bool(inplace), min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
             SemiringGPU.launch!(s, W, A, B, c, Val(Bool(ow)))
         end
     end
@@ -180,7 +180,7 @@ end
     @test k1 == shape_key(S_ACC)
     @test startswith(k1, GEMM_TUNE_KEY * "|")
     @test occursin("|MinPlus|Float32|acc|out|", k1)
-    @test c1 in gemm_candidates(150, false, min3_ok(s, Float32))
+    @test c1 in gemm_candidates(150, false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
     @test GEMM_TABLE[k1] == c1
     @test !ispath(TUNE_FILE * ".lock")                # the lock is released
 
@@ -196,8 +196,8 @@ end
     @test length(L) == 3
     E = Dict(parse_entry(l) for l in L)
     @test Set(keys(E)) == Set(shape_key.((S_ACC, S_OW, S_INPLACE)))
-    @test E[shape_key(S_OW)] in gemm_candidates(150, false, min3_ok(s, Float32))
-    @test E[shape_key(S_INPLACE)] in gemm_candidates(100, true, min3_ok(s, Float32))
+    @test E[shape_key(S_OW)] in gemm_candidates(150, false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
+    @test E[shape_key(S_INPLACE)] in gemm_candidates(100, true, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
     @test E[shape_key(S_INPLACE)].bn >= 100
     @test all(E[k] == GEMM_TABLE[k] for k in keys(E))
 end
@@ -254,7 +254,7 @@ end
     @test haskey(mine, shape_key(S_ACC))
     path = joinpath(DIR, "readback.tsv")
     planted = GemmConfig(2, SemiringGPU.TILING_N32)  # a valid candidate (n > 64) the tuner would rarely pick
-    @test planted in gemm_candidates(S_PLANT[2], false, min3_ok(s, Float32))
+    @test planted in gemm_candidates(S_PLANT[2], false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
     kstale = shape_key(S_STALE)
     stale = replace(kstale, GEMM_TUNE_KEY => "gemm-0123456789abcdef")
     @test stale != kstale
@@ -281,7 +281,7 @@ end
         @test length(new) == 1                                                         # only the stale class is tuned
         e = parse_entry(only(new))
         @test e !== nothing && e[1] == kstale                                          # under the current key
-        @test e !== nothing && e[2] in gemm_candidates(S_STALE[2], false, min3_ok(s, Float32))
+        @test e !== nothing && e[2] in gemm_candidates(S_STALE[2], false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
         @test r.saved == 1
     end
     @test !ispath(path * ".lock")
@@ -319,7 +319,7 @@ end
     for (k, _) in good; counts[k] = get(counts, k, 0) + 1; end
     @test Set(keys(counts)) == keys_expected
     @test all(==(2), values(counts))                               # each class once per process
-    @test all(c in gemm_candidates(sh[2], false, min3_ok(s, Float32)) for sh in shapes for (k, c) in good if k == shape_key(sh))
+    @test all(c in gemm_candidates(sh[2], false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32)) for sh in shapes for (k, c) in good if k == shape_key(sh))
     @test !ispath(path * ".lock")
 end
 

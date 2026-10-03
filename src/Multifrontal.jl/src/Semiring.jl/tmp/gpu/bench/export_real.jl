@@ -1,6 +1,6 @@
 # Real graphs for the sweep, undirected, uniform weights in [1, 100] (fixed seed), written to data/mtx
 # (both arc directions, as export_mtx.jl):
-#   julia --project=. bench/export_real.jl ca-HepTh ca-AstroPh ca-CondMat email-Enron delaunay_n16 ...
+#   julia --project=. bench/export_real.jl ca-HepTh ca-AstroPh ca-CondMat email-Enron delaunay_n16 HB/bcsstk30 ...
 include(joinpath(@__DIR__, "bench_solve.jl"))
 
 const SNAP = Dict("ca-HepTh" => "ca-HepTh.txt.gz", "ca-AstroPh" => "ca-AstroPh.txt.gz", "ca-CondMat" => "ca-CondMat.txt.gz",
@@ -48,16 +48,23 @@ function write_mtx(path, A)
     end
 end
 
-for name in ARGS
+# a name is a SNAP graph, a DIMACS10 graph, or Group/Name of any symmetric matrix in the SuiteSparse
+# collection (its pattern, without the diagonal)
+for arg in ARGS
+    group, name = occursin('/', arg) ? split(arg, '/') : ("DIMACS10", arg)
     out = joinpath(DATA, "mtx", name * ".mtx")
     isfile(out) && continue
-    if haskey(SNAP, name)
-        I, J, n = edges_snap(fetch("https://snap.stanford.edu/data/" * SNAP[name], joinpath(DATA, SNAP[name])))
-    else                                                # DIMACS10 meshes from the SuiteSparse collection
-        tgz = fetch("https://suitesparse-collection-website.herokuapp.com/MM/DIMACS10/$name.tar.gz", joinpath(DATA, "$name.tar.gz"))
-        isdir(joinpath(DATA, name)) || Base.run(`tar -xzf $tgz -C $DATA`)
-        I, J, n = edges_mtx(joinpath(DATA, name, name * ".mtx"))
+    try
+        if haskey(SNAP, name)
+            I, J, n = edges_snap(fetch("https://snap.stanford.edu/data/" * SNAP[name], joinpath(DATA, SNAP[name])))
+        else
+            tgz = fetch("https://sparse.tamu.edu/MM/$group/$name.tar.gz", joinpath(DATA, "$name.tar.gz"))
+            isdir(joinpath(DATA, name)) || Base.run(`tar -xzf $tgz -C $DATA`)
+            I, J, n = edges_mtx(joinpath(DATA, name, name * ".mtx"))
+        end
+        write_mtx(out, weighted(I, J, n))
+        println(name, ": n=", n)
+    catch e
+        println(name, ": failed (", sprint(showerror, e)[1:min(end, 200)], ")")
     end
-    write_mtx(out, weighted(I, J, n))
-    println(name, ": n=", n)
 end

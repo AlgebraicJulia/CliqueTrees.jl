@@ -34,8 +34,8 @@ struct Amalgamation{I}
     mUD::CuVector{Int32}
     mLL::CuVector{Int32}
     mUL::CuVector{Int32}
-    # the structure it was computed from: a cache hit must match it
-    from::NTuple{7, Vector{I}}
+    # a hash of the structure it was computed from: a cache hit must match it
+    from::UInt
     group::Vector{Int}          # original front → merged front
 end
 
@@ -64,7 +64,7 @@ function amalgamation(key, ::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     k = (Int(nmax), Float64(alpha), CUDA.deviceid(CUDA.device()), isnothing(allowed) ? UInt(0) : hash((BitVector(allowed), compact)))
     A = lock(() -> get(cache, k, missing), AMALGAMATIONS_LOCK)
 
-    if ismissing(A) || (!isnothing(A) && A.from != (Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx))
+    if ismissing(A) || (!isnothing(A) && A.from != hash((Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx)))
         A = amalgamate_fronts(I, nmax, alpha, Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx; allowed, compact)
         lock(() -> (cache[k] = A), AMALGAMATIONS_LOCK)
     end
@@ -78,6 +78,20 @@ function amalgamation_key(x)
     ismutable(x) && return x
     hasfield(typeof(x), :mem) && ismutable(getfield(x, :mem)) && return getfield(x, :mem)
     return nothing
+end
+
+# |a ∩ b| for sorted vectors (separators are sorted), without allocating
+function sorted_common(a::AbstractVector, b::AbstractVector)
+    i = firstindex(a); j = firstindex(b); c = 0
+
+    @inbounds while i <= lastindex(a) && j <= lastindex(b)
+        x = a[i]; y = b[j]
+        c += x == y
+        i += x <= y
+        j += y <= x
+    end
+
+    return c
 end
 
 # allowed: only fronts with allowed[f] are merged (all if nothing). compact: the merged arrays (and the
@@ -101,7 +115,7 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
         (isnothing(allowed) || (allowed[c] && allowed[f])) || continue
         w = width[c] + nn(f)
         w <= nmax || continue
-        common = length(intersect(sep(c), sep(f)))
+        common = sorted_common(sep(c), sep(f))
         zeros = width[c] * (na(f) - common)              # padded entries in the chain's separator columns
         zeros <= max(8, alpha * width[c] * max(na(c), 1)) || continue
         joins[c] = true
@@ -143,39 +157,14 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     end
 
     max(Dn[end], Ln[end], Dptr[end], Lptr[end]) < typemax(Int32) || return nothing     # too large for Int32 maps: no merge
-    mLD = zeros(Int32, Dn[end] - 1); mUD = zeros(Int32, Dn[end] - 1)
-    mLL = zeros(Int32, Ln[end] - 1); mUL = zeros(Int32, Ln[end] - 1)
-
-    for (q, (h, g)) in enumerate(groups)
-        stored(h) || continue
-        r0 = Int(Rptr[h]); r1 = Int(Rptr[g + 1]) - 1; w = r1 - r0 + 1
-        sg = sep(g); a = length(sg)
-        LDq = reshape(view(mLD, Dn[q]:(Dn[q + 1] - 1)), w, w); UDq = reshape(view(mUD, Dn[q]:(Dn[q + 1] - 1)), w, w)
-        LLq = reshape(view(mLL, Ln[q]:(Ln[q + 1] - 1)), a, w); ULq = reshape(view(mUL, Ln[q]:(Ln[q + 1] - 1)), w, a)
-
-        for m in h:g
-            o = Int(Rptr[m]) - r0                        # offset of member m in the merged residual
-            nm = nn(m); am = na(m); sm = sep(m)
-            Dm = Int(Dptr[m]); Lm = Int(Lptr[m])
-
-            for j in 1:nm, i in 1:nm                     # D block (nm × nm, column-major)
-                LDq[o + i, o + j] = UDq[o + i, o + j] = Dm + (j - 1) * nm + i - 1
-            end
-
-            for (r, u) in enumerate(sm)                  # L₂₁ is am × nm, U₁₂ is nm × am
-                if r0 <= u <= r1                         # a later member's residual vertex: inside the merged block
-                    li = Int(u) - r0 + 1
-                    for j in 1:nm; LDq[li, o + j] = -(Lm + (j - 1) * am + r - 1); end
-                    for i in 1:nm; UDq[o + i, li] = -(Lm + (r - 1) * nm + i - 1); end
-                else                                     # a vertex of sep(g)
-                    k = searchsortedfirst(sg, u)
-                    @assert k <= a && sg[k] == u "amalgamation: separator vertex outside the parent's bag"
-                    for j in 1:nm; LLq[k, o + j] = Lm + (j - 1) * am + r - 1; end
-                    for i in 1:nm; ULq[o + i, k] = Lm + (r - 1) * nm + i - 1; end
-                end
-            end
-        end
-    end
+    #
+    # the maps are built on the GPU (the merged factor is as large as the factor: tens of MB of maps per
+    # call, which on the host would be garbage after one upload)
+    #
+    mLD = CUDA.zeros(Int32, Dn[end] - 1); mUD = CUDA.zeros(Int32, Dn[end] - 1)
+    mLL = CUDA.zeros(Int32, Ln[end] - 1); mUL = CUDA.zeros(Int32, Ln[end] - 1)
+    members = Int32[m for (h, g) in groups if stored(h) for m in h:g]
+    amalgamate_maps_gpu!(mLD, mUD, mLL, mUL, members, group, groups, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
 
     pn = Vector{I}(undef, ng)
 
@@ -184,8 +173,72 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     end
 
     idn = I[group[f] for f in idx]
-    from = (copy(Rptr), copy(Sptr), copy(Stgt), copy(Dptr), copy(Lptr), copy(pnt), copy(idx))
-    return Amalgamation{I}(ng, Rn, Sn, Tn, Dn, Ln, pn, idn, upload(mLD), upload(mUD), upload(mLL), upload(mUL), from, group)
+    from = hash((Rptr, Sptr, Stgt, Dptr, Lptr, pnt, idx))
+    return Amalgamation{I}(ng, Rn, Sn, Tn, Dn, Ln, pn, idn, mLD, mUD, mLL, mUL, from, group)
+end
+
+# the index maps of the merged blocks (see amalgamate_fronts), on the GPU: one block of threads per
+# member front m of a stored group (h:g), which writes the entries of its own blocks into the merged
+# blocks of its group (the members' entries are disjoint, the rest stays 0: the semiring zero)
+function amalgamate_maps_gpu!(mLD, mUD, mLL, mUL, members, group, groups, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
+    isempty(members) && return
+    gh = Int32[h for (h, _) in groups]; gg = Int32[g for (_, g) in groups]
+    dev(x) = CuVector(x)                                   # (as they are: no host copies to Int32)
+    @cuda threads = 256 blocks = length(members) amalgamate_maps_kernel!(mLD, mUD, mLL, mUL, dev(members), dev(group),
+        dev(gh), dev(gg), dev(Rptr), dev(Sptr), dev(Stgt), dev(Dptr), dev(Lptr), dev(Dn), dev(Ln))
+    return
+end
+
+function amalgamate_maps_kernel!(mLD, mUD, mLL, mUL, members, group, gh, gg, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
+    m = members[blockIdx().x]
+    t = threadIdx().x - Int32(1); nt = blockDim().x
+
+    @inbounds begin
+        q = group[m]; h = gh[q]; g = gg[q]
+        r0 = Rptr[h]; r1 = Rptr[g + 1] - Int32(1); w = r1 - r0 + Int32(1)
+        s0 = Sptr[g]; a = Sptr[g + 1] - s0                 # sep(g) = Stgt[s0:s0 + a - 1]
+        o = Rptr[m] - r0                                   # offset of m in the merged residual
+        nm = Rptr[m + 1] - Rptr[m]; am = Sptr[m + 1] - Sptr[m]; sm0 = Sptr[m]
+        Dm = Dptr[m]; Lm = Lptr[m]; d0 = Dn[q] - Int32(1); l0 = Ln[q] - Int32(1)
+        #
+        #   D block of m (nm × nm, column-major) at (o + i, o + j) of the merged w × w block
+        #
+        e = t
+        while e < nm * nm
+            i, j = cm_index(e, nm)                         # 1-based
+            v = Dm + (j - Int32(1)) * nm + i - Int32(1)
+            pos = d0 + (o + i) + (o + j - Int32(1)) * w
+            mLD[pos] = v; mUD[pos] = v
+            e += nt
+        end
+        #
+        #   separator row r of m (vertex u), entry c: L₂₁ is am × nm, U₁₂ is nm × am
+        #
+        e = t
+        while e < am * nm
+            r, c = cm_index(e, am)                         # 1-based: row r of sep(m), column (or row of U) c
+            u = Stgt[sm0 + r - Int32(1)]
+
+            if r0 <= u <= r1                               # a later member's residual vertex: inside the merged block
+                li = u - r0 + Int32(1)
+                mLD[d0 + li + (o + c - Int32(1)) * w] = -(Lm + (c - Int32(1)) * am + r - Int32(1))
+                mUD[d0 + (o + c) + (li - Int32(1)) * w] = -(Lm + (r - Int32(1)) * nm + c - Int32(1))
+            else                                           # a vertex of sep(g): its position k, by binary search
+                lo = Int32(0); hi = a
+                while lo < hi
+                    mid = (lo + hi) >> 1
+                    Stgt[s0 + mid] < u ? (lo = mid + Int32(1)) : (hi = mid)
+                end
+                k = lo + Int32(1)
+                mLL[l0 + k + (o + c - Int32(1)) * a] = Lm + (c - Int32(1)) * am + r - Int32(1)
+                mUL[l0 + (o + c) + (k - Int32(1)) * w] = Lm + (r - Int32(1)) * nm + c - Int32(1)
+            end
+
+            e += nt
+        end
+    end
+
+    return
 end
 
 function amalgamate_gather_kernel!(out, D, L, from, z)

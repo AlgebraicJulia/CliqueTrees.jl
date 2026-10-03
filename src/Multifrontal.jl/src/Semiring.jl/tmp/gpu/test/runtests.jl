@@ -12,6 +12,7 @@
 #                    the archived C++ backend, which no suite runs) is run when asked for explicitly.
 #   --seed=N         first seed of the randomized stress files (default: theirs, 1)
 #   --logdir=DIR     where the logs go (default: $SEMIRINGGPU_TEST_LOGDIR, else a new temporary directory)
+#   --list           print what would run (file, arguments, timeout) and exit
 #
 # Each child runs `julia --project=<this project> -t auto` (SEMIRINGGPU_TEST_THREADS overrides `auto`),
 # with SEMIRINGGPU_TUNE_FILE set to a file in the log directory unless it is already set, so the
@@ -69,7 +70,7 @@ exists(e::Entry) = isfile(joinpath(TESTDIR, e.file))
 # ===== command line =====
 
 function parse_args(args)
-    mode = "quick"; names = String[]; seed = nothing
+    mode = "quick"; names = String[]; seed = nothing; list = false
     logdir = get(ENV, "SEMIRINGGPU_TEST_LOGDIR", "")
 
     for (i, a) in enumerate(args)
@@ -79,6 +80,8 @@ function parse_args(args)
             seed = parse(Int, a[8:end])
         elseif startswith(a, "--logdir=")
             logdir = a[10:end]
+        elseif a == "--list"
+            list = true
         elseif a in ("-h", "--help")
             println(read(@__FILE__, String) |> s -> join(Iterators.takewhile(startswith("#"), split(s, '\n')), '\n'))
             exit(0)
@@ -89,7 +92,7 @@ function parse_args(args)
         end
     end
 
-    return mode, names, seed, logdir
+    return mode, names, seed, logdir, list
 end
 
 # the entries a name selects: within the suite first, then anywhere in the catalog
@@ -207,14 +210,22 @@ end
 # ===== main =====
 
 function main(args)
-    mode, names, seed, logdir, tests = try
-        mode, names, seed, logdir = parse_args(args)
-        mode, names, seed, logdir, select(mode, names)
+    mode, names, seed, logdir, list, tests = try
+        mode, names, seed, logdir, list = parse_args(args)
+        mode, names, seed, logdir, list, select(mode, names)
     catch e
         e isa ErrorException || e isa ArgumentError || rethrow()
         println(stderr, "runtests.jl: ", e isa ErrorException ? e.msg : sprint(showerror, e))
         exit(2)
     end
+    if list
+        for e in tests
+            a = vcat(e.args, seed !== nothing && e.file in ("stress.jl", "stress_large.jl") ? [string(seed)] : String[])
+            @printf("%-18s test/%s %s  (timeout %.0f min)\n", e.name, e.file, join(a, " "), e.timeout / 60)
+        end
+        exit(0)
+    end
+
     logdir = isempty(logdir) ? mktempdir(; prefix = "semiringgpu-tests-", cleanup = false) : (mkpath(logdir); abspath(logdir))
     threads = get(ENV, "SEMIRINGGPU_TEST_THREADS", "auto")
 

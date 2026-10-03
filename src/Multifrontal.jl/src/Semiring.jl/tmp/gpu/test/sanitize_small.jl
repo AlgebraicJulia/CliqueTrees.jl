@@ -11,7 +11,7 @@ Random.seed!(11)
 
 s = MinPlus()
 # dense kernels: every GEMM version and tiling, in place and not, odd sizes
-for v in (2, 4, 6), tl in (SemiringGPU.TILING_LARGE, SemiringGPU.TILING_MID, SemiringGPU.TILING_SMALL, SemiringGPU.TILING_N32, SemiringGPU.TILING_N16)
+for v in (2, 4, 6, 7, 8), tl in (SemiringGPU.TILING_LARGE, SemiringGPU.TILING_MID, SemiringGPU.TILING_SMALL, SemiringGPU.TILING_N32, SemiringGPU.TILING_N16)
     with_config(gemm_kernel = v) do
         for (m, n, k) in ((70, 33, 17), (130, 20, 9), (64, 64, 64), (200, 129, 31))
             A = CuArray(Float32.(rand(1:9, m, k))); B = CuArray(Float32.(rand(1:9, k, n))); C = CUDA.fill(100f0, m, n)

@@ -6,17 +6,16 @@
 #   P = FactorPlan(F; large = 256, graph = false, nstreams = 8)     hybrid numeric LU: bottom subtrees on
 #   factorize!(P)                                                    CPU threads, the top fronts on the GPU
 #   G = GPUSLU(P; large = 8192); precompute_ops!(G)                 solve structure and the large fronts' dense operators
-#   closure_gpu!(D, G; M)                                            D[i, j] = A*[p[i], p[j]],  p = rperm
-#   D ← D[q, q],  q = p⁻¹ = cinvp                                    D[i, j] = A*[i, j]
+#   sssp_gpu!(D, G, 1:n; W = D, M, permute = false)                  D[i, j] = A*[i, p[j]],  p = rperm
+#   D ← D[:, q],  q = p⁻¹ = cinvp                                    D[i, j] = A*[i, j]
 #
-# The symbolic phase permutes A symmetrically (rperm = cperm), so one permutation relabels both the
-# rows and the columns. D may fill most of the GPU, so it is relabelled in place through a buffer W of
-# b rows (or columns), as permuterows! / permutecols! do on the CPU:
+# The sources are taken in the labels of A, so only the columns are in elimination order (the rows of
+# the closure are independent: their order changes nothing but which row holds which source). D may
+# fill most of the GPU, so its columns are relabelled in place through a buffer W of b rows:
 #
-#   pass 1, rows I, b at a time:       W ← D[I, q];  D[I, :] ← W       now D[i, j] = A*[p[i], j]
-#   pass 2, columns J, b at a time:    W ← D[q, J];  D[:, J] ← W       now D[i, j] = A*[i, j]
+#   rows I, b at a time:   W ← D[I, q];  D[I, :] ← W       now D[i, j] = A*[i, j]
 #
-# With output = :host, pass 2 copies W straight into the host matrix instead of back into D.
+# (relabel_rows! does the same for rows, for the blocks of the multi-GPU closure.)
 #
 # With several devices, closure_multigpu! leaves block g = D[rows_g, :] on devices[g] (rows_g a range
 # of elimination order: the sources p[rows_g]). Each device relabels the columns of its own block
@@ -119,29 +118,26 @@ function apsp_single(A::SparseMatrixCSC{T}, s::AbstractSemiring, output::Symbol,
     iszero(n) && return output === :host ? Matrix{T}(undef, 0, 0) : CuMatrix{T}(undef, 0, 0)
     advice = "split the rows over several GPUs (devices = [...]) or compute blocks of rows (apsp_gpu(A, sources))"
     need_apsp_memory(n^2 * sizeof(T), "the $n × $n closure", advice)                                  # before any work
-    H = output === :host ? Matrix{T}(undef, n, n) : nothing
+    H = @step "host matrix" (output === :host ? Matrix{T}(undef, n, n) : nothing)
     P = apsp_factor(s, A)
-    G = GPUSLU(P; large = 8192)
-    precompute_ops!(G)
+    G = @step "solve setup" GPUSLU(P; large = 8192)
+    @step "operators" precompute_ops!(G)
     need_apsp_memory((n^2 + n * G.maxna) * sizeof(T), "the $n × $n closure and its workspace", advice)
-    D = CuMatrix{T}(undef, n, n)
-    M = CuMatrix{T}(undef, n, G.maxna)
+    D, M = @step "allocate" (CuMatrix{T}(undef, n, n), CuMatrix{T}(undef, n, G.maxna))
     #
-    #   D ← A*, in elimination coordinates
+    #   D[i, :] ← A*[i, p]   every vertex a source, in the labels of A (the rows need no relabelling:
+    #                        the closure costs the same in any order of its rows), columns in elimination order
     #
-    closure_gpu!(D, G; M)
+    @step "closure" sssp_gpu!(D, G, CuVector{Int}(1:n); W = D, M, permute = false)
     CUDA.synchronize()
     q = G.cinvp
-    CUDA.unsafe_free!(M)
-    free_solver!(G); free_plan!(P)                     # before the buffer, which may then be larger
+    @step "free" (CUDA.unsafe_free!(M); free_solver!(G); free_plan!(P))   # before the buffer, which may then be larger
     #
-    #   D ← D[q, q]
+    #   D ← D[:, q]
     #
-    W = CuVector{T}(undef, relabel_length(T, n, n, buffer))
-    relabel_cols!(D, q, W)
-    relabel_rows!(isnothing(H) ? D : H, D, q, W)
-    CUDA.unsafe_free!(W)
+    D = @step "relabel columns" relabel_cols(D, q, buffer)
     isnothing(H) && return D
+    @step "to host" copyto!(H, D)
     CUDA.unsafe_free!(D)
     return H
 end
@@ -225,17 +221,20 @@ end
 # Symbolic phase and hybrid numeric factorization (bench/portable.jl's settings). The coupling check
 # of GPUSLU, as an ArgumentError before the numeric work.
 #
-function apsp_factor(s::AbstractSemiring, A::SparseMatrixCSC)
-    F = ChordalSLU(s, A)
+function apsp_factor(s::AbstractSemiring, A::SparseMatrixCSC{T}) where {T}
+    # ChordalSLU(s, A), in its two parts: the symbolic factorization (ordering, elimination tree,
+    # supernodes, structure) and the storage of the factor
+    Q, S = @step "symbolic" Semiring.ssymbolic(A; alg = Semiring.DEFAULT_ELIMINATION_ALGORITHM)
+    F = @step "factor storage" ChordalSLU(s, T, S, Q.perm, Q.invp, Q.perm, Q.invp)
 
     if ispositive(MF.ne(F.S.N))
         throw(ArgumentError("apsp_gpu: coupling between strongly connected components (a directed graph whose components " *
             "reach one another) is not supported on the GPU yet; use the CPU solver, CliqueTrees.Multifrontal.Semiring.mstar(semiring, A)"))
     end
 
-    copyto!(F, A)
-    P = FactorPlan(F; large = 256, graph = false, nstreams = 8)
-    factorize!(P)
+    @step "copy entries" copyto!(F, A)
+    P = @step "plan" FactorPlan(F; large = 256, graph = false, nstreams = 8)
+    @step "factorize" factorize!(P)
     return P
 end
 
@@ -294,6 +293,27 @@ end
 function relabel_length(::Type{T}, m::Integer, n::Integer, buffer::Integer) where {T}
     len = ispositive(buffer) ? Int(buffer) : min(m * n, CUDA.free_memory() ÷ (20 * sizeof(T)), 2^30 ÷ sizeof(T))
     return max(len, m, n, 1)
+end
+
+#
+#   X[:, j] ← X[:, q[j]], into a new matrix when one fits (one coalesced pass, X is freed), else in place
+#   through a buffer (relabel_cols!). `buffer > 0` forces the in-place path with that buffer (tests).
+#
+function relabel_cols(X::CuMatrix{T}, q::CuVector, buffer::Integer) where {T}
+    m, n = size(X)
+    (iszero(m) || iszero(n)) && return X
+
+    if !ispositive(buffer) && m * n * sizeof(T) <= CUDA.free_memory() - 2^28
+        Y = CuMatrix{T}(undef, m, n)
+        launch2d(gather_cols_kernel!, m, n, vec(Y), X, 0, m, q)            # Y ← X[:, q]
+        CUDA.unsafe_free!(X)
+        return Y
+    end
+
+    W = CuVector{T}(undef, relabel_length(T, m, n, buffer))
+    relabel_cols!(X, q, W)
+    CUDA.unsafe_free!(W)
+    return X
 end
 
 #

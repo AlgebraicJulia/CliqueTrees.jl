@@ -258,172 +258,181 @@ function FactorPlan(F::ChordalSLU{Sem, T, I}; large::Integer = 256, nt::Integer 
     na(f) = Int(Sptr[f + 1] - Sptr[f])
     children(f) = (Int(chdtgt[p]) for p in chdptr[f]:(chdptr[f + 1] - 1))
 
-    istop = falses(nf)
+    @step "top selection" begin
+        istop = falses(nf)
 
-    for f in 1:nf
-        if nn(f) + na(f) >= large
-            g = f
+        for f in 1:nf
+            if nn(f) + na(f) >= large
+                g = f
 
-            while !iszero(g) && !istop[g]
-                istop[g] = true
-                g = pnt[g]
+                while !iszero(g) && !istop[g]
+                    istop[g] = true
+                    g = pnt[g]
+                end
             end
         end
-    end
 
-    work(f) = nn(f)^3 / 3 + nn(f)^2 * na(f) + nn(f) * na(f)^2
-    topwork = sum(work(f) for f in 1:nf if istop[f]; init = 0.0) / max(sum(work, 1:nf), 1.0)
+        work(f) = nn(f)^3 / 3 + nn(f)^2 * na(f) + nn(f) * na(f)^2
+        topwork = sum(work(f) for f in 1:nf if istop[f]; init = 0.0) / max(sum(work, 1:nf), 1.0)
+    end
     #
     # the bottom forest: subtrees rooted at the bottom fronts whose parent is
     # in the top (or that are roots), balanced over nt threads by work
     #
-    sz = ones(Int, nf)
+    @step "bottom forest" begin
+        sz = ones(Int, nf)
 
-    for f in 1:nf
-        iszero(pnt[f]) || (sz[pnt[f]] += sz[f])
-    end
+        for f in 1:nf
+            iszero(pnt[f]) || (sz[pnt[f]] += sz[f])
+        end
 
-    roots = [f for f in 1:nf if !istop[f] && (iszero(pnt[f]) || istop[pnt[f]])]
-    weight = [sum(g -> work(g) + 64, (f - sz[f] + 1):f) for f in roots]
-    nw = max(1, min(nt, length(roots)))
-    lists = [Int[] for _ in 1:nw]; load = zeros(nw)
+        roots = [f for f in 1:nf if !istop[f] && (iszero(pnt[f]) || istop[pnt[f]])]
+        weight = [sum(g -> work(g) + 64, (f - sz[f] + 1):f) for f in roots]
+        nw = max(1, min(nt, length(roots)))
+        lists = [Int[] for _ in 1:nw]; load = zeros(nw)
 
-    for r in sortperm(weight; rev = true)
-        w = argmin(load)
-        push!(lists[w], roots[r]); load[w] += weight[r]
+        for r in sortperm(weight; rev = true)
+            w = argmin(load)
+            push!(lists[w], roots[r]); load[w] += weight[r]
+        end
     end
     #
     # simulate each worker's update stack: the updates of its subtree roots
     # whose parent is in the top (the boundary) stay on it, at offsets that
     # the simulation reproduces exactly
     #
-    bndoff = zeros(Int, nf)
-    workers = BottomWorker{T, I}[]
-    base = 1
+    @step "worker stacks" begin
+        bndoff = zeros(Int, nf)
+        workers = BottomWorker{T, I}[]
+        base = 1
 
-    for list in lists
-        sort!(list)
-        ranges = [(f - sz[f] + 1):f for f in list]
-        cstack = Tuple{Int, Int}[]; cpeak = 0; cdepth = 0; nFcpu = 2      # (offset, length)
+        for list in lists
+            sort!(list)
+            ranges = [(f - sz[f] + 1):f for f in list]
+            cstack = Tuple{Int, Int}[]; cpeak = 0; cdepth = 0; nFcpu = 2      # (offset, length)
 
-        for r in ranges, f in r
-            for _ in children(f)
-                pop!(cstack)
-            end
-
-            if ispositive(na(f))
-                off = isempty(cstack) ? 1 : sum(cstack[end])
-                push!(cstack, (off, na(f)^2))
-                cpeak = max(cpeak, off + na(f)^2 - 1)
-                cdepth = max(cdepth, length(cstack))
-
-                if !iszero(pnt[f]) && istop[pnt[f]]
-                    bndoff[f] = base + off - 1
+            for r in ranges, f in r
+                for _ in children(f)
+                    pop!(cstack)
                 end
+
+                if ispositive(na(f))
+                    off = isempty(cstack) ? 1 : sum(cstack[end])
+                    push!(cstack, (off, na(f)^2))
+                    cpeak = max(cpeak, off + na(f)^2 - 1)
+                    cdepth = max(cdepth, length(cstack))
+
+                    if !iszero(pnt[f]) && istop[pnt[f]]
+                        bndoff[f] = base + off - 1
+                    end
+                end
+
+                nFcpu = max(nFcpu, (nn(f) + na(f))^2)
             end
 
-            nFcpu = max(nFcpu, (nn(f) + na(f))^2)
+            nb = isempty(cstack) ? 0 : sum(cstack[end]) - 1
+            push!(workers, BottomWorker{T, I}(ranges, MF.FVector{I}(undef, cdepth + 1), MF.FVector{T}(undef, max(cpeak, 1)),
+                MF.FVector{T}(undef, nFcpu), spool_mt(s, T, 1), nb, base))
+            base += nb
         end
 
-        nb = isempty(cstack) ? 0 : sum(cstack[end]) - 1
-        push!(workers, BottomWorker{T, I}(ranges, MF.FVector{I}(undef, cdepth + 1), MF.FVector{T}(undef, max(cpeak, 1)),
-            MF.FVector{T}(undef, nFcpu), spool_mt(s, T, 1), nb, base))
-        base += nb
+        nbndval = base - 1
     end
-
-    nbndval = base - 1
     #
     # merge chains of top fronts (see config().factor_merge): the GPU then factors merged fronts, in a merged
     # copy of the factor (gathered before and scattered back after the top), and every child's update
     # is assembled at its positions in the merged front of its parent
     #
-    amal = nothing
+    @step "top merge" begin
+        amal = nothing
 
-    if merge > 1 && any(istop)
-        Stgt = MF.targets(S.sep)
-        amal = amalgamation(amalgamation_key(S.Dptr), I, merge, alpha, Vector{I}(view(Rptr, 1:(nf + 1))), Vector{I}(view(Sptr, 1:(nf + 1))),
-            Vector{I}(view(Stgt, 1:(Sptr[nf + 1] - 1))), Vector{I}(view(S.Dptr, 1:(nf + 1))), Vector{I}(view(S.Lptr, 1:(nf + 1))),
-            Vector{I}(view(pnt, 1:nf)), Vector{I}(view(S.idx, 1:size(F, 1))); allowed = istop, compact = true)     # cached per symbolic factorization
-        isnothing(amal) || amal.nf == nf && (amal = nothing)        # nothing merged
+        if merge > 1 && any(istop)
+            Stgt = MF.targets(S.sep)
+            amal = amalgamation(amalgamation_key(S.Dptr), I, merge, alpha, Vector{I}(view(Rptr, 1:(nf + 1))), Vector{I}(view(Sptr, 1:(nf + 1))),
+                Vector{I}(view(Stgt, 1:(Sptr[nf + 1] - 1))), Vector{I}(view(S.Dptr, 1:(nf + 1))), Vector{I}(view(S.Lptr, 1:(nf + 1))),
+                Vector{I}(view(pnt, 1:nf)), Vector{I}(view(S.idx, 1:size(F, 1))); allowed = istop, compact = true)     # cached per symbolic factorization
+            isnothing(amal) || amal.nf == nf && (amal = nothing)        # nothing merged
+        end
     end
-
     if !isnothing(amal)
-        return merged_plan(F, amal, istop, topwork, nt, workers, nbndval, bndoff, nstreams, maxbytes, graph)
+        return @step "merged plan" merged_plan(F, amal, istop, topwork, nt, workers, nbndval, bndoff, nstreams, maxbytes, graph)
     end
     #
     # the top fronts, in postorder, with a stack of update matrices
     #
-    gstack = Tuple{Int, Int}[]; gpeak = 0
-    nFgpu = 1
-    tasks = Tuple{Int, Int, Int, Int, Int, Vector{Tuple{Bool, Int, Int, Int}}}[]
-
-    for f in 1:nf
-        if istop[f]
-            kids = Tuple{Bool, Int, Int, Int}[]
-
-            for c in Iterators.reverse(collect(children(f)))
-                if istop[c]
-                    off, _ = pop!(gstack)
-                    push!(kids, (true, off, na(c), Int(relptr[c])))
-                else
-                    push!(kids, (false, bndoff[c], na(c), Int(relptr[c])))
-                end
-            end
-
-            out = isempty(gstack) ? 1 : sum(gstack[end])
-            push!(tasks, (nn(f), na(f), Int(S.Dptr[f]), Int(S.Lptr[f]), out, kids))
-
-            if ispositive(na(f))
-                push!(gstack, (out, na(f)^2))
-                gpeak = max(gpeak, out + na(f)^2 - 1)
-            end
-
-            nFgpu = max(nFgpu, (nn(f) + na(f))^2)
-        end
-    end
-    #
-    # concurrent schedule: static update slots, levels by height in the top
-    #
-    topsize = sum(f -> istop[f] ? na(f)^2 : 0, 1:nf; init = 0)
-    nstreams = (nstreams > 1 && topsize * sizeof(T) <= maxbytes) ? Int(nstreams) : 1
-    levels = Vector{Int}[]
-
-    if nstreams > 1
-        slot = zeros(Int, nf); theight = zeros(Int, nf); q = 1
-        tasks = empty(tasks)
+    @step "top schedule" begin
+        gstack = Tuple{Int, Int}[]; gpeak = 0
+        nFgpu = 1
+        tasks = Tuple{Int, Int, Int, Int, Int, Vector{Tuple{Bool, Int, Int, Int}}}[]
 
         for f in 1:nf
-            istop[f] || continue
-            slot[f] = q; q += na(f)^2
-            theight[f] = 1 + maximum((theight[c] for c in children(f) if istop[c]); init = 0)
-            kids = [istop[c] ? (true, slot[c], na(c), Int(relptr[c])) : (false, bndoff[c], na(c), Int(relptr[c])) for c in Iterators.reverse(collect(children(f)))]
-            push!(tasks, (nn(f), na(f), Int(S.Dptr[f]), Int(S.Lptr[f]), slot[f], kids))
-            length(levels) < theight[f] && push!(levels, Int[])
-            push!(levels[theight[f]], length(tasks))
+            if istop[f]
+                kids = Tuple{Bool, Int, Int, Int}[]
+
+                for c in Iterators.reverse(collect(children(f)))
+                    if istop[c]
+                        off, _ = pop!(gstack)
+                        push!(kids, (true, off, na(c), Int(relptr[c])))
+                    else
+                        push!(kids, (false, bndoff[c], na(c), Int(relptr[c])))
+                    end
+                end
+
+                out = isempty(gstack) ? 1 : sum(gstack[end])
+                push!(tasks, (nn(f), na(f), Int(S.Dptr[f]), Int(S.Lptr[f]), out, kids))
+
+                if ispositive(na(f))
+                    push!(gstack, (out, na(f)^2))
+                    gpeak = max(gpeak, out + na(f)^2 - 1)
+                end
+
+                nFgpu = max(nFgpu, (nn(f) + na(f))^2)
+            end
         end
+        #
+        # concurrent schedule: static update slots, levels by height in the top
+        #
+        topsize = sum(f -> istop[f] ? na(f)^2 : 0, 1:nf; init = 0)
+        nstreams = (nstreams > 1 && topsize * sizeof(T) <= maxbytes) ? Int(nstreams) : 1
+        levels = Vector{Int}[]
 
-        gpeak = topsize
+        if nstreams > 1
+            slot = zeros(Int, nf); theight = zeros(Int, nf); q = 1
+            tasks = empty(tasks)
+
+            for f in 1:nf
+                istop[f] || continue
+                slot[f] = q; q += na(f)^2
+                theight[f] = 1 + maximum((theight[c] for c in children(f) if istop[c]); init = 0)
+                kids = [istop[c] ? (true, slot[c], na(c), Int(relptr[c])) : (false, bndoff[c], na(c), Int(relptr[c])) for c in Iterators.reverse(collect(children(f)))]
+                push!(tasks, (nn(f), na(f), Int(S.Dptr[f]), Int(S.Lptr[f]), slot[f], kids))
+                length(levels) < theight[f] && push!(levels, Int[])
+                push!(levels[theight[f]], length(tasks))
+            end
+
+            gpeak = topsize
+        end
     end
-
-    P = FactorPlan{Sem, T, I}(
-        F, istop, topwork, nt, workers, nbndval,
-        CuVector{T}(undef, length(F.LDval)), CuVector{T}(undef, length(F.LLval)),
-        CuVector{T}(undef, length(F.UDval)), CuVector{T}(undef, length(F.ULval)),
-        CuVector{T}(undef, max(nbndval, 1)), CuVector{T}(undef, max(gpeak, 1)), CuVector{T}(undef, 1),
-        upload(relptr), upload(MF.targets(S.rel)),
-        tasks, levels, [CuStream() for _ in 1:nstreams],
-        [CuVector{T}(undef, nFgpu) for _ in 1:nstreams], graph, nothing,
-        nothing, ntuple(_ -> CuVector{T}(undef, 0), 4),
-    )
-    #
-    # the plan orders every cross-stream access itself (fork event, level
-    # barriers, join), so CUDA.jl's implicit synchronization on stream
-    # switches is disabled for its buffers; it would also break capture
-    #
-    for x in (P.LD, P.LL, P.UD, P.UL, P.Mb, P.Mg, P.relptr, P.reltgt, P.Fbufs...)
-        CUDA.enable_synchronization!(x, false)
+    @step "device buffers" begin
+        P = FactorPlan{Sem, T, I}(
+            F, istop, topwork, nt, workers, nbndval,
+            CuVector{T}(undef, length(F.LDval)), CuVector{T}(undef, length(F.LLval)),
+            CuVector{T}(undef, length(F.UDval)), CuVector{T}(undef, length(F.ULval)),
+            CuVector{T}(undef, max(nbndval, 1)), CuVector{T}(undef, max(gpeak, 1)), CuVector{T}(undef, 1),
+            upload(relptr), upload(MF.targets(S.rel)),
+            tasks, levels, [CuStream() for _ in 1:nstreams],
+            [CuVector{T}(undef, nFgpu) for _ in 1:nstreams], graph, nothing,
+            nothing, ntuple(_ -> CuVector{T}(undef, 0), 4),
+        )
+        #
+        # the plan orders every cross-stream access itself (fork event, level
+        # barriers, join), so CUDA.jl's implicit synchronization on stream
+        # switches is disabled for its buffers; it would also break capture
+        #
+        for x in (P.LD, P.LL, P.UD, P.UL, P.Mb, P.Mg, P.relptr, P.reltgt, P.Fbufs...)
+            CUDA.enable_synchronization!(x, false)
+        end
     end
-
     return P
 end
 
@@ -608,19 +617,24 @@ function factor_top!(P::FactorPlan)
         if !isnothing(P.amal)
             A = P.amal; z = szero(P.F.s, eltype(P.LD), Val(:N))
             LDm, LLm, UDm, ULm = P.merged
-            amalgamate_gather!(LDm, P.LD, P.LL, A.mLD, z); amalgamate_gather!(LLm, P.LL, P.LL, A.mLL, z)
-            amalgamate_gather!(UDm, P.UD, P.UL, A.mUD, z); amalgamate_gather!(ULm, P.UL, P.UL, A.mUL, z)
-            factor_top_streams!(P)
-            amalgamate_scatter!(P.LD, P.LL, LDm, A.mLD); amalgamate_scatter!(P.LL, P.LL, LLm, A.mLL)
-            amalgamate_scatter!(P.UD, P.UL, UDm, A.mUD); amalgamate_scatter!(P.UL, P.UL, ULm, A.mUL)
+            @step "merge gather" begin
+                amalgamate_gather!(LDm, P.LD, P.LL, A.mLD, z); amalgamate_gather!(LLm, P.LL, P.LL, A.mLL, z)
+                amalgamate_gather!(UDm, P.UD, P.UL, A.mUD, z); amalgamate_gather!(ULm, P.UL, P.UL, A.mUL, z)
+            end
+            @step "fronts" factor_top_streams!(P)
+            @step "merge scatter" begin
+                amalgamate_scatter!(P.LD, P.LL, LDm, A.mLD); amalgamate_scatter!(P.LL, P.LL, LLm, A.mLL)
+                amalgamate_scatter!(P.UD, P.UL, UDm, A.mUD); amalgamate_scatter!(P.UL, P.UL, ULm, A.mUL)
+            end
             return P
         end
 
-        return factor_top_streams!(P)
+        return @step "fronts" factor_top_streams!(P)
     end
 end
 
 function factor_top_streams!(P::FactorPlan{Sem, T}) where {Sem, T}
+    use_batched_top(P) && return factor_top_batched!(P)
     s = P.F.s
     scale = Val(!isintegral(s))
 
@@ -697,11 +711,11 @@ end
 # calls replay.
 #
 function factorize!(P::FactorPlan; download::Bool = false)
-    tcpu = @elapsed factor_bottom!(P)
-    tup = @elapsed upload!(P)
+    tcpu = @elapsed @step "bottom (CPU)" factor_bottom!(P)
+    tup = @elapsed @step "upload" upload!(P)
     thost = 0.0
 
-    tgpu = @elapsed begin
+    tgpu = @elapsed @step "top (GPU)" begin
         thost = @elapsed if isnothing(P.exec)
             factor_top!(P)
         else
@@ -952,7 +966,8 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
     @inbounds begin
         e = tid
         while e < b * b
-            S[e % b + 1, e ÷ b + 1] = A[e % b + 1, e ÷ b + 1]
+            ci, cj = cm_index(e, b)
+            S[ci, cj] = A[ci, cj]
             e += nt
         end
         sync_threads()
@@ -973,8 +988,9 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
             m = b - p
             e = tid
             while e < m * m
-                k = p + e % m + 1
-                j = p + e ÷ m + 1
+                ci, cj = cm_index(e, m)
+                k = p + ci
+                j = p + cj
                 S[k, j] = smuladd(s, S[k, p], S[p, j], S[k, j], Val(:N), Val(:N))
                 e += nt
             end
@@ -983,7 +999,8 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
 
         e = tid
         while e < b * b
-            A[e % b + 1, e ÷ b + 1] = S[e % b + 1, e ÷ b + 1]
+            ci, cj = cm_index(e, b)
+            A[ci, cj] = S[ci, cj]
             e += nt
         end
         q = tid % DIAG_KS
@@ -993,7 +1010,8 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
         #
         e = tid
         while e < b * b
-            X[e % b + 1, e ÷ b + 1] = e % b == e ÷ b ? o : z
+            ci, cj = cm_index(e, b)
+            X[ci, cj] = ci == cj ? o : z
             e += nt
         end
         sync_threads()
@@ -1018,7 +1036,8 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
 
         e = tid
         while e < b * b
-            TU[e % b + 1, e ÷ b + 1] = X[e % b + 1, e ÷ b + 1]
+            ci, cj = cm_index(e, b)
+            TU[ci, cj] = X[ci, cj]
             e += nt
         end
         sync_threads()
@@ -1027,7 +1046,8 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
         #
         e = tid
         while e < b * b
-            X[e % b + 1, e ÷ b + 1] = e % b == e ÷ b ? o : z
+            ci, cj = cm_index(e, b)
+            X[ci, cj] = ci == cj ? o : z
             e += nt
         end
         sync_threads()
@@ -1049,7 +1069,8 @@ function front_diag_kernel!(s::AbstractSemiring, ::Val{SCALE}, A::AbstractMatrix
 
         e = tid
         while e < b * b
-            TL[e % b + 1, e ÷ b + 1] = X[e % b + 1, e ÷ b + 1]
+            ci, cj = cm_index(e, b)
+            TL[ci, cj] = X[ci, cj]
             e += nt
         end
     end
@@ -1209,4 +1230,715 @@ function addblock_gpu!(s::AbstractSemiring, X::AbstractMatrix, F::AbstractMatrix
 
     launch2d(kernel, size(X, 1), size(X, 2), s, X, F, i0, j0, Val(overwrite))
     return X
+end
+
+# ===== batched kernels: diagonal blocks, tiles, assembly =====
+#
+# The top of the tree is factored level by level, and each launch below covers the same step of every
+# front of a level (and precompute_ops! forms the operators of all large fronts in a few launches):
+# a launch is a list of tasks, one per thread block. This replaces the ~30 launches per 64 pivots of
+# the per-front path, most of them single-block kernels on a GPU of 100+ SMs, by 3 launches per 64
+# pivots per level. A task names its matrices by device address (Int64; the matrices of one launch
+# live in different arrays) and leading dimension.
+
+# element k (from 1) of the T array at device address a
+@inline gptr(::Type{T}, a::Int64) where {T} = reinterpret(Core.LLVMPtr{T, 1}, a)
+@inline gload(::Type{T}, a::Int64, k::Int64) where {T} = unsafe_load(gptr(T, a), k, Val(Base.datatype_alignment(T)))
+@inline gstore!(a::Int64, x::T, k::Int64) where {T} = unsafe_store!(gptr(T, a), x, k, Val(Base.datatype_alignment(T)))
+
+# the device address of x[i] (host side)
+devaddr(x::CuArray, i::Integer = 1) = reinterpret(Int64, pointer(x, i))
+
+#
+# Register tiles: a thread of a 256-thread block holds 4 × 4 entries of a 64 × 64 block, rows
+# tx + 16a + 1 and columns 4ty + c + 1 (tx = tid mod 16, ty = tid ÷ 16, a, c ∈ 0:3), as entry
+# 4c + a + 1 of a 16-tuple. Warp w holds the columns 8w + 1:8w + 8: a column vector in shared memory
+# is read without bank conflicts, a row vector is a broadcast, and global rows are coalesced.
+#
+const TB_NT = 256
+
+@inline tile_row(tx, a) = tx + 16a + 1
+@inline tile_col(ty, c) = 4ty + c + 1
+
+# X[i, j] ← X[i, j] ⊕ l[i] u[j] on the thread's entries
+@inline function rank1(s::AbstractSemiring, X::NTuple{16, T}, l::NTuple{4, T}, u::NTuple{4, T}) where {T}
+    return ntuple(k -> smuladd(s, l[((k - 1) & 3) + 1], u[((k - 1) >> 2) + 1], X[k], Val(:N), Val(:N)), Val(16))
+end
+
+# t[i + 1] for a runtime i ∈ 0:3, by selects (a runtime index into a tuple would go through local memory)
+@inline pick4(t::NTuple{4}, i) = ifelse(i == 0, t[1], ifelse(i == 1, t[2], ifelse(i == 2, t[3], t[4])))
+
+# the thread's entries of the b × b block at sl / su (strictly lower part from sl, the rest from su); zero outside
+@inline function load_block(::Type{T}, sl::Int64, su::Int64, ld::Int64, b::Int64, tx, ty, z::T) where {T}
+    return ntuple(Val(16)) do k
+        i = tile_row(tx, (k - 1) & 3); j = tile_col(ty, (k - 1) >> 2)
+        (i <= b && j <= b) ? gload(T, i > j ? sl : su, i + (j - 1) * ld) : z
+    end
+end
+
+@inline function ident_block(b::Int64, tx, ty, z::T, o::T) where {T}
+    return ntuple(k -> (i = tile_row(tx, (k - 1) & 3); ifelse(i == tile_col(ty, (k - 1) >> 2) && i <= b, o, z)), Val(16))
+end
+
+# X[1:m, 1:n] (or its upper part) → a, leading dimension ld
+@inline function store_block!(a::Int64, X::NTuple{16}, ld::Int64, m::Int64, n::Int64, tx, ty, upper::Bool)
+    Base.Cartesian.@nexprs 16 k -> begin
+        i = tile_row(tx, (k - 1) & 3); j = tile_col(ty, (k - 1) >> 2)
+        (i <= m && j <= n && (!upper || i <= j)) && gstore!(a, X[k], i + (j - 1) * ld)
+    end
+    return
+end
+
+# the owners of column q0 + 1 write it (of S and of XU) to buffer nb; the owners of row q0 + 1 write it (of S and of XL)
+@inline function publish_col!(CL, CX, S::NTuple{16}, XU::NTuple{16}, q0, nb, tx, ty)
+    if ty == q0 >> 2
+        c = q0 & 3
+        Base.Cartesian.@nexprs 4 a -> begin
+            @inbounds CL[tile_row(tx, a - 1), nb] = pick4((S[a], S[a + 4], S[a + 8], S[a + 12]), c)
+            @inbounds CX[tile_row(tx, a - 1), nb] = pick4((XU[a], XU[a + 4], XU[a + 8], XU[a + 12]), c)
+        end
+    end
+    return
+end
+
+@inline function publish_row!(RU, RX, S::NTuple{16}, XL::NTuple{16}, q0, nb, tx, ty)
+    if tx == q0 & 15
+        a = q0 >> 4
+        Base.Cartesian.@nexprs 4 c -> begin
+            @inbounds RU[tile_col(ty, c - 1), nb] = pick4((S[4c - 3], S[4c - 2], S[4c - 1], S[4c]), a)
+            @inbounds RX[tile_col(ty, c - 1), nb] = pick4((XL[4c - 3], XL[4c - 2], XL[4c - 1], XL[4c]), a)
+        end
+    end
+    return
+end
+
+# the thread's rows of column vector C (zero above row p + 1 if masked, times sp if SCALE)
+@inline function col_vals(s::AbstractSemiring, ::Val{SCALE}, C, nb, p, tx, z::T, sp::T, masked::Bool) where {SCALE, T}
+    return ntuple(Val(4)) do a
+        i = tile_row(tx, a - 1)
+        v = @inbounds C[i, nb]
+        v = (masked & (i <= p)) ? z : v
+        SCALE ? sprod(s, v, sp, Val(:N), Val(:N)) : v
+    end
+end
+
+@inline function row_vals(R, nb, p, ty, z::T, masked::Bool) where {T}
+    return ntuple(c -> (j = tile_col(ty, c - 1); v = @inbounds R[j, nb]; (masked & (j <= p)) ? z : v), Val(4))
+end
+
+# the owners of column q0 + 1 keep its new values v: rows below q0 + 1 (lower) or all
+@inline function keep_col(X::NTuple{16, T}, v::NTuple{4, T}, q0, tx, ty, lower::Bool) where {T}
+    own = ty == q0 >> 2
+    c = q0 & 3
+    return ntuple(Val(16)) do k
+        a = (k - 1) & 3
+        ifelse(own & (((k - 1) >> 2) == c) & (!lower | (tile_row(tx, a) > q0 + 1)), v[a + 1], X[k])
+    end
+end
+
+#
+# One b × b diagonal block (b ≤ 64) per thread block, in registers:
+#
+#   LU = true    S ← LU of S in place (as sgetrf_diag_kernel!), TL = L*, TU = U*
+#   LU = false   only the closures TL = L* (L: the strictly lower part of S, unit) and TU = U* of a factor
+#
+# all three right-looking, in one pass over the pivots p = 1, …, b:
+#
+#   S[i, p] ← S[i, p] S[p, p]*  (i > p, LU)          XU[:, p] ← XU[:, p] S[p, p]*      (SCALE)
+#   S[i, j] ← S[i, j] ⊕ S[i, p] S[p, j]              (i, j > p, LU)
+#   XL[i, c] ← XL[i, c] ⊕ S[i, p] XL[p, c]           (i > p; XL = I at the start)
+#   XU[r, j] ← XU[r, j] ⊕ XU[r, p] S[p, j]           (j > p; XU = I at the start)
+#
+# Column p and row p of S, row p of XL and column p of XU are final when step p starts; their owners
+# publish them in shared memory (two buffers, one barrier per pivot). The products are those of
+# sgetrf_diag_kernel! and strsx_*_diag_shared_kernel!; XL and XU sum them in pivot order instead of a
+# tree, the same for idempotent ⊕ (min, max). A warp skips the updates that are void for its columns:
+# XL[p, c] is zero for c > p and S[p, j] is not used for j ≤ p.
+#
+# A task: (sl, su, lds, b, a, u, tl, ldtl, tu, ldtu). S is read from sl (strictly lower part) and su
+# (the rest), leading dimension lds; with LU the factored block goes to a, and its upper part to u if
+# u ≠ 0 (as copyupper_gpu!). TL and TU go to tl and tu if nonzero.
+#
+function diag_block_kernel!(s::AbstractSemiring, ::Val{SCALE}, ::Val{LU}, ::Type{T}, tasks, toff::Int32) where {SCALE, LU, T}
+    sl, su, lds, b, aout, uout, tl, ldtl, tu, ldtu = @inbounds tasks[toff + blockIdx().x]
+    CL = CuStaticSharedArray(T, (DIAG_NB, 2))              # column p of S, row p of S, row p of XL, column p of XU
+    RU = CuStaticSharedArray(T, (DIAG_NB, 2))
+    RX = CuStaticSharedArray(T, (DIAG_NB, 2))
+    CX = CuStaticSharedArray(T, (DIAG_NB, 2))
+    tid = Int(threadIdx().x) - 1
+    tx = tid & 15; ty = tid >> 4; w8 = (tid >> 5) << 3     # the warp's columns: w8 + 1:w8 + 8
+    z = szero(s, T, Val(:N)); o = sone(s, T, Val(:N))
+
+    S = load_block(T, sl, su, lds, b, tx, ty, z)
+    XL = ident_block(b, tx, ty, z, o)
+    XU = XL
+    publish_col!(CL, CX, S, XU, 0, 1, tx, ty)
+    publish_row!(RU, RX, S, XL, 0, 1, tx, ty)
+    sync_threads()
+
+    for p in 1:b
+        nb = ((p - 1) & 1) + 1
+        sp = SCALE ? sstar(s, @inbounds(CL[p, nb])) : o
+        l = col_vals(s, Val(SCALE && LU), CL, nb, p, tx, z, sp, true)        # S[i, p] (i > p), scaled
+        xu = col_vals(s, Val(SCALE), CX, nb, p, tx, z, sp, false)            # XU[:, p], scaled
+        u = row_vals(RU, nb, p, ty, z, true)                                 # S[p, j] (j > p)
+        xl = row_vals(RX, nb, p, ty, z, false)                               # XL[p, :]
+
+        if SCALE
+            LU && (S = keep_col(S, l, p - 1, tx, ty, true))
+            XU = keep_col(XU, xu, p - 1, tx, ty, false)
+        end
+
+        if w8 + 8 > p && w8 < b
+            LU && (S = rank1(s, S, l, u))
+            XU = rank1(s, XU, xu, u)
+        end
+
+        w8 < p && (XL = rank1(s, XL, l, xl))
+
+        if p < b
+            publish_col!(CL, CX, S, XU, p, 3 - nb, tx, ty)
+            publish_row!(RU, RX, S, XL, p, 3 - nb, tx, ty)
+        end
+
+        sync_threads()
+    end
+
+    if LU
+        store_block!(aout, S, lds, b, b, tx, ty, false)
+        uout != 0 && store_block!(uout, S, lds, b, b, tx, ty, true)
+    end
+
+    tl != 0 && store_block!(tl, XL, ldtl, b, b, tx, ty, false)
+    tu != 0 && store_block!(tu, XU, ldtu, b, b, tx, ty, false)
+    return
+end
+
+# Xs[1:64, 1:n] ← the m × n matrix at a (rows past m are zero)
+@inline function load_tile!(Xs, a::Int64, ld::Int64, m::Int64, n::Int64, tid, z::T) where {T}
+    e = tid
+
+    while e < (n << 6)
+        i = e & 63; j = e >> 6
+        @inbounds Xs[i + 1, j + 1] = i < m ? gload(T, a, i + 1 + j * ld) : z
+        e += TB_NT
+    end
+
+    return
+end
+
+@inline function put_tile!(Xs, X::NTuple{16}, tx, ty)
+    Base.Cartesian.@nexprs 16 k -> (@inbounds Xs[tile_row(tx, (k - 1) & 3), tile_col(ty, (k - 1) >> 2)] = X[k])
+    return
+end
+
+# X ← X ⊕ As[:, 1:k] Bs[1:k, :] on the thread's entries
+@inline function tile_mac(s::AbstractSemiring, X::NTuple{16, T}, As, Bs, k::Int64, tx, ty) where {T}
+    for kk in 1:k
+        av = ntuple(a -> @inbounds(As[tile_row(tx, a - 1), kk]), Val(4))
+        bv = ntuple(c -> @inbounds(Bs[kk, tile_col(ty, c - 1)]), Val(4))
+        X = rank1(s, X, av, bv)
+    end
+
+    return X
+end
+
+#
+# One tile C[1:m, 1:n] (m, n ≤ 64) per thread block:
+#
+#   X ← ⊕_q A_q B_q                 (products q, each of depth k_q ≤ 64)
+#   X ← X D (D: n × n) or D X (D: m × m), if asked
+#   C ← X, or C ← C ⊕ X             (and C2 ← the same, if C2 ≠ 0)
+#
+# A task: (c, ldc, c2, m, n, flags, q1, nq, d, ldd) with flags 1 overwrite, 2 X D, 4 D X; a product:
+# (a, lda, b, ldb, k). Both operands of a product are in shared memory before C is written, so a task
+# with one product may overwrite its own A or B (a panel solve in place).
+#
+function tile_kernel!(s::AbstractSemiring, ::Type{T}, tasks, prods, toff::Int32) where {T}
+    c, ldc, c2, m, n, flags, q1, nq, d, ldd = @inbounds tasks[toff + blockIdx().x]
+    As = CuStaticSharedArray(T, (64, 64))
+    Bs = CuStaticSharedArray(T, (64, 64))
+    tid = Int(threadIdx().x) - 1
+    tx = tid & 15; ty = tid >> 4
+    z = szero(s, T, Val(:N))
+    X = ntuple(_ -> z, Val(16))
+
+    for q in q1:(q1 + nq - 1)
+        a, lda, b, ldb, k = @inbounds prods[q]
+        load_tile!(As, a, lda, m, k, tid, z)
+        load_tile!(Bs, b, ldb, k, n, tid, z)
+        sync_threads()
+        X = tile_mac(s, X, As, Bs, k, tx, ty)
+        sync_threads()
+    end
+
+    if flags & 2 != 0
+        put_tile!(As, X, tx, ty)
+        load_tile!(Bs, d, ldd, n, n, tid, z)
+        sync_threads()
+        X = tile_mac(s, ntuple(_ -> z, Val(16)), As, Bs, n, tx, ty)
+    elseif flags & 4 != 0
+        put_tile!(Bs, X, tx, ty)
+        load_tile!(As, d, ldd, m, m, tid, z)
+        sync_threads()
+        X = tile_mac(s, ntuple(_ -> z, Val(16)), As, Bs, m, tx, ty)
+    end
+
+    ow = flags & 1 != 0
+
+    Base.Cartesian.@nexprs 16 k -> begin
+        i = tile_row(tx, (k - 1) & 3); j = tile_col(ty, (k - 1) >> 2)
+
+        if i <= m && j <= n
+            e = i + (j - 1) * ldc
+            v = ow ? X[k] : splus(s, gload(T, c, e), X[k], Val(:N))
+            gstore!(c, v, e)
+            c2 != 0 && gstore!(c2, v, e)
+        end
+    end
+
+    return
+end
+
+const ASM_NT = 256
+
+#
+# Assembly of the fronts of a level, straight into the factor (as extendadd_direct_gpu!), one thread
+# block per column j of a front [L₁₁ U₁₂; L₂₁ M]:
+#
+#   L₁₁[1:j, j] ← U₁₁[1:j, j]  (j ≤ n₁: the diagonal block in one array)        M[:, j - n₁] ← 0  (j > n₁)
+#   F[rel_c[v], j] ← F[rel_c[v], j] ⊕ M_c[v, w]   for each child c with rel_c[w] = j, v = 1:na_c
+#
+# The children are taken in their order, with a barrier between two (they may add to the same
+# entries), so the sums are those of one extendadd launch per child, without races. rel_c is
+# increasing, so w is found by bisection. A front: (l11, u11, l21, u12, m, n₁, n₂, k1, nk); a child:
+# (address of M_c, na_c, rel pointer).
+#
+function assemble_kernel!(s::AbstractSemiring, ::Type{T}, fronts, kids, reltgt, foff::Int32) where {T}
+    l11, u11, l21, u12, mm, n1, n2, k1, nk = @inbounds fronts[foff + blockIdx().y]
+    j = Int(blockIdx().x)
+    j > n1 + n2 && return
+    HK = CuStaticSharedArray(Int32, ASM_NT)               # the children of a chunk that hold column j, in order
+    HW = CuStaticSharedArray(Int32, ASM_NT)               # and its position in them
+    WC = CuStaticSharedArray(Int32, ASM_NT >> 5)          # hits per warp
+    tid = Int(threadIdx().x) - 1
+    lane = tid & 31; wid = tid >> 5
+    z = szero(s, T, Val(:N))
+
+    @inbounds begin
+        i = tid + 1
+
+        if j <= n1
+            while i <= j
+                gstore!(l11, gload(T, u11, i + (j - 1) * n1), i + (j - 1) * n1)
+                i += ASM_NT
+            end
+        else
+            while i <= n2
+                gstore!(mm, z, i + (j - n1 - 1) * n2)
+                i += ASM_NT
+            end
+        end
+
+        sync_threads()
+        c0 = k1
+
+        while c0 < k1 + nk
+            kc = c0 + tid
+            w = 0
+
+            if kc < k1 + nk
+                _, na, rp = kids[kc]
+                lo = rp; hi = rp + na - 1
+
+                if reltgt[lo] <= j <= reltgt[hi]
+                    while lo < hi
+                        mid = (lo + hi) >> 1
+                        reltgt[mid] < j ? (lo = mid + 1) : (hi = mid)
+                    end
+
+                    reltgt[lo] == j && (w = lo - rp + 1)
+                end
+            end
+
+            mask = vote_ballot_sync(0xffffffff, w > 0)
+            lane == 0 && (WC[wid + 1] = count_ones(mask))
+            sync_threads()
+            base = 0; total = 0
+
+            for v in 1:(ASM_NT >> 5)
+                x = Int(WC[v])
+                v <= wid && (base += x)
+                total += x
+            end
+
+            if w > 0
+                h = base + count_ones(mask & ((UInt32(1) << lane) - UInt32(1))) + 1
+                HK[h] = kc; HW[h] = w
+            end
+
+            sync_threads()
+
+            for h in 1:total
+                mc, na, rp = kids[HK[h]]
+                cw = Int(HW[h]) - 1
+                v = tid + 1
+
+                while v <= na
+                    r = Int(reltgt[rp + v - 1])
+                    x = gload(T, mc, v + cw * na)
+
+                    if r <= n1
+                        a, e = j <= n1 ? (l11, r + (j - 1) * n1) : (u12, r + (j - n1 - 1) * n1)
+                    else
+                        a, e = j <= n1 ? (l21, r - n1 + (j - 1) * n2) : (mm, r - n1 + (j - n1 - 1) * n2)
+                    end
+
+                    gstore!(a, splus(s, gload(T, a, e), x, Val(:N)), e)
+                    v += ASM_NT
+                end
+
+                sync_threads()
+            end
+
+            c0 += ASM_NT
+            sync_threads()
+        end
+    end
+
+    return
+end
+
+# the start of every front's assembly, for all top fronts in one launch (they are independent): the
+# first phase of assemble_kernel!, one thread block per column
+function assemble_init_kernel!(s::AbstractSemiring, ::Type{T}, fronts) where {T}
+    l11, u11, _, _, mm, n1, n2, _, _ = @inbounds fronts[blockIdx().y]
+    j = Int(blockIdx().x)
+    j > n1 + n2 && return
+    i = Int(threadIdx().x)
+
+    if j <= n1
+        while i <= j
+            gstore!(l11, gload(T, u11, i + (j - 1) * n1), i + (j - 1) * n1)
+            i += ASM_NT
+        end
+    else
+        while i <= n2
+            gstore!(mm, szero(s, T, Val(:N)), i + (j - n1 - 1) * n2)
+            i += ASM_NT
+        end
+    end
+
+    return
+end
+
+# x ⊕= y at element e of the array at a, atomically, when ⊕ is min or max (atomic_kind; as
+# atomic_splus!: native integer min / max on the bits of an IEEE float, exact, a NaN y dropped)
+@inline function gatomic_splus!(::Val{K}, a::Int64, e::Int64, y::T) where {K, T}
+    p = a + (e - 1) * sizeof(T)
+
+    if T <: Integer
+        K === :min ? CUDA.atomic_min!(gptr(T, p), y) : CUDA.atomic_max!(gptr(T, p), y)
+    elseif !isnan(y)
+        S = sizeof(T) == 4 ? Int32 : Int64
+        U = sizeof(T) == 4 ? UInt32 : UInt64
+
+        if signbit(y)
+            K === :min ? CUDA.atomic_max!(gptr(U, p), reinterpret(U, y)) : CUDA.atomic_min!(gptr(U, p), reinterpret(U, y))
+        else
+            K === :min ? CUDA.atomic_min!(gptr(S, p), reinterpret(S, y)) : CUDA.atomic_max!(gptr(S, p), reinterpret(S, y))
+        end
+    end
+
+    return
+end
+
+#
+# Assembly of all children of a level at once, for ⊕ = min or max: the order of the ⊕ does not matter
+# and the atomic ⊕ is exact, so every entry of every child is added in parallel, with no barrier. A
+# task: (k1, k2, w0, w1), columns w0:w1 of child k1 (k1 = k2), or all of children k1:k2 (w1 = 0); a
+# child: (address of M_c, na_c, rel pointer, front).
+#
+function assemble_atomic_kernel!(kind::Val, ::Type{T}, fronts, kids, tasks, reltgt, toff::Int32) where {T}
+    k1, k2, w0, w1 = @inbounds tasks[toff + blockIdx().x]
+
+    @inbounds for kc in k1:k2
+        mc, na, rp, fr = kids[kc]
+        l11, _, l21, u12, mm, n1, n2, _, _ = fronts[fr]
+        lo = iszero(w1) ? 1 : w0
+        hi = iszero(w1) ? na : w1
+        e = Int(threadIdx().x) - 1
+        len = (hi - lo + 1) * na
+
+        while e < len
+            v, w = cm_index(e, na)
+            w += lo - 1
+            r = Int(reltgt[rp + v - 1]); j = Int(reltgt[rp + w - 1])
+            x = gload(T, mc, v + (w - 1) * na)
+
+            if r <= n1
+                a, ee = j <= n1 ? (l11, r + (j - 1) * n1) : (u12, r + (j - n1 - 1) * n1)
+            else
+                a, ee = j <= n1 ? (l21, r - n1 + (j - 1) * n2) : (mm, r - n1 + (j - n1 - 1) * n2)
+            end
+
+            gatomic_splus!(kind, a, ee, x)
+            e += ASM_NT
+        end
+    end
+
+    return
+end
+
+# ===== the top, level by level =====
+#
+# factor_top_batched! factors the top fronts of a plan with static update slots (P.levels) with the
+# batched kernels above. Per level:
+#
+#   assembly              one launch: every child of every front of the level
+#   for each 64-pivot step k (the fronts with at least k blocks of pivots, J = their k-th block):
+#     diagonal blocks     one launch: L₁₁[J, J] ← LU, TL = L[J, J]*, TU = U[J, J]*, U₁₁[J, J] ← its upper part
+#     panels              one launch: [L₁₁[J, R] | U₁₂[J, :]] ← TL [⋯] (also into U₁₁[J, R]), [L₁₁[R, J]; L₂₁[:, J]] ← [⋯] TU
+#     trailing update     one launch: L₁₁[R, R], U₁₂[R, :], L₂₁[:, R] ⊕= (panel) (panel)        (R: the pivots after J)
+#   Schur complements     one launch: M ← M ⊕ L₂₁ U₁₂
+#
+# (with the merged-diagonal start of every front, merge_diag_gpu! and the zero M, in one launch for the
+# whole top). This is the blocked right-looking LU of each front with inverted diagonal blocks, as the
+# per-front path (sgetrf_gpu!, strsx_gpu!, strsx_left_gpu!), with the same products; for idempotent ⊕
+# the factor is bit-identical.
+#
+# The tables of tasks depend only on the plan, so they are built on the first factorization and kept
+# (TOP_BATCH), which also lets a recorded graph replay them.
+
+const BATCHED_TOP = Ref(true)          # (A/B switch for benchmarks: false runs the per-front path)
+
+struct TopBatch
+    fronts::CuVector{NTuple{9, Int64}}
+    kids::CuVector{NTuple{4, Int64}}
+    ktasks::CuVector{NTuple{4, Int64}}
+    diag::CuVector{NTuple{10, Int64}}
+    tiles::CuVector{NTuple{10, Int64}}
+    prods::CuVector{NTuple{5, Int64}}
+    work::CuVector
+    launches::Vector{NTuple{4, Int}}     # (kind, first task - 1, tasks, grid width)
+    maxw::Int                            # widest front (n₁ + n₂)
+end
+
+const TB_INIT, TB_ASM, TB_ASM_ORDERED, TB_DIAG, TB_PANEL, TB_TRAIL, TB_SCHUR = 1, 2, 3, 4, 5, 6, 7
+
+const TOP_BATCH = WeakKeyDict{Any, TopBatch}()
+
+use_batched_top(P::FactorPlan{Sem, T}) where {Sem, T} =
+    BATCHED_TOP[] && !isempty(P.levels) && config().direct_assembly && config().fused_front && sizeof(T) <= 4
+
+# children of an atomic assembly per task: whole children while they are small, else ≥ 8192 entries
+const ASM_TASK = 8192
+
+function top_batch(P::FactorPlan{Sem, T}) where {Sem, T}
+    tb = lock(() -> get(TOP_BATCH, P, nothing), TOP_BATCH)
+    isnothing(tb) || return tb
+    @assert !CUDA.is_capturing() "the batched schedule must be built before graph capture"
+    nb = 64; sz = sizeof(T)
+    nslot = maximum(length, P.levels)
+    work = CuVector{T}(undef, 2 * nb * nb * nslot)
+    CUDA.enable_synchronization!(work, false)
+    LD, UD, LL, UL = top_arrays(P)
+    # (pointer() is slow, ~0.2 µs, and the plan's array fields are not concrete: the addresses as Int64)
+    bLD::Int64, bUD::Int64, bLL::Int64, bUL::Int64, bMg::Int64, bMb::Int64, bW::Int64 = devaddr.((LD, UD, LL, UL, P.Mg, P.Mb, work))
+    ordered = atomic_kind(P.F.s, Val(:N), T) isa Union{Val{:add}, Val{:cas}}
+    fronts = NTuple{9, Int64}[]; kids = NTuple{4, Int64}[]; ktasks = NTuple{4, Int64}[]
+    diag = NTuple{10, Int64}[]; tiles = NTuple{10, Int64}[]; prods = NTuple{5, Int64}[]
+    launches = NTuple{4, Int}[]
+    index = zeros(Int, length(P.tasks))
+    maxw = 0
+    #
+    # every front: (L₁₁, U₁₁, L₂₁, U₁₂, M, n₁, n₂, first child, children), the children with their front
+    #
+    for level in P.levels, t in level
+        n1, n2, Dp, Lp, out, ks = P.tasks[t]
+        k1 = length(kids) + 1
+
+        for (gpu, off, na, rp) in ks
+            push!(kids, ((gpu ? bMg : bMb) + (off - 1) * sz, na, rp, length(fronts) + 1))
+        end
+
+        push!(fronts, (bLD + (Dp - 1) * sz, bUD + (Dp - 1) * sz, bLL + (Lp - 1) * sz, bUL + (Lp - 1) * sz, bMg + (out - 1) * sz, n1, n2, k1, length(ks)))
+        index[t] = length(fronts)
+        maxw = max(maxw, n1 + n2)
+    end
+
+    ordered || push!(launches, (TB_INIT, 0, length(fronts), maxw))
+    addr(base, p, ld, i, j) = base + (p - 1 + (i - 1) + (j - 1) * ld) * sz          # of X[i, j], X = the ld-row matrix at base[p]
+
+    for level in P.levels
+        f1 = index[first(level)]                # the fronts of a level are consecutive
+        lw = maximum(t -> P.tasks[t][1] + P.tasks[t][2], level)
+
+        if ordered
+            push!(launches, (TB_ASM_ORDERED, f1 - 1, length(level), lw))
+        else
+            q0 = length(ktasks)
+            kc = fronts[f1][8]; kend = fronts[index[last(level)]][8] + fronts[index[last(level)]][9] - 1
+            while kc <= kend
+                na = kids[kc][2]
+
+                if na * na >= ASM_TASK                      # a large child: groups of columns
+                    w = max(1, ASM_TASK ÷ na)
+
+                    for w0 in 1:w:na
+                        push!(ktasks, (kc, kc, w0, min(w0 + w - 1, na)))
+                    end
+
+                    kc += 1
+                else                                        # small children: as many as fill a task
+                    k2 = kc; len = na * na
+
+                    while k2 < kend && len + kids[k2 + 1][2]^2 <= ASM_TASK && kids[k2 + 1][2]^2 < ASM_TASK
+                        k2 += 1; len += kids[k2][2]^2
+                    end
+
+                    push!(ktasks, (kc, k2, 1, 0))
+                    kc = k2 + 1
+                end
+            end
+
+            push!(launches, (TB_ASM, q0, length(ktasks) - q0, 0))
+        end
+
+        maxp = maximum(t -> cld(P.tasks[t][1], nb), level)
+
+        for k in 1:maxp
+            j0 = (k - 1) * nb + 1
+            d0 = length(diag); p0 = length(tiles)
+            #
+            # diagonal blocks: TL, TU of the level's slot-th front at work[(2slot - 2) nb² + 1], [(2slot - 1) nb² + 1]
+            #
+            for (slot, t) in enumerate(level)
+                n1, n2, Dp, Lp = P.tasks[t]
+                j0 <= n1 || continue
+                b = min(nb, n1 - j0 + 1)
+                a = addr(bLD, Dp, n1, j0, j0)
+                push!(diag, (a, a, n1, b, a, addr(bUD, Dp, n1, j0, j0), bW + (2slot - 2) * nb * nb * sz, nb,
+                    bW + (2slot - 1) * nb * nb * sz, nb))
+            end
+
+            push!(launches, (TB_DIAG, d0, length(diag) - d0, 0))
+            #
+            # panels, in place
+            #
+            for (slot, t) in enumerate(level)
+                n1, n2, Dp, Lp = P.tasks[t]
+                j0 <= n1 || continue
+                b = min(nb, n1 - j0 + 1); j1 = j0 + b - 1
+                wl = bW + (2slot - 2) * nb * nb * sz; wu = bW + (2slot - 1) * nb * nb * sz
+
+                for c0 in (j1 + 1):nb:n1                    # L₁₁[J, c] ← TL L₁₁[J, c], also into U₁₁
+                    w = min(nb, n1 - c0 + 1); x = addr(bLD, Dp, n1, j0, c0)
+                    push!(prods, (wl, nb, x, n1, b))
+                    push!(tiles, (x, n1, addr(bUD, Dp, n1, j0, c0), b, w, 1, length(prods), 1, 0, 0))
+                end
+
+                for c0 in 1:nb:n2                           # U₁₂[J, c] ← TL U₁₂[J, c]
+                    w = min(nb, n2 - c0 + 1); x = addr(bUL, Lp, n1, j0, c0)
+                    push!(prods, (wl, nb, x, n1, b))
+                    push!(tiles, (x, n1, 0, b, w, 1, length(prods), 1, 0, 0))
+                end
+
+                for r0 in (j1 + 1):nb:n1                    # L₁₁[r, J] ← L₁₁[r, J] TU
+                    h = min(nb, n1 - r0 + 1); x = addr(bLD, Dp, n1, r0, j0)
+                    push!(prods, (x, n1, wu, nb, b))
+                    push!(tiles, (x, n1, 0, h, b, 1, length(prods), 1, 0, 0))
+                end
+
+                for r0 in 1:nb:n2                           # L₂₁[r, J] ← L₂₁[r, J] TU
+                    h = min(nb, n2 - r0 + 1); x = addr(bLL, Lp, n2, r0, j0)
+                    push!(prods, (x, n2, wu, nb, b))
+                    push!(tiles, (x, n2, 0, h, b, 1, length(prods), 1, 0, 0))
+                end
+            end
+
+            push!(launches, (TB_PANEL, p0, length(tiles) - p0, 0))
+            #
+            # trailing update of the pivots after J (the update matrix M waits for the Schur complement)
+            #
+            r0t = length(tiles)
+
+            for t in level
+                n1, n2, Dp, Lp = P.tasks[t]
+                j0 + nb <= n1 || continue
+                b = nb; j1 = j0 + b - 1
+
+                for c0 in (j1 + 1):nb:n1, r0 in (j1 + 1):nb:n1                  # L₁₁[R, R]
+                    push!(prods, (addr(bLD, Dp, n1, r0, j0), n1, addr(bLD, Dp, n1, j0, c0), n1, b))
+                    push!(tiles, (addr(bLD, Dp, n1, r0, c0), n1, 0, min(nb, n1 - r0 + 1), min(nb, n1 - c0 + 1), 0, length(prods), 1, 0, 0))
+                end
+
+                for c0 in 1:nb:n2, r0 in (j1 + 1):nb:n1                          # U₁₂[R, :]
+                    push!(prods, (addr(bLD, Dp, n1, r0, j0), n1, addr(bUL, Lp, n1, j0, c0), n1, b))
+                    push!(tiles, (addr(bUL, Lp, n1, r0, c0), n1, 0, min(nb, n1 - r0 + 1), min(nb, n2 - c0 + 1), 0, length(prods), 1, 0, 0))
+                end
+
+                for c0 in (j1 + 1):nb:n1, r0 in 1:nb:n2                          # L₂₁[:, R]
+                    push!(prods, (addr(bLL, Lp, n2, r0, j0), n2, addr(bLD, Dp, n1, j0, c0), n1, b))
+                    push!(tiles, (addr(bLL, Lp, n2, r0, c0), n2, 0, min(nb, n2 - r0 + 1), min(nb, n1 - c0 + 1), 0, length(prods), 1, 0, 0))
+                end
+            end
+
+            push!(launches, (TB_TRAIL, r0t, length(tiles) - r0t, 0))
+        end
+        #
+        # Schur complements M ← M ⊕ L₂₁ U₁₂, one tile per 64 × 64 block of M, a product per 64 pivots
+        #
+        s0 = length(tiles)
+
+        for t in level
+            n1, n2, Dp, Lp, out = P.tasks[t]
+
+            for c0 in 1:nb:n2, r0 in 1:nb:n2
+                q1 = length(prods) + 1
+
+                for j0 in 1:nb:n1
+                    push!(prods, (addr(bLL, Lp, n2, r0, j0), n2, addr(bUL, Lp, n1, j0, c0), n1, min(nb, n1 - j0 + 1)))
+                end
+
+                push!(tiles, (addr(bMg, out, n2, r0, c0), n2, 0, min(nb, n2 - r0 + 1), min(nb, n2 - c0 + 1), 0, q1, length(prods) - q1 + 1, 0, 0))
+            end
+        end
+
+        push!(launches, (TB_SCHUR, s0, length(tiles) - s0, 0))
+    end
+
+    up(v) = (d = CuVector(isempty(v) ? [ntuple(_ -> Int64(0), fieldcount(eltype(v)))] : v); CUDA.enable_synchronization!(d, false); d)
+    tb = TopBatch(up(fronts), up(kids), up(ktasks), up(diag), up(tiles), up(prods), work, filter(l -> l[3] > 0, launches), maxw)
+    lock(() -> (TOP_BATCH[P] = tb), TOP_BATCH)
+    return tb
+end
+
+function factor_top_batched!(P::FactorPlan{Sem, T}) where {Sem, T}
+    s = P.F.s
+    scale = Val(!isintegral(s))
+    kind = atomic_kind(s, Val(:N), T)
+    B = top_batch(P)
+
+    for (what, off, n, w) in B.launches
+        o = Int32(off)
+
+        if what == TB_INIT
+            @phase FTIMER[] :assemble @cuda threads = ASM_NT blocks = (w, n) assemble_init_kernel!(s, T, B.fronts)
+        elseif what == TB_ASM
+            @phase FTIMER[] :assemble @cuda threads = ASM_NT blocks = n assemble_atomic_kernel!(kind, T, B.fronts, B.kids, B.ktasks, P.reltgt, o)
+        elseif what == TB_ASM_ORDERED
+            @phase FTIMER[] :assemble @cuda threads = ASM_NT blocks = (w, n) assemble_kernel!(s, T, B.fronts, B.kids, P.reltgt, o)
+        elseif what == TB_DIAG
+            @phase FTIMER[] :lu_diag @cuda threads = TB_NT blocks = n diag_block_kernel!(s, scale, Val(true), T, B.diag, o)
+        elseif what == TB_PANEL
+            @phase FTIMER[] :panel_trsm @cuda threads = TB_NT blocks = n tile_kernel!(s, T, B.tiles, B.prods, o)
+        elseif what == TB_TRAIL
+            @phase FTIMER[] :lu_gemm @cuda threads = TB_NT blocks = n tile_kernel!(s, T, B.tiles, B.prods, o)
+        else
+            @phase FTIMER[] :schur_gemm @cuda threads = TB_NT blocks = n tile_kernel!(s, T, B.tiles, B.prods, o)
+        end
+    end
+
+    return P
 end
