@@ -63,6 +63,10 @@ const CASES = [
         @test H isa Matrix{T}
         @test same(s, H, C)
 
+        # the columns in elimination order: D[i, k] = A*[i, cols[k]]
+        E, cols = apsp_gpu(A; semiring = s, columns = :elimination)
+        @test sort(cols) == 1:n && same(s, Array(E), C[:, cols])
+
         # tiny buffers: 1 row / column per block, and 7 per block (ragged last block)
         for b in (1, 7n + 3)
             @test same(s, Array(apsp_gpu(A; semiring = s, buffer = b)), C)
@@ -102,6 +106,18 @@ const CASES = [
         @test apsp_gpu(A; output = :host) == C
     end
 
+    @testset "in-place relabelling by cycles" begin
+        # X[:, j] ← X[:, q[j]]; with a small budget (many segments) it may decline, leaving X as it was
+        for (m, n) in ((1, 1), (3, 5), (1000, 37), (257, 2049)), len in (10^9, 40m, 3m)
+            for q in (collect(1:n), randperm(n), [mod1(j + 1, n) for j in 1:n],
+                      [isodd(j) && j < n ? j + 1 : iseven(j) ? j - 1 : j for j in 1:n], vcat(randperm(n ÷ 2), (n ÷ 2 + 1):n))
+                X = CUDA.rand(Float32, m, n); X0 = Array(X)
+                done = SemiringGPU.relabel_cycles!(X, q, len)
+                @test Array(X) == (done ? X0[:, q] : X0)
+            end
+        end
+    end
+
     @testset "settings and edge cases" begin
         A = grid(30, 30, Float32); C = closure(MinPlus(), A)
         @test with_config(() -> apsp_gpu(A; output = :host); merge = 1, skip_fill = false, layered_min_rows = 1) == C
@@ -122,6 +138,9 @@ const CASES = [
     end
 
     @testset "errors" begin
+        @test errorof(() -> apsp_gpu(grid(3, 3, Float32); columns = :other)) isa ArgumentError
+        @test errorof(() -> apsp_gpu(grid(3, 3, Float32); columns = :elimination, output = :host)) isa ArgumentError
+        @test errorof(() -> apsp_gpu(grid(3, 3, Float32); columns = :elimination, devices = [d, d])) isa ArgumentError
         A = grid(10, 10, Float32)
         R = sprand(Float32, 3, 4, 0.5)
         @test_throws ArgumentError apsp_gpu(R)                              # not square

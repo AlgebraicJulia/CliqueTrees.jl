@@ -546,13 +546,13 @@ function symmetric(graph::AbstractGraph{V}) where {V}
     ptr = FVector{E}(undef, n + one(V))
     tgt = FVector{V}(undef, m)
 
-    for v in vertices(fwd)
+    @inbounds for v in vertices(fwd)
         mrk[v] = zero(V)
     end
 
     p = zero(E)
 
-    for v in vertices(fwd)
+    @inbounds for v in vertices(fwd)
         mrk[v] = v
         ptr[v] = p + one(E)
 

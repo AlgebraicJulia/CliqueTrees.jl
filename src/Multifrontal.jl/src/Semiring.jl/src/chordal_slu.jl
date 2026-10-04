@@ -109,8 +109,99 @@ function Base.getproperty(F::ChordalSLU, name::Symbol)
     end
 end
 
-function Base.copyto!(F::ChordalSLU, A::SparseMatrixCSC)
-    A = permute(A, F.rperm, F.cperm)
+#
+# Each entry A[r, c] goes straight to its slot. With i = rinvp[r], j = cinvp[c] and f the front of j,
+# g the front of i (the slots of flatindex):
+#
+#   i before the component of j       -> the coupling block N (column j)
+#   i, j in one front                 -> the diagonal blocks of L and of U (both hold all of it)
+#   i > j, other fronts               -> the off-diagonal block of L at f (i in sep(f))
+#   i < j, other fronts               -> the off-diagonal block of U at g (j in sep(g))
+#
+# Every entry has its own slot, so the columns of A are independent and threads take disjoint ranges.
+# This is copyto_reference! (permute, then scatter front by front) without the permuted copy of A.
+#
+function Base.copyto!(F::ChordalSLU{<:Any, T}, A::SparseMatrixCSC) where {T}
+    z = szero(F.s, T, Val(:N))
+    pfill!(F.LDval, z); pfill!(F.LLval, z)
+    pfill!(F.UDval, z); pfill!(F.ULval, z)
+    fill!(F.Nval, z)
+
+    n = size(A, 2)
+    nchunk = getcolptr(A)[n + 1] - 1 < 2^15 ? 1 : 8 * nthreads()
+
+    @threads for k in 1:nchunk
+        scatter_columns!(F, A, cld((k - 1) * n, nchunk) + 1, cld(k * n, nchunk))
+    end
+
+    return F
+end
+
+function scatter_columns!(F::ChordalSLU{<:Any, T, I}, A::SparseMatrixCSC, c0::Integer, c1::Integer) where {T, I}
+    S = F.S.S
+    rptr = pointers(S.res); sptr = pointers(S.sep); stgt = targets(S.sep)
+    idx = S.idx; Dptr = S.Dptr; Lptr = S.Lptr
+    Bptr = F.S.Bptr; nBptr = F.S.nBptr
+    Nptr = pointers(F.S.N); Ntgt = targets(F.S.N)
+    LD = F.LDval; LL = F.LLval; UD = F.UDval; UL = F.ULval; Nval = F.Nval
+    rinvp = F.rinvp; cinvp = F.cinvp
+    Aptr = getcolptr(A); Arow = rowvals(A); Aval = nonzeros(A)
+
+    @inbounds for c in c0:c1
+        j = convert(I, cinvp[c]); f = idx[j]
+        jlo = rptr[f]; nn = rptr[f + one(I)] - jlo
+        na = sptr[f + one(I)] - sptr[f]
+        jstrt = isone(nBptr) ? one(I) : Bptr[searchsortedlast(view(Bptr, oneto(nBptr)), j)]
+
+        for p in Aptr[c]:(Aptr[c + 1] - 1)
+            i = convert(I, rinvp[Arow[p]]); x = Aval[p]
+
+            if i < jstrt
+                r = sortedindex(Ntgt, Nptr[j], Nptr[j + one(I)] - one(I), i)
+                iszero(r) || (Nval[r] = x)
+            elseif i - jlo < nn && i >= jlo
+                o = Dptr[f] + (i - jlo) + (j - jlo) * nn
+                LD[o] = x; UD[o] = x
+            elseif i > j
+                k = sortedindex(stgt, sptr[f], sptr[f + one(I)] - one(I), i)
+                iszero(k) || (LL[Lptr[f] + (k - sptr[f]) + (j - jlo) * na] = x)
+            else
+                g = idx[i]; ilo = rptr[g]; mm = rptr[g + one(I)] - ilo
+                k = sortedindex(stgt, sptr[g], sptr[g + one(I)] - one(I), j)
+                iszero(k) || (UL[Lptr[g] + (i - ilo) + (k - sptr[g]) * mm] = x)
+            end
+        end
+    end
+
+    return
+end
+
+# the index of v in the sorted range tgt[lo:hi], or 0
+function sortedindex(tgt::AbstractVector{I}, lo::I, hi::I, v::I) where {I}
+    @inbounds while lo <= hi
+        mid = (lo + hi) >>> 1; t = tgt[mid]
+        t == v && return mid
+        t < v ? (lo = mid + one(I)) : (hi = mid - one(I))
+    end
+
+    return zero(I)
+end
+
+# fill! on threads, for the large factor arrays
+function pfill!(x::AbstractVector, v)
+    n = length(x)
+    nchunk = n < 2^18 ? 1 : 4 * nthreads()
+
+    @threads for k in 1:nchunk
+        fill!(view(x, (cld((k - 1) * n, nchunk) + 1):cld(k * n, nchunk)), v)
+    end
+
+    return x
+end
+
+# copyto! through a permuted copy of A (the reference for the direct scatter above)
+function copyto_reference!(F::ChordalSLU, A::SparseMatrixCSC)
+    A = permute_csc(A, F.rperm, F.cperm)
     scopyto_offd!(F, A)
     scopyto!(F.s, F.L, A)
     scopyto!(F.s, F.U, A)

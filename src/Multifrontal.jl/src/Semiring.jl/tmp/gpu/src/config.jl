@@ -34,11 +34,31 @@ Solve and closure
 - `layer_cache = true`: the layered sweep keeps each row's recent values in shared memory (slots,
   placed by a host-side plan; layered.jl); false runs the plain layered walk.
 - `layer_slots = 0`: slots per row of that cache (0: from the device's shared memory, at most 64).
+- `layer_cache_min = 300000`: that cache only when rows × (work per row) / (fronts) below the top of the
+  tree reaches this: its plan costs the host ~0.3–0.5 µs per front, and it saves the GPU ~0.25 ms per 10⁹
+  multiply-adds on meshes (B200), little on social and power-law graphs, whose fronts are small.
+- `plan_overlap = true`: build that host-side plan on another thread while the GPU sweeps the top of
+  the tree (false: build it when the sweep reaches it, with the GPU idle).
 
 Numeric factorization
 - `factor_merge = 128`: merge chains of fronts at the top of the tree for the GPU factorization (1 = off).
+- `factor_merge_min = 16`: that merge only for a top of at least this many fronts (the fronts that reach
+  the GPU's front size and their ancestors); on a smaller top it costs more host time than it saves.
+- `factor_balance = 8`: the CPU factors the bottom of the tree in subtrees, one thread each. Subtrees with
+  more than 1/(b × threads) of the work join the GPU top, for the b in 1, 2, 4, … ≤ `factor_balance`
+  that saves the most CPU time net of the top levels it adds, if any (0 = off: a graph whose fronts are
+  all small then has no top, and one subtree, so the whole tree is factored on one thread).
+- `factor_level_work = 200000`: the CPU work (multiply-adds, a front counted as at least 256) that a
+  level added to the GPU top must save: a level costs ~50–70 µs of launches, a multiply-add ~0.3 ns.
 - `fused_front = true`: LU and both triangular closures of a ≤ 64-pivot diagonal block in one kernel.
 - `direct_assembly = true`: add children's updates straight into the factor blocks (no front matrix).
+
+Symbolic factorization
+- `ordering = "auto"`: the fill-reducing ordering (any order gives the same distances; only fill and speed
+  change). "auto": CliqueTrees.AutoOrder — per graph, HubAMF on graphs with hubs (maximum degree > 2√n),
+  BFSND (parallel nested dissection, halo AMF leaves) on lattice-like graphs, AMF otherwise; "amf": AMF;
+  "hub": HubAMF; "bfsnd": BFSND everywhere; "amd", "metis": SuiteSparse AMD and METIS NodeND (need AMD.jl /
+  Metis.jl loaded); "nd-dense": partial nested dissection with dense leaves of ≤ 150 vertices (ROME-style).
 """
 Base.@kwdef struct GPUConfig
     gemm_tune::Bool = get(ENV, "SEMIRINGGPU_TUNE", "auto") != "off"
@@ -50,9 +70,15 @@ Base.@kwdef struct GPUConfig
     layer_size::Int = 0
     layer_cache::Bool = true
     layer_slots::Int = 0
+    layer_cache_min::Int = 300000
+    plan_overlap::Bool = true
     factor_merge::Int = 128
+    factor_merge_min::Int = 16
+    factor_balance::Int = 8
+    factor_level_work::Int = 200000
     fused_front::Bool = true
     direct_assembly::Bool = true
+    ordering::String = "auto"
 end
 
 # a copy of c with some fields replaced
@@ -68,8 +94,25 @@ function check(c::GPUConfig)
     c.merge >= 1 && c.factor_merge >= 1 || throw(ArgumentError("merge widths must be at least 1"))
     0 <= c.merge_alpha || throw(ArgumentError("merge_alpha must be nonnegative"))
     c.layered_min_rows >= 1 && c.layer_size >= 0 || throw(ArgumentError("layered_min_rows must be ≥ 1 and layer_size ≥ 0"))
-    c.layer_slots >= 0 || throw(ArgumentError("layer_slots must be ≥ 0"))
+    c.layer_slots >= 0 && c.layer_cache_min >= 0 || throw(ArgumentError("layer_slots and layer_cache_min must be ≥ 0"))
+    c.factor_merge_min >= 0 && c.factor_balance >= 0 && c.factor_level_work >= 0 ||
+        throw(ArgumentError("factor_merge_min, factor_balance and factor_level_work must be ≥ 0"))
+    c.ordering in ORDERINGS || throw(ArgumentError("ordering must be one of $(join(ORDERINGS, ", ")), not $(repr(c.ordering))"))
     return c
+end
+
+const ORDERINGS = ("auto", "amf", "hub", "bfsnd", "amd", "metis", "nd-dense")
+
+"The fill-reducing ordering of the symbolic factorization (see `GPUConfig`'s `ordering`)."
+function elimination_algorithm(c::GPUConfig = config())
+    o = c.ordering
+    o == "auto" && return CliqueTrees.AutoOrder()
+    o == "amf" && return CliqueTrees.AMF()
+    o == "hub" && return CliqueTrees.HubAMF()
+    o == "bfsnd" && return CliqueTrees.BFSND()
+    o == "amd" && return CliqueTrees.AMD()
+    o == "metis" && return CliqueTrees.METIS()
+    return CliqueTrees.BFSND(; levels = 40, minsize = 150, leaf = CliqueTrees.Natural())
 end
 
 # process-wide defaults may be set by environment variables SEMIRINGGPU_<SETTING> (e.g.
@@ -81,7 +124,7 @@ function settings_from_env(env = ENV)
         v = get(env, "SEMIRINGGPU_" * uppercase(String(f)), nothing)
         isnothing(v) && continue
         T = fieldtype(GPUConfig, f)
-        push!(kw, f => (T === Bool ? parse(Bool, v) : parse(T, v)))
+        push!(kw, f => (T === String ? String(v) : T === Bool ? parse(Bool, v) : parse(T, v)))
     end
 
     return (; kw...)

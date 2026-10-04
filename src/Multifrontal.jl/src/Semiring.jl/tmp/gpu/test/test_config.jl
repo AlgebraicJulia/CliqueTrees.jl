@@ -43,6 +43,7 @@ function other_value(f)
     d isa Bool && return !d
     d isa Integer && return d + 1
     d isa AbstractFloat && return d / 2
+    f == :ordering && return d == "amf" ? "auto" : "amf"
     error("no test value for the setting $f::$(typeof(d)); add one to test_config.jl")
 end
 
@@ -61,7 +62,7 @@ rootcause(e) = e isa CompositeException ? rootcause(first(e.exceptions)) : e isa
             @test haskey(documented, f)                     # every setting is documented with its default
             haskey(documented, f) || continue
             T = fieldtype(GPUConfig, f)
-            @test getfield(d, f) == parse(T, documented[f])
+            @test getfield(d, f) == (T === String ? strip(documented[f], '"') : parse(T, documented[f]))
         end
         @test config() == d                                 # in effect at the top level
         # the values themselves (bench/portable.jl's measured best); settings added later are covered by
@@ -226,6 +227,7 @@ end
                    ("MERGE_ALPHA", "half"), ("MERGE_ALPHA", "")]
         @test_throws ArgumentError settings_from_env(Dict("SEMIRINGGPU_" * k => v))
     end
+    has(:ordering) && @test_throws ArgumentError SemiringGPU.check(GPUConfig(GPUConfig(); settings_from_env(Dict("SEMIRINGGPU_ORDERING" => "bogus"))...))
 end
 
 @testset "SEMIRINGGPU_* variables when the module loads" begin

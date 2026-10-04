@@ -142,7 +142,7 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     end
 
     Rn = Vector{I}(undef, ng + 1); Sn = Vector{I}(undef, ng + 1); Dn = Vector{I}(undef, ng + 1); Ln = Vector{I}(undef, ng + 1)
-    Tn = I[]
+    Tn = Vector{I}(undef, sum(((h, g),) -> na(g), groups; init = 0))     # (sized once: grown, it left ~15 MB of garbage per call)
     Rn[1] = Rptr[1]; Sn[1] = 1; Dn[1] = 1; Ln[1] = 1
 
     stored(h) = !compact || isnothing(allowed) || allowed[h]
@@ -150,7 +150,7 @@ function amalgamate_fronts(::Type{I}, nmax::Integer, alpha::Real, Rptr, Sptr, St
     for (q, (h, g)) in enumerate(groups)
         w = Int(Rptr[g + 1] - Rptr[h]); a = na(g)
         Rn[q + 1] = Rptr[g + 1]
-        append!(Tn, sep(g))
+        copyto!(Tn, Sn[q], Stgt, Sptr[g], a)
         Sn[q + 1] = Sn[q] + a
         Dn[q + 1] = Dn[q] + (stored(h) ? w * w : 0)
         Ln[q + 1] = Ln[q] + (stored(h) ? w * a : 0)
@@ -182,14 +182,113 @@ end
 # blocks of its group (the members' entries are disjoint, the rest stays 0: the semiring zero)
 function amalgamate_maps_gpu!(mLD, mUD, mLL, mUL, members, group, groups, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
     isempty(members) && return
+    #
+    # The work is flattened: one thread per map entry of all member fronts, which finds its front by
+    # binary search in the prefix sums of the fronts' entries. Fronts range from one entry to millions,
+    # so a fixed number of threads per front either idles (a block each) or serializes the largest ones
+    # (a warp each: 5× slower). The inputs go up as Int32 in one upload (the maps are Int32, and
+    # amalgamate_fronts checked that every offset fits): 64-bit inputs made every store a checked
+    # conversion.
+    #
+    work = zeros(Int, length(members) + 1)
+
+    for (w, m) in enumerate(members)
+        nm = Rptr[m + 1] - Rptr[m]; am = Sptr[m + 1] - Sptr[m]
+        work[w + 1] = work[w] + nm * nm + am * nm
+    end
+
+    total = work[end]
+    (iszero(total) || total >= typemax(Int32)) && return
+    parts = (members, group, first.(groups), last.(groups), Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln, work)
+    offs = cumsum([0; [length(p) for p in parts]])
+    buf = Vector{Int32}(undef, offs[end])
+
+    for (k, p) in enumerate(parts), (i, x) in enumerate(p)
+        buf[offs[k] + i] = x % Int32
+    end
+
+    d = CuVector(buf)
+    o = ntuple(k -> Int32(offs[k]), 12)
+    nb = min(cld(total, 256), 2^16)
+    @cuda threads = 256 blocks = nb amalgamate_maps_kernel!(mLD, mUD, mLL, mUL, d, o, Int32(length(members)), Int32(total))
+    CUDA.unsafe_free!(d)
+    return
+end
+
+# (e + 1)-th entry of a column-major matrix with d rows: its (row, column), 1-based, in 32 bits
+@inline function cm_index32(e::Int32, d::Int32)
+    a = e % UInt32; b = d % UInt32
+    return Core.Intrinsics.urem_int(a, b) % Int32 + Int32(1), Core.Intrinsics.udiv_int(a, b) % Int32 + Int32(1)
+end
+
+function amalgamate_maps_kernel!(mLD, mUD, mLL, mUL, buf, o, nmem, total)
+    one32 = Int32(1)
+    E = (blockIdx().x - one32) * blockDim().x + threadIdx().x - one32
+
+    @inbounds while E < total
+        members(i) = buf[o[1] + i]; group(i) = buf[o[2] + i]; gh(i) = buf[o[3] + i]; gg(i) = buf[o[4] + i]
+        Rptr(i) = buf[o[5] + i]; Sptr(i) = buf[o[6] + i]; Stgt(i) = buf[o[7] + i]
+        Dptr(i) = buf[o[8] + i]; Lptr(i) = buf[o[9] + i]; Dn(i) = buf[o[10] + i]; Ln(i) = buf[o[11] + i]; work(i) = buf[o[12] + i]
+        # the member w with work(w) ≤ E < work(w + 1)
+        lo = one32; hi = nmem
+
+        while lo < hi
+            mid = (lo + hi + one32) >> one32
+            work(mid) <= E ? (lo = mid) : (hi = mid - one32)
+        end
+
+        w = lo; e = E - work(w)
+        m = members(w)
+        q = group(m); h = gh(q); g = gg(q)
+        r0 = Rptr(h); r1 = Rptr(g + one32) - one32; wd = r1 - r0 + one32
+        s0 = Sptr(g); a = Sptr(g + one32) - s0                 # sep(g) = Stgt[s0:s0 + a - 1]
+        off = Rptr(m) - r0                                     # offset of m in the merged residual
+        nm = Rptr(m + one32) - Rptr(m); am = Sptr(m + one32) - Sptr(m); sm0 = Sptr(m)
+        Dm = Dptr(m); Lm = Lptr(m); d0 = Dn(q) - one32; l0 = Ln(q) - one32
+
+        if e < nm * nm
+            #   D block of m (nm × nm, column-major) at (off + i, off + j) of the merged wd × wd block
+            i, j = cm_index32(e, nm)
+            v = Dm + (j - one32) * nm + i - one32
+            pos = d0 + (off + i) + (off + j - one32) * wd
+            mLD[pos] = v; mUD[pos] = v
+        else
+            #   separator row r of m (vertex u), entry c: L₂₁ is am × nm, U₁₂ is nm × am
+            r, c = cm_index32(e - nm * nm, am)
+            u = Stgt(sm0 + r - one32)
+
+            if r0 <= u <= r1                                   # a later member's residual vertex: inside the merged block
+                li = u - r0 + one32
+                mLD[d0 + li + (off + c - one32) * wd] = -(Lm + (c - one32) * am + r - one32)
+                mUD[d0 + (off + c) + (li - one32) * wd] = -(Lm + (r - one32) * nm + c - one32)
+            else                                               # a vertex of sep(g): its position k, by binary search
+                lo2 = Int32(0); hi2 = a
+                while lo2 < hi2
+                    mid = (lo2 + hi2) >> one32
+                    Stgt(s0 + mid) < u ? (lo2 = mid + one32) : (hi2 = mid)
+                end
+                k = lo2 + one32
+                mLL[l0 + k + (off + c - one32) * a] = Lm + (c - one32) * am + r - one32
+                mUL[l0 + (off + c) + (k - one32) * wd] = Lm + (r - one32) * nm + c - one32
+            end
+        end
+
+        E += blockDim().x * gridDim().x
+    end
+
+    return
+end
+
+function amalgamate_maps_gpu_ref!(mLD, mUD, mLL, mUL, members, group, groups, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
+    isempty(members) && return
     gh = Int32[h for (h, _) in groups]; gg = Int32[g for (_, g) in groups]
     dev(x) = CuVector(x)                                   # (as they are: no host copies to Int32)
-    @cuda threads = 256 blocks = length(members) amalgamate_maps_kernel!(mLD, mUD, mLL, mUL, dev(members), dev(group),
+    @cuda threads = 256 blocks = length(members) amalgamate_maps_kernel_ref!(mLD, mUD, mLL, mUL, dev(members), dev(group),
         dev(gh), dev(gg), dev(Rptr), dev(Sptr), dev(Stgt), dev(Dptr), dev(Lptr), dev(Dn), dev(Ln))
     return
 end
 
-function amalgamate_maps_kernel!(mLD, mUD, mLL, mUL, members, group, gh, gg, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
+function amalgamate_maps_kernel_ref!(mLD, mUD, mLL, mUL, members, group, gh, gg, Rptr, Sptr, Stgt, Dptr, Lptr, Dn, Ln)
     m = members[blockIdx().x]
     t = threadIdx().x - Int32(1); nt = blockDim().x
 

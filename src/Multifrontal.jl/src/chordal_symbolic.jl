@@ -314,6 +314,7 @@ function ChordalSymbolic(res::BipartiteGraph{I, I}, sep::BipartiteGraph{I, I}, t
     Lp = zero(I)
 
     idx = FVector{I}(undef, nov(res))
+    pos = FVector{I}(undef, nov(res))
     Dptr = FVector{I}(undef, nv(res) + one(I))
     Lptr = FVector{I}(undef, nv(res) + one(I))
 
@@ -328,25 +329,24 @@ function ChordalSymbolic(res::BipartiteGraph{I, I}, sep::BipartiteGraph{I, I}, t
         jres = neighbors(res, j)
         jsep = neighbors(sep, j)
 
-        for w in jres
+        q = zero(I)
+
+        @inbounds for w in jres
             idx[w] = j
+            pos[w] = q += one(I)
+        end
+        #
+        # the position of each vertex of the front, once: a child's separator is a subset of it, and
+        # looking its vertices up costs the size of the separator (a merge with the front's list
+        # costs the front's size per child, quadratic for a front with many children)
+        #
+        @inbounds for w in jsep
+            pos[w] = q += one(I)
         end
 
         for i in neighbors(chd, j)
-            q = one(I); w = jres[q]
-
-            for p in incident(sep, i)
-                v = targets(sep)[p]
-
-                while w < v && q < nn
-                    q += one(I); w = jres[q]
-                end
-
-                while w < v
-                    q += one(I); w = jsep[q - nn]
-                end
-
-                targets(rel)[p] = q
+            @inbounds for p in incident(sep, i)
+                targets(rel)[p] = pos[targets(sep)[p]]
             end
 
             ma = eltypedegree(sep, i)

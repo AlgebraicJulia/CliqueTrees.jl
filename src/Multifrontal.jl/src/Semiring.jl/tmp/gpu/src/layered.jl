@@ -196,12 +196,15 @@ function slot_count(::Type{T}, regs::Integer) where {T}
     return clamp((p.shmem_sm - nb * 1024) ÷ (nb * R * sizeof(T)), 1, min(SLOT_MAX, 48 * 1024 ÷ (R * sizeof(T))))
 end
 
-function slot_plan(G::GPUSLU{<:Any, T}, S::Int, R::Int) where {T}
+# mapped: the plan's columns are storage columns of a ColMapped work matrix, ColMapped(·, G.rperm)
+function slot_plan(G::GPUSLU{<:Any, T}, S::Int, R::Int; mapped::Bool = false) where {T}
     lp = layer_plan(G)
-    @step "slot plan" get!(G.cache, Symbol(:slots, lp.m, :_, S, :_, R)) do
-        build_slot_plan(G, lp, S, R)
+    @step "slot plan" get!(G.cache, slot_key(lp, S, R, mapped)) do
+        build_slot_plan(G, lp, S, R; wcol = mapped ? host_rperm(G) : nothing)
     end
 end
+
+slot_key(lp, S, R, mapped::Bool) = Symbol(:slots, lp.m, :_, S, :_, R, mapped ? :_m : :_)
 
 pack8(a, b, c, d) = (a | (b << 8) | (c << 16) | (d << 24)) % Int32
 
@@ -227,9 +230,10 @@ pack8(a, b, c, d) = (a | (b << 8) | (c << 16) | (d << 24)) % Int32
 # of a when i is a's residual column k > j, and the semiring zero otherwise: the same products as the
 # front-by-front walk plus zero terms, exact for idempotent ⊕.
 #
-function build_slot_plan(G::GPUSLU{<:Any, T}, lp::LayerPlan, S::Int, R::Int) where {T}
+function build_slot_plan(G::GPUSLU{<:Any, T, I}, lp::LayerPlan, S::Int, R::Int; wcol = nothing) where {T, I}
     S < 255 || return nothing                   # slot indices must fit a byte
-    st = SlotStructure(G.hRptr, G.hSptr, G.hDptr, G.hLptr, Array(G.Stgt), Array(G.pnt), Array(first_descendants(G)), G.n, G.nf, S, R * sizeof(T))
+    st = SlotStructure(G.hRptr, G.hSptr, G.hDptr, G.hLptr, Array(G.Stgt), Array(G.pnt), Array(first_descendants(G)), G.n, G.nf, S, R * sizeof(T),
+        isnothing(wcol) ? I[] : Vector{I}(wcol))
     max(length(G.LLval), length(G.LDval)) < typemax(Int32) || return nothing    # coefficient sources must fit 32 bits
     sread = 0; gread = 0
     pool = SlotScratch[]; plock = ReentrantLock()
@@ -296,7 +300,11 @@ struct SlotStructure{I}
     Stgt::Vector{I}; pnt::Vector{I}; fd::Vector{I}
     n::Int; nf::Int; S::Int
     RB::Int                                     # bytes per slot (R sizeof(T))
+    wcol::Vector{I}                             # by column: where it is stored (empty: there)
 end
+
+# the storage column of a column, in the plan's entries
+@inline wcol(st::SlotStructure, col) = isempty(st.wcol) ? col : oftype(col, st.wcol[col])
 
 # scratch of one task, reused from region to region (no allocation per region once grown)
 mutable struct SlotScratch
@@ -586,7 +594,7 @@ function slot_region!(sc::SlotScratch, st::SlotStructure, fs)
         ep = length(ent) + 1; cp = length(cmap) + 1
 
         for o in o0:(o0 + w - 1)
-            push!(ent, sc.cout[o])
+            push!(ent, wcol(st, sc.cout[o]))
         end
 
         slot_align!(ent, Int32(0))
@@ -625,7 +633,7 @@ function slot_region!(sc::SlotScratch, st::SlotStructure, fs)
 
         for q in 1:cld(nm, 4)                   # the other inputs read from C, in groups of 4 (padded like the cached ones)
             for k in 1:4
-                push!(ent, sc.cin[i0 + sc.miss[min(4q - 4 + k, nm)] - 1])
+                push!(ent, wcol(st, sc.cin[i0 + sc.miss[min(4q - 4 + k, nm)] - 1]))
             end
 
             for k in 1:4
@@ -659,7 +667,7 @@ function slot_region!(sc::SlotScratch, st::SlotStructure, fs)
 
         push!(hdr, zp, w | (length(sc.pf) << 4) | (cld(nm, 4) << 6), ngrp, ep, cp, st.fd[r], r)
         push!(hdr, pack8(okeep[1], okeep[2], okeep[3], okeep[4]), pack8(okeep[5], okeep[6], okeep[7], okeep[8]), pack8(pk1, pk2, 255, 255), 0, 0)
-        c > 1 && (hdr[end - 2SLOT_HDR + 11] = pcol1; hdr[end - 2SLOT_HDR + 12] = pcol2)   # the chunk before loads them
+        c > 1 && (hdr[end - 2SLOT_HDR + 11] = ispositive(pcol1) ? wcol(st, pcol1) : 0; hdr[end - 2SLOT_HDR + 12] = ispositive(pcol2) ? wcol(st, pcol2) : 0)   # the chunk before loads them
         slot_align!(ent, Int32(0)); slot_align!(cmap, Int64(0))
         sc.sread += nh; sc.gread += length(sc.pf) + nm
         (length(ent) < 2^30 && length(cmap) < 2^30 && nm < 2^24) || return false
@@ -877,14 +885,16 @@ end
 # The L sweep below the top of the tree with the slot-cached walk; nothing when the plan does not
 # apply (the caller then runs layered_down_kernel!).
 #
-function layered_slot_sweep!(G::GPUSLU, W::CuMatrix{T}, trans::Val, timer, zr) where {T}
+function layered_slot_sweep!(G::GPUSLU, W::Union{CuMatrix{T}, ColMapped{T}}, trans::Val, timer, zr) where {T}
     s = G.s
+    mapped = W isa ColMapped                    # (then the plan's columns are W.p's: see slot_plan)
+    W = storage_matrix(W)
     zargs = isnothing(zr) ? (Val(false), nothing, nothing, nothing) : (Val(true), zr, G.cinvp, G.idx)
     R = SLOT_TB * SLOT_Q
     i32 = get!(() -> CuVector{Int32}(undef, 4), G.cache, :int32)::CuVector{Int32}      # stands for the plan's arrays, to compile first
     kernel = @cuda launch = false maxregs = SLOT_MAXREGS layered_down_slot_kernel!(s, trans, W, Val(SLOT_Q), Val(SLOT_TB), Int32(1),
         i32, i32, i32, G.LLval, zargs...)
-    P = slot_plan(G, slot_count(T, CUDA.registers(kernel)), R)
+    P = slot_plan(G, slot_count(T, CUDA.registers(kernel)), R; mapped)
     isnothing(P) && return nothing
     @phase timer :L_layered slot_coefficients!(P, G)
     nb = cld(size(W, 1), R)

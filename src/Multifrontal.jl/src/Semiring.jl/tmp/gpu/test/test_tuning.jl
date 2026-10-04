@@ -4,7 +4,8 @@
 #   julia --project=. -t auto test/test_tuning.jl
 #
 # What is observable (src/SemiringGPU.jl, kernel selection): the tuning file (one tab-separated line per
-# tuned shape class: key, version, bm, bn, bk, tm, tn, appended under `<file>.lock`), and the in-memory
+# tuned shape class: key, version, bm, bn, bk, tm, tn, and lm, split, rem unless those are the defaults,
+# appended under `<file>.lock`), and the in-memory
 # table SemiringGPU.GEMM_TABLE. gemm_table_file() reads SEMIRINGGPU_TUNE_FILE at call time, but the
 # file is read only once per process (at the first tuned GEMM), so reading it back, concurrent writers
 # and SEMIRINGGPU_TUNE=off are tested in fresh processes. A retuned shape class always appends a line,
@@ -30,14 +31,22 @@ readlines_or_empty(path) = isfile(path) ? readlines(path) : String[]
 # (key, GemmConfig) of a well-formed line, else nothing
 function parse_entry(line)
     f = split(line, '\t')
-    length(f) == 7 || return nothing
-    v = tryparse.(Int, f[2:7])
+    length(f) in (7, 10) || return nothing
+    v = tryparse.(Int, f[2:end])
     any(isnothing, v) && return nothing
     return String(f[1]), GemmConfig(v...)
 end
 
-cfgstring(c::GemmConfig) = join((c.version, c.bm, c.bn, c.bk, c.tm, c.tn), ',')
-entry_line(key, c::GemmConfig) = join((key, c.version, c.bm, c.bn, c.bk, c.tm, c.tn), '\t')
+cfgstring(c::GemmConfig) = join((c.version, c.bm, c.bn, c.bk, c.tm, c.tn, c.lm, c.split, c.rem), ',')
+entry_line(key, c::GemmConfig) = join(SemiringGPU.gemm_fields(key, c), '\t')
+
+# a configuration the tuner may pick for an output n columns wide: a candidate of the first round, or
+# (not in place) one of them with split-K or a remainder launch (the second round)
+function tuner_choice(c::GemmConfig, n, inplace)
+    base = GemmConfig(c; split = 1, rem = 0)
+    base in gemm_candidates(n, inplace, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32)) || return false
+    return c == base || !inplace && c.version in (7, 8)
+end
 
 # a shape class: (m, n, k, overwrite, inplace); in place means C === A (so k == n and overwrite)
 shape_arg(sh) = join(Int.(sh), ',')
@@ -97,7 +106,7 @@ n0 = length(GEMM_TABLE)
 for sh in SHAPES
     try
         key, c, ok = run_shape(sh...)
-        println("SHAPE ", join(sh, ','), " KEY ", key, " CFG ", c === nothing ? "none" : join((c.version, c.bm, c.bn, c.bk, c.tm, c.tn), ','), " OK ", ok)
+        println("SHAPE ", join(sh, ','), " KEY ", key, " CFG ", c === nothing ? "none" : join((c.version, c.bm, c.bn, c.bk, c.tm, c.tn, c.lm, c.split, c.rem), ','), " OK ", ok)
     catch e
         println("SHAPE ", join(sh, ','), " CRASH ", typeof(e), ": ", first(split(sprint(showerror, e), '\\n')))
     end
@@ -179,13 +188,13 @@ end
     k1, c1 = e
     @test k1 == shape_key(S_ACC)
     @test startswith(k1, GEMM_TUNE_KEY * "|")
-    @test occursin("|MinPlus|Float32|acc|out|", k1)
-    @test c1 in gemm_candidates(150, false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
+    @test occursin("MinPlus|Float32|acc|out|", k1)           # (the semiring's full name: …Semiring.MinPlus)
+    @test tuner_choice(c1, 150, false)
     @test GEMM_TABLE[k1] == c1
     @test !ispath(TUNE_FILE * ".lock")                # the lock is released
 
-    # the same shape class again (other sizes in the same buckets): answered from memory
-    sgemx_gpu!(s, operand(290, 140), operand(290, 230), operand(230, 140))
+    # the same shape class again (other sizes in the same classes: n to a multiple of 16): answered from memory
+    sgemx_gpu!(s, operand(290, 155), operand(290, 230), operand(230, 155))
     @test length(readlines_or_empty(TUNE_FILE)) == 1
 
     # overwrite and in place are their own classes; in place only tiles one tile wide
@@ -196,9 +205,9 @@ end
     @test length(L) == 3
     E = Dict(parse_entry(l) for l in L)
     @test Set(keys(E)) == Set(shape_key.((S_ACC, S_OW, S_INPLACE)))
-    @test E[shape_key(S_OW)] in gemm_candidates(150, false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
-    @test E[shape_key(S_INPLACE)] in gemm_candidates(100, true, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
-    @test E[shape_key(S_INPLACE)].bn >= 100
+    @test tuner_choice(E[shape_key(S_OW)], 150, false)
+    @test tuner_choice(E[shape_key(S_INPLACE)], 100, true)
+    @test SemiringGPU.inplace_config(E[shape_key(S_INPLACE)], 100)
     @test all(E[k] == GEMM_TABLE[k] for k in keys(E))
 end
 
@@ -281,7 +290,7 @@ end
         @test length(new) == 1                                                         # only the stale class is tuned
         e = parse_entry(only(new))
         @test e !== nothing && e[1] == kstale                                          # under the current key
-        @test e !== nothing && e[2] in gemm_candidates(S_STALE[2], false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32))
+        @test e !== nothing && tuner_choice(e[2], S_STALE[2], false)
         @test r.saved == 1
     end
     @test !ispath(path * ".lock")
@@ -319,7 +328,7 @@ end
     for (k, _) in good; counts[k] = get(counts, k, 0) + 1; end
     @test Set(keys(counts)) == keys_expected
     @test all(==(2), values(counts))                               # each class once per process
-    @test all(c in gemm_candidates(sh[2], false, min3_ok(s, Float32), true, SemiringGPU.pair_ok(s, Float32)) for sh in shapes for (k, c) in good if k == shape_key(sh))
+    @test all(tuner_choice(c, sh[2], false) for sh in shapes for (k, c) in good if k == shape_key(sh))
     @test !ispath(path * ".lock")
 end
 

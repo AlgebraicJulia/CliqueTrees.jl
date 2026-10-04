@@ -69,6 +69,139 @@ function sccs!(low::AbstractVector{I}, arc::AbstractVector{I}, ptr::AbstractVect
     return BipartiteGraph{I, I}(n, c, n, ptr, tgt)
 end
 
+#
+# A[p, q] for a sparse matrix whose columns are sorted and duplicate-free: the same arrays as
+# SparseArrays.permute(A, p, q), built in parallel. Column j of the result is column q[j] of A with its
+# rows renamed by p⁻¹ and sorted; the columns are independent, so threads fill disjoint ranges.
+# (SparseArrays' version is serial and goes through two transposes: 19 ms for 2M entries.)
+#
+function permute_csc(A::SparseMatrixCSC{T, I}, p::AbstractVector, q::AbstractVector) where {T, I}
+    m, n = size(A)
+    Aptr = getcolptr(A); Arow = rowvals(A); Aval = nonzeros(A)
+    ip = Vector{I}(undef, m)
+
+    @inbounds for i in oneto(m)
+        ip[p[i]] = i
+    end
+
+    ptr = Vector{I}(undef, n + 1)
+    @inbounds ptr[1] = one(I)
+
+    @inbounds for j in oneto(n)
+        c = q[j]
+        ptr[j + 1] = ptr[j] + (Aptr[c + 1] - Aptr[c])
+    end
+
+    nz = Int(ptr[n + 1]) - 1
+    row = Vector{I}(undef, nz)
+    val = Vector{T}(undef, nz)
+    nchunk = nz < 2^16 ? 1 : 8 * nthreads()
+
+    if isone(nchunk)                               # (no threads to wake for a small matrix)
+        permute_csc_columns!(row, val, ptr, Aptr, Arow, Aval, ip, q, 1, n)
+    else
+        @threads for k in 1:nchunk
+            permute_csc_columns!(row, val, ptr, Aptr, Arow, Aval, ip, q, cld((k - 1) * n, nchunk) + 1, cld(k * n, nchunk))
+        end
+    end
+
+    return SparseMatrixCSC(m, n, ptr, row, val)
+end
+
+# the graph of the pattern of A[p, q] (columns sorted), without the values
+function permute_pattern(A::SparseMatrixCSC{<:Any, I}, p::AbstractVector, q::AbstractVector) where {I}
+    m, n = size(A)
+    Aptr = getcolptr(A); Arow = rowvals(A)
+    ip = Vector{I}(undef, m)
+
+    @inbounds for i in oneto(m)
+        ip[p[i]] = i
+    end
+
+    ptr = FVector{I}(undef, n + 1)
+    @inbounds ptr[1] = one(I)
+
+    @inbounds for j in oneto(n)
+        c = q[j]
+        ptr[j + 1] = ptr[j] + (Aptr[c + 1] - Aptr[c])
+    end
+
+    nz = ptr[n + 1] - one(I)
+    row = FVector{I}(undef, nz)
+    nchunk = nz < 2^16 ? 1 : 8 * nthreads()
+
+    if isone(nchunk)                               # (no threads to wake for a small matrix)
+        permute_pattern_columns!(row, ptr, Aptr, Arow, ip, q, 1, n)
+    else
+        @threads for k in 1:nchunk
+            permute_pattern_columns!(row, ptr, Aptr, Arow, ip, q, cld((k - 1) * n, nchunk) + 1, cld(k * n, nchunk))
+        end
+    end
+
+    return BipartiteGraph{I, I}(m, n, nz, ptr, row)
+end
+
+function permute_pattern_columns!(row::AbstractVector{I}, ptr, Aptr, Arow, ip, q, j0::Integer, j1::Integer) where {I}
+    @inbounds for j in j0:j1
+        c = q[j]; a = Aptr[c]; o = ptr[j]; d = ptr[j + 1] - o
+
+        for t in 0:(d - 1)
+            row[o + t] = ip[Arow[a + t]]
+        end
+
+        if d > 24                                  # rows are distinct: an unstable in-place sort will do
+            r = view(row, o:(o + d - 1))
+            issorted(r) || sort!(r; alg = QuickSort)  # (sorted already when the relabelling keeps the order)
+            continue
+        end
+
+        for t in 1:(d - 1)
+            r = row[o + t]; u = t - 1
+
+            while u >= 0 && row[o + u] > r
+                row[o + u + 1] = row[o + u]
+                u -= 1
+            end
+
+            row[o + u + 1] = r
+        end
+    end
+
+    return
+end
+
+function permute_csc_columns!(row::Vector{I}, val::Vector{T}, ptr, Aptr, Arow, Aval, ip, q, j0::Integer, j1::Integer) where {I, T}
+    @inbounds for j in j0:j1
+        c = q[j]; a = Aptr[c]; o = ptr[j]; d = ptr[j + 1] - o
+
+        for t in 0:(d - 1)
+            row[o + t] = ip[Arow[a + t]]
+            val[o + t] = Aval[a + t]
+        end
+
+        if d > 32                                  # a long column: sort it through a permutation
+            rs = view(row, o:(o + d - 1)); vs = view(val, o:(o + d - 1))
+            σ = sortperm(rs)
+            vs .= vs[σ]; rs .= rs[σ]
+            continue
+        end
+
+        # insertion sort of a short column by row (rows are distinct)
+        for t in 1:(d - 1)
+            r = row[o + t]; v = val[o + t]; u = t - 1
+
+            while u >= 0 && row[o + u] > r
+                row[o + u + 1] = row[o + u]; val[o + u + 1] = val[o + u]
+                u -= 1
+            end
+
+            row[o + u + 1] = r; val[o + u + 1] = v
+        end
+    end
+
+    return
+end
+
 function subgraph(graph::BipartiteGraph{I}, strt::I, stop::I) where {I}
     @assert one(I) <= strt <= stop <= nv(graph)
 

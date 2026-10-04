@@ -65,6 +65,10 @@ export BFS,
     ConnectedComponents,
     BestWidth,
     BestFill,
+    HubAMF,
+    BFSND,
+    AutoOrder,
+    Natural,
     permutation
 
 # Trees
@@ -99,6 +103,7 @@ include("bipartite_edge_iter.jl")
 include("lower_bound_algorithms.jl")
 include("dissection_algorithms.jl")
 include("elimination_algorithms.jl")
+include("fast_orderings.jl")
 include("parent.jl")
 include("trees.jl")
 include("supernode_types.jl")

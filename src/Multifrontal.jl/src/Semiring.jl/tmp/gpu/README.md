@@ -74,6 +74,7 @@ using SemiringGPU, CUDA
 D = apsp_gpu(A)                          # A: n × n SparseMatrixCSC{Float32}, A[i, j] = weight of the arc i → j;
                                          # D[i, j] = A*[i, j] = distance i → j, a CuMatrix in the labels of A
 H = apsp_gpu(A; output = :host)          # the same, as a Matrix
+E, cols = apsp_gpu(A; columns = :elimination)   # E[i, k] = A*[i, cols[k]]: skips the final relabel pass
 X = apsp_gpu(A, sources)                 # k × n: X[t, :] = A*[sources[t], :] (any order, repeats allowed)
 
 using SemiringGPU.Semiring: MinPlus, MaxPlus, MaxMin, PlusProd
@@ -138,7 +139,14 @@ end
 
 ```
 SEMIRINGGPU_TUNE=off julia --project=. script.jl  # no GEMM autotuning (heuristic kernel choice)
+SEMIRINGGPU_ORDERING=amf julia --project=. script.jl   # fill-reducing ordering: auto (default), amf, hub, bfsnd, amd, metis
 ```
+
+Host threads: start Julia with about half the cores, e.g. `julia -t 8` on a 16-core allocation. The host
+phases (ordering, symbolic analysis, the CPU part of the factorization) use the Julia threads, and with one
+per core the CUDA driver's and CUDA.jl's synchronization threads find no free core: on HPG's 16-core
+allocations, `-t 16` stalled a third of the calls on small graphs by 10–15 ms, while `-t 8` was as fast or
+faster on all 30 benchmark graphs.
 
 ## How it works
 

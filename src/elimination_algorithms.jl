@@ -1554,8 +1554,17 @@ function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V)
 end
 
 function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph)
-    simple = simplegraph(graph)
+    # simplegraph only drops self-loops (in order), so a graph without any is passed as it is
+    simple = graph isa BipartiteGraph && !hasselfloops(graph) ? graph : simplegraph(graph)
     return amf(nv(simple), weights, pointers(simple), targets(simple))
+end
+
+function hasselfloops(graph::BipartiteGraph)
+    @inbounds for v in vertices(graph), w in neighbors(graph, v)
+        w == v && return true
+    end
+
+    return false
 end
 
 function mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
