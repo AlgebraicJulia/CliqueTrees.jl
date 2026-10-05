@@ -1,12 +1,16 @@
+const GEMX_MR   = 8
+const GEMX_NR   = 4
+const GEMX_LEAF = 256
+
 # ===== gemm! =====
 
-function gemm!(tA::Val, tB::Val, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β, C::AbstractMatrix{T}) where {T <: BlasFloat}
+function gemm!(tA::Val, tB::Val, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β, C::AbstractMatrix{T}; nt::Integer = nthreads()) where {T <: BlasFloat}
     BLAS.gemm!(char(tA), char(tB), convert(T, α), A, B, convert(T, β), C)
     return
 end
 
-function gemm!(tA::Val, tB::Val, α, A::AbstractMatrix, B::AbstractMatrix, β, C::AbstractMatrix)
-    gemx!(tA, tB, α, A, B, β, C)
+function gemm!(tA::Val, tB::Val, α, A::AbstractMatrix, B::AbstractMatrix, β, C::AbstractMatrix; nt::Integer = nthreads())
+    gemx!(tA, tB, α, A, B, β, C; nt)
     return
 end
 
@@ -47,7 +51,16 @@ function gemx!(tA::Val{TA}, tB::Val{TB}, α, A::AbstractMatrix, B::AbstractVecto
     return
 end
 
-function gemx!(tA::Val{TA}, tB::Val{TB}, α, A::AbstractMatrix, B::AbstractMatrix, β, C::AbstractMatrix) where {TA, TB}
+function gemx!(tA::Val{TA}, tB::Val{TB}, α, A::AbstractMatrix{T}, B::AbstractMatrix{T}, β, C::AbstractMatrix{T}; nt::Integer = nthreads()) where {TA, TB, T}
+    #
+    #   C ← β C
+    #
+    if iszero(β)
+        fill!(C, zero(T))
+    elseif !isone(β)
+        C .*= β
+    end
+
     m = size(C, 1)
     n = size(C, 2)
 
@@ -57,66 +70,286 @@ function gemx!(tA::Val{TA}, tB::Val{TB}, α, A::AbstractMatrix, B::AbstractMatri
         k = size(A, 1)
     end
 
-    maxdim = max(m, n, k)
-
-    if maxdim <= THRESHOLD
-        gemx2!(tA, tB, α, A, B, β, C)
+    mc = min(m, GEMX_LEAF)
+    nc = min(n, GEMX_LEAF)
+    kc = min(k, GEMX_LEAF)
+    #
+    #   C ← α A B + C
+    #
+    if nt <= 1 || max(m, n, k) <= GEMX_LEAF
+        AP = FVector{T}(undef, cld(mc, GEMX_MR) * GEMX_MR * kc)
+        BP = FVector{T}(undef, cld(nc, GEMX_NR) * GEMX_NR * kc)
+        gemx_st!(tA, tB, C, A, B, α, AP, BP)
     else
-        l = prevpow(2, maxdim) >> 1
+        depth = ceil(Int, log2(nt)) + 1
+        work = Channel{Tuple{FVector{T}, FVector{T}}}(nt)
 
-        if m == maxdim
-            C₁ = view(C,     1:l, :)
-            C₂ = view(C, l + 1:m,  :)
-
-            if TA === :N
-                A₁ = view(A,     1:l, :)
-                A₂ = view(A, l + 1:m,  :)
-            else
-                A₁ = view(A, :,     1:l)
-                A₂ = view(A, :, l + 1:m)
-            end
-
-            gemx!(tA, tB, α, A₁, B, β, C₁)
-            gemx!(tA, tB, α, A₂, B, β, C₂)
-
-        elseif n == maxdim
-            C₁ = view(C, :,     1:l)
-            C₂ = view(C, :, l + 1:n)
-
-            if TB === :N
-                B₁ = view(B, :,     1:l)
-                B₂ = view(B, :, l + 1:n)
-            else
-                B₁ = view(B,     1:l, :)
-                B₂ = view(B, l + 1:n,  :)
-            end
-
-            gemx!(tA, tB, α, A, B₁, β, C₁)
-            gemx!(tA, tB, α, A, B₂, β, C₂)
-
-        else
-            if TA === :N
-                A₁ = view(A, :,     1:l)
-                A₂ = view(A, :, l + 1:k)
-            else
-                A₁ = view(A,     1:l, :)
-                A₂ = view(A, l + 1:k,  :)
-            end
-
-            if TB === :N
-                B₁ = view(B,     1:l, :)
-                B₂ = view(B, l + 1:k,  :)
-            else
-                B₁ = view(B, :,     1:l)
-                B₂ = view(B, :, l + 1:k)
-            end
-
-            gemx!(tA, tB, α, A₁, B₁, β, C)
-            gemx!(tA, tB, α, A₂, B₂, 1, C)
+        for _ in 1:nt
+            AP = FVector{T}(undef, cld(mc, GEMX_MR) * GEMX_MR * kc)
+            BP = FVector{T}(undef, cld(nc, GEMX_NR) * GEMX_NR * kc)
+            put!(work, (AP, BP))
         end
+
+        gemx_mt!(tA, tB, C, A, B, α, work, depth)
     end
 
     return
+end
+
+function gemx_mt!(tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix{T}, A::AbstractMatrix, B::AbstractMatrix, α, work::Channel, depth::Int) where {TA, TB, T}
+    m = size(C, 1)
+    n = size(C, 2)
+
+    if TA === :N
+        k = size(A, 2)
+    else
+        k = size(A, 1)
+    end
+
+    if depth <= 0 || (m <= GEMX_LEAF && n <= GEMX_LEAF && k <= GEMX_LEAF)
+        AP, BP = take!(work)
+
+        try
+            gemx_st!(tA, tB, C, A, B, α, AP, BP)
+        finally
+            put!(work, (AP, BP))
+        end
+    else
+        mx = max(m, n, k)
+
+        if m == mx
+            h = (m >> 1); h -= h % GEMX_MR; h = max(h, GEMX_MR)
+
+            if TA === :N
+                A₁ = view(A, 1:h, :); A₂ = view(A, h + 1:m, :)
+            else
+                A₁ = view(A, :, 1:h); A₂ = view(A, :, h + 1:m)
+            end
+
+            task = @spawn gemx_mt!(tA, tB, view(C, 1:h, :), A₁, B, α, work, depth - 1)
+            gemx_mt!(tA, tB, view(C, h + 1:m, :), A₂, B, α, work, depth - 1)
+            wait(task)
+        elseif n == mx
+            h = (n >> 1); h -= h % GEMX_NR; h = max(h, GEMX_NR)
+
+            if TB === :N
+                B₁ = view(B, :, 1:h); B₂ = view(B, :, h + 1:n)
+            else
+                B₁ = view(B, 1:h, :); B₂ = view(B, h + 1:n, :)
+            end
+
+            task = @spawn gemx_mt!(tA, tB, view(C, :, 1:h), A, B₁, α, work, depth - 1)
+            gemx_mt!(tA, tB, view(C, :, h + 1:n), A, B₂, α, work, depth - 1)
+            wait(task)
+        else
+            h = k >> 1
+
+            if TA === :N
+                A₁ = view(A, :, 1:h); A₂ = view(A, :, h + 1:k)
+            else
+                A₁ = view(A, 1:h, :); A₂ = view(A, h + 1:k, :)
+            end
+
+            if TB === :N
+                B₁ = view(B, 1:h, :); B₂ = view(B, h + 1:k, :)
+            else
+                B₁ = view(B, :, 1:h); B₂ = view(B, :, h + 1:k)
+            end
+
+            gemx_mt!(tA, tB, C, A₁, B₁, α, work, depth)
+            gemx_mt!(tA, tB, C, A₂, B₂, α, work, depth)
+        end
+    end
+
+    return C
+end
+
+function gemx_st!(tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, α, AP::AbstractVector, BP::AbstractVector) where {TA, TB}
+    m = size(C, 1)
+    n = size(C, 2)
+
+    if TA === :N
+        k = size(A, 2)
+    else
+        k = size(A, 1)
+    end
+
+    if m <= GEMX_LEAF && n <= GEMX_LEAF && k <= GEMX_LEAF
+        gemx_col!(tA, tB, C, A, B, α, AP, BP)
+    else
+        mx = max(m, n, k)
+
+        if m == mx
+            h = (m >> 1); h -= h % GEMX_MR; h = max(h, GEMX_MR)
+
+            if TA === :N
+                A₁ = view(A, 1:h, :); A₂ = view(A, h + 1:m, :)
+            else
+                A₁ = view(A, :, 1:h); A₂ = view(A, :, h + 1:m)
+            end
+            #
+            #   [ C₁ ]     [ A₁ ]
+            #   [ C₂ ]  ←  [ A₂ ] B + C
+            #
+            gemx_st!(tA, tB, view(C, 1:h, :),     A₁, B, α, AP, BP)
+            gemx_st!(tA, tB, view(C, h + 1:m, :), A₂, B, α, AP, BP)
+        elseif n == mx
+            h = (n >> 1); h -= h % GEMX_NR; h = max(h, GEMX_NR)
+
+            if TB === :N
+                B₁ = view(B, :, 1:h); B₂ = view(B, :, h + 1:n)
+            else
+                B₁ = view(B, 1:h, :); B₂ = view(B, h + 1:n, :)
+            end
+            #
+            #   [ C₁ C₂ ]  ←  A [ B₁ B₂ ] + C
+            #
+            gemx_st!(tA, tB, view(C, :, 1:h),     A, B₁, α, AP, BP)
+            gemx_st!(tA, tB, view(C, :, h + 1:n), A, B₂, α, AP, BP)
+        else
+            h = k >> 1
+
+            if TA === :N
+                A₁ = view(A, :, 1:h); A₂ = view(A, :, h + 1:k)
+            else
+                A₁ = view(A, 1:h, :); A₂ = view(A, h + 1:k, :)
+            end
+
+            if TB === :N
+                B₁ = view(B, 1:h, :); B₂ = view(B, h + 1:k, :)
+            else
+                B₁ = view(B, :, 1:h); B₂ = view(B, :, h + 1:k)
+            end
+            #
+            #   C  ←  [ A₁ A₂ ] [ B₁ ] + C
+            #                   [ B₂ ]
+            #
+            gemx_st!(tA, tB, C, A₁, B₁, α, AP, BP)
+            gemx_st!(tA, tB, C, A₂, B₂, α, AP, BP)
+        end
+    end
+
+    return C
+end
+
+function gemx_col!(tA::Val{TA}, tB::Val{TB}, C::AbstractMatrix, A::AbstractMatrix, B::AbstractMatrix, α, AP::AbstractVector, BP::AbstractVector) where {TA, TB}
+    m = size(C, 1)
+    n = size(C, 2)
+
+    if TA === :N
+        k = size(A, 2)
+    else
+        k = size(A, 1)
+    end
+    #
+    #   BP ← α B
+    #
+    @inbounds for j0 in 1:GEMX_NR:n
+        nt = min(GEMX_NR, n - j0 + 1)
+        off = (j0 - 1) * k
+
+        for p in 1:k
+            for j in 1:nt
+                if TB === :N
+                    Bpj = B[p, j0 + j - 1]
+                else
+                    Bpj = conj(B[j0 + j - 1, p])
+                end
+
+                BP[off + (p - 1) * GEMX_NR + j] = α * Bpj
+            end
+        end
+    end
+    #
+    #   AP ← A
+    #
+    @inbounds for i0 in 1:GEMX_MR:m
+        mt = min(GEMX_MR, m - i0 + 1)
+        off = (i0 - 1) * k
+
+        for p in 1:k
+            for i in 1:mt
+                if TA === :N
+                    Aip = A[i0 + i - 1, p]
+                else
+                    Aip = conj(A[p, i0 + i - 1])
+                end
+
+                AP[off + (p - 1) * GEMX_MR + i] = Aip
+            end
+        end
+    end
+    #
+    #   C ← A B + C
+    #
+    @inbounds for j0 in 1:GEMX_NR:n
+        for i0 in 1:GEMX_MR:m
+            mt = min(GEMX_MR, m - i0 + 1)
+            nt = min(GEMX_NR, n - j0 + 1)
+
+            if mt == GEMX_MR && nt == GEMX_NR
+                gemx_col_kernel!(C, AP, (i0 - 1) * k + 1, BP, (j0 - 1) * k + 1, i0, j0, k)
+            else
+                for j in 1:nt
+                    for p in 1:k
+                        b = BP[(j0 - 1) * k + (p - 1) * GEMX_NR + j]
+
+                        for i in 1:mt
+                            C[i0 + i - 1, j0 + j - 1] = muladd(AP[(i0 - 1) * k + (p - 1) * GEMX_MR + i], b, C[i0 + i - 1, j0 + j - 1])
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return C
+end
+
+@generated function gemx_col_kernel!(C::AbstractMatrix, AP::AbstractVector, ap0::Int, BP::AbstractVector, bp0::Int, i0::Int, j0::Int, k::Int)
+    load  = Expr[]   # Δij ← C[i, j]
+    la    = Expr[]   # ai  ← AP[…]
+    lb    = Expr[]   # bj  ← BP[…]
+    fma   = Expr[]   # Δij ← ai bj + Δij
+    store = Expr[]   # C[i, j] ← Δij
+
+    for i in 1:GEMX_MR
+        ai = Symbol(:a, i)
+        push!(la, :($ai = AP[aoff + $(i - 1)]))
+    end
+
+    for j in 1:GEMX_NR
+        bj = Symbol(:b, j)
+        push!(lb, :($bj = BP[boff + $(j - 1)]))
+
+        for i in 1:GEMX_MR
+            ai  = Symbol(:a, i)
+            Δij = Symbol(:Δ, i, j)
+            push!(load,  :($Δij = C[i0 + $(i - 1), j0 + $(j - 1)]))
+            push!(fma,   :($Δij = muladd($ai, $bj, $Δij)))
+            push!(store, :(C[i0 + $(i - 1), j0 + $(j - 1)] = $Δij))
+        end
+    end
+
+    return quote
+        $(Expr(:meta, :inline))
+        @inbounds @fastmath begin
+            $(load...)
+
+            for p in 1:k
+                aoff = ap0 + (p - 1) * GEMX_MR
+                boff = bp0 + (p - 1) * GEMX_NR
+
+                $(la...)
+                $(lb...)
+                $(fma...)
+            end
+
+            $(store...)
+        end
+
+        return
+    end
 end
 
 @generated function gemx_tile!(c::AbstractVector, A::AbstractMatrix, b::AbstractVector, α, istrt, ::Val{TILE}) where {TILE}
@@ -173,34 +406,6 @@ function gemx2!(::Val{:N}, ::Val{:N}, α, A::AbstractMatrix, b::AbstractVector, 
     @inbounds while i +  3 <= m; gemx_tile!(c, A, b, α, i, Val( 4)); i +=  4; end
     @inbounds while i +  1 <= m; gemx_tile!(c, A, b, α, i, Val( 2)); i +=  2; end
     @inbounds while i      <= m; gemx_tile!(c, A, b, α, i, Val( 1)); i +=  1; end
-
-    return
-end
-
-function gemx2!(::Val{:N}, ::Val{:N}, α, A::AbstractMatrix, B::AbstractMatrix, β, C::AbstractMatrix)
-    if iszero(β)
-        @inbounds @fastmath for j in axes(C, 2)
-            for i in axes(C, 1)
-                C[i, j] = β
-            end
-        end
-    else
-        @inbounds @fastmath for j in axes(C, 2)
-            for i in axes(C, 1)
-                C[i, j] *= β
-            end
-        end
-    end
-
-    @inbounds @fastmath for k in axes(A, 2)
-        for j in axes(C, 2)
-            Bkj = α * B[k, j]
-
-            for i in axes(C, 1)
-                C[i, j] += A[i, k] * Bkj
-            end
-        end
-    end
 
     return
 end
@@ -288,7 +493,7 @@ function gemx2!(tA::Val{TA}, ::Val{:N}, α, A::AbstractMatrix, b::AbstractVector
         end
     end
     #
-    #     c ← c + α op(A) b   (column-jammed dot; outputs cascade 8→4→2→1)
+    #     c ← c + α A b
     #
     j = 1
 
@@ -296,30 +501,6 @@ function gemx2!(tA::Val{TA}, ::Val{:N}, α, A::AbstractMatrix, b::AbstractVector
     @inbounds while j + 3 <= n; gemx_dot_tile!(c, A, b, α, tA, j, Val(4)); j += 4; end
     @inbounds while j + 1 <= n; gemx_dot_tile!(c, A, b, α, tA, j, Val(2)); j += 2; end
     @inbounds while j     <= n; gemx_dot_tile!(c, A, b, α, tA, j, Val(1)); j += 1; end
-
-    return
-end
-
-function gemx2!(::Val{TA}, ::Val{:N}, α, A::AbstractMatrix, B::AbstractMatrix, β, C::AbstractMatrix) where {TA}
-    @inbounds @fastmath for j in axes(C, 2)
-        for i in axes(C, 1)
-            Δ = zero(promote_eltype(A, B))
-
-            for k in axes(A, 1)
-                if TA === :C
-                    Δ += conj(A[k, i]) * B[k, j]
-                else
-                    Δ += A[k, i] * B[k, j]
-                end
-            end
-
-            if iszero(β)
-                C[i, j] = α * Δ
-            else
-                C[i, j] = α * Δ + β * C[i, j]
-            end
-        end
-    end
 
     return
 end

@@ -560,22 +560,37 @@ for (f, op) in [(:copy, :(=)), (:add, :(+=))]
             A::AbstractMatrix,
             B::AbstractMatrix,
             ind::AbstractVector,
+            uplo::Val,
+        )
+        return $(Symbol(f, :scattertri!))(A, B, ind, 1, size(B, 1), uplo)
+    end
+
+    @eval function $(Symbol(f, :scattertri!))(
+            A::AbstractMatrix,
+            B::AbstractMatrix,
+            ind::AbstractVector,
+            jstrt::Integer,
+            jstop::Integer,
             ::Val{UPLO},
         ) where {UPLO}
         @assert size(B, 1) == size(B, 2) <= length(ind)
         n = size(B, 1)
 
-        @inbounds for j in axes(B, 2)
-            indj = ind[j]
+        if UPLO === :L
+            @inbounds for j in jstrt:jstop
+                indj = ind[j]
 
-            if UPLO === :L
-                rng = j:n
-            else
-                rng = 1:j
+                for i in j:n
+                    $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+                end
             end
+        else
+            @inbounds for j in jstrt:n
+                indj = ind[j]
 
-            for i in rng
-                $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+                for i in jstrt:min(jstop, j)
+                    $(Expr(op, :(A[ind[i], indj]), :(B[i, j])))
+                end
             end
         end
 
@@ -595,9 +610,23 @@ function unwrap(A::Transpose)
     return (parent(A), Val(:T))
 end
 
+function unwrap(A::Factorization)
+    return (A, Val(:N))
+end
+
+function unwrap(A::AdjointFactorization)
+    return (parent(A), Val(:C))
+end
+
+function unwrap(A::TransposeFactorization)
+    return (parent(A), Val(:T))
+end
+
 function isforward(UPLO, TRANS, SIDE)
-    return UPLO === :L && (TRANS === :N && SIDE === :L || TRANS !== :N && SIDE === :R) ||
-           UPLO === :U && (TRANS !== :N && SIDE === :L || TRANS === :N && SIDE === :R)
+    N_OR_R = TRANS === :N || TRANS === :R
+
+    return UPLO === :L && ( N_OR_R && SIDE === :L || !N_OR_R && SIDE === :R) ||
+           UPLO === :U && (!N_OR_R && SIDE === :L ||  N_OR_R && SIDE === :R)
 end
 
 function swaprec!(v::AbstractVector, j::Integer, k::Integer)
@@ -776,12 +805,12 @@ function allocate(::Type{Arr}, (n,)::Tuple) where {Arr <: OneTo}
     return Arr(n)
 end
 
-function checkinfo(info, ::Val{DIAG}) where {DIAG}
+function checkinfo(info, ::Val{DIAG}, check) where {DIAG}
     if isnegative(info)
         throw(ArgumentError(info))
-    elseif DIAG === :N && ispositive(info)
+    elseif check && DIAG === :N && ispositive(info)
         throw(PosDefException(info))
-    elseif DIAG === :U && ispositive(info)
+    elseif check && DIAG === :U && ispositive(info)
         throw(SingularException(info))
     end
 

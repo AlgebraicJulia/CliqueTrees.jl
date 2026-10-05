@@ -9,7 +9,7 @@ function complete_dense!(
     Wval = FVector{T}(undef, n * L.S.nFval)
 
     info = complete_dense_impl!(X, Wval, mark, L)
-    check && checkinfo(info, L.diag)
+    checkinfo(info, L.diag, check)
 
     return X
 end
