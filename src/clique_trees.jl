@@ -152,11 +152,11 @@ function cliquetree_impl!(
     ) where {V, E}
     n = last(sndtree.tree)
     lower = sympermute!_impl!(target, source, index, Reverse)
-    residual = residuals(sndtree); cache = index
+    residual = residuals(sndtree)
 
     for j in oneto(n)
         pstrt = pointers(separator)[j]
-        pstop = pointers(separator)[j + one(V)] 
+        pstop = pointers(separator)[j + one(V)]
 
         qstrt = pointers(residual)[j]
         qstop = pointers(residual)[j + one(V)]
@@ -179,54 +179,53 @@ function cliquetree_impl!(
  
         for i in childindices(sndtree, j)
             pstop1 = p1
-            pstrt1 = pstrt
 
             pstop2 = pointers(separator)[i + one(V)]
-            pstrt2 = pointers(separator)[i]
-        
-            p1 = pstrt1; p2 = pstrt2; t = one(V)
+            p2 = pointers(separator)[i]
 
             while p2 < pstop2 && targets(separator)[p2] < qstop
                 p2 += one(E)
             end
 
-            while p1 < pstop1 && p2 < pstop2
+            p1 = pstop; s = pstop1
+
+            while pstrt < s
+                p1 -= one(E); s -= one(E)
+                targets(separator)[p1] = targets(separator)[s]
+            end
+
+            w = pstrt
+
+            while p1 < pstop && p2 < pstop2
                 v1 = targets(separator)[p1]
                 v2 = targets(separator)[p2]
 
                 if v1 == v2
-                    cache[t] = v1
+                    targets(separator)[w] = v1
                     p1 += one(E)
                     p2 += one(E)
                 elseif v1 < v2
-                    cache[t] = v1
+                    targets(separator)[w] = v1
                     p1 += one(E)
                 else
-                    cache[t] = v2
+                    targets(separator)[w] = v2
                     p2 += one(E)
                 end
 
-                t += one(V)
+                w += one(E)
             end
 
-            while p1 < pstop1
-                cache[t] = targets(separator)[p1]
-                p1 += one(E)
-                t += one(V)
+            while p1 < pstop
+                targets(separator)[w] = targets(separator)[p1]
+                p1 += one(E); w += one(E)
             end
 
             while p2 < pstop2
-                cache[t] = targets(separator)[p2]
-                p2 += one(E)
-                t += one(V)
+                targets(separator)[w] = targets(separator)[p2]
+                p2 += one(E); w += one(E)
             end
 
-            p1 = pstrt; tstop = t
-
-            for t in oneto(tstop - one(V))
-                targets(separator)[p1] = cache[t]
-                p1 += one(E)
-            end
+            p1 = w
         end
     end        
 
@@ -792,7 +791,7 @@ function treefill(weights::Ones{W}, tree::CliqueTree) where {W}
     @inbounds for i in vertices(residual)
         nn = convert(W, outdegree(residual, i))
         na = convert(W, outdegree(separator, i))
-        fill += half(nn * (nn + one(I))) + nn * na
+        fill += half(nn * (nn + one(W))) + nn * na
     end
 
     return fill
