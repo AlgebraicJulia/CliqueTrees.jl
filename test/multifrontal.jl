@@ -114,6 +114,41 @@ using CliqueTrees.Multifrontal: flatindices, setflatindex!, triangular, selinv!,
     end
 end
 
+@testset "lowrank" begin
+    for UPLO in (:L, :U)
+        for (n, k, p) in ((60, 20, 0.1), (120, 40, 0.05))
+            A = sprand(n, k, p)
+            A[:, 1] .= rand(n)
+            M = sparse(A * A' + I)
+            b = rand(n)
+
+            for mk in (() -> cholesky!(ChordalCholesky{UPLO}(M)),
+                       () -> ldlt!(ChordalLDLt{UPLO}(M)))
+                v = Vector(A[:, 1])
+                F = mk(); lowrankupdate!(F, v);   @test Matrix(F) ≈ M + v * v'
+                F = mk(); lowrankdowndate!(F, v); @test Matrix(F) ≈ M - v * v'
+                @test isapprox(b, (M - v * v') * (F \ b); rtol=1e-6, atol=1e-12)
+            end
+
+            F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankupdate!(F, A)
+            @test Matrix(F) ≈ M + A * A'
+            F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankupdate!(F, Matrix(A))
+            @test Matrix(F) ≈ M + A * A'
+            F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankdowndate!(F, A)
+            @test Matrix(F) ≈ sparse(1.0I, n, n)
+        end
+    end
+
+    A = SparseMatrixCSC{BigFloat}(sprand(40, 15, 0.1)); A[:, 1] .= rand(BigFloat, 40)
+    M = sparse(A * A' + I)
+    F = cholesky!(ChordalCholesky{:L}(M)); v = Vector(A[:, 1])
+    lowrankupdate!(F, v); @test Matrix(F) ≈ M + v * v'
+
+    A = sprand(60, 20, 0.1); A[:, 1] .= rand(60); M = sparse(A * A' + I)
+    F = cholesky!(ChordalCholesky{:L}(M)); v = Vector(A[:, 1])
+    @inferred lowrankupdate!(F, v)
+end
+
 @testset "cholesky (cholmod)" begin
     matrices = ("685_bus", "Trefethen_500", "bcsstk26", "bcsstk13", "mhd1280b")
 
