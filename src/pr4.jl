@@ -480,17 +480,10 @@ function sr_init!(
         end
     end
 
-    # count the triangles containing each vertex
-    sr_triangles!(marker, tmpptr, fillin, number, source, target, begptr, endptr, n)
+    # compute the fill-in of each vertex
+    sr_fillin!(fillin, marker, stack0, tmpptr, source, number, target, begptr, endptr, n)
 
     @inbounds for v in vertices(graph)
-        # `num` is the degree of `v`
-        num = Int(number[v])
-
-        # the fill-in of `v` is the number of missing
-        # edges in its neighborhood
-        fillin[v] = convert(F, (num * (num - 1)) ÷ 2) - fillin[v]
-
         # if `v` is simplicial...
         if iszero(fillin[v])
             # add `v` to the stack of simplicial vertices
@@ -502,84 +495,146 @@ function sr_init!(
 end
 
 """
-    sr_triangles!(marker, fwdptr, count, number, fwdtgt, target,
-        begptr, endptr, n)
+    sr_fillin!(fillin, marker, order, tail, adjtgt, number,
+        target, begptr, endptr, n)
 
-Count the triangles containing each vertex, writing the counts
-to `count`. Each edge is oriented toward the endpoint of larger
-(degree, label); every triangle {u, v, w} with u < v < w in this
-order is found once, by intersecting the out-neighborhoods of
-u and v. An out-neighborhood has at most √(2m) vertices, so this
-takes O(m√m) time, instead of the O(Σ deg(v)²) time taken by
-scanning N(w) for every neighbor w of every vertex.
+Compute the fill-in of each vertex: the number of missing edges
+in its neighborhood. Starting from the empty graph, add the edges
+back one at a time, keeping the fill-in of every vertex up to
+date with Wing-Huang updates. When the edge {`u`, `w`} is added,
+
+  - every common neighbor of `u` and `w` loses one unit of fill-in
+  - `u` gains one unit for each neighbor of `u` that is not a
+    neighbor of `w`, and vice versa.
+
+The vertices are processed in order of decreasing degree; when a
+vertex `u` is processed, the edges joining `u` to unprocessed
+vertices are added. The common neighbors of `u` and `w` are found
+by scanning the processed neighbors of `w`, each of which has
+degree at least that of `w`, so there are at most √(2m) of them,
+and this takes O(m√m) time.
 
 The neighbors of `v` are `target[begptr[v]:endptr[v] - 1]`, in any
-order. Every edge must appear in the lists of both endpoints, and
-there must be no self loops. `number[v]` should be the degree of `v`
-(any values give correct counts; degrees give the time bound).
+order, and `number[v]` is the degree of `v`. The graph must be
+symmetric, with no self loops or repeated neighbors.
 
 working arrays:
-  - `marker`: marker array (length ≥ n; must hold values up to n)
-  - `fwdptr`: the first out-arc of a vertex (length ≥ n + 1)
-  - `fwdtgt`: the target of an out-arc (length ≥ number of edges)
+  - `marker`: marker array (length ≥ n)
+  - `order`: the vertices in order of decreasing degree (length ≥ n)
+  - `tail`: the end of the processed neighbors of a vertex (length ≥ n)
+  - `adjtgt`: the processed neighbors of a vertex, stored at the
+    same positions as its neighbors in `target`
 """
-function sr_triangles!(
-        marker::AbstractVector{M},
-        fwdptr::AbstractVector{E},
-        count::AbstractVector{F},
+function sr_fillin!(
+        fillin::AbstractVector{F},
+        marker::AbstractVector{V},
+        order::AbstractVector{V},
+        tail::AbstractVector{E},
+        adjtgt::AbstractVector{V},
         number::AbstractVector{V},
-        fwdtgt::AbstractVector{V},
         target::AbstractVector{V},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
         n::V,
-    ) where {V, E, F, M}
+    ) where {V, E, F}
 
-    # construct the oriented graph
-    @inbounds fwdptr[begin] = q = one(E)
+    iszero(n) && return
+
+    # `maxnum` is the maximum degree
+    maxnum = zero(V)
 
     @inbounds for v in oneto(n)
-        vnum = number[v]
-        count[v] = zero(F)
-        marker[v] = zero(M)
-
-        for p in begptr[v]:endptr[v] - one(E)
-            w = target[p]; wnum = number[w]
-
-            if vnum < wnum || (vnum == wnum && v < w)
-                fwdtgt[q] = w; q += one(E)
-            end
-        end
-
-        fwdptr[v + one(V)] = q
+        maxnum = max(maxnum, number[v])
     end
 
-    # for each vertex `u`...
-    @inbounds for u in oneto(n)
-        tag = convert(M, u)
+    # the counting sort below uses `marker[1:maxnum + 1]`
+    @assert maxnum < n
 
-        # mark the out-neighbors of `u`
-        for p in fwdptr[u]:fwdptr[u + one(V)] - one(E)
-            marker[fwdtgt[p]] = tag
+    # sort the vertices by decreasing degree, using
+    # `marker` to count the vertices of each degree
+    @inbounds for j in oneto(maxnum + one(V))
+        marker[j] = zero(V)
+    end
+
+    @inbounds for v in oneto(n)
+        j = number[v] + one(V); marker[j] += one(V)
+    end
+
+    # `pos` is the first position in `order` of the
+    # vertices of degree `num`
+    pos = one(V)
+
+    @inbounds for num in maxnum:-one(V):zero(V)
+        j = num + one(V); k = marker[j]; marker[j] = pos; pos += k
+    end
+
+    @inbounds for v in oneto(n)
+        j = number[v] + one(V); pos = marker[j]; order[pos] = v; marker[j] = pos + one(V)
+    end
+
+    # start from the empty graph
+    @inbounds for v in oneto(n)
+        marker[v] = zero(V)
+        tail[v] = begptr[v]
+        fillin[v] = zero(F)
+    end
+
+    # for each vertex `u`, in order of decreasing degree...
+    @inbounds for i in oneto(n)
+        u = order[i]
+
+        # mark the processed neighbors of `u`: these are
+        # its neighbors in the growing graph
+        for p in begptr[u]:tail[u] - one(E)
+            marker[adjtgt[p]] = i
         end
 
-        # for each out-neighbor `v` of `u`...
-        for p in fwdptr[u]:fwdptr[u + one(V)] - one(E)
-            v = fwdtgt[p]; c = zero(F)
+        # `unum` is the degree of `u` in the growing graph
+        unum = convert(F, tail[u] - begptr[u])
 
-            # for each out-neighbor `w` of `v`...
-            for q in fwdptr[v]:fwdptr[v + one(V)] - one(E)
-                w = fwdtgt[q]
+        # `ufil` is the fill-in gained by `u`
+        ufil = zero(F)
 
-                # if `w` is an out-neighbor of `u`, then
-                # {`u`, `v`, `w`} is a triangle
-                if marker[w] == tag
-                    c += one(F); count[w] += one(F)
+        # for all neighbors `w` of `u`...
+        for p in begptr[u]:endptr[u] - one(E)
+            w = target[p]
+
+            # if `w` is not processed, then it is not marked:
+            # add the edge {`u`, `w`} to the growing graph
+            if marker[w] != i
+                # the neighbors of `w` in the growing graph
+                # are the arcs {`wbeg`, ..., `wtail` - 1}
+                wbeg = begptr[w]; wtail = tail[w]
+
+                # `cnt` is the number of common neighbors
+                # of `u` and `w`
+                cnt = zero(F)
+
+                for q in wbeg:wtail - one(E)
+                    x = adjtgt[q]
+
+                    # if `x` is a common neighbor of `u` and `w`,
+                    # then {`u`, `w`} is no longer missing from
+                    # the neighborhood of `x`
+                    if marker[x] == i
+                        cnt += one(F); fillin[x] -= one(F)
+                    end
                 end
-            end
 
-            count[u] += c; count[v] += c
+                # `u` and `w` gain one unit of fill-in for each
+                # of their neighbors that are not common
+                ufil += unum - cnt
+                fillin[w] += convert(F, wtail - wbeg) - cnt
+
+                # add `u` to the neighbors of `w`
+                adjtgt[wtail] = u; tail[w] = wtail + one(E)
+
+                # increment the degree of `u`
+                unum += one(F)
+            end
         end
+
+        fillin[u] += ufil
     end
 
     return
