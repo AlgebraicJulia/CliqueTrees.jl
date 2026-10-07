@@ -140,12 +140,12 @@ function sr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where
         totdeg += weights[v]
     end
 
-    marker = FVector{E}(undef, n)
+    marker = FVector{V}(undef, n)
     stack0 = FVector{V}(undef, n)
     stack1 = FVector{V}(undef, n)
     tmpptr = FVector{E}(undef, nn)
 
-    fillin = FVector{E}(undef, n)
+    fillin = FVector{Int}(undef, n)
     degree = FVector{W}(undef, n)
     number = FVector{V}(undef, n)
     source = FVector{V}(undef, m)
@@ -162,11 +162,11 @@ function sr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) where
 end
 
 function sr_impl!(
-        marker::AbstractVector{E},
+        marker::AbstractVector{V},
         stack0::AbstractVector{V},
         stack1::AbstractVector{V},
         tmpptr::AbstractVector{E},
-        fillin::AbstractVector{E},
+        fillin::AbstractVector{F},
         degree::AbstractVector{W},
         number::AbstractVector{V},
         source::AbstractVector{V},
@@ -178,7 +178,7 @@ function sr_impl!(
         weight::AbstractVector{W},
         graph::AbstractGraph{V},
         width::W,
-    ) where {W, V, E}
+    ) where {W, V, E, F <: Integer}
     @assert nv(graph) <= length(marker)
     @assert nv(graph) <= length(stack0)
     @assert nv(graph) <= length(stack1)
@@ -198,7 +198,7 @@ function sr_impl!(
     # `hi0` is the number of simplicial vertices
     # `mindeg` is the minimum weighted degree
     hi0, mindeg = sr_init!(marker, stack0, tmpptr, fillin, degree, number,
-        target, begptr, endptr, invptr, totdeg, weight, graph)
+        source, target, begptr, endptr, invptr, totdeg, weight, graph)
 
     # the weighted treewidth is at least the minimum
     # weighted degree
@@ -265,7 +265,7 @@ function sr_impl!(
             # increase the degeneracy of `w` by the
             # degree of `v` and decrease it by the
             # degree of `w`
-            fillin[w] = wfil - convert(E, wnum - num)
+            fillin[w] = wfil - convert(F, wnum - num)
 
             # decrease the weighted degree of `w` by
             # the weight of `v`
@@ -364,12 +364,13 @@ function sr_make!(
 end
 
 function sr_init!(
-        marker::AbstractVector{E},
+        marker::AbstractVector{V},
         stack0::AbstractVector{V},
         tmpptr::AbstractVector{E},
-        fillin::AbstractVector{E},
+        fillin::AbstractVector{F},
         degree::AbstractVector{W},
         number::AbstractVector{V},
+        source::AbstractVector{V},
         target::AbstractVector{V},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
@@ -377,7 +378,7 @@ function sr_init!(
         totdeg::W,
         weight::AbstractVector{W},
         graph::AbstractGraph{V},
-    ) where {W, V, E}
+    ) where {W, V, E, F}
 
     # `n` is the number of vertices in the
     # input graph
@@ -387,21 +388,18 @@ function sr_init!(
     # vertices
     hi0 = zero(V)
 
-    # `tag` is used for marking vertices
-    tag = zero(E)
-
     # `mindeg` is the minimum weighted degree
     mindeg = totdeg
+
+    # `sorted` is true if every neighborhood is sorted
+    sorted = true
 
     # `p` is the current arc
     p = one(E)
 
-    @inbounds  for v in vertices(graph)
-        marker[v] = tag
-    end
-
+    # copy the graph into the array `target`
     @inbounds for v in vertices(graph)
-        tmpptr[v] = begptr[v] = endptr[v] = p
+        begptr[v] = p
 
         # `deg` is the weighted degree of `v`
         deg = weight[v]
@@ -409,68 +407,67 @@ function sr_init!(
         # `num` is the degree of `v`
         num = zero(V)
 
-        # `fil` is the degeneracy of `v`
-        fil = zero(E)
+        # `prv` is the previous neighbor of `v`
+        prv = zero(V)
 
         # for all neighbors `w` of `v`...
         for w in neighbors(graph, v)
             # ignore self loops
             if v != w
                 # `p` is the arc (`v`, `w`)
-                p += one(E)
+                target[p] = w; p += one(E)
+
+                # check if the neighborhood of `v` is sorted
+                sorted = sorted && prv < w; prv = w
 
                 # increase `deg` by the weight of `w`
                 deg += weight[w]
 
                 # increment `num`
                 num += one(V)
-
-                # increment `tag`
-                tag += one(E)
-
-                # mark neighbors of `w` with `tag`
-                for x in neighbors(graph, w)
-                    if x != w
-                        marker[x] = tag
-                    end
-                end
-
-                # for all neighbors `ww` of `v`...
-                for ww in neighbors(graph, v)
-                    w == ww && break
-
-                    # if `ww` is not adjacent to `w`...
-                    if v != ww && marker[ww] < tag
-                        # increment `fil`
-                        fil += one(E)
-                    end
-                end
             end
         end
 
-        # if `v` is simplicial...
-        if iszero(fil)
-            # add `v` to the stack of simplicial vertices
-            hi0 = pr3_stack_add!(stack0, hi0, v)
-        end
+        endptr[v] = p
 
         # update the minimum weighted degree
         mindeg = min(mindeg, deg)
-        fillin[v] = fil
         degree[v] = deg
         number[v] = num
     end
 
-    @inbounds for v in vertices(graph), w in neighbors(graph, v)
-        if v != w
-            # `q` is the arc (`w`, `v`)
-            q = endptr[w]; target[q] = v; endptr[w] = q + one(E)
+    @inbounds begptr[nn] = p
+
+    # if the neighborhoods are not sorted, sort them by
+    # transposing the graph
+    @inbounds if !sorted
+        for v in vertices(graph)
+            tmpptr[v] = begptr[v]
         end
+
+        for v in vertices(graph)
+            p = begptr[v]; pend = endptr[v]
+
+            while p < pend
+                # `p` is the arc (`v`, `w`)
+                w = target[p]; p += one(E)
+
+                # `q` is the arc (`w`, `v`)
+                q = tmpptr[w]; invptr[q] = v; tmpptr[w] = q + one(E)
+            end
+        end
+
+        copyto!(target, begptr[begin], invptr, begptr[begin], begptr[nn] - one(E))
+    end
+
+    # compute the reverse of every arc: since the neighborhoods
+    # are sorted, the reverse of the arc (`v`, `w`) is the first
+    # unvisited arc incident to `w`
+    @inbounds for v in vertices(graph)
+        tmpptr[v] = begptr[v]
     end
 
     @inbounds for v in vertices(graph)
-        # the arcs {`p`, ..., `pend` - 1} are incident
-        # to `v`
         p = begptr[v]; pend = endptr[v]
 
         while p < pend
@@ -483,9 +480,107 @@ function sr_init!(
         end
     end
 
-    if ispositive(n)
-        @inbounds begptr[nn] = endptr[n]
+    # count the triangles containing each vertex
+    sr_triangles!(marker, tmpptr, fillin, number, source, target, begptr, endptr, n)
+
+    @inbounds for v in vertices(graph)
+        # `num` is the degree of `v`
+        num = Int(number[v])
+
+        # the fill-in of `v` is the number of missing
+        # edges in its neighborhood
+        fillin[v] = convert(F, (num * (num - 1)) ÷ 2) - fillin[v]
+
+        # if `v` is simplicial...
+        if iszero(fillin[v])
+            # add `v` to the stack of simplicial vertices
+            hi0 = pr3_stack_add!(stack0, hi0, v)
+        end
     end
 
     return hi0, mindeg
+end
+
+"""
+    sr_triangles!(marker, fwdptr, count, number, fwdtgt, target,
+        begptr, endptr, n)
+
+Count the triangles containing each vertex, writing the counts
+to `count`. Each edge is oriented toward the endpoint of larger
+(degree, label); every triangle {u, v, w} with u < v < w in this
+order is found once, by intersecting the out-neighborhoods of
+u and v. An out-neighborhood has at most √(2m) vertices, so this
+takes O(m√m) time, instead of the O(Σ deg(v)²) time taken by
+scanning N(w) for every neighbor w of every vertex.
+
+The neighbors of `v` are `target[begptr[v]:endptr[v] - 1]`, in any
+order. Every edge must appear in the lists of both endpoints, and
+there must be no self loops. `number[v]` should be the degree of `v`
+(any values give correct counts; degrees give the time bound).
+
+working arrays:
+  - `marker`: marker array (length ≥ n; must hold values up to n)
+  - `fwdptr`: the first out-arc of a vertex (length ≥ n + 1)
+  - `fwdtgt`: the target of an out-arc (length ≥ number of edges)
+"""
+function sr_triangles!(
+        marker::AbstractVector{M},
+        fwdptr::AbstractVector{E},
+        count::AbstractVector{F},
+        number::AbstractVector{V},
+        fwdtgt::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        n::V,
+    ) where {V, E, F, M}
+
+    # construct the oriented graph
+    @inbounds fwdptr[begin] = q = one(E)
+
+    @inbounds for v in oneto(n)
+        vnum = number[v]
+        count[v] = zero(F)
+        marker[v] = zero(M)
+
+        for p in begptr[v]:endptr[v] - one(E)
+            w = target[p]; wnum = number[w]
+
+            if vnum < wnum || (vnum == wnum && v < w)
+                fwdtgt[q] = w; q += one(E)
+            end
+        end
+
+        fwdptr[v + one(V)] = q
+    end
+
+    # for each vertex `u`...
+    @inbounds for u in oneto(n)
+        tag = convert(M, u)
+
+        # mark the out-neighbors of `u`
+        for p in fwdptr[u]:fwdptr[u + one(V)] - one(E)
+            marker[fwdtgt[p]] = tag
+        end
+
+        # for each out-neighbor `v` of `u`...
+        for p in fwdptr[u]:fwdptr[u + one(V)] - one(E)
+            v = fwdtgt[p]; c = zero(F)
+
+            # for each out-neighbor `w` of `v`...
+            for q in fwdptr[v]:fwdptr[v + one(V)] - one(E)
+                w = fwdtgt[q]
+
+                # if `w` is an out-neighbor of `u`, then
+                # {`u`, `v`, `w`} is a triangle
+                if marker[w] == tag
+                    c += one(F); count[w] += one(F)
+                end
+            end
+
+            count[u] += c; count[v] += c
+        end
+    end
+
+    return
 end
