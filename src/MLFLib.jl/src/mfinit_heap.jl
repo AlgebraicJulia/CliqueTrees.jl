@@ -87,67 +87,69 @@ function mfinit_heap(
         umark::AbstractVector{I},
         invp::AbstractVector{V},
     ) where {V, E, I, W}
+    @inbounds begin
     
-    #       ---------------------------------------------------------
-    #       MORE INITIALIZATIONS AND ALSO PLACE EACH NODE AND ITS
-    #       DEFICIENCY-BASED SCORE IN THE HEAP STRUCTURE IN ARBITRARY
-    #       ORDER.
-    #       ---------------------------------------------------------
+        #       ---------------------------------------------------------
+        #       MORE INITIALIZATIONS AND ALSO PLACE EACH NODE AND ITS
+        #       DEFICIENCY-BASED SCORE IN THE HEAP STRUCTURE IN ARBITRARY
+        #       ORDER.
+        #       ---------------------------------------------------------
     
-    heapcnt = zero(V)
+        heapcnt = zero(V)
 
-    #       -------------------------
-    #       FOR EACH VERTEX JNODE ...
-    #       -------------------------
-    for jnode in oneto(neqns)
+        #       -------------------------
+        #       FOR EACH VERTEX JNODE ...
+        #       -------------------------
+        for jnode in oneto(neqns)
 
-        #           ----------------------------------------------
-        #           NVTXS(JNODE) WILL BE -1 FOR ABSORBED VERTICES.
-        #           ----------------------------------------------
-        nvtxs[jnode] = -one(V)
+            #           ----------------------------------------------
+            #           NVTXS(JNODE) WILL BE -1 FOR ABSORBED VERTICES.
+            #           ----------------------------------------------
+            nvtxs[jnode] = -one(V)
 
-        #           -------------------------------------
-        #           IF JNODE IS A REPRESENTATIVE NODE ...
-        #           -------------------------------------
-        if !iszero(qsize[jnode])
+            #           -------------------------------------
+            #           IF JNODE IS A REPRESENTATIVE NODE ...
+            #           -------------------------------------
+            if !iszero(qsize[jnode])
 
-            #               ---------------------------
-            #               INITIALIZE VARIOUS VECTORS.
-            #               ---------------------------
-            ecforw[jnode] = -one(V)
-            changed[jnode] = false
-            umark[jnode] = zero(I)
-            work[jnode] = zero(V)
-            invp[jnode] = zero(V)
-            marker[jnode] = zero(I)
-            nvtxs[jnode] = convert(V, xadj[jnode + one(V)] - xadj[jnode])
+                #               ---------------------------
+                #               INITIALIZE VARIOUS VECTORS.
+                #               ---------------------------
+                ecforw[jnode] = -one(V)
+                changed[jnode] = false
+                umark[jnode] = zero(I)
+                work[jnode] = zero(V)
+                invp[jnode] = zero(V)
+                marker[jnode] = zero(I)
+                nvtxs[jnode] = convert(V, xadj[jnode + one(V)] - xadj[jnode])
             
-            #               ------------------------------------------
-            #               DJ WILL BE THE DEGREE OF JNODE (PLUS ONE).
-            #               ------------------------------------------
-            def = defncy[jnode]
+                #               ------------------------------------------
+                #               DJ WILL BE THE DEGREE OF JNODE (PLUS ONE).
+                #               ------------------------------------------
+                def = defncy[jnode]
             
-            #               -------------------------------
-            #               COMPUTE DEFICIENCY-BASED SCORE.
-            #               -------------------------------
+                #               -------------------------------
+                #               COMPUTE DEFICIENCY-BASED SCORE.
+                #               -------------------------------
             
-            #               ---------------------------------------------
-            #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE
-            #               INTO THE HEAP IN THE NEXT AVAILABLE LOCATION.
-            #               ---------------------------------------------
-            heapcnt += one(V)
-            heapinv[jnode] = heapcnt
-            heap[twice(heapcnt) - one(V)] = def
-            heap[twice(heapcnt)] = convert(W, jnode)
+                #               ---------------------------------------------
+                #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE
+                #               INTO THE HEAP IN THE NEXT AVAILABLE LOCATION.
+                #               ---------------------------------------------
+                heapcnt += one(V)
+                heapinv[jnode] = heapcnt
+                heap[twice(heapcnt) - one(V)] = def
+                heap[twice(heapcnt)] = convert(W, jnode)
             
-        end
+            end
         
+        end
+    
+        #       ------------------------------
+        #       IMPOSE HEAP ORDER ON THE HEAP.
+        #       ------------------------------
+        heapsize = build_heap(heap, heapinv, heapcnt)
+    
+        return heapsize
     end
-    
-    #       ------------------------------
-    #       IMPOSE HEAP ORDER ON THE HEAP.
-    #       ------------------------------
-    heapsize = build_heap(heap, heapinv, heapcnt)
-    
-    return heapsize
 end

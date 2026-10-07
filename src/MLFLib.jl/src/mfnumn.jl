@@ -45,73 +45,75 @@
 #**********************************************************************
 #
 function mfnumn(neqns::V, work::AbstractVector{V}, invp::AbstractVector{V}, perm::AbstractVector{V}) where {V}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       -------------------------------------------------------
-    #       INITIALIZATION AND TAKE CARE OF REPRESENTATIVE COLUMNS.
-    #       -------------------------------------------------------
-    for jcol in oneto(neqns)
-        perm[jcol] = zero(V)
-    end
-
-    for jcol in oneto(neqns)
-        if !isnegative(work[jcol])
-            perm[-invp[jcol]] = jcol
+        #       -------------------------------------------------------
+        #       INITIALIZATION AND TAKE CARE OF REPRESENTATIVE COLUMNS.
+        #       -------------------------------------------------------
+        for jcol in oneto(neqns)
+            perm[jcol] = zero(V)
         end
-    end
-    
-    #       -----------------------------------------------------
-    #       MAIN LOOP -- TAKE CARE OF NON-REPRESENTATIVE COLUMNS.
-    #       FOR EACH COLUMN JCOL ...
-    #       -----------------------------------------------------
-    for jcol in oneto(neqns)
-        
-        #           ---------------------------
-        #           SKIP REPRESENTATIVE COLUMN.
-        #           ---------------------------
-        if isnegative(work[jcol])
-            
-            #               ----------------------------
-            #               FIND ROOT OF SUPERNODE TREE.
-            #               ----------------------------
-            parent = jcol
 
-            while isnegative(work[parent])
-                parent = -work[parent]
+        for jcol in oneto(neqns)
+            if !isnegative(work[jcol])
+                perm[-invp[jcol]] = jcol
             end
+        end
+    
+        #       -----------------------------------------------------
+        #       MAIN LOOP -- TAKE CARE OF NON-REPRESENTATIVE COLUMNS.
+        #       FOR EACH COLUMN JCOL ...
+        #       -----------------------------------------------------
+        for jcol in oneto(neqns)
+        
+            #           ---------------------------
+            #           SKIP REPRESENTATIVE COLUMN.
+            #           ---------------------------
+            if isnegative(work[jcol])
             
-            #               -----------------------
-            #               NUMBER JCOL AFTER ROOT.
-            #               -----------------------
-            root = parent
-            invp[root] -= one(V)
-            perm[-invp[root]] = jcol
-            
-            #               --------------------
-            #               SHORTEN MERGED TREE.
-            #               --------------------
-            parent = jcol
-            nextp = -work[parent]
+                #               ----------------------------
+                #               FIND ROOT OF SUPERNODE TREE.
+                #               ----------------------------
+                parent = jcol
 
-            while ispositive(nextp)
-                work[parent] = -root
-                parent = nextp
+                while isnegative(work[parent])
+                    parent = -work[parent]
+                end
+            
+                #               -----------------------
+                #               NUMBER JCOL AFTER ROOT.
+                #               -----------------------
+                root = parent
+                invp[root] -= one(V)
+                perm[-invp[root]] = jcol
+            
+                #               --------------------
+                #               SHORTEN MERGED TREE.
+                #               --------------------
+                parent = jcol
                 nextp = -work[parent]
-            end
+
+                while ispositive(nextp)
+                    work[parent] = -root
+                    parent = nextp
+                    nextp = -work[parent]
+                end
             
-        end
+            end
         
-    end
+        end
     
-    #       --------------------------------
-    #       COMPUTE INVERSE PERMUTATION TOO.
-    #       --------------------------------
-    for jcol in oneto(neqns)
-        invp[perm[jcol]] = jcol
-    end
+        #       --------------------------------
+        #       COMPUTE INVERSE PERMUTATION TOO.
+        #       --------------------------------
+        for jcol in oneto(neqns)
+            invp[perm[jcol]] = jcol
+        end
     
-    return
+        return
+    end
 end

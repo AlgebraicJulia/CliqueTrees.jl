@@ -40,80 +40,82 @@
 #**********************************************************************
 #
 function move_up(heap::AbstractVector{W}, heapsize::V, vtx_ptr::V, v2heap::AbstractVector{V}) where {V, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       ------------------------------------------------------
-    #       MOVE THE GIVEN NODE IN LOCATION VTX_PTR UP IN HEAP AND
-    #       ENSURE THAT HEAP IS A HEAP.
-    #       ------------------------------------------------------
-    v = vtx_ptr
-    #       PRINT *, 'FLD_INDEX = ', VTX_PTR
+        #       ------------------------------------------------------
+        #       MOVE THE GIVEN NODE IN LOCATION VTX_PTR UP IN HEAP AND
+        #       ENSURE THAT HEAP IS A HEAP.
+        #       ------------------------------------------------------
+        v = vtx_ptr
+        #       PRINT *, 'FLD_INDEX = ', VTX_PTR
     
-    while ispositive(v - one(V))
-        #           PRINT *, 'NODE = ', V
+        while ispositive(v - one(V))
+            #           PRINT *, 'NODE = ', V
         
-        #           ------------------------------------------------
-        #           DO THE FOLLOWING, AS LONG AS THE ELEMENT HAS NOT
-        #           REACHED THE ROOT OF THE BINARY TREE.
-        #           ------------------------------------------------
+            #           ------------------------------------------------
+            #           DO THE FOLLOWING, AS LONG AS THE ELEMENT HAS NOT
+            #           REACHED THE ROOT OF THE BINARY TREE.
+            #           ------------------------------------------------
         
-        #           ----------------
-        #           P IS THE PARENT.
-        #           ----------------
-        p = half(v)
+            #           ----------------
+            #           P IS THE PARENT.
+            #           ----------------
+            p = half(v)
         
-        #           -----------------------------------------------
-        #           V_PTR AND P_PTR POINT TO WHERE V AND ITS PARENT
-        #           ARE LOCATED IN HEAP.
-        #           -----------------------------------------------
-        v_ptr = twice(v)
-        p_ptr = twice(p)
+            #           -----------------------------------------------
+            #           V_PTR AND P_PTR POINT TO WHERE V AND ITS PARENT
+            #           ARE LOCATED IN HEAP.
+            #           -----------------------------------------------
+            v_ptr = twice(v)
+            p_ptr = twice(p)
         
-        #           --------------------------------------------
-        #           V_WT AND P_WT ARE THE WEIGHT FIELDS OF V AND
-        #           ITS PARENT.
-        #           --------------------------------------------
-        v_wt = heap[v_ptr - one(V)]
-        p_wt = heap[p_ptr - one(V)]
+            #           --------------------------------------------
+            #           V_WT AND P_WT ARE THE WEIGHT FIELDS OF V AND
+            #           ITS PARENT.
+            #           --------------------------------------------
+            v_wt = heap[v_ptr - one(V)]
+            p_wt = heap[p_ptr - one(V)]
         
-        #           PRINT *, 'VAL, VAL1 = ', V_WT, P_WT
-        if v_wt >= p_wt
+            #           PRINT *, 'VAL, VAL1 = ', V_WT, P_WT
+            if v_wt >= p_wt
             
-            #               ----------------------------------------------
-            #               WE ARE DONE MOVING ELEMENT UP THE BINARY TREE.
-            #               ----------------------------------------------
-            v = zero(V)
+                #               ----------------------------------------------
+                #               WE ARE DONE MOVING ELEMENT UP THE BINARY TREE.
+                #               ----------------------------------------------
+                v = zero(V)
             
-        else
+            else
 
-            #               ----------------------------------------------
-            #               HERE V_WT < P_WT, SO THE WEIGHT FIELD OF THE
-            #               THE NODE IS LESS THAN THAT OF THE PARENT.  THE
-            #               TWO SHOULD BE SWAPPED.
-            #               ----------------------------------------------
+                #               ----------------------------------------------
+                #               HERE V_WT < P_WT, SO THE WEIGHT FIELD OF THE
+                #               THE NODE IS LESS THAN THAT OF THE PARENT.  THE
+                #               TWO SHOULD BE SWAPPED.
+                #               ----------------------------------------------
 
-            c_vtx = convert(V, heap[v_ptr])
-            v2heap[c_vtx] = p
+                c_vtx = convert(V, heap[v_ptr])
+                v2heap[c_vtx] = p
 
-            p_vtx = convert(V, heap[p_ptr])
-            v2heap[p_vtx] = v
-            #               PRINT *, 'VTX, FLD_NEXT, IPOINT, FLD_NOW = ',
-            #    &                    C_VTX, P, P_VTX, V
+                p_vtx = convert(V, heap[p_ptr])
+                v2heap[p_vtx] = v
+                #               PRINT *, 'VTX, FLD_NEXT, IPOINT, FLD_NOW = ',
+                #    &                    C_VTX, P, P_VTX, V
 
-            heap[v_ptr] = heap[p_ptr]
-            heap[p_ptr] = convert(W, c_vtx)
+                heap[v_ptr] = heap[p_ptr]
+                heap[p_ptr] = convert(W, c_vtx)
             
-            heap[v_ptr - one(V)] = p_wt
-            heap[p_ptr - one(V)] = v_wt
+                heap[v_ptr - one(V)] = p_wt
+                heap[p_ptr - one(V)] = v_wt
             
-            v = p
+                v = p
             
+            end
+        
         end
-        
-    end
     
-    return
+        return
+    end
 end

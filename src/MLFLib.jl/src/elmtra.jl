@@ -139,342 +139,344 @@ function elmtra(
         hheads::AbstractVector{V},
         hlink::AbstractVector{V},
     ) where {V, E, I, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       ---------------------
-    #       BUMP TAG.
-    #       NOTE: TAG <= MAXINT-1
-    #       ---------------------
-    if tag <= maxint(I) - two(I)
-        tag += one(I)
-    else
-        tag = one(I)
+        #       ---------------------
+        #       BUMP TAG.
+        #       NOTE: TAG <= MAXINT-1
+        #       ---------------------
+        if tag <= maxint(I) - two(I)
+            tag += one(I)
+        else
+            tag = one(I)
 
-        for i in oneto(neqns)
-            if marker[i] < maxint(I)
-                marker[i] = zero(I)
+            for i in oneto(neqns)
+                if marker[i] < maxint(I)
+                    marker[i] = zero(I)
+                end
             end
         end
-    end
 
-    #       -----------------------------------------------------------
-    #       MARK THE CLIQUES MERGED TO FORM ENODE'S ELIMINATION CLIQUE.
-    #       THIS SERVES TO REMOVE THEM FROM THE QUOTIENT GRAPH.
-    #       -----------------------------------------------------------
-    cstart = xadj[enode] + convert(E, nvtxs[enode])
-    cstop = cstart + convert(E, work[enode]) - one(E)
+        #       -----------------------------------------------------------
+        #       MARK THE CLIQUES MERGED TO FORM ENODE'S ELIMINATION CLIQUE.
+        #       THIS SERVES TO REMOVE THEM FROM THE QUOTIENT GRAPH.
+        #       -----------------------------------------------------------
+        cstart = xadj[enode] + convert(E, nvtxs[enode])
+        cstop = cstart + convert(E, work[enode]) - one(E)
 
-    for c in cstart:cstop
-        cnode = adjncy[c]
-        nvtxs[cnode] = -one(V)
-        marker[cnode] = tag
-    end
+        for c in cstart:cstop
+            cnode = adjncy[c]
+            nvtxs[cnode] = -one(V)
+            marker[cnode] = tag
+        end
 
-    #       -------------------------------------------------
-    #       IF ENODE'S ELIMINATION CLIQUE WILL NOT FIT IN THE
-    #       REMAINING STORAGE ...
-    #       -------------------------------------------------
-    remain = adjlen - nxtloc + one(E)
+        #       -------------------------------------------------
+        #       IF ENODE'S ELIMINATION CLIQUE WILL NOT FIT IN THE
+        #       REMAINING STORAGE ...
+        #       -------------------------------------------------
+        remain = adjlen - nxtloc + one(E)
 
-    if convert(E, nnodes) > remain
-        #           ---------------------------------------------------------------
-        #           ... PERFORM GARBAGE COLLECTION ON
-        #               THE QUOTIENT GRAPH STRUCTURE.
-        #
-        #           INPUT:    NEQNS, ADJLEN, ECHEAD, ECFORW, NVTXS,
-        #                     WORK, INVP
-        #           MODIFIED: XADJ, ADJNCY
-        #           OUTPUT:   NXTLOC
-        #           ---------------------------------------------------------------
-        nxtloc = garbg2(
-            neqns, adjlen, echead, ecforw, nvtxs,
-            work, invp, xadj, adjncy, nxtloc
-        )
+        if convert(E, nnodes) > remain
+            #           ---------------------------------------------------------------
+            #           ... PERFORM GARBAGE COLLECTION ON
+            #               THE QUOTIENT GRAPH STRUCTURE.
+            #
+            #           INPUT:    NEQNS, ADJLEN, ECHEAD, ECFORW, NVTXS,
+            #                     WORK, INVP
+            #           MODIFIED: XADJ, ADJNCY
+            #           OUTPUT:   NXTLOC
+            #           ---------------------------------------------------------------
+            nxtloc = garbg2(
+                neqns, adjlen, echead, ecforw, nvtxs,
+                work, invp, xadj, adjncy, nxtloc
+            )
 
-        gbgcnt += one(I)
-    end
+            gbgcnt += one(I)
+        end
     
-    #       ------------------------------------
-    #       COPY ENODE'S ELIMINATION CLIQUE INTO
-    #       THE QUOTIENT GRAPH STRUCTURE.
-    #       ------------------------------------
-    fstloc = nxtloc
+        #       ------------------------------------
+        #       COPY ENODE'S ELIMINATION CLIQUE INTO
+        #       THE QUOTIENT GRAPH STRUCTURE.
+        #       ------------------------------------
+        fstloc = nxtloc
 
-    for i in oneto(nnodes)
-        adjncy[nxtloc] = ecliq[i]
-        nxtloc += one(E)
-    end
-    #       ------------------------------------
-    #       RECORD POINTER AND LENGTH FOR ENODE.
-    #       ------------------------------------
-    xadj[enode] = fstloc
-    nvtxs[enode] = nnodes
-    #       -----------------------------------------------
-    #       APPEND ENODE TO END OF ELIMINATION CLIQUE LIST.
-    #       -----------------------------------------------
-    if iszero(ectail)
-        echead = enode
-    else
-        ecforw[ectail] = enode
-    end
+        for i in oneto(nnodes)
+            adjncy[nxtloc] = ecliq[i]
+            nxtloc += one(E)
+        end
+        #       ------------------------------------
+        #       RECORD POINTER AND LENGTH FOR ENODE.
+        #       ------------------------------------
+        xadj[enode] = fstloc
+        nvtxs[enode] = nnodes
+        #       -----------------------------------------------
+        #       APPEND ENODE TO END OF ELIMINATION CLIQUE LIST.
+        #       -----------------------------------------------
+        if iszero(ectail)
+            echead = enode
+        else
+            ecforw[ectail] = enode
+        end
 
-    ectail = enode
-    ecforw[enode] = zero(V)
+        ectail = enode
+        ecforw[enode] = zero(V)
 
-    #       **************************************************************
-    #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE,
-    #           (1) UPDATE (I.E. REDUCE) ITS SET OF VERTEX NEIGHBORS.
-    #           (2) UPDATE (GENERALLY REDUCE) ITS SET OF CLIQUE NEIGHBORS.
-    #
-    #       ANCILLARY FUNCTION OF THE LOOP:
-    #           (1) MASS ELIMINATION
-    #       **************************************************************
-    #       --------------------------------------------------------
-    #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE ...
-    #       --------------------------------------------------------
-    jstart = xadj[enode]
-    jstop = jstart + convert(E, nvtxs[enode]) - one(E)
+        #       **************************************************************
+        #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE,
+        #           (1) UPDATE (I.E. REDUCE) ITS SET OF VERTEX NEIGHBORS.
+        #           (2) UPDATE (GENERALLY REDUCE) ITS SET OF CLIQUE NEIGHBORS.
+        #
+        #       ANCILLARY FUNCTION OF THE LOOP:
+        #           (1) MASS ELIMINATION
+        #       **************************************************************
+        #       --------------------------------------------------------
+        #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE ...
+        #       --------------------------------------------------------
+        jstart = xadj[enode]
+        jstop = jstart + convert(E, nvtxs[enode]) - one(E)
 
-    for j in jstart:jstop
-        jnode = adjncy[j]
-        #           ********************************************************
-        #           UPDATE (I.E., REDUCE) VERTEX NEIGHBORS (INODE) OF JNODE.
-        #           ********************************************************
-        #           --------------------------------------------
-        #           FOR EVERY VERTEX NEIGHBOR INODE OF JNODE ...
-        #           --------------------------------------------
-        istart = xadj[jnode]
-        istop = xadj[jnode] + convert(E, nvtxs[jnode]) - one(E)
+        for j in jstart:jstop
+            jnode = adjncy[j]
+            #           ********************************************************
+            #           UPDATE (I.E., REDUCE) VERTEX NEIGHBORS (INODE) OF JNODE.
+            #           ********************************************************
+            #           --------------------------------------------
+            #           FOR EVERY VERTEX NEIGHBOR INODE OF JNODE ...
+            #           --------------------------------------------
+            istart = xadj[jnode]
+            istop = xadj[jnode] + convert(E, nvtxs[jnode]) - one(E)
+            nxtlc2 = istart
+
+            for i in istart:istop
+                inode = adjncy[i]
+                #               -----------------------------------------
+                #               IF INODE IS NOT IN ENODE'S ELIMINATION
+                #               CLIQUE AND HAS NOT BEEN ABSORBED THEN ...
+                #               -----------------------------------------
+                if ispositive(qsize[inode])
+                    #                   ------------------------------------
+                    #                   RETAIN INODE IN JNODE'S VERTEX LIST.
+                    #                   ------------------------------------
+                    adjncy[nxtlc2] = inode
+                    nxtlc2 += one(E)
+                end
+            end
+            cst = nxtlc2
+            #           ****************************************************
+            #           UPDATE (GENERALLY REDUCE) CLIQUE NEIGHBORS OF JNODE.
+            #           ****************************************************
+            #           ----------------------------------------------
+            #           FOR EACH ELIMINATION CLIQUE NEIGHBOR CNODE ...
+            #           ----------------------------------------------
+            cstart = istop + one(E)
+            cstop = istop + convert(E, work[jnode])
+
+            for c in cstart:cstop
+                cnode = adjncy[c]
+                #               ---------------------------------------
+                #               IF CNODE WAS NOT MERGED TO FORM ENODE'S
+                #               ELIMINATION CLIQUE ...
+                #               ---------------------------------------
+                if marker[cnode] < tag
+                    #                   --------------------------
+                    #                   ADD CNODE TO JNODE'S LIST.
+                    #                   --------------------------
+                    adjncy[nxtlc2] = cnode
+                    nxtlc2 += one(E)
+                end
+            end
+            #           ----------------------------------------------------
+            #           INCLUDE ENODE AS AN ELIMINATION CLIQUE NBR OF JNODE.
+            #           ----------------------------------------------------
+            adjncy[nxtlc2] = enode
+            #           ---------------------------------------------------
+            #           COMPUTE THE NUMBER OF VERTEX AND ELIMINATION CLIQUE
+            #           NEIGHBORS OF JNODE.
+            #           ---------------------------------------------------
+            nvtxs[jnode] = convert(V, cst - istart)
+            work[jnode] = convert(V, nxtlc2 - cst) + one(V)
+            #           ------------------------------------------------
+            #           IF ENODE IS THE ONLY NEIGHBOR OF JNODE, THEN ...
+            #           ------------------------------------------------
+            if isone(work[jnode]) && iszero(nvtxs[jnode])
+                #               -------------------------------------------
+                #               ... PERFORM MASS ELIMINATION OF JNODE ALONG
+                #               WITH ENODE.
+                #               NOTE: QSIZE'S ARE NEGATIVE.
+                #               -------------------------------------------
+                work[jnode] = -enode
+                qsize[enode] += qsize[jnode]
+                qnmbr[enode] += qnmbr[jnode]
+                nvtxs[jnode] = -one(V)
+                marker[jnode] = maxint(I)
+                umark[jnode] = maxint(I)
+                clqsiz += qsize[jnode]
+                qsize[jnode] = zero(W)
+                qnmbr[jnode] = zero(V)
+            end
+        end
+
+        #       *********************************
+        #       SUPERNODE ABSORPTION VIA HASHING.
+        #       *********************************
+        #       -------------------------------------
+        #       INITIALIZE EMPTY HASH LISTS.
+        #       HHEADS(I) IS THE HEAD OF HASH LIST I.
+        #       -------------------------------------
+        for i in oneto(nnodes)
+            hheads[i] = zero(V)
+        end
+        #       --------------------------------------------------------
+        #       FOR EVERY VERTEX INODE IN ENODE'S ELIMINATION CLIQUE ...
+        #       --------------------------------------------------------
+        istart = xadj[enode]
+        istop = istart + convert(E, nvtxs[enode]) - one(E)
+
+        for i in istart:istop
+            inode = adjncy[i]
+            #           ------------------------------------
+            #           IF INODE HAS BEEN ABSORBED, SKIP IT.
+            #           ------------------------------------
+            if !iszero(qsize[inode])
+                #               ---------
+                #               BUMP TAG.
+                #               ---------
+                if tag <= maxint(I) - two(I)
+                    tag += one(I)
+                else
+                    tag = one(I)
+
+                    for k in oneto(neqns)
+                        if marker[k] < maxint(I)
+                            marker[k] = zero(I)
+                        end
+                    end
+                end
+                #               -------------------------------------
+                #               MARK THE QUOTIENT NEIGHBORS OF INODE.
+                #               (AND COMPUTE ITS HASH VALUE.)
+                #               -------------------------------------
+                hash = zero(I)
+                nvtxi = nvtxs[inode]
+                nclqi = work[inode]
+                kstart = xadj[inode]
+                kstop = kstart + convert(E, nvtxi + nclqi) - two(E)
+
+                for k in kstart:kstop
+                    knode = adjncy[k]
+                    hash += convert(I, knode)
+                    marker[knode] = tag
+                end
+
+                hash2 = convert(V, mod(hash, convert(I, nnodes))) + one(V)
+                #               ------------------------------------------------
+                #               SCAN THE NODES JNODE ALREADY IN INODE'S HASH BIN
+                #               FOR IDENTICAL QUOTIENT ADJACENCY SETS.
+                #               ------------------------------------------------
+                #               -------------------------------------------
+                #               FOR EACH NODE JNODE IN INODE'S HASH BIN ...
+                #               -------------------------------------------
+                done = false
+                jnode = hheads[hash2]
+
+                while ispositive(jnode) && !done
+                    #                   --------------------------------------------
+                    #                   IF LIST LENGTHS OF INODE AND JNODE MATCH ...
+                    #                   --------------------------------------------
+                    match = false
+
+                    if nvtxs[jnode] == nvtxi && work[jnode] == nclqi
+                        #                       ------------------
+                        #                       CHECK FOR A MATCH.
+                        #                       ------------------
+                        match = true
+                        kstart = xadj[jnode]
+                        kstop = kstart + convert(E, nvtxs[jnode] + work[jnode]) - two(E)
+
+                        for k in kstart:kstop
+                            knode = adjncy[k]
+
+                            if marker[knode] != tag
+                                match = false
+                            end
+                        end
+                    end
+                    #                   ----------------------------
+                    #                   IF INODE AND JNODE MATCH ...
+                    #                   ----------------------------
+                    if match
+                        #                       ----------------------------------
+                        #                       INODE WILL BE ABSORBED INTO JNODE.
+                        #                       NOTE: QSIZE'S ARE NEGATIVE.
+                        #                       ----------------------------------
+                        work[inode] = -jnode
+                        qsize[jnode] += qsize[inode]
+                        qnmbr[jnode] += qnmbr[inode]
+                        nvtxs[inode] = -one(V)
+                        marker[inode] = maxint(I)
+                        umark[inode] = maxint(I)
+                        qsize[inode] = zero(W)
+                        qnmbr[inode] = zero(V)
+                        #                       -------------------
+                        #                       INODE IS ABSORBED.
+                        #                       SKIP TO NEXT INODE.
+                        #                       -------------------
+                        done = true
+                    end
+
+                    if !done
+                        #                       --------------------------------
+                        #                       TRY NEXT JNODE IN HASH BIN.
+                        #                       HLINK(*)(JNODE) IS FORWARD LINK.
+                        #                       --------------------------------
+                        jnode = hlink[jnode]
+                    end
+                end
+
+                if !done
+                    #                   ------------------------------------
+                    #                   INODE WILL BE A REPRESENTATIVE NODE.
+                    #                   INSERT IT INTO ITS HASH LIST.
+                    #                   HLINK(INODE) IS FORWARD LINK.
+                    #                   ------------------------------------
+                    hlink[inode] = hheads[hash2]
+                    hheads[hash2] = inode
+                end
+            end
+            # 200       continue
+        end
+    
+        #       ------------------------------------------------------
+        #       REMOVE ABSORBED NODES FROM ENODE'S ELIMINATION CLIQUE.
+        #       REVERSE SIGNS ON QSIZE'S.
+        #       ------------------------------------------------------
+        istart = xadj[enode]
+        istop = istart + convert(E, nvtxs[enode]) - one(E)
         nxtlc2 = istart
 
         for i in istart:istop
             inode = adjncy[i]
-            #               -----------------------------------------
-            #               IF INODE IS NOT IN ENODE'S ELIMINATION
-            #               CLIQUE AND HAS NOT BEEN ABSORBED THEN ...
-            #               -----------------------------------------
-            if ispositive(qsize[inode])
-                #                   ------------------------------------
-                #                   RETAIN INODE IN JNODE'S VERTEX LIST.
-                #                   ------------------------------------
+            #           ----------------------------------------------
+            #           UNMARKING WHEN OUTMATCHING IS BEING EXPLOITED.
+            #           ----------------------------------------------
+            if !iszero(qsize[inode])
+                qsize[inode] = -qsize[inode]
                 adjncy[nxtlc2] = inode
                 nxtlc2 += one(E)
             end
         end
-        cst = nxtlc2
-        #           ****************************************************
-        #           UPDATE (GENERALLY REDUCE) CLIQUE NEIGHBORS OF JNODE.
-        #           ****************************************************
-        #           ----------------------------------------------
-        #           FOR EACH ELIMINATION CLIQUE NEIGHBOR CNODE ...
-        #           ----------------------------------------------
-        cstart = istop + one(E)
-        cstop = istop + convert(E, work[jnode])
-
-        for c in cstart:cstop
-            cnode = adjncy[c]
-            #               ---------------------------------------
-            #               IF CNODE WAS NOT MERGED TO FORM ENODE'S
-            #               ELIMINATION CLIQUE ...
-            #               ---------------------------------------
-            if marker[cnode] < tag
-                #                   --------------------------
-                #                   ADD CNODE TO JNODE'S LIST.
-                #                   --------------------------
-                adjncy[nxtlc2] = cnode
-                nxtlc2 += one(E)
-            end
-        end
-        #           ----------------------------------------------------
-        #           INCLUDE ENODE AS AN ELIMINATION CLIQUE NBR OF JNODE.
-        #           ----------------------------------------------------
-        adjncy[nxtlc2] = enode
-        #           ---------------------------------------------------
-        #           COMPUTE THE NUMBER OF VERTEX AND ELIMINATION CLIQUE
-        #           NEIGHBORS OF JNODE.
-        #           ---------------------------------------------------
-        nvtxs[jnode] = convert(V, cst - istart)
-        work[jnode] = convert(V, nxtlc2 - cst) + one(V)
-        #           ------------------------------------------------
-        #           IF ENODE IS THE ONLY NEIGHBOR OF JNODE, THEN ...
-        #           ------------------------------------------------
-        if isone(work[jnode]) && iszero(nvtxs[jnode])
-            #               -------------------------------------------
-            #               ... PERFORM MASS ELIMINATION OF JNODE ALONG
-            #               WITH ENODE.
-            #               NOTE: QSIZE'S ARE NEGATIVE.
-            #               -------------------------------------------
-            work[jnode] = -enode
-            qsize[enode] += qsize[jnode]
-            qnmbr[enode] += qnmbr[jnode]
-            nvtxs[jnode] = -one(V)
-            marker[jnode] = maxint(I)
-            umark[jnode] = maxint(I)
-            clqsiz += qsize[jnode]
-            qsize[jnode] = zero(W)
-            qnmbr[jnode] = zero(V)
-        end
-    end
-
-    #       *********************************
-    #       SUPERNODE ABSORPTION VIA HASHING.
-    #       *********************************
-    #       -------------------------------------
-    #       INITIALIZE EMPTY HASH LISTS.
-    #       HHEADS(I) IS THE HEAD OF HASH LIST I.
-    #       -------------------------------------
-    for i in oneto(nnodes)
-        hheads[i] = zero(V)
-    end
-    #       --------------------------------------------------------
-    #       FOR EVERY VERTEX INODE IN ENODE'S ELIMINATION CLIQUE ...
-    #       --------------------------------------------------------
-    istart = xadj[enode]
-    istop = istart + convert(E, nvtxs[enode]) - one(E)
-
-    for i in istart:istop
-        inode = adjncy[i]
-        #           ------------------------------------
-        #           IF INODE HAS BEEN ABSORBED, SKIP IT.
-        #           ------------------------------------
-        if !iszero(qsize[inode])
-            #               ---------
-            #               BUMP TAG.
-            #               ---------
-            if tag <= maxint(I) - two(I)
-                tag += one(I)
-            else
-                tag = one(I)
-
-                for k in oneto(neqns)
-                    if marker[k] < maxint(I)
-                        marker[k] = zero(I)
-                    end
-                end
-            end
-            #               -------------------------------------
-            #               MARK THE QUOTIENT NEIGHBORS OF INODE.
-            #               (AND COMPUTE ITS HASH VALUE.)
-            #               -------------------------------------
-            hash = zero(I)
-            nvtxi = nvtxs[inode]
-            nclqi = work[inode]
-            kstart = xadj[inode]
-            kstop = kstart + convert(E, nvtxi + nclqi) - two(E)
-
-            for k in kstart:kstop
-                knode = adjncy[k]
-                hash += convert(I, knode)
-                marker[knode] = tag
-            end
-
-            hash2 = convert(V, mod(hash, convert(I, nnodes))) + one(V)
-            #               ------------------------------------------------
-            #               SCAN THE NODES JNODE ALREADY IN INODE'S HASH BIN
-            #               FOR IDENTICAL QUOTIENT ADJACENCY SETS.
-            #               ------------------------------------------------
-            #               -------------------------------------------
-            #               FOR EACH NODE JNODE IN INODE'S HASH BIN ...
-            #               -------------------------------------------
-            done = false
-            jnode = hheads[hash2]
-
-            while ispositive(jnode) && !done
-                #                   --------------------------------------------
-                #                   IF LIST LENGTHS OF INODE AND JNODE MATCH ...
-                #                   --------------------------------------------
-                match = false
-
-                if nvtxs[jnode] == nvtxi && work[jnode] == nclqi
-                    #                       ------------------
-                    #                       CHECK FOR A MATCH.
-                    #                       ------------------
-                    match = true
-                    kstart = xadj[jnode]
-                    kstop = kstart + convert(E, nvtxs[jnode] + work[jnode]) - two(E)
-
-                    for k in kstart:kstop
-                        knode = adjncy[k]
-
-                        if marker[knode] != tag
-                            match = false
-                        end
-                    end
-                end
-                #                   ----------------------------
-                #                   IF INODE AND JNODE MATCH ...
-                #                   ----------------------------
-                if match
-                    #                       ----------------------------------
-                    #                       INODE WILL BE ABSORBED INTO JNODE.
-                    #                       NOTE: QSIZE'S ARE NEGATIVE.
-                    #                       ----------------------------------
-                    work[inode] = -jnode
-                    qsize[jnode] += qsize[inode]
-                    qnmbr[jnode] += qnmbr[inode]
-                    nvtxs[inode] = -one(V)
-                    marker[inode] = maxint(I)
-                    umark[inode] = maxint(I)
-                    qsize[inode] = zero(W)
-                    qnmbr[inode] = zero(V)
-                    #                       -------------------
-                    #                       INODE IS ABSORBED.
-                    #                       SKIP TO NEXT INODE.
-                    #                       -------------------
-                    done = true
-                end
-
-                if !done
-                    #                       --------------------------------
-                    #                       TRY NEXT JNODE IN HASH BIN.
-                    #                       HLINK(*)(JNODE) IS FORWARD LINK.
-                    #                       --------------------------------
-                    jnode = hlink[jnode]
-                end
-            end
-
-            if !done
-                #                   ------------------------------------
-                #                   INODE WILL BE A REPRESENTATIVE NODE.
-                #                   INSERT IT INTO ITS HASH LIST.
-                #                   HLINK(INODE) IS FORWARD LINK.
-                #                   ------------------------------------
-                hlink[inode] = hheads[hash2]
-                hheads[hash2] = inode
-            end
-        end
-        # 200       continue
-    end
+        #       ----------------------------------------------------------
+        #       RECORD INFO ABOUT ENODE AND RECORD NEXT AVAILABLE LOCATION
+        #       IN QUOTIENT GRAPH.
+        #       ----------------------------------------------------------
+        nvtxs[enode] = convert(V, nxtlc2 - istart)
+        qsize[enode] = -qsize[enode]
+        nxtloc = nxtlc2
     
-    #       ------------------------------------------------------
-    #       REMOVE ABSORBED NODES FROM ENODE'S ELIMINATION CLIQUE.
-    #       REVERSE SIGNS ON QSIZE'S.
-    #       ------------------------------------------------------
-    istart = xadj[enode]
-    istop = istart + convert(E, nvtxs[enode]) - one(E)
-    nxtlc2 = istart
-
-    for i in istart:istop
-        inode = adjncy[i]
-        #           ----------------------------------------------
-        #           UNMARKING WHEN OUTMATCHING IS BEING EXPLOITED.
-        #           ----------------------------------------------
-        if !iszero(qsize[inode])
-            qsize[inode] = -qsize[inode]
-            adjncy[nxtlc2] = inode
-            nxtlc2 += one(E)
-        end
+        return tag, echead, ectail, nxtloc, gbgcnt, clqsiz
     end
-    #       ----------------------------------------------------------
-    #       RECORD INFO ABOUT ENODE AND RECORD NEXT AVAILABLE LOCATION
-    #       IN QUOTIENT GRAPH.
-    #       ----------------------------------------------------------
-    nvtxs[enode] = convert(V, nxtlc2 - istart)
-    qsize[enode] = -qsize[enode]
-    nxtloc = nxtlc2
-    
-    return tag, echead, ectail, nxtloc, gbgcnt, clqsiz
 end

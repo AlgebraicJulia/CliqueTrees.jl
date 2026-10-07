@@ -40,63 +40,65 @@
 #**********************************************************************
 #
 function del_heap(heap::AbstractVector{W}, heapsize::V, v2heap::AbstractVector{V}, vtx::V) where {V, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       --------------------------------
-    #       VTX IS THE VERTEX TO BE REMOVED.
-    #       --------------------------------
-    v = vtx
+        #       --------------------------------
+        #       VTX IS THE VERTEX TO BE REMOVED.
+        #       --------------------------------
+        v = vtx
 
-    if iszero(heapsize)
+        if iszero(heapsize)
+            return heapsize
+        end
+    
+        #       ---------------------------------------------------
+        #       I GIVES THE LOCATION OF THE VERTEX VTX IN THE HEAP.
+        #       ---------------------------------------------------
+        i = v2heap[v]
+
+        if i < heapsize
+        
+            #           -----------------------------------------
+            #           INDICATE THAT THE ELEMENT WITH VERTEX = V
+            #           IS NO LONGER IN THE HEAP.
+            #           -----------------------------------------
+            v2heap[v] = zero(V)
+
+            #           ----------------------------------------------------
+            #           THE ELEMENT BEING REMOVED OCCUPIES HEAP(2*I)-1 AND
+            #           HEAP(2*I).  MOVE THE LAST ELEMENT IN THE HEAP TO THE
+            #           POSITION OCCUPIED BY THE DELETED ELEMENT.
+            #           ----------------------------------------------------
+            lp = twice(heapsize)
+            ip = twice(i)
+
+            v = convert(V, heap[lp])
+            heap[ip] = convert(W, v)
+            v2heap[v] = i
+            heapsize -= one(V)
+
+            wt = heap[lp - one(V)]
+
+            #           -------------------------------------------------
+            #           CALLING MOD_HEAP TO PUT THE WEIGHT IN THE CORRECT
+            #           PLACE AND REBUILD THE HEAP.
+            #           -------------------------------------------------
+            mod_heap(heap, heapsize, v2heap, v, wt)
+
+        else
+
+            #           ---------------------------------------------
+            #           THE ELEMENT BEING REMOVED IS THE LAST ELEMENT
+            #           IN THE HEAP, SO THERE IS NOT MUCH TO DO.
+            #           ---------------------------------------------
+            v2heap[v] = zero(V)
+            heapsize -= one(V)
+        end
+    
         return heapsize
     end
-    
-    #       ---------------------------------------------------
-    #       I GIVES THE LOCATION OF THE VERTEX VTX IN THE HEAP.
-    #       ---------------------------------------------------
-    i = v2heap[v]
-
-    if i < heapsize
-        
-        #           -----------------------------------------
-        #           INDICATE THAT THE ELEMENT WITH VERTEX = V
-        #           IS NO LONGER IN THE HEAP.
-        #           -----------------------------------------
-        v2heap[v] = zero(V)
-
-        #           ----------------------------------------------------
-        #           THE ELEMENT BEING REMOVED OCCUPIES HEAP(2*I)-1 AND
-        #           HEAP(2*I).  MOVE THE LAST ELEMENT IN THE HEAP TO THE
-        #           POSITION OCCUPIED BY THE DELETED ELEMENT.
-        #           ----------------------------------------------------
-        lp = twice(heapsize)
-        ip = twice(i)
-
-        v = convert(V, heap[lp])
-        heap[ip] = convert(W, v)
-        v2heap[v] = i
-        heapsize -= one(V)
-
-        wt = heap[lp - one(V)]
-
-        #           -------------------------------------------------
-        #           CALLING MOD_HEAP TO PUT THE WEIGHT IN THE CORRECT
-        #           PLACE AND REBUILD THE HEAP.
-        #           -------------------------------------------------
-        mod_heap(heap, heapsize, v2heap, v, wt)
-
-    else
-
-        #           ---------------------------------------------
-        #           THE ELEMENT BEING REMOVED IS THE LAST ELEMENT
-        #           IN THE HEAP, SO THERE IS NOT MUCH TO DO.
-        #           ---------------------------------------------
-        v2heap[v] = zero(V)
-        heapsize -= one(V)
-    end
-    
-    return heapsize
 end

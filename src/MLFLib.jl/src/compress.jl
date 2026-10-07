@@ -79,176 +79,178 @@ function compress(
         umark::AbstractVector{I},
         xadj2::AbstractVector{E}
     ) where {V, E, I, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       -----------------------------------------------------------
-    #       INITIALIZE VARIOUS VECTORS.
-    #       NOTE THAT DEGREE COUNTS THE VERTEX AS A NEIGHBOR OF ITSELF.
-    #       -----------------------------------------------------------
-    tag = zero(I)
+        #       -----------------------------------------------------------
+        #       INITIALIZE VARIOUS VECTORS.
+        #       NOTE THAT DEGREE COUNTS THE VERTEX AS A NEIGHBOR OF ITSELF.
+        #       -----------------------------------------------------------
+        tag = zero(I)
 
-    for jnode in oneto(neqns)
-        qsize[jnode] = vwght[jnode]
-        qnmbr[jnode] = one(V)
-        marker[jnode] = zero(V)
-        work[jnode] = zero(V)
-        umark[jnode] = zero(V)
-        hash[jnode] = convert(I, jnode)
+        for jnode in oneto(neqns)
+            qsize[jnode] = vwght[jnode]
+            qnmbr[jnode] = one(V)
+            marker[jnode] = zero(V)
+            work[jnode] = zero(V)
+            umark[jnode] = zero(V)
+            hash[jnode] = convert(I, jnode)
 
-        kstart = xadj[jnode]
-        kstop = xadj[jnode + one(V)] - one(E)
-        dj = vwght[jnode]
-
-        for k in kstart:kstop
-            knode = adjncy[k]
-            dj += vwght[knode]
-        end
-
-        degree[jnode] = dj
-    end
-
-    #       ----------------------------------
-    #       COMPUTE HASH SCORES FOR EACH NODE.
-    #       ----------------------------------
-    kstart = xadj[1]
-
-    for jnode in oneto(neqns)
-        kstop = xadj[jnode + one(V)] - one(E)
-
-        for k in kstart:kstop
-            knode = adjncy[k]
-            hash[jnode] += convert(I, knode)
-        end
-
-        kstart = kstop + one(E)
-    end
-    
-    #       -----------------------
-    #       FOR EACH NODE JNODE ...
-    #       -----------------------
-    for jnode in oneto(neqns)
-        
-        #           -------------------------------------------------------
-        #           IF JNODE IS NOT ALREADY ABSORBED IN A PREVIOUS NODE ...
-        #           -------------------------------------------------------
-        if !iszero(qsize[jnode])
-            
-            #               ----------------------------------------------
-            #               MARK JNODE AND ITS NEIGHBORS WITH THE NEW TAG.
-            #               ----------------------------------------------
-            tag += one(I)
-            umark[jnode] = tag
             kstart = xadj[jnode]
             kstop = xadj[jnode + one(V)] - one(E)
+            dj = vwght[jnode]
 
             for k in kstart:kstop
                 knode = adjncy[k]
-                umark[knode] = tag
+                dj += vwght[knode]
             end
 
-            #               ------------------------------------
-            #               FOR EACH NEIGHBOR KNODE OF JNODE ...
-            #               ------------------------------------
-            kstart = xadj[jnode]
+            degree[jnode] = dj
+        end
+
+        #       ----------------------------------
+        #       COMPUTE HASH SCORES FOR EACH NODE.
+        #       ----------------------------------
+        kstart = xadj[1]
+
+        for jnode in oneto(neqns)
             kstop = xadj[jnode + one(V)] - one(E)
 
             for k in kstart:kstop
                 knode = adjncy[k]
-                #                   ----------------------------------------------
-                #                   IF KNODE HAS THE SAME DEGREE AND HASH VALUE AS
-                #                   JNODE AND KNODE IS GREATER THAN JNODE
-                #                   ----------------------------------------------
-                if degree[knode] == degree[jnode] && hash[knode] == hash[jnode] && knode > jnode
+                hash[jnode] += convert(I, knode)
+            end
 
-                    #                       ----------------------------------------------
-                    #                       CHECK IF KNODE AND JNODE ARE INDISINGUISHABLE.
-                    #                       ----------------------------------------------
-                    indist = true
-                    istart = xadj[knode]
-                    istop = xadj[knode + one(V)] - one(E)
+            kstart = kstop + one(E)
+        end
+    
+        #       -----------------------
+        #       FOR EACH NODE JNODE ...
+        #       -----------------------
+        for jnode in oneto(neqns)
+        
+            #           -------------------------------------------------------
+            #           IF JNODE IS NOT ALREADY ABSORBED IN A PREVIOUS NODE ...
+            #           -------------------------------------------------------
+            if !iszero(qsize[jnode])
+            
+                #               ----------------------------------------------
+                #               MARK JNODE AND ITS NEIGHBORS WITH THE NEW TAG.
+                #               ----------------------------------------------
+                tag += one(I)
+                umark[jnode] = tag
+                kstart = xadj[jnode]
+                kstop = xadj[jnode + one(V)] - one(E)
 
-                    for i in istart:istop
-                        inode = adjncy[i]
+                for k in kstart:kstop
+                    knode = adjncy[k]
+                    umark[knode] = tag
+                end
 
-                        if umark[inode] < tag
-                            indist = false
+                #               ------------------------------------
+                #               FOR EACH NEIGHBOR KNODE OF JNODE ...
+                #               ------------------------------------
+                kstart = xadj[jnode]
+                kstop = xadj[jnode + one(V)] - one(E)
+
+                for k in kstart:kstop
+                    knode = adjncy[k]
+                    #                   ----------------------------------------------
+                    #                   IF KNODE HAS THE SAME DEGREE AND HASH VALUE AS
+                    #                   JNODE AND KNODE IS GREATER THAN JNODE
+                    #                   ----------------------------------------------
+                    if degree[knode] == degree[jnode] && hash[knode] == hash[jnode] && knode > jnode
+
+                        #                       ----------------------------------------------
+                        #                       CHECK IF KNODE AND JNODE ARE INDISINGUISHABLE.
+                        #                       ----------------------------------------------
+                        indist = true
+                        istart = xadj[knode]
+                        istop = xadj[knode + one(V)] - one(E)
+
+                        for i in istart:istop
+                            inode = adjncy[i]
+
+                            if umark[inode] < tag
+                                indist = false
+                            end
+                        end
+                        #                       -----------------------------------------
+                        #                       IF JNODE AND KNODE ARE INDISTINGUISHABLE,
+                        #                       THEN
+                        #                       -----------------------------------------
+                        if indist
+                            #                           ---------------------------
+                            #                           KNODE IS MERGED INTO JNODE.
+                            #                           ---------------------------
+                            work[knode] = -jnode
+                            qsize[jnode] += qsize[knode]
+                            qnmbr[jnode] += qnmbr[knode]
+                            marker[knode] = maxint(I)
+                            qsize[knode] = zero(W)
+                            qnmbr[knode] = zero(V)
                         end
                     end
-                    #                       -----------------------------------------
-                    #                       IF JNODE AND KNODE ARE INDISTINGUISHABLE,
-                    #                       THEN
-                    #                       -----------------------------------------
-                    if indist
-                        #                           ---------------------------
-                        #                           KNODE IS MERGED INTO JNODE.
-                        #                           ---------------------------
-                        work[knode] = -jnode
-                        qsize[jnode] += qsize[knode]
-                        qnmbr[jnode] += qnmbr[knode]
-                        marker[knode] = maxint(I)
-                        qsize[knode] = zero(W)
-                        qnmbr[knode] = zero(V)
+                    #                   ----------------------------
+                    #                   NEXT NEIGHBOR KNODE OF JNODE
+                    #                   ----------------------------
+                end
+            
+            end
+            #           ----------------
+            #           NEXT NODE JNODE.
+            #           ----------------
+        end
+    
+        #       ---------------------------------
+        #       COMPRESS THE ADJACENCY STRUCTURE.
+        #       ---------------------------------
+        nxtloc = one(E)
+        #       -----------------------
+        #       FOR EACH NODE JNODE ...
+        #       -----------------------
+        for jnode in oneto(neqns)
+            #           ----------------------------------------
+            #           IF JNODE IS ABSORBED BY ANOTHER NODE ...
+            #           ----------------------------------------
+            if iszero(qsize[jnode])
+                #               -------------------------------------------
+                #               JNODE WILL HAVE AN EMPTY LIST OF NEIGHBORS.
+                #               -------------------------------------------
+                xadj2[jnode] = nxtloc
+            else
+                #               -------------------------------
+                #               JNODE IS A REPRESENTATIVE NODE.
+                #               COMPRESS JNODE'S NEIGHBOR LIST.
+                #               -------------------------------
+                kstart = xadj[jnode]
+                kstop = xadj[jnode + one(V)] - one(E)
+
+                for k in kstart:kstop
+                    knode = adjncy[k]
+
+                    if !iszero(qsize[knode])
+                        adjncy[nxtloc] = knode
+                        nxtloc += one(E)
                     end
                 end
-                #                   ----------------------------
-                #                   NEXT NEIGHBOR KNODE OF JNODE
-                #                   ----------------------------
+
+                xadj2[jnode] = nxtloc
             end
-            
         end
-        #           ----------------
-        #           NEXT NODE JNODE.
-        #           ----------------
-    end
-    
-    #       ---------------------------------
-    #       COMPRESS THE ADJACENCY STRUCTURE.
-    #       ---------------------------------
-    nxtloc = one(E)
-    #       -----------------------
-    #       FOR EACH NODE JNODE ...
-    #       -----------------------
-    for jnode in oneto(neqns)
-        #           ----------------------------------------
-        #           IF JNODE IS ABSORBED BY ANOTHER NODE ...
-        #           ----------------------------------------
-        if iszero(qsize[jnode])
-            #               -------------------------------------------
-            #               JNODE WILL HAVE AN EMPTY LIST OF NEIGHBORS.
-            #               -------------------------------------------
-            xadj2[jnode] = nxtloc
-        else
-            #               -------------------------------
-            #               JNODE IS A REPRESENTATIVE NODE.
-            #               COMPRESS JNODE'S NEIGHBOR LIST.
-            #               -------------------------------
-            kstart = xadj[jnode]
-            kstop = xadj[jnode + one(V)] - one(E)
 
-            for k in kstart:kstop
-                knode = adjncy[k]
+        #       ------------------
+        #       COPY NEW POINTERS.
+        #       ------------------
+        xadj[1] = one(E)
 
-                if !iszero(qsize[knode])
-                    adjncy[nxtloc] = knode
-                    nxtloc += one(E)
-                end
-            end
-
-            xadj2[jnode] = nxtloc
+        for k in oneto(neqns)
+            xadj[k + one(V)] = xadj2[k]
         end
-    end
-
-    #       ------------------
-    #       COPY NEW POINTERS.
-    #       ------------------
-    xadj[1] = one(E)
-
-    for k in oneto(neqns)
-        xadj[k + one(V)] = xadj2[k]
-    end
     
-    return
+        return
+    end
 end

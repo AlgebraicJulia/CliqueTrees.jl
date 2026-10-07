@@ -44,58 +44,60 @@
 #**********************************************************************
 #
 function mod_heap(heap::AbstractVector{W}, heapsize::V, v2heap::AbstractVector{V}, vtx::V, wt::W) where {V, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       ---------------------------------------------------
-    #       GET THE LOCATION OF THE NODE CONTAINING VERTEX VTX.
-    #       ---------------------------------------------------
-    i = v2heap[vtx]
+        #       ---------------------------------------------------
+        #       GET THE LOCATION OF THE NODE CONTAINING VERTEX VTX.
+        #       ---------------------------------------------------
+        i = v2heap[vtx]
     
-    #       -----------------------------------------------------
-    #       MODIFY THE WEIGHT FIELD OF ELEMENT WITH VERTEX = VTX.
-    #       -----------------------------------------------------
-    heap[twice(i) - one(V)] = wt
+        #       -----------------------------------------------------
+        #       MODIFY THE WEIGHT FIELD OF ELEMENT WITH VERTEX = VTX.
+        #       -----------------------------------------------------
+        heap[twice(i) - one(V)] = wt
     
-    #       ------------------------------------------------------
-    #       HEAP MAY NO LONGER BE A HEAP AFTER THE WEIGHT FIELD OF
-    #       AN ELEMENT IS MODIFIED.  IT HAS TO BE REBUILT INTO A
-    #       HEAP.
-    #       ------------------------------------------------------
+        #       ------------------------------------------------------
+        #       HEAP MAY NO LONGER BE A HEAP AFTER THE WEIGHT FIELD OF
+        #       AN ELEMENT IS MODIFIED.  IT HAS TO BE REBUILT INTO A
+        #       HEAP.
+        #       ------------------------------------------------------
     
-    if ispositive(i - one(V))
-        #           ----------------------------------------------------
-        #           THE MODIFIED ELEMENT IS NOT AT THE TOP OF THE BIANRY
-        #           TREE, SO IT HAS A PARENT, GIVEN BY I/2.
-        #           ----------------------------------------------------
-        p = half(i)
+        if ispositive(i - one(V))
+            #           ----------------------------------------------------
+            #           THE MODIFIED ELEMENT IS NOT AT THE TOP OF THE BIANRY
+            #           TREE, SO IT HAS A PARENT, GIVEN BY I/2.
+            #           ----------------------------------------------------
+            p = half(i)
 
-        if heap[twice(p) - one(V)] > wt
-            #               ------------------------------------------------
-            #               THE WEIGHT FIELD OF THE PARENT IS LARGER THAN THE
-            #               WEIGHT OF THE MODIFIED ELEMENT, SO THE MODIFIED
-            #               ELEMENT HAS TO BE MOVED UP THE BINARY TREE TO
-            #               REBUILD THE HEAP.
-            #               ------------------------------------------------
-            move_up(heap, heapsize, i, v2heap)
-            return
+            if heap[twice(p) - one(V)] > wt
+                #               ------------------------------------------------
+                #               THE WEIGHT FIELD OF THE PARENT IS LARGER THAN THE
+                #               WEIGHT OF THE MODIFIED ELEMENT, SO THE MODIFIED
+                #               ELEMENT HAS TO BE MOVED UP THE BINARY TREE TO
+                #               REBUILD THE HEAP.
+                #               ------------------------------------------------
+                move_up(heap, heapsize, i, v2heap)
+                return
+            end
         end
+    
+        #       -------------------------------------------------------
+        #       EITHER THE MODIFIED ELEMENT IS AT THE TOP OF THE BINARY
+        #       TREE (WITH I = 1), OR ITS WEIGHT FIELD IS LESS THAN OR
+        #       EQUAL TO THE WEIGHT FIELD OF THE PARENT IN THE BINARY
+        #       TREE.
+        #
+        #       THE BINARY TREE ROOTED AT THE MODIFIED ELEMENT MAY NOT
+        #       BE A HEAP ANYMORE.  IT MAY BE NECESSARY TO REBUILD THE
+        #       HEAP BY TRAVERSING DOWN THE BINARY TREE, STARTING FROM
+        #       THE MODIFIED ELEMENT.
+        #       -------------------------------------------------------
+        move_down(heap, heapsize, i, v2heap)
+    
+        return
     end
-    
-    #       -------------------------------------------------------
-    #       EITHER THE MODIFIED ELEMENT IS AT THE TOP OF THE BINARY
-    #       TREE (WITH I = 1), OR ITS WEIGHT FIELD IS LESS THAN OR
-    #       EQUAL TO THE WEIGHT FIELD OF THE PARENT IN THE BINARY
-    #       TREE.
-    #
-    #       THE BINARY TREE ROOTED AT THE MODIFIED ELEMENT MAY NOT
-    #       BE A HEAP ANYMORE.  IT MAY BE NECESSARY TO REBUILD THE
-    #       HEAP BY TRAVERSING DOWN THE BINARY TREE, STARTING FROM
-    #       THE MODIFIED ELEMENT.
-    #       -------------------------------------------------------
-    move_down(heap, heapsize, i, v2heap)
-    
-    return
 end

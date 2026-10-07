@@ -215,290 +215,292 @@ function genmf_wh(
         work1::AbstractVector{I},
         work2::AbstractVector{W},
     ) where {V, E, I, W}
+    @inbounds begin
     
-    #       ****************
-    #       INITIALIZATIONS.
-    #       ****************
+        #       ****************
+        #       INITIALIZATIONS.
+        #       ****************
     
-    #       -------------------------------------
-    #       COMPRESS THE GRAPH.
-    #         INPUT:    NEQNS, MAXINT, ADJLEN
-    #         MODIFIED: XADJ, ADJNCY
-    #         OUTPUT:   DEGREE, MARKER, WORK, QSIZE
-    #         WORK:     DEFNCY, UMARK, XADJ2
-    #       -------------------------------------
-    compress(
-        neqns, adjlen, vwght, xadj, adjncy,
-        degree, marker, work, qsize, qnmbr, work1,
-        umark, xadj2
-    )
-    
-    if !defflag
-        
-        #           -----------------------------------------------------
-        #           COMPUTE INITIAL DEFICIENCIES BY THE STRAIGHTFORWARD
-        #           APPROACH.
-        #             INPUT:  NEQNS , ADJLEN, XADJ, ADJNCY, DEGREE, QSIZE
-        #             OUTPUT: DEFNCY
-        #             WORK:   UMARK
-        #           -----------------------------------------------------
-        mfinit_vanilla(
-            neqns, adjlen, xadj, adjncy, degree,
-            qsize, defncy, umark
+        #       -------------------------------------
+        #       COMPRESS THE GRAPH.
+        #         INPUT:    NEQNS, MAXINT, ADJLEN
+        #         MODIFIED: XADJ, ADJNCY
+        #         OUTPUT:   DEGREE, MARKER, WORK, QSIZE
+        #         WORK:     DEFNCY, UMARK, XADJ2
+        #       -------------------------------------
+        compress(
+            neqns, adjlen, vwght, xadj, adjncy,
+            degree, marker, work, qsize, qnmbr, work1,
+            umark, xadj2
         )
+    
+        if !defflag
         
-    else
+            #           -----------------------------------------------------
+            #           COMPUTE INITIAL DEFICIENCIES BY THE STRAIGHTFORWARD
+            #           APPROACH.
+            #             INPUT:  NEQNS , ADJLEN, XADJ, ADJNCY, DEGREE, QSIZE
+            #             OUTPUT: DEFNCY
+            #             WORK:   UMARK
+            #           -----------------------------------------------------
+            mfinit_vanilla(
+                neqns, adjlen, xadj, adjncy, degree,
+                qsize, defncy, umark
+            )
         
-        #           --------------------------------------------------------
-        #           IF DEFICIENCY FLAG IS ON ...
-        #           COMPUTE INITIAL DEFICIENCIES BY ADDING THE EDGES ONE
-        #           AT A TIME TO AN INITIALLY EMPTY GRAPH AND PERFORMING
-        #           WING-HUANG UPDATING FOR EACH NEW EDGE.
-        #             INPUT:  NEQNS , ADJLEN, ADJLEN2, XADJ, ADJNCY, DEGREE,
-        #               QSIZE
-        #             OUTPUT: DEFNCY
-        #             WORK:   MARKER, PERM, INVP, UMARK, XADJ2, LEN2  , ADJ2
-        #           --------------------------------------------------------
-        mfinit_def(
-            neqns, adjlen, adjlen2, xadj, adjncy,
-            degree, qsize, defncy, marker, perm,
-            invp, work2, xadj2, len2, adj2
+        else
+        
+            #           --------------------------------------------------------
+            #           IF DEFICIENCY FLAG IS ON ...
+            #           COMPUTE INITIAL DEFICIENCIES BY ADDING THE EDGES ONE
+            #           AT A TIME TO AN INITIALLY EMPTY GRAPH AND PERFORMING
+            #           WING-HUANG UPDATING FOR EACH NEW EDGE.
+            #             INPUT:  NEQNS , ADJLEN, ADJLEN2, XADJ, ADJNCY, DEGREE,
+            #               QSIZE
+            #             OUTPUT: DEFNCY
+            #             WORK:   MARKER, PERM, INVP, UMARK, XADJ2, LEN2  , ADJ2
+            #           --------------------------------------------------------
+            mfinit_def(
+                neqns, adjlen, adjlen2, xadj, adjncy,
+                degree, qsize, defncy, marker, perm,
+                invp, work2, xadj2, len2, adj2
+            )
+        
+        end
+    
+        #       ----------------------------------------------------------
+        #       INITIALIZE VARIOUS VECTORS AND MAKE THE INITIAL HEAP BASED
+        #       ON INITIAL DEFICIENCY-BASED SCORES.
+        #         INPUT:  NEQNS, XADJ, DEGREE, QSIZE, DEFNCY
+        #         OUTPUT: HEAP, HEAPSIZE, HEAPINV, MARKER, NVTXS, WORK,
+        #                 ECFORW, CHANGED, UMARK, INVP
+        #       ----------------------------------------------------------
+        heapsize = mfinit_heap(
+            neqns, xadj, degree, qsize, defncy,
+            heap, heapinv, marker, nvtxs,
+            work, ecforw, changed, umark, invp
         )
-        
-    end
     
-    #       ----------------------------------------------------------
-    #       INITIALIZE VARIOUS VECTORS AND MAKE THE INITIAL HEAP BASED
-    #       ON INITIAL DEFICIENCY-BASED SCORES.
-    #         INPUT:  NEQNS, XADJ, DEGREE, QSIZE, DEFNCY
-    #         OUTPUT: HEAP, HEAPSIZE, HEAPINV, MARKER, NVTXS, WORK,
-    #                 ECFORW, CHANGED, UMARK, INVP
-    #       ----------------------------------------------------------
-    heapsize = mfinit_heap(
-        neqns, xadj, degree, qsize, defncy,
-        heap, heapinv, marker, nvtxs,
-        work, ecforw, changed, umark, invp
-    )
-    
-    #       ------------------------------------------------------
-    #       NOFNZ:  NUMBER OF NONZEROS IN FACTOR IS INITIALLY ZERO.
-    #       ECHEAD, ECTAIL: EMPTY ELIMINATION CLIQUE LIST.
-    #       GBGCNT: GARBAGE COLLECTION COUNT INITIALLY ZERO.
-    #       TAG:    INITIAL MARKER VALUE IS ZERO.
-    #       UTAG:   INITIAL W-H MARKER VALUE IS ZERO.
-    #       NXTLOC: POINTS TO FIRST LOCATION IN VACANT STORAGE
-    #               REMAINING AT END OF ADJNCY(*).
-    #       REMAIN: AMOUNT OF VACANT STORAGE REMAINING AT END OF
-    #               ADJNCY(*).
-    #       IFLAG:  TEST FOR SUFFICIENT WORK STORAGE IN ADJNCY(*).
-    #       ------------------------------------------------------
-    nofnz  = zero(W)
-    echead = zero(V)
-    ectail = zero(V)
-    gbgcnt = zero(I)
-    tag    = zero(I)
-    utag   = zero(I)
-    nxtloc = xadj[neqns + one(V)]
-    remain = adjlen - nxtloc + one(E)
+        #       ------------------------------------------------------
+        #       NOFNZ:  NUMBER OF NONZEROS IN FACTOR IS INITIALLY ZERO.
+        #       ECHEAD, ECTAIL: EMPTY ELIMINATION CLIQUE LIST.
+        #       GBGCNT: GARBAGE COLLECTION COUNT INITIALLY ZERO.
+        #       TAG:    INITIAL MARKER VALUE IS ZERO.
+        #       UTAG:   INITIAL W-H MARKER VALUE IS ZERO.
+        #       NXTLOC: POINTS TO FIRST LOCATION IN VACANT STORAGE
+        #               REMAINING AT END OF ADJNCY(*).
+        #       REMAIN: AMOUNT OF VACANT STORAGE REMAINING AT END OF
+        #               ADJNCY(*).
+        #       IFLAG:  TEST FOR SUFFICIENT WORK STORAGE IN ADJNCY(*).
+        #       ------------------------------------------------------
+        nofnz  = zero(W)
+        echead = zero(V)
+        ectail = zero(V)
+        gbgcnt = zero(I)
+        tag    = zero(I)
+        utag   = zero(I)
+        nxtloc = xadj[neqns + one(V)]
+        remain = adjlen - nxtloc + one(E)
 
-    if remain >= convert(E, neqns)
-        #           --------------------------------
-        #           SUFFICIENT STORAGE (NO WARNING).
-        #           --------------------------------
-        iflag = zero(I)
-    elseif !isnegative(remain) && remain <= convert(E, neqns) - one(E)
-        #           ------------------------------------------------------
-        #           SUFFICIENT STORAGE, BUT COULD BE TIGHT ENOUGH TO CAUSE
-        #           MANY GARBAGE COLLECTIONS. (WARNING)
-        #           ------------------------------------------------------
-        iflag = one(I)
-    else
-        #           -----------------------------
-        #           INSUFFICIENT STORAGE (ERROR).
-        #           -----------------------------
-        iflag = -one(I)
+        if remain >= convert(E, neqns)
+            #           --------------------------------
+            #           SUFFICIENT STORAGE (NO WARNING).
+            #           --------------------------------
+            iflag = zero(I)
+        elseif !isnegative(remain) && remain <= convert(E, neqns) - one(E)
+            #           ------------------------------------------------------
+            #           SUFFICIENT STORAGE, BUT COULD BE TIGHT ENOUGH TO CAUSE
+            #           MANY GARBAGE COLLECTIONS. (WARNING)
+            #           ------------------------------------------------------
+            iflag = one(I)
+        else
+            #           -----------------------------
+            #           INSUFFICIENT STORAGE (ERROR).
+            #           -----------------------------
+            iflag = -one(I)
+            return nofnz, gbgcnt, iflag
+        end
+    
+        #       ------------------------------------------------
+        #       MAIN LOOP:
+        #       WHILE THERE REMAIN ANY NODES TO ELIMINATE ...
+        #
+        #       NUM: NEXT NUMBER TO BE ASSIGNED BY THE ORDERING.
+        #       ------------------------------------------------
+        num = one(V)
+
+        while num <= neqns
+
+            #           --------------------------------------------
+            #           DELETE THE MINIMUM-SCORE NODE FROM THE HEAP.
+            #             ENODE:  MINIMUM-SCORE NODE
+            #           --------------------------------------------
+            enode = convert(V, heap[two(V)])
+            heapsize = del_heap(heap, heapsize, heapinv, enode)
+        
+            #           --------------------------------------------------------
+            #           COMPUTE THE NEW ELIMINATION CLIQUE FORMED BY ELIMINATING
+            #           ENODE.
+            #             INPUT:    ENODE, NEQNS, ADJLEN, XADJ, ADJNCY, NVTXS,
+            #                       WORK
+            #             MODIFIED: QSIZE, CHANGED
+            #             OUTPUT:   CLQSIZ, FNODE, NNODES, ECLIQ, CLIQUE
+            #           --------------------------------------------------------
+            clqsiz, fnode, nnodes = elmclq(
+                enode, neqns, adjlen, xadj, adjncy,
+                nvtxs, work, qsize, changed, ecliq
+            )
+        
+            #           ----------------------------------------------------------
+            #           INITIALLY NO NNODES EXTERNAL TO ENODE'S ELIMINATION CLIQUE
+            #           HAVE HAD THEIR DEFICIENCIES REDUCED. (NNODES2 = 0)
+            #           ----------------------------------------------------------
+        
+            #           ---------------------------------------------------------
+            #           PERFORM THE WING-HUANG UPDATES TO THE DEFICIENCIES DUE TO
+            #           EDGES ADDED BY THE ELIMINATION OF ENODE.
+            #             INPUT:    CONFLAG, CONDONE, ENODE, NEQNS, MAXINT, 
+            #                       ADJLEN, XADJ, ADJNCY, NVTXS, WORK,
+            #                       QSIZE, NNODES, FNODE
+            #             MODIFIED: NNODES2, ECLIQ, DEGREE, DEFNCY, TAG, MARKER,
+            #                       UTAG, UMARK, CHANGED
+            #             WORK:     XADJ2, LEN2
+            #           ---------------------------------------------------------
+            tag, utag, nnodes2 = mfupd_def(
+                enode, neqns, adjlen, xadj,
+                adjncy, nvtxs, work, qsize, nnodes,
+                fnode, ecliq, degree, defncy,
+                tag, marker, utag, umark, changed,
+                len2, work2
+            )
+        
+            #           -------------------------------------------------------
+            #           PERFORM THE ELIMINATION GRAPH TRANSFORMATION DUE TO THE
+            #           ELIMINATION OF ENODE ...
+            #             INPUT:    ENODE, NEQNS, ADJLEN, MAXINT, NNODES,
+            #                       ECLIQ, INVP
+            #             MODIFIED: TAG, XADJ, ADJNCY, NVTXS, WORK,
+            #                       QSIZE, MARKER, ECHEAD, ECTAIL, ECFORW,
+            #                       NXTLOC, GBGCNT, CLQSIZ, UMARK
+            #             WORK:     WORK1, XADJ2
+            #           -------------------------------------------------------
+            tag, echead, ectail, nxtloc, gbgcnt, clqsiz = elmtra(
+                enode, neqns, adjlen, nnodes,
+                ecliq, invp, tag, xadj, adjncy,
+                nvtxs, work, qsize, qnmbr, marker, echead,
+                ectail, ecforw, nxtloc, gbgcnt, clqsiz,
+                umark, perm, len2
+            )
+        
+            #           -------------------------------------------------------
+            #           PERFORM FINAL WING-HUANG UPDATE TO THE DEFICIENCIES FOR
+            #           EACH NODE UNODE IN ENODE'S ELIMINATION CLIQUE, DUE TO
+            #           THE REMOVAL OF ENODE FROM THE GRAPH (NOT DUE TO THE NEW
+            #           FILL EDGES).
+            #           -------------------------------------------------------
+            qe = qsize[enode]
+            de = degree[enode]
+            jstart = xadj[enode]
+            jstop = jstart + convert(E, nvtxs[enode]) - one(E)
+
+            for j in jstart:jstop
+                unode = adjncy[j]
+                du = degree[unode]
+                defncy[unode] = defncy[unode] - (du - de) * qe
+            end
+
+            #           -----------------------------------------------
+            #           UPDATE THE DEGREE OF EACH NODE UNODE IN ENODE'S
+            #           ELIMINATION CLIQUE TO REFLECT THE REMOVAL OF
+            #           ENODE.
+            #           -----------------------------------------------
+            jstart = xadj[enode]
+            jstop = jstart + convert(E, nvtxs[enode]) - one(E)
+
+            for j in jstart:jstop
+                unode = adjncy[j]
+                degree[unode] = degree[unode] - qsize[enode]
+            end
+        
+            #           ---------------------------------------------------------
+            #           ... RECORD INFO FOR ENODE.
+            #
+            #           NOFNZ:  ACCUMULATES THE NUMBER OF NONZEROS IN THE FACTOR.
+            #                   THIS IS RETURNED SO THAT IT CAN BE COMPARED WITH
+            #                   THE RESULTS OF A SYMBOLIC FACTORIZATION.
+            #           NUM:    ENODE'S NUMBER IN THE ELIMINATION ORDERING.
+            #           CLQSIZ: ENODE'S ELIMINATION CLIQUE SIZE.
+            #           ---------------------------------------------------------
+            qe = qsize[enode]
+            nofnz += qe * (qe + clqsiz) - half((qe - one(W)) * qe)
+            invp[enode] = -num
+            num += qnmbr[enode]
+        
+            #           ---------------------------------------------------------
+            #           FOR EACH NODE JNODE WHOSE DEFICIENCY HAS BEEN CHANGED ...
+            #           ---------------------------------------------------------
+            for j in oneto(nnodes + nnodes2)
+            
+                jnode = ecliq[j]
+            
+                if iszero(qsize[jnode])
+                    #                   -------------------------------------
+                    #                   DELETE ABSORBED VERTEX FROM THE HEAP.
+                    #                   -------------------------------------
+                    heapsize = del_heap(heap, heapsize, heapinv, jnode)
+                else
+                    #                   ------------------------------------
+                    #                   DJ WILL BE THE DEGREE OF JNODE.
+                    #                   (PLUS ONE).
+                    #                   QJ IS THE SIZE OF JNODE'S SUPERNODE.
+                    #                   ------------------------------------
+                    def = defncy[jnode]
+                    #                   -------------------------------
+                    #                   COMPUTE DEFICIENCY-BASED SCORE.
+                    #                   -------------------------------
+                
+                    #                   -------------------
+                    #                   RESTORE HEAP ORDER.
+                    #                   -------------------
+                    if j <= nnodes
+                        #                       ------------------------------------------
+                        #                       JNODE IS IN THE ELIMINATION CLIQUE,
+                        #                       SO DSCORE MAY HAVE INCREASED OR DECREASED.
+                        #                       ------------------------------------------
+                        mod_heap(heap, heapsize, heapinv, jnode, def)
+                    else
+                        #                       ------------------------------------------
+                        #                       JNODE IS NOT IN THE ELIMINATION CLIQUE,
+                        #                       SO DSCORE HAS DECREASED.
+                        #                       ------------------------------------------
+                        hindex = heapinv[jnode]
+                        heap[twice(hindex) - one(V)] = def
+                        move_up(heap, heapsize, hindex, heapinv)
+                    end
+                end
+                #               ------------------------
+                #               MARK JNODE AS UNCHANGED.
+                #               ------------------------
+                changed[jnode] = false
+                #               ----------------------
+                #               NEXT NODE IN THE LIST.
+                #               ----------------------
+            end
+        
+            #           -----------------------------------------------
+            #           END OF MAIN LOOP:
+            #           GET NEXT NODE OF MINIMUM SCORE TO ELIMINATE ...
+            #           -----------------------------------------------
+        end
+    
+        #       ------------------------------------------------------
+        #       NUMBER THE VERTICES ACCORDING THE THE ORDER GENERATED.
+        #         INPUT:    NEQNS, WORK
+        #         MODIFIED: INVP
+        #         OUTPUT:   PERM 
+        #       ------------------------------------------------------
+        mfnumn(neqns, work, invp, perm)
+    
         return nofnz, gbgcnt, iflag
     end
-    
-    #       ------------------------------------------------
-    #       MAIN LOOP:
-    #       WHILE THERE REMAIN ANY NODES TO ELIMINATE ...
-    #
-    #       NUM: NEXT NUMBER TO BE ASSIGNED BY THE ORDERING.
-    #       ------------------------------------------------
-    num = one(V)
-
-    while num <= neqns
-
-        #           --------------------------------------------
-        #           DELETE THE MINIMUM-SCORE NODE FROM THE HEAP.
-        #             ENODE:  MINIMUM-SCORE NODE
-        #           --------------------------------------------
-        enode = convert(V, heap[two(V)])
-        heapsize = del_heap(heap, heapsize, heapinv, enode)
-        
-        #           --------------------------------------------------------
-        #           COMPUTE THE NEW ELIMINATION CLIQUE FORMED BY ELIMINATING
-        #           ENODE.
-        #             INPUT:    ENODE, NEQNS, ADJLEN, XADJ, ADJNCY, NVTXS,
-        #                       WORK
-        #             MODIFIED: QSIZE, CHANGED
-        #             OUTPUT:   CLQSIZ, FNODE, NNODES, ECLIQ, CLIQUE
-        #           --------------------------------------------------------
-        clqsiz, fnode, nnodes = elmclq(
-            enode, neqns, adjlen, xadj, adjncy,
-            nvtxs, work, qsize, changed, ecliq
-        )
-        
-        #           ----------------------------------------------------------
-        #           INITIALLY NO NNODES EXTERNAL TO ENODE'S ELIMINATION CLIQUE
-        #           HAVE HAD THEIR DEFICIENCIES REDUCED. (NNODES2 = 0)
-        #           ----------------------------------------------------------
-        
-        #           ---------------------------------------------------------
-        #           PERFORM THE WING-HUANG UPDATES TO THE DEFICIENCIES DUE TO
-        #           EDGES ADDED BY THE ELIMINATION OF ENODE.
-        #             INPUT:    CONFLAG, CONDONE, ENODE, NEQNS, MAXINT, 
-        #                       ADJLEN, XADJ, ADJNCY, NVTXS, WORK,
-        #                       QSIZE, NNODES, FNODE
-        #             MODIFIED: NNODES2, ECLIQ, DEGREE, DEFNCY, TAG, MARKER,
-        #                       UTAG, UMARK, CHANGED
-        #             WORK:     XADJ2, LEN2
-        #           ---------------------------------------------------------
-        tag, utag, nnodes2 = mfupd_def(
-            enode, neqns, adjlen, xadj,
-            adjncy, nvtxs, work, qsize, nnodes,
-            fnode, ecliq, degree, defncy,
-            tag, marker, utag, umark, changed,
-            len2, work2
-        )
-        
-        #           -------------------------------------------------------
-        #           PERFORM THE ELIMINATION GRAPH TRANSFORMATION DUE TO THE
-        #           ELIMINATION OF ENODE ...
-        #             INPUT:    ENODE, NEQNS, ADJLEN, MAXINT, NNODES,
-        #                       ECLIQ, INVP
-        #             MODIFIED: TAG, XADJ, ADJNCY, NVTXS, WORK,
-        #                       QSIZE, MARKER, ECHEAD, ECTAIL, ECFORW,
-        #                       NXTLOC, GBGCNT, CLQSIZ, UMARK
-        #             WORK:     WORK1, XADJ2
-        #           -------------------------------------------------------
-        tag, echead, ectail, nxtloc, gbgcnt, clqsiz = elmtra(
-            enode, neqns, adjlen, nnodes,
-            ecliq, invp, tag, xadj, adjncy,
-            nvtxs, work, qsize, qnmbr, marker, echead,
-            ectail, ecforw, nxtloc, gbgcnt, clqsiz,
-            umark, perm, len2
-        )
-        
-        #           -------------------------------------------------------
-        #           PERFORM FINAL WING-HUANG UPDATE TO THE DEFICIENCIES FOR
-        #           EACH NODE UNODE IN ENODE'S ELIMINATION CLIQUE, DUE TO
-        #           THE REMOVAL OF ENODE FROM THE GRAPH (NOT DUE TO THE NEW
-        #           FILL EDGES).
-        #           -------------------------------------------------------
-        qe = qsize[enode]
-        de = degree[enode]
-        jstart = xadj[enode]
-        jstop = jstart + convert(E, nvtxs[enode]) - one(E)
-
-        for j in jstart:jstop
-            unode = adjncy[j]
-            du = degree[unode]
-            defncy[unode] = defncy[unode] - (du - de) * qe
-        end
-
-        #           -----------------------------------------------
-        #           UPDATE THE DEGREE OF EACH NODE UNODE IN ENODE'S
-        #           ELIMINATION CLIQUE TO REFLECT THE REMOVAL OF
-        #           ENODE.
-        #           -----------------------------------------------
-        jstart = xadj[enode]
-        jstop = jstart + convert(E, nvtxs[enode]) - one(E)
-
-        for j in jstart:jstop
-            unode = adjncy[j]
-            degree[unode] = degree[unode] - qsize[enode]
-        end
-        
-        #           ---------------------------------------------------------
-        #           ... RECORD INFO FOR ENODE.
-        #
-        #           NOFNZ:  ACCUMULATES THE NUMBER OF NONZEROS IN THE FACTOR.
-        #                   THIS IS RETURNED SO THAT IT CAN BE COMPARED WITH
-        #                   THE RESULTS OF A SYMBOLIC FACTORIZATION.
-        #           NUM:    ENODE'S NUMBER IN THE ELIMINATION ORDERING.
-        #           CLQSIZ: ENODE'S ELIMINATION CLIQUE SIZE.
-        #           ---------------------------------------------------------
-        qe = qsize[enode]
-        nofnz += qe * (qe + clqsiz) - half((qe - one(W)) * qe)
-        invp[enode] = -num
-        num += qnmbr[enode]
-        
-        #           ---------------------------------------------------------
-        #           FOR EACH NODE JNODE WHOSE DEFICIENCY HAS BEEN CHANGED ...
-        #           ---------------------------------------------------------
-        for j in oneto(nnodes + nnodes2)
-            
-            jnode = ecliq[j]
-            
-            if iszero(qsize[jnode])
-                #                   -------------------------------------
-                #                   DELETE ABSORBED VERTEX FROM THE HEAP.
-                #                   -------------------------------------
-                heapsize = del_heap(heap, heapsize, heapinv, jnode)
-            else
-                #                   ------------------------------------
-                #                   DJ WILL BE THE DEGREE OF JNODE.
-                #                   (PLUS ONE).
-                #                   QJ IS THE SIZE OF JNODE'S SUPERNODE.
-                #                   ------------------------------------
-                def = defncy[jnode]
-                #                   -------------------------------
-                #                   COMPUTE DEFICIENCY-BASED SCORE.
-                #                   -------------------------------
-                
-                #                   -------------------
-                #                   RESTORE HEAP ORDER.
-                #                   -------------------
-                if j <= nnodes
-                    #                       ------------------------------------------
-                    #                       JNODE IS IN THE ELIMINATION CLIQUE,
-                    #                       SO DSCORE MAY HAVE INCREASED OR DECREASED.
-                    #                       ------------------------------------------
-                    mod_heap(heap, heapsize, heapinv, jnode, def)
-                else
-                    #                       ------------------------------------------
-                    #                       JNODE IS NOT IN THE ELIMINATION CLIQUE,
-                    #                       SO DSCORE HAS DECREASED.
-                    #                       ------------------------------------------
-                    hindex = heapinv[jnode]
-                    heap[twice(hindex) - one(V)] = def
-                    move_up(heap, heapsize, hindex, heapinv)
-                end
-            end
-            #               ------------------------
-            #               MARK JNODE AS UNCHANGED.
-            #               ------------------------
-            changed[jnode] = false
-            #               ----------------------
-            #               NEXT NODE IN THE LIST.
-            #               ----------------------
-        end
-        
-        #           -----------------------------------------------
-        #           END OF MAIN LOOP:
-        #           GET NEXT NODE OF MINIMUM SCORE TO ELIMINATE ...
-        #           -----------------------------------------------
-    end
-    
-    #       ------------------------------------------------------
-    #       NUMBER THE VERTICES ACCORDING THE THE ORDER GENERATED.
-    #         INPUT:    NEQNS, WORK
-    #         MODIFIED: INVP
-    #         OUTPUT:   PERM 
-    #       ------------------------------------------------------
-    mfnumn(neqns, work, invp, perm)
-    
-    return nofnz, gbgcnt, iflag
 end

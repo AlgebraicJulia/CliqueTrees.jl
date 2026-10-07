@@ -97,110 +97,112 @@ function elmclq(
         changed::AbstractVector{Bool},
         ecliq::AbstractVector{V},
     ) where {V, E, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    #       -----------------------------------------------------------
-    #       MARK ENODE SO IT WILL NOT APPEAR IN QUOTIENT GRAPH LISTS
-    #       WHEN THE ELIMINATION GRAPH TRANSFORMATION IS COMPUTED LATER
-    #       IN THE ELMTRA ROUTINE.
-    #       -----------------------------------------------------------
-    qsize[enode] = -qsize[enode]
+        #       -----------------------------------------------------------
+        #       MARK ENODE SO IT WILL NOT APPEAR IN QUOTIENT GRAPH LISTS
+        #       WHEN THE ELIMINATION GRAPH TRANSFORMATION IS COMPUTED LATER
+        #       IN THE ELMTRA ROUTINE.
+        #       -----------------------------------------------------------
+        qsize[enode] = -qsize[enode]
     
-    #       ****************************************
-    #       FORM NEW ELIMINATION CLIQUE IN ECLIQ(*).
-    #       ****************************************
+        #       ****************************************
+        #       FORM NEW ELIMINATION CLIQUE IN ECLIQ(*).
+        #       ****************************************
     
-    clqsiz = zero(W)
+        clqsiz = zero(W)
     
-    #       ***********************************************
-    #       MERGE ELIMINATION CLIQUES CONTAINING ENODE INTO 
-    #       ENODE'S ELIMINATION CLIQUE.
-    #       ***********************************************
-    #       ------------------------------------------------------------
-    #       FOR EACH ELIMINATION CLIQUE CNODE TO WHICH ENODE BELONGS ...
-    #       ------------------------------------------------------------
+        #       ***********************************************
+        #       MERGE ELIMINATION CLIQUES CONTAINING ENODE INTO 
+        #       ENODE'S ELIMINATION CLIQUE.
+        #       ***********************************************
+        #       ------------------------------------------------------------
+        #       FOR EACH ELIMINATION CLIQUE CNODE TO WHICH ENODE BELONGS ...
+        #       ------------------------------------------------------------
     
-    cstart = xadj[enode] + convert(E, nvtxs[enode])
-    cstop = cstart + convert(E, work[enode]) - one(E)
-    ipnt = zero(V)
-    fnode = one(V)
+        cstart = xadj[enode] + convert(E, nvtxs[enode])
+        cstop = cstart + convert(E, work[enode]) - one(E)
+        ipnt = zero(V)
+        fnode = one(V)
 
-    for c in reverse(cstart:cstop)
-        cnode = adjncy[c]
-        jstart = xadj[cnode]
-        jstop = jstart + convert(E, nvtxs[cnode]) - one(E)
-        #           ---------------------------------------------
-        #           ... FOR EACH VERTEX JNODE IN CLIQUE CNODE ...
-        #           ---------------------------------------------
+        for c in reverse(cstart:cstop)
+            cnode = adjncy[c]
+            jstart = xadj[cnode]
+            jstop = jstart + convert(E, nvtxs[cnode]) - one(E)
+            #           ---------------------------------------------
+            #           ... FOR EACH VERTEX JNODE IN CLIQUE CNODE ...
+            #           ---------------------------------------------
+            for j in jstart:jstop
+                jnode = adjncy[j]
+                #               ------------------------------------------------
+                #               ... IF JNODE HAS NOT YET BEEN ADDED TO ENODE'S
+                #               ELIMINATION CLIQUE AND HAS NOT BEEN ABSORBED ...
+                #               ------------------------------------------------
+                if ispositive(qsize[jnode])
+                    #                   ----------------------------------------
+                    #                   ADD JNODE TO ENODE'S ELIMINATION CLIQUE.
+                    #                   ----------------------------------------
+                    ipnt += one(V)
+                    ecliq[ipnt] = jnode
+                    clqsiz += qsize[jnode]
+                    qsize[jnode] = -qsize[jnode]
+                    #                   -----------------------------------
+                    #                   MARK JNODE'S DEFICIENCY AS CHANGED.
+                    #                   -----------------------------------
+                    changed[jnode] = true
+                end
+            end
+            #           --------------------------------------------------
+            #           RECORD THE LOCATION OF THE FIRST NODE THAT WILL BE
+            #           INSERTED INTO ENODE'S ELIMINATION CLIQUE AFTER THE
+            #           NODES OF CLIQUE CSTOP HAVE BEEN INTRODUCED.
+            #           --------------------------------------------------
+            if c == cstop
+                fnode = max(fnode, ipnt + one(V))
+            end
+        end
+
+        #       ******************************************************
+        #       PUT VERTEX NEIGHBORS OF ENODE INTO ENODE'S ELIMINATION
+        #       CLIQUE.
+        #       ******************************************************
+        #       ----------------------------------------------
+        #       COPY ENODE'S VERTICES INTO ENODE'S NEW CLIQUE.
+        #       ----------------------------------------------
+        jstart = xadj[enode]
+        jstop = jstart + convert(E, nvtxs[enode]) - one(E)
+        #       ------------------------------------------------
+        #       ... FOR EACH VERTEX JNODE IN THE VERTEX LIST ...
+        #       ------------------------------------------------
         for j in jstart:jstop
             jnode = adjncy[j]
-            #               ------------------------------------------------
-            #               ... IF JNODE HAS NOT YET BEEN ADDED TO ENODE'S
-            #               ELIMINATION CLIQUE AND HAS NOT BEEN ABSORBED ...
-            #               ------------------------------------------------
-            if ispositive(qsize[jnode])
-                #                   ----------------------------------------
-                #                   ADD JNODE TO ENODE'S ELIMINATION CLIQUE.
-                #                   ----------------------------------------
+            #           --------------------------------------
+            #           ... IF JNODE HAS NOT BEEN ABSORBED ...
+            #           --------------------------------------
+            if !iszero(qsize[jnode])
+                #               ----------------------------------------
+                #               ADD JNODE TO ENODE'S ELIMINATION CLIQUE.
+                #               ----------------------------------------
                 ipnt += one(V)
                 ecliq[ipnt] = jnode
                 clqsiz += qsize[jnode]
                 qsize[jnode] = -qsize[jnode]
-                #                   -----------------------------------
-                #                   MARK JNODE'S DEFICIENCY AS CHANGED.
-                #                   -----------------------------------
+                #               -----------------------------------
+                #               MARK JNODE'S DEFICIENCY AS CHANGED.
+                #               -----------------------------------
                 changed[jnode] = true
             end
         end
-        #           --------------------------------------------------
-        #           RECORD THE LOCATION OF THE FIRST NODE THAT WILL BE
-        #           INSERTED INTO ENODE'S ELIMINATION CLIQUE AFTER THE
-        #           NODES OF CLIQUE CSTOP HAVE BEEN INTRODUCED.
-        #           --------------------------------------------------
-        if c == cstop
-            fnode = max(fnode, ipnt + one(V))
-        end
-    end
-
-    #       ******************************************************
-    #       PUT VERTEX NEIGHBORS OF ENODE INTO ENODE'S ELIMINATION
-    #       CLIQUE.
-    #       ******************************************************
-    #       ----------------------------------------------
-    #       COPY ENODE'S VERTICES INTO ENODE'S NEW CLIQUE.
-    #       ----------------------------------------------
-    jstart = xadj[enode]
-    jstop = jstart + convert(E, nvtxs[enode]) - one(E)
-    #       ------------------------------------------------
-    #       ... FOR EACH VERTEX JNODE IN THE VERTEX LIST ...
-    #       ------------------------------------------------
-    for j in jstart:jstop
-        jnode = adjncy[j]
-        #           --------------------------------------
-        #           ... IF JNODE HAS NOT BEEN ABSORBED ...
-        #           --------------------------------------
-        if !iszero(qsize[jnode])
-            #               ----------------------------------------
-            #               ADD JNODE TO ENODE'S ELIMINATION CLIQUE.
-            #               ----------------------------------------
-            ipnt += one(V)
-            ecliq[ipnt] = jnode
-            clqsiz += qsize[jnode]
-            qsize[jnode] = -qsize[jnode]
-            #               -----------------------------------
-            #               MARK JNODE'S DEFICIENCY AS CHANGED.
-            #               -----------------------------------
-            changed[jnode] = true
-        end
-    end
     
-    #       ----------------------------------------------------------------
-    #       RECORD THE NUMBER OF (SUPER)NODES IN ENODE'S ELIMINATION CLIQUE.
-    #       ----------------------------------------------------------------
-    nnodes = ipnt
+        #       ----------------------------------------------------------------
+        #       RECORD THE NUMBER OF (SUPER)NODES IN ENODE'S ELIMINATION CLIQUE.
+        #       ----------------------------------------------------------------
+        nnodes = ipnt
     
-    return clqsiz, fnode, nnodes
+        return clqsiz, fnode, nnodes
+    end
 end

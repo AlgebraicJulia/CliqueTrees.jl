@@ -40,121 +40,123 @@
 #**********************************************************************
 #
 function move_down(heap::AbstractVector{W}, heapsize::V, vtx_ptr::V, v2heap::AbstractVector{V}) where {V, W}
+    @inbounds begin
     
-    #       -------------------
-    #       LOCAL VARIABLES ...
-    #       -------------------
+        #       -------------------
+        #       LOCAL VARIABLES ...
+        #       -------------------
     
-    infty = typemax(W) - convert(W, 100000)
+        infty = typemax(W) - convert(W, 100000)
     
-    #       --------------------------------------------------------
-    #       MOVE THE GIVEN NODE IN LOCATION VTX_PTR DOWN IN HEAP AND
-    #       ENSURE THAT HEAP IS A HEAP.
-    #       --------------------------------------------------------
-    v = vtx_ptr
-    #       PRINT *, 'FLD_NOW, FLD_INDEX = ', V, VTX_PTR
+        #       --------------------------------------------------------
+        #       MOVE THE GIVEN NODE IN LOCATION VTX_PTR DOWN IN HEAP AND
+        #       ENSURE THAT HEAP IS A HEAP.
+        #       --------------------------------------------------------
+        v = vtx_ptr
+        #       PRINT *, 'FLD_NOW, FLD_INDEX = ', V, VTX_PTR
     
-    while v <= heapsize
+        while v <= heapsize
         
-        #           ----------------------------------------------
-        #           DO THE FOLLOWING, AS LONG AS V HAS NOT REACHED
-        #           THE BOTTOM OF THE BINARY TREE.
-        #           ----------------------------------------------
+            #           ----------------------------------------------
+            #           DO THE FOLLOWING, AS LONG AS V HAS NOT REACHED
+            #           THE BOTTOM OF THE BINARY TREE.
+            #           ----------------------------------------------
         
-        #           ------------------------
-        #           V_WT IS THE WEIGHT OF V.
-        #           ------------------------
-        v_wt = heap[twice(v) - one(V)]
-        #           PRINT *, 'FLD_NOW, VAL = ', V, V_WT
+            #           ------------------------
+            #           V_WT IS THE WEIGHT OF V.
+            #           ------------------------
+            v_wt = heap[twice(v) - one(V)]
+            #           PRINT *, 'FLD_NOW, VAL = ', V, V_WT
         
-        #           ----------------------------------------
-        #           C_LEFT AND C_RIGHT ARE THE CHILDREN OF V
-        #           IN THE BINARY TREE.
-        #           ----------------------------------------
-        c_left = twice(v)
-        c_right = c_left + one(V)
-        #           PRINT *, 'FLD_NEXT1, FLD_NEXT2 = ',
-        #    &                C_LEFT, C_RIGHT
+            #           ----------------------------------------
+            #           C_LEFT AND C_RIGHT ARE THE CHILDREN OF V
+            #           IN THE BINARY TREE.
+            #           ----------------------------------------
+            c_left = twice(v)
+            c_right = c_left + one(V)
+            #           PRINT *, 'FLD_NEXT1, FLD_NEXT2 = ',
+            #    &                C_LEFT, C_RIGHT
         
-        #           ---------------------------------
-        #           GET THE WEIGHT'S OF THE CHILDREN.
-        #           ---------------------------------
-        if c_left <= heapsize
-            wt_left = heap[twice(c_left) - one(V)]
-        else
-            wt_left = infty
-        end
-        
-        if c_right <= heapsize
-            wt_right = heap[twice(c_right) - one(V)]
-        else
-            wt_right = infty
-        end
-        
-        #           PRINT *, 'VAL1, VAL2 = ', WT_LEFT, WT_RIGHT
-        
-        #           ----------------------------
-        #           DECIDE WHICH PATH TO FOLLOW.
-        #           ----------------------------
-        if v_wt <= wt_left && v_wt <= wt_right
-
-            #               ------------------------------------------
-            #               THE WEIGHT OF V IS LESS THAN OR EQUAL TO
-            #               THOSE OF THE TWO CHILDREN, SO WE ARE DONE.
-            #               ------------------------------------------
-            v = heapsize + one(V)
-            #               PRINT *, 'DONE ...'
-            
-        else
-            
-            #               ----------------------------------------
-            #               THE WEIGHT OF V IS GREATER THAN THAT OF
-            #               AT LEAST ONE OF THE CHILDERN.  DETERMINE
-            #               WHICH PATH TO TRAVERSE.
-            #               ----------------------------------------
-            
-            if wt_left <= wt_right
-                c = c_left
+            #           ---------------------------------
+            #           GET THE WEIGHT'S OF THE CHILDREN.
+            #           ---------------------------------
+            if c_left <= heapsize
+                wt_left = heap[twice(c_left) - one(V)]
             else
-                c = c_right
+                wt_left = infty
             end
-            #               PRINT *, 'FLD_NEXT = ', P
-            
-            #               ---------------------
-            #               SWAP V AND THE CHILD.
-            #               ---------------------
-            
-            v_ptr = twice(v)
-            c_ptr = twice(c)
-            #               PRINT *, 'FLD_NEXT1, FLD_NEXT2 = ',
-            #    &                    V_PTR, C_PTR
-            
-            v_vtx = convert(V, heap[v_ptr])
-            #               PRINT *, 'VTX = ', V_VTX
-            v2heap[v_vtx] = c
-            #               PRINT *, 'FLD_NEXT = ', P
-
-            c_vtx = convert(V, heap[c_ptr])
-            v2heap[c_vtx] = v
-            #               PRINT *, 'IPOINT, FLD_NOW = ', C_VTX, V
-            
-            heap[v_ptr] = heap[c_ptr]
-            heap[c_ptr] = v_vtx
-            #               PRINT *, 'HEAP(FLD_NEXT1), HEAP(FLD_NEXT2) = ',
-            #    &                    HEAP(V_PTR), HEAP(C_PTR)
-            
-            v_ptr -= one(V)
-            c_ptr -= one(V)
-            heap[v_ptr] = heap[c_ptr]
-            heap[c_ptr] = v_wt
-            #               PRINT *, 'HEAP(FLD_NEXT1), HEAP(FLD_NEXT2) = ',
-            #    &                    HEAP(V_PTR), HEAP(C_PTR)
-            
-            v = c
-            
-        end
         
-    end
+            if c_right <= heapsize
+                wt_right = heap[twice(c_right) - one(V)]
+            else
+                wt_right = infty
+            end
+        
+            #           PRINT *, 'VAL1, VAL2 = ', WT_LEFT, WT_RIGHT
+        
+            #           ----------------------------
+            #           DECIDE WHICH PATH TO FOLLOW.
+            #           ----------------------------
+            if v_wt <= wt_left && v_wt <= wt_right
+
+                #               ------------------------------------------
+                #               THE WEIGHT OF V IS LESS THAN OR EQUAL TO
+                #               THOSE OF THE TWO CHILDREN, SO WE ARE DONE.
+                #               ------------------------------------------
+                v = heapsize + one(V)
+                #               PRINT *, 'DONE ...'
+            
+            else
+            
+                #               ----------------------------------------
+                #               THE WEIGHT OF V IS GREATER THAN THAT OF
+                #               AT LEAST ONE OF THE CHILDERN.  DETERMINE
+                #               WHICH PATH TO TRAVERSE.
+                #               ----------------------------------------
+            
+                if wt_left <= wt_right
+                    c = c_left
+                else
+                    c = c_right
+                end
+                #               PRINT *, 'FLD_NEXT = ', P
+            
+                #               ---------------------
+                #               SWAP V AND THE CHILD.
+                #               ---------------------
+            
+                v_ptr = twice(v)
+                c_ptr = twice(c)
+                #               PRINT *, 'FLD_NEXT1, FLD_NEXT2 = ',
+                #    &                    V_PTR, C_PTR
+            
+                v_vtx = convert(V, heap[v_ptr])
+                #               PRINT *, 'VTX = ', V_VTX
+                v2heap[v_vtx] = c
+                #               PRINT *, 'FLD_NEXT = ', P
+
+                c_vtx = convert(V, heap[c_ptr])
+                v2heap[c_vtx] = v
+                #               PRINT *, 'IPOINT, FLD_NOW = ', C_VTX, V
+            
+                heap[v_ptr] = heap[c_ptr]
+                heap[c_ptr] = v_vtx
+                #               PRINT *, 'HEAP(FLD_NEXT1), HEAP(FLD_NEXT2) = ',
+                #    &                    HEAP(V_PTR), HEAP(C_PTR)
+            
+                v_ptr -= one(V)
+                c_ptr -= one(V)
+                heap[v_ptr] = heap[c_ptr]
+                heap[c_ptr] = v_wt
+                #               PRINT *, 'HEAP(FLD_NEXT1), HEAP(FLD_NEXT2) = ',
+                #    &                    HEAP(V_PTR), HEAP(C_PTR)
+            
+                v = c
+            
+            end
+        
+        end
     
-    return
+        return
+    end
 end
