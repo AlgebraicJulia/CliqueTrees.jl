@@ -35,6 +35,7 @@ These algorithms try to minimize the *bandwidth* and *envelope* of the ordered g
 | type             | name                              | time   | space    | package                                                   |
 |:-----------------|:----------------------------------|:-------|:-------- | :-------------------------------------------------------- |
 | [`MMD`](@ref)    | multiple minimum degree           | O(mn²) | O(m + n) |                                                           |
+| [`MD`](@ref)     | minimum degree                    | O(mnΔ) | O(m + n) |                                                           |
 | [`MF`](@ref)     | minimum fill                      | O(mn²) |          |                                                           |
 | [`AMD`](@ref)    | approximate minimum degree        | O(mn)  | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl) |
 | [`SymAMD`](@ref) | column approximate minimum degree | O(mn)  | O(m + n) | [AMD.jl](https://github.com/JuliaSmoothOptimizers/AMD.jl) |
@@ -244,6 +245,27 @@ The [multiple minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_de
 """
 @kwdef struct MMD <: EliminationAlgorithm
     delta::Int = 0
+end
+
+"""
+    MD <: EliminationAlgorithm
+
+    MD(; mass=false, external=false)
+
+The [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+
+### Parameters
+
+  - `mass`: mass elimination
+  - `external`: minimum external degree
+
+### References
+
+  - Cummings, Robert, Matthew Fahrbach, and Animesh Fatehpuria. "A fast minimum degree algorithm and matching lower bound." *Proceedings of the 2021 ACM-SIAM Symposium on Discrete Algorithms (SODA)*. 2021.
+"""
+@kwdef struct MD <: EliminationAlgorithm
+    mass::Bool = false
+    external::Bool = false
 end
 
 """
@@ -829,6 +851,11 @@ end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD)
     index = mmd(weights, graph; delta = alg.delta)
+    return invperm(index), index
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD)
+    index = md(weights, graph; mass = alg.mass, external = alg.external)
     return invperm(index), index
 end
 
@@ -1581,6 +1608,11 @@ end
 function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     simple = simplegraph(graph)
     return mmd(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
+end
+
+function MDLib.md(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    simple = simplegraph(graph)
+    return md(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
 function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
