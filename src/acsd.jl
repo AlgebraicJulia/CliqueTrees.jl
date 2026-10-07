@@ -7,7 +7,6 @@ function acsd_find!(
         graph::AbstractGraph{V},
         order::AbstractVector{V},
         tree::CliqueTree{V, E},
-        uniform::Bool,
     ) where {W, V, E}
     @assert nv(graph) <= length(head)
     @assert nv(graph) <= length(next)
@@ -82,15 +81,14 @@ function acsd_find!(
             end
 
             if !isnegative(poscnt) && !(iszero(vert) && iszero(negcnt))
-                # the minimum weight of a vertex outside of S
+                # the minimum weight of a vertex outside of S: the first vertex
+                # not in S in weight order (`wperm`)
                 minout = minwgt
 
-                if !uniform
-                    for v in wperm
-                        if mark[v] != node
-                            minout = weights[v]
-                            break
-                        end
+                for v in wperm
+                    if mark[v] != node
+                        minout = weights[v]
+                        break
                     end
                 end
 
@@ -260,17 +258,20 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
 
     order, tree = cliquetree(weights, graph, alg)
 
-    minwgt, maxwgt = extrema(weights)
-    uniform = maxwgt < minwgt + tolerance(W)
+    minwgt, maxwgt = extrema(view(weights, oneto(n)))
 
-    if uniform
-        wperm = Vector{V}(undef, 0)
+    # `wperm` lists the vertices in increasing weight order; when every weight
+    # is equal, any order works, so skip the sort
+    wperm = FVector{V}(undef, n)
+
+    if maxwgt < minwgt + tolerance(W)
+        copyto!(wperm, oneto(n))
     else
-        wperm = Vector{V}(sortperm(weights))
+        sortperm!(wperm, view(weights, oneto(n)))
     end
 
     m = acsd_find!(head, next, mark, wperm,
-        weights, graph, order, tree, uniform)
+        weights, graph, order, tree)
 
     target = FVector{V}(undef, m)
     return acsd_complete!(pointer, target, head, next, mark, graph, order, tree)
