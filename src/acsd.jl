@@ -2,17 +2,22 @@ function acsd_find!(
         head::AbstractVector{V},
         next::AbstractVector{V},
         mark::AbstractVector{V},
+        stat::AbstractVector{V},
+        cent::AbstractVector{V},
         wperm::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
         tree::CliqueTree{V, E},
+        pass::V,
     ) where {W, V, E}
     @assert nv(graph) <= length(head)
     @assert nv(graph) <= length(next)
     @assert nv(graph) <= length(mark)
     @assert nv(graph) <= length(weights)
     @assert nv(graph) <= length(order)
+    @assert nv(graph) <= length(cent)
+    @assert length(tree) <= length(stat)
 
     function set(v::V)
         h = view(head, v)
@@ -23,6 +28,7 @@ function acsd_find!(
     tol = tolerance(W)
     node = zero(V)
     totcnt = zero(E)
+    numsep = zero(V)
 
     for v in vertices(graph)
         head[v] = zero(V)
@@ -35,86 +41,114 @@ function acsd_find!(
         sep = separator(bag)
         maxcnt = convert(V, length(sep))
 
-        # pre-filter: a vertex of degree less than |S| - 2 is missing at
-        # least two edges in S; two such vertices rule out an almost clique
-        numlow = zero(V)
+        # skip cliques and separators already filled (both are cliques now)
+        proc = !isnegative(stat[node])
 
-        for i in sep
-            if eltypedegree(graph, order[i]) + two(V) < maxcnt
-                numlow += one(V)
-                numlow > one(V) && break
+        # after the first pass a separator can only change if it gained an
+        # edge, and every new edge is incident to a center of the previous
+        # pass; `cent[v]` is the last pass in which `v` was a center, and it
+        # only grows
+        if proc && pass > one(V)
+            proc = false
+
+            for i in sep
+                if cent[order[i]] >= pass - one(V)
+                    proc = true
+                    break
+                end
             end
         end
 
-        if numlow <= one(V)
-            for i in sep
-                mark[order[i]] = node
-            end
-
-            poscnt = negcnt = vert = alt1 = alt2 = zero(V)
+        if proc
+            # pre-filter: a vertex of degree less than |S| - 2 is missing at
+            # least two edges in S; two such vertices rule out an almost clique
+            numlow = zero(V)
 
             for i in sep
-                v = order[i]; cnt = maxcnt - one(V)
-
-                for w in neighbors(graph, v)
-                    if w != v && mark[w] == node
-                        cnt -= one(V)
-                    end
-                end
-
-                if isone(cnt)
-                    negcnt += one(V)
-
-                    if iszero(alt1)
-                        alt1 = v
-                    else
-                        alt2 = v
-                    end
-                elseif ispositive(cnt)
-                    if iszero(vert)
-                        poscnt = cnt; vert = v
-                    else
-                        poscnt = -one(V)
-                        break
-                    end
+                if eltypedegree(graph, order[i]) + two(V) < maxcnt
+                    numlow += one(V)
+                    numlow > one(V) && break
                 end
             end
 
-            if !isnegative(poscnt) && !(iszero(vert) && iszero(negcnt))
-                # the minimum weight of a vertex outside of S: the first vertex
-                # not in S in weight order (`wperm`)
-                minout = minwgt
+            if numlow <= one(V)
+                for i in sep
+                    mark[order[i]] = node
+                end
 
-                for v in wperm
-                    if mark[v] != node
-                        minout = weights[v]
-                        break
+                poscnt = negcnt = vert = alt1 = alt2 = zero(V)
+
+                for i in sep
+                    v = order[i]; cnt = maxcnt - one(V)
+
+                    for w in neighbors(graph, v)
+                        if w != v && mark[w] == node
+                            cnt -= one(V)
+                        end
+                    end
+
+                    if isone(cnt)
+                        negcnt += one(V)
+
+                        if iszero(alt1)
+                            alt1 = v
+                        else
+                            alt2 = v
+                        end
+                    elseif ispositive(cnt)
+                        if iszero(vert)
+                            poscnt = cnt; vert = v
+                        else
+                            poscnt = -one(V)
+                            break
+                        end
                     end
                 end
 
-                center = zero(V); k = zero(V)
+                if !isnegative(poscnt)
+                    if iszero(vert) && iszero(negcnt)
+                        # S is a clique
+                        stat[node] = -one(V)
+                    else
+                        # the minimum weight of a vertex outside of S: the first
+                        # vertex not in S in weight order (`wperm`)
+                        minout = minwgt
 
-                if ispositive(vert)
-                    if poscnt == negcnt && weights[vert] < minout + tol
-                        center = vert; k = poscnt
-                    end
-                elseif negcnt == two(V)
-                    if weights[alt1] < minout + tol
-                        center = alt1; k = one(V)
-                    elseif weights[alt2] < minout + tol
-                        center = alt2; k = one(V)
-                    end
-                end
+                        for v in wperm
+                            if mark[v] != node
+                                minout = weights[v]
+                                break
+                            end
+                        end
 
-                if ispositive(center)
-                    totcnt += convert(E, k)
-                    pushfirst!(set(center), node)
+                        center = zero(V); k = zero(V)
+
+                        if ispositive(vert)
+                            if poscnt == negcnt && weights[vert] < minout + tol
+                                center = vert; k = poscnt
+                            end
+                        elseif negcnt == two(V)
+                            if weights[alt1] < minout + tol
+                                center = alt1; k = one(V)
+                            elseif weights[alt2] < minout + tol
+                                center = alt2; k = one(V)
+                            end
+                        end
+
+                        if ispositive(center)
+                            totcnt += convert(E, k)
+                            numsep += one(V)
+                            stat[node] = -one(V)
+                            cent[center] = pass
+                            pushfirst!(set(center), node)
+                        end
+                    end
                 end
             end
         end
     end
 
-    return de(graph) + twice(totcnt)
+    return de(graph) + twice(totcnt), numsep
 end
 
 function acsd_complete!(
@@ -251,12 +285,22 @@ end
 function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalAlgorithm) where {W, V}
     E = etype(graph); n = nv(graph)
 
+    order, tree = cliquetree(weights, graph, alg)
+    t = length(tree)
+
     head = FVector{V}(undef, n)
     next = FVector{V}(undef, n)
     mark = FVector{V}(undef, n)
-    pointer = FVector{E}(undef, n + one(V))
+    stat = FVector{V}(undef, t)
+    cent = FVector{V}(undef, n)
 
-    order, tree = cliquetree(weights, graph, alg)
+    for v in vertices(graph)
+        cent[v] = zero(V)
+    end
+
+    for node in oneto(t)
+        stat[node] = zero(V)
+    end
 
     minwgt, maxwgt = extrema(view(weights, oneto(n)))
 
@@ -270,28 +314,55 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
         sortperm!(wperm, view(weights, oneto(n)))
     end
 
-    m = acsd_find!(head, next, mark, wperm,
-        weights, graph, order, tree)
+    # fill the almost-clique separators of the triangulation, then re-check its
+    # other separators: filling one can turn another into an almost clique. the
+    # triangulation stays a minimal triangulation of every graph between the
+    # input and itself, so each pass examines minimal separators of the current
+    # graph
+    pass = zero(V)
 
-    target = FVector{V}(undef, m)
-    return acsd_complete!(pointer, target, head, next, mark, graph, order, tree)
+    while true
+        pass += one(V)
+
+        m, numsep = acsd_find!(head, next, mark, stat, cent,
+            wperm, weights, graph, order, tree, pass)
+
+        iszero(numsep) && break
+
+        # `pointer` and `target` are fresh each pass: the new graph is read out
+        # of the old one, which lives in the previous pass's arrays
+        pointer = FVector{E}(undef, n + one(V))
+        target = FVector{V}(undef, m)
+        graph = acsd_complete!(pointer, target, head, next, mark, graph, order, tree)
+    end
+
+    return graph, order, tree
 end
 
-function acsd(weights::AbstractVector, graph::AbstractGraph, alg::MinimalAlgorithm, rest::MinimalAlgorithm...) 
-    return acsd(weights, acsd(weights, graph, alg), rest...)
+function acsd(weights::AbstractVector, graph::AbstractGraph, alg::MinimalAlgorithm, rest::MinimalAlgorithm...)
+    graph, order, tree = acsd(weights, graph, alg)
+
+    for other in rest
+        graph, order, tree = acsd(weights, graph, other)
+    end
+
+    return graph, order, tree
 end
 
 function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple) where {V}
     n = nv(graph)
 
     if n > one(V)
-        cmpgraph = acsd(weights, graph, mins...)
-        order, tree = atomtree(cmpgraph, MinimalChordal())
+        # the minimal triangulation computed by `acsd` is also a minimal
+        # triangulation of `cmpgraph`, so it contains every clique minimal
+        # separator of `cmpgraph`
+        cmpgraph, order, tree = acsd(weights, graph, mins...)
+        order, tree = atomtree!(order, tree, cmpgraph)
         index = invperm(order)
 
         if length(tree) > 1
             pmtweights = weights[order]
-            pmtgraph = permute(cmpgraph, order, index)
+            pmtgraph = graphpermute(cmpgraph, order, index)
             pmtindex = safeseparators(pmtweights, pmtgraph, tree, alg, mins)
 
             for v in vertices(graph)

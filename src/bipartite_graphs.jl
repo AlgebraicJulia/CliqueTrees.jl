@@ -223,6 +223,14 @@ function SparseArrays.permute!(graph::BipartiteGraph{V, E}, order::AbstractVecto
     return graph
 end
 
+function graphpermute(graph::AbstractGraph, order::AbstractVector, index::AbstractVector)
+    return permute(BipartiteGraph(graph), order, index)
+end
+
+function graphpermute(graph::BipartiteGraph, order::AbstractVector, index::AbstractVector)
+    return permute(graph, order, index)
+end
+
 function permute_impl!(
         pointer::AbstractVector{E},
         target::AbstractVector{V},
