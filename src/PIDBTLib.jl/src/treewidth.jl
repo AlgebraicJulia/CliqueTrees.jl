@@ -1,34 +1,63 @@
-# Treewidth.jl — faithful transpilation of Tamaki_Tree_Decomp/Treewidth.cs
-# Contains the core DP algorithm for computing exact treewidth.
-# Uses the blocksieve path (C# #define blocksieve).
-# Graph reduction is SKIPPED (input is assumed pre-reduced).
+# Exact (weighted) treewidth by positive-instance driven dynamic programming.
+#
+# This is the algorithm of Tamaki, as reformulated by Althaus, Schnurbusch,
+# Wüschner, and Ziegler ("On Tamaki's Algorithm to Compute Treewidths",
+# SEA 2021). It started out as a port of their C# implementation
+# (Tamaki_Tree_Decomp/Treewidth.cs, "blocksieve" path) and deviates from it
+# in the following ways.
+#
+#   - When the outlet of a new PTD is found to be a safe separator, the graph
+#     is split at *that* outlet. The C# splits at the outlet of the PTD
+#     currently being processed, which was never tested.
+#   - PTDs that are delayed by the ">2 components" rule (Section 4.6) are
+#     released when P runs dry, instead of being dropped. Dropping them is
+#     unsound: two delayed PTDs can each wait on a component whose PTD can
+#     only be built from the other.
+#   - Equivalent PTDURs (same inlet) are not pruned (Section 4.2): only exact
+#     duplicates are dropped. Pruning by bag size, or even by bag inclusion,
+#     is unsound for weighted graphs.
+#   - Heuristic completion (min-degree) is tried only when a PTD's inlet is
+#     heavier than any tried before, instead of on every other PTD.
+#   - The "adding one vertex to the bag forms a PMC" test (Section 4.5) and
+#     the cliquish/PMC cache are gone: neither paid for itself.
+#   - Graph reduction is skipped (the input is assumed to be pre-reduced).
+#   - The caller (`pidbt`) renumbers the vertices in Cuthill-McKee order,
+#     which the algorithm is sensitive to (see pidbt.jl). Vertices need not be
+#     sorted by weight.
+#
 # All vertex indices are 1-based.
 
 const COMPLETE_HEURISTICALLY = true
-const HEURISTIC_COMPLETION_FREQUENCY = 1
 const TEST_OUTLET_IS_CLIQUE_MINOR = true
 const MORE_THAN_2_COMPONENTS_OPTIMIZATION = true
-const HEURISTIC_INLET_MIN = 0.0f0
-const HEURISTIC_INLET_MAX = 1.0f0
-const MAX_TESTS_PER_GRAPH_AND_K = typemax(Int)
 
 @enum State Continue Divide Halt
 
 # ---------------------------------------------------------------------------
-# Main entry point  (C# TreeWidth, lines 27-51)
+# Main entry point
 # ---------------------------------------------------------------------------
 
 """
-    treewidth(graph::Graph{PSet}, weights::Vector{Int}; min_k::Int=0) where {PSet}
+    treewidth(weights, graph::Graph{PSet}; min_k::Int=0) where {PSet}
 
 Compute the exact treewidth of `graph` and return `(treewidth, ptd)` where
 `ptd` is a `(pool, root_index)` tuple.
 
 `min_k` is a lower bound on the treewidth. The DP search begins at this value,
 so supplying a tight lower bound (e.g. from MMD+) avoids wasted iterations.
+
+The graph must be connected. (The search builds only PTDs that are not
+incoming. If the smallest vertex were isolated, the only PTD containing it
+would be incoming, so no tree decomposition of the whole graph would ever be
+found.) Safe separators found during the search split a connected graph into
+connected pieces, so this needs to be checked only here.
 """
-function treewidth(weights::Vector{Int}, graph::Graph{PSet}; min_k::Int=0) where {PSet}
-    # Edge cases
+function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0) where {PSet}
+    if count(_ -> true, components(graph, PSet())) > 1
+        throw(ArgumentError("PIDBT requires a connected graph. Wrap it with `ConnectedComponents`."))
+    end
+
+    weights isa Weights{PSet} || (weights = Weights{PSet}(collect(weights)))
     if nv(graph) == 0
         pool = PTDPool{PSet}()
         root = make_ptd(pool, PSet())
@@ -48,7 +77,7 @@ end
 # Achievable subset sums of vertex weights
 # ---------------------------------------------------------------------------
 
-function achievable_sums(weights::Vector{Int}, graph::Graph{PSet}) where {PSet}
+function achievable_sums(weights::AbstractVector{Int}, graph::Graph{PSet}) where {PSet}
     W = wt(weights, vertices(graph))
     achievable = falses(W + 1)
     achievable[1] = true  # 0 is achievable (1-indexed: index 1 = sum 0)
@@ -73,10 +102,10 @@ function achievable_sums(weights::Vector{Int}, graph::Graph{PSet}) where {PSet}
 end
 
 # ---------------------------------------------------------------------------
-# Orchestrator  (C# TreeWidth_Computation, lines 63-297)
+# Orchestrator  (C# TreeWidth_Computation)
 # ---------------------------------------------------------------------------
 
-function treewidth_computation(weights::Vector{Int}, graph::Graph{PSet}, lower_bound::Int) where {PSet}
+function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int) where {PSet}
     outlets_already_checked = Set{PSet}()
 
     min_k = lower_bound
@@ -87,15 +116,19 @@ function treewidth_computation(weights::Vector{Int}, graph::Graph{PSet}, lower_b
     sub_graphs = Graph{PSet}[graph]
     separators = PSet[]                          # index j -> separator
     separator_subgraph_indices = Int[]           # index j -> subgraph index i
-    child_stop = Int[1]                      # children for sep j = child_stop[j]+1 : child_stop[j+1]
+    child_stop = Int[1]                          # children for sep j = child_stop[j]+1 : child_stop[j+1]
     ptd_roots = Int[]                            # index i -> root index (0 = pending)
+    precomputed = Dict{Int, Int}()               # subgraph index -> already computed root
 
     for (i, graph_i) in enumerate(sub_graphs)
-        # Loop over possible treewidths for the current subgraph (C# line 141)
+        if haskey(precomputed, i)
+            push!(ptd_roots, precomputed[i])
+            continue
+        end
+
         first_k = true
 
         while min_k < wt(weights, vertices(graph_i)) - 1
-            # Break early if no vertices remain (C# lines 152-161)
             if nv(graph_i) == 0
                 push!(ptd_roots, make_ptd(pool, PSet()))
                 break
@@ -105,18 +138,21 @@ function treewidth_computation(weights::Vector{Int}, graph::Graph{PSet}, lower_b
                 empty!(outlets_already_checked)
             end
 
-            immutable_graph = CachedGraph(graph_i)
-
             state, tree_decomp_root, outlet_safe_sep = has_treewidth(
-                pool, weights, immutable_graph, min_k, graph_i, outlets_already_checked)
+                pool, weights, CachedGraph(graph_i), min_k, graph_i, outlets_already_checked)
 
             if state == Halt
                 push!(ptd_roots, tree_decomp_root)
                 break
             elseif state == Divide
-                tree_decomp_data = pool[tree_decomp_root]
                 separated_graphs, already_calc_idx, min_k = apply_externally_found_safe_separator!(
-                    weights, graph_i, outlet_safe_sep, min_k, inlet(tree_decomp_data))
+                    weights, graph_i, outlet_safe_sep, min_k, inlet(pool[tree_decomp_root]))
+
+                # The PTD whose outlet is the separator is already a tree
+                # decomposition of one of the pieces.
+                if ispositive(already_calc_idx)
+                    precomputed[length(sub_graphs) + already_calc_idx] = tree_decomp_root
+                end
 
                 append!(sub_graphs, separated_graphs)
 
@@ -124,8 +160,6 @@ function treewidth_computation(weights::Vector{Int}, graph::Graph{PSet}, lower_b
                 push!(separator_subgraph_indices, i)
                 push!(child_stop, length(sub_graphs))
                 push!(ptd_roots, 0)
-
-                # Continue with the next graph
                 break
             end
 
@@ -134,14 +168,13 @@ function treewidth_computation(weights::Vector{Int}, graph::Graph{PSet}, lower_b
             first_k = false
         end
 
-        # If graph is smaller than min bound (all vertices form a single bag) (C# lines 268-271)
+        # If graph is smaller than min bound (all vertices form a single bag)
         if length(ptd_roots) < i
             push!(ptd_roots, make_ptd(pool, vertices(graph_i)))
         end
-
     end
 
-    # Recombine subgraphs that have been safe separated (C# lines 277-293)
+    # Recombine subgraphs that have been safe separated
     for j in length(separators):-1:1
         parent_idx = separator_subgraph_indices[j]
         children = child_stop[j] + 1 : child_stop[j + 1]
@@ -152,529 +185,373 @@ function treewidth_computation(weights::Vector{Int}, graph::Graph{PSet}, lower_b
 end
 
 # ---------------------------------------------------------------------------
-# Core DP algorithm  (C# HasTreeWidth, lines 317-736)
-#
-# Uses the blocksieve path.
-# Returns (found::Bool, root_or_nothing::Union{Int, Nothing}, outlet_safe_sep::Union{PSet, Nothing}).
+# Search state for a single call to `has_treewidth`
 # ---------------------------------------------------------------------------
 
-function has_treewidth(pool::PTDPool{PSet}, weights::Vector{Int}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
-                       outlets_already_checked::Set{PSet}) where {PSet}
+mutable struct Search{PSet <: AbstractPackedSet}
+    const pool::PTDPool{PSet}             # scratch pool for this search
+    const weights::AbstractVector{Int}
+    const graph::CachedGraph{PSet}
+    const mutable_graph::Graph{PSet}
+    const k::Int
+    const work::Vector{PSet}
+    const is_small_pmc::Vector{Bool}
+
+    # P: the PTDs still to be processed, and the inlets of every PTD added so far
+    const P::Vector{Int}
+    const P_inlets::Set{PSet}
+
+    # >2 components optimization (Section 4.6)
+    const waiting::Dict{PSet, Vector{Int}}   # component -> PTDs waiting on it
+    const nmissing::Dict{Int, Int}           # PTD -> number of components it waits on
+
+    # U: the PTDURs, indexed by vertex set, and their (inlet, bag) pairs
+    const sieve::LayeredSieve{PSet}
+    const U::Set{Tuple{PSet, PSet}}
+    const results::Vector{Int}               # query results
+    const cmps::Vector{PSet}                 # components of an outlet (reused buffer; see is_minimal_separator)
+
+    const outlets_checked::Set{PSet}
+    const minor::MinorWork{PSet}
+    heuristic_best::Int     # heaviest inlet tried by heuristic completion
+end
+
+function Search(weights::Weights{PSet}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
+                outlets_checked::Set{PSet}) where {PSet}
+    return Search{PSet}(
+        PTDPool{PSet}(), weights, graph, mutable_graph, k,
+        Vector{PSet}(undef, domain(PSet)), Vector{Bool}(undef, domain(PSet)),
+        Int[], Set{PSet}(),
+        Dict{PSet, Vector{Int}}(), Dict{Int, Int}(),
+        LayeredSieve{PSet}(k, weights), Set{Tuple{PSet, PSet}}(), Int[], PSet[],
+        outlets_checked, MinorWork{PSet}(), 0)
+end
+
+# ---------------------------------------------------------------------------
+# Core DP algorithm  (C# HasTreeWidth)
+#
+# Returns (state, root, separator). On `Halt`, `root` is a tree decomposition of
+# the graph of width ≤ k. On `Divide`, `root` is a PTD whose outlet `separator`
+# is a safe separator. The returned trees are copied into `pool`.
+# ---------------------------------------------------------------------------
+
+function has_treewidth(pool::PTDPool{PSet}, weights::AbstractVector{Int}, graph::CachedGraph{PSet}, k::Int,
+                       mutable_graph::Graph{PSet}, outlets_already_checked::Set{PSet}) where {PSet}
     if nv(graph) == 0
         return (Halt, make_ptd(pool, PSet()), PSet())
     end
 
-    ptd_roots = Int[]              # Stack of root indices (push!/pop!)
-    ptd_inlets = Set{PSet}()
+    search = Search(weights, graph, k, mutable_graph, outlets_already_checked)
+    state, root, sep = _search!(search)
 
-    sieve = LayeredSieve{PSet}(k, weights)
-    ptdur_inlets = Dict{PSet, Int}()    # inlet -> ptdur root index
-
-    is_small_pmc = Vector{Bool}(undef, domain(PSet))
-    work = Vector{PSet}(undef, domain(PSet))
-
-    # moreThan2ComponentsOptimization data structures (C# lines 345-346)
-    if MORE_THAN_2_COMPONENTS_OPTIMIZATION
-        cmp_to_ptd_roots = Dict{PSet, Vector{Int}}()
-        ptd_root_to_cmps = Dict{Int, Int}()
-    else
-        cmp_to_ptd_roots = nothing
-        ptd_root_to_cmps = nothing
+    if state != Continue
+        root = copy_tree!(pool, search.pool, root)
     end
 
-    heuristic_completion_in = 1
-    current_tests_per_gk = 0
+    return (state, root, sep)
+end
 
-    # --------- lines 2 to 6: Initialize PTDs from vertex neighborhoods ----------
-    # (C# lines 357-380)
+function _search!(s::Search{PSet}) where {PSet}
+    graph = s.graph; pool = s.pool; weights = s.weights; k = s.k
 
+    # --------- lines 1-4: leaves N[v] ----------
     for v in vertices(graph)
         N = neighbors(graph, v) ∪ v
-        is_small_pmc[v] = flag = wt(weights, N) <= k + 1 && is_pmc!(work, graph, N)
+        s.is_small_pmc[v] = flag = wt(weights, N) <= k + 1 && is_pmc!(s.work, graph, N)
 
         if flag
-            ptd_root = make_ptd(pool, N, neighbors(graph, setdiff(vertices(graph), N)))
-            ptd_data = pool[ptd_root]
-            S = outlet(ptd_data)
-            R = inlet(ptd_data)
+            root = make_ptd(pool, N, neighbors(graph, setdiff(vertices(graph), N)))
+            data = pool[root]
 
-            if R ∉ ptd_inlets && !is_incoming(pool, ptd_root, graph)
-                is_min_sep, cmps = is_minimal_separator(graph, S)
-                is_min_sep && _add_to_p!(pool, ptd_root, cmps, graph, ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps)
+            if inlet(data) ∉ s.P_inlets && !is_incoming(pool, root, graph)
+                is_ms, cmps = is_minimal_separator(graph, outlet(data), s.cmps)
+                is_ms && _add_to_p!(s, root, cmps)
             end
         end
     end
 
-    # --------- lines 7 to 32: Main DP loop ----------
-    # (C# lines 384-721)
-
-    while !isempty(ptd_roots)
-        ptd_root = pop!(ptd_roots)
-
-        # --------- line 9 ----------
-        ptdur_root_1 = create_ptdur_from_ptd(pool, ptd_root)
-
-        # --------- line 10: add PTDUR to U ----------
-        # (C# lines 400-421, blocksieve path)
-        ptdur_data_1 = pool[ptdur_root_1]
-        V_1 = vertices(ptdur_data_1)
-        B_1 = bag(ptdur_data_1)
-        R_1 = inlet(ptdur_data_1)
-
-        if haskey(ptdur_inlets, R_1)
-            ptdur_root_0 = ptdur_inlets[R_1]
-            ptdur_data_0 = pool[ptdur_root_0]
-            B_0 = bag(ptdur_data_0)
-
-            if wt(weights, B_1) < wt(weights, B_0)
-                replace_subset!(sieve, ptdur_root_0, B_0, ptdur_root_1, B_1, V_1)
-                ptdur_inlets[R_1] = ptdur_root_1
-                rem_vertex!(pool, ptdur_root_0)
-            else
-                rem_vertex!(pool, ptdur_root_1)
-                continue
-            end
-        else
-            ptdur_inlets[R_1] = ptdur_root_1
-            sieve[ptdur_root_1] = (B_1, V_1)
-            flush!(sieve)
+    # --------- lines 5-27: main loop ----------
+    while true
+        if isempty(s.P)
+            _release_waiting!(s) || break
         end
 
-        # --------- lines 11-32: iterate over eligible PTDURs ----------
-        # (C# lines 448-718)
-        ptd_data = pool[ptd_root]
-        R = inlet(ptd_data)
-        S = outlet(ptd_data)
+        tau = pop!(s.P)
 
-        for ptdur_root_2 in query(sieve, R, S, ptdur_root_1)
-            ptdur_data_2 = pool[ptdur_root_2]
-            R_2 = inlet(ptdur_data_2)
+        # line 6-7: the PTDUR with τ as its only child
+        rho = create_ptdur_from_ptd(pool, tau)
+        _add_to_u!(s, rho) || continue
+        _flush!(s)
 
-            # --------- lines 12-15 ----------
-            # (C# lines 460-520)
-            if R_1 != R_2
-                success, new_root = add_ptd_to_ptdur_check(work, pool, ptdur_root_2, ptd_root, weights, graph, k, mutable_graph)
-                success || continue
-   
-                ptdur_root_3 = new_root
+        R = inlet(pool[tau])
+        S = outlet(pool[tau])
 
-                # Add to U (blocksieve path, C# lines 470-492)
-                ptdur_data_3 = pool[ptdur_root_3]
-                V_3 = vertices(ptdur_data_3)
-                B_3 = bag(ptdur_data_3)
-                R_3 = inlet(ptdur_data_3)
+        # line 9-10: Tb = Te
+        state, root = _extend!(s, rho, tau)
+        state == Continue || return (state, root, outlet(pool[root]))
 
-                if haskey(ptdur_inlets, R_3)
-                    ptdur_root_0 = ptdur_inlets[R_3]
-                    ptdur_data_0 = pool[ptdur_root_0]
-                    B_0 = bag(ptdur_data_0)
+        # lines 8, 11-16: Tb = T' + τ
+        for rho2 in query!(s.results, s.sieve, R, S)
+            success, rho3 = add_ptd_to_ptdur_check(s.work, pool, rho2, tau, weights, graph, k)
+            success || continue
+            _add_to_u!(s, rho3) || continue
 
-                    if wt(weights, B_3) < wt(weights, B_0)
-                        replace_subset!(sieve, ptdur_root_0, B_0, ptdur_root_3, B_3, V_3)
-                        ptdur_inlets[R_3] = ptdur_root_3
-                        rem_vertex!(pool, ptdur_root_0)
-                    else
-                        rem_vertex!(pool, ptdur_root_3)
-                        continue
-                    end
-                else
-                    sieve[ptdur_root_3] = (B_3, V_3)
-                    ptdur_inlets[R_3] = ptdur_root_3
-                end
-            else
-                ptdur_root_3 = ptdur_root_1
-            end
-
-            ptdur_data_3 = pool[ptdur_root_3]
-            B_3 = bag(ptdur_data_3)
-            ptdur_size = wt(weights, B_3)
-
-            # --------- lines 16-20: Rule 1 - Check if completion ----------
-            if ptdur_size == k + 1 || is_pmc!(work, graph, B_3)
-                state, root, sep, heuristic_completion_in, current_tests_per_gk =
-                    _rule1!(pool, ptdur_root_3, ptd_root, weights, graph, k, mutable_graph,
-                            ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps, outlets_already_checked,
-                            heuristic_completion_in, current_tests_per_gk)
-
-                state == Continue || return (state, root, sep)
-            else
-                # --------- lines 21-26: Rule 2 ----------
-                state, root, sep, heuristic_completion_in, current_tests_per_gk =
-                    _rule2!(pool, ptdur_root_3, ptdur_data_3, ptd_root, weights, graph, k, mutable_graph,
-                            is_small_pmc, ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps, outlets_already_checked,
-                            heuristic_completion_in, current_tests_per_gk)
-
-                state == Continue || return (state, root, sep)
-
-                # --------- lines 27-32: Rule 3 ----------
-                state, root, sep, heuristic_completion_in, current_tests_per_gk =
-                    _rule3!(work, pool, ptdur_root_3, ptdur_data_3, ptd_root, weights, graph, k, mutable_graph,
-                            ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps, outlets_already_checked,
-                            heuristic_completion_in, current_tests_per_gk)
-
-                state == Continue || return (state, root, sep)
-            end
+            state, root = _extend!(s, rho3, tau)
+            state == Continue || return (state, root, outlet(pool[root]))
         end
 
-        # Flush deferred additions (C# lines 719-721, blocksieve path)
-        flush!(sieve)
+        _flush!(s)
     end
 
     return (Continue, 0, PSet())
 end
 
-# ---------------------------------------------------------------------------
-# Rule 1: Check if completion (C# lines 530-580)
-# ---------------------------------------------------------------------------
+# lines 17-27: try to turn the PTDUR `rho` into PTDs
+function _extend!(s::Search{PSet}, rho::Int, tau::Int) where {PSet}
+    pool = s.pool; graph = s.graph; weights = s.weights; k = s.k
+    data = pool[rho]
+    B = bag(data)
 
-function _rule1!(pool::PTDPool{PSet}, ptdur_root::Int, ptd_root::Int,
-                 weights::Vector{Int}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
-                 ptd_roots::Vector{Int}, ptd_inlets::Set{PSet}, cmp_to_ptd_roots, ptd_root_to_cmps,
-                 outlets_already_checked::Set{PSet},
-                 heuristic_completion_in::Int, current_tests_per_gk::Int) where {PSet}
-    new_ptd_root = copy_ptd(pool, ptdur_root)
-    consumed = false
-    new_ptd_data = pool[new_ptd_root]
-    V_new = vertices(new_ptd_data)
-    R_new = inlet(new_ptd_data)
-    S_new = outlet(new_ptd_data)
-
-    if V_new == vertices(graph)
-        return (Halt, new_ptd_root, PSet(), heuristic_completion_in, current_tests_per_gk)
+    # lines 17-18: the root bag is already a PMC. No proper superset of a PMC
+    # is a PMC, so there is nothing else to try.
+    if wt(weights, B) == k + 1 || is_pmc!(s.work, graph, B)
+        return _offer_ptd!(s, copy_ptd(pool, rho))
     end
 
-    if !(R_new in ptd_inlets)
-        is_ms, cmps = is_minimal_separator(graph, S_new)
+    V = vertices(data)
+    O = outlet(data)
 
-        if is_ms && !is_incoming(pool, new_ptd_root, graph) && is_normalized(pool, new_ptd_root)
-            heuristic_completion_in -= 1
+    # lines 19-22: X = N[v] for v ∉ V with O ⊆ N[v]
+    if !isempty(O)
+        candidates = neighbors(graph, first(O))
 
-            if COMPLETE_HEURISTICALLY && heuristic_completion_in == 0
-                success, current_tests_per_gk =
-                    _try_heuristic_completion!(pool, weights, graph, new_ptd_root, k, mutable_graph,
-                        current_tests_per_gk)
+        for u in O
+            candidates = candidates ∩ neighbors(graph, u)
+        end
 
-                if success
-                    return (Halt, new_ptd_root, PSet(), heuristic_completion_in, current_tests_per_gk)
-                end
+        for v in setdiff(candidates, V)
+            N = neighbors(graph, v) ∪ v
+
+            if s.is_small_pmc[v] && N ⊇ B
+                state, root = _offer_ptd!(s, extend_to_pmc_rule2(pool, rho, N, graph))
+                state == Continue || return (state, root)
             end
-            if heuristic_completion_in < 0
-                heuristic_completion_in = HEURISTIC_COMPLETION_FREQUENCY
-            end
-
-            if _outlet_is_safe_separator(pool, new_ptd_root, weights, graph, mutable_graph, outlets_already_checked)
-                return (Divide, new_ptd_root, outlet(pool[ptd_root]), heuristic_completion_in, current_tests_per_gk)
-            end
-
-            _add_to_p!(pool, new_ptd_root, cmps, graph, ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps)
-            consumed = true
         end
     end
 
-    consumed || rem_vertex!(pool, new_ptd_root)
-
-    return (Continue, 0, PSet(), heuristic_completion_in, current_tests_per_gk)
-end
-
-# ---------------------------------------------------------------------------
-# Rule 2: Extend via vertex neighborhood (C# lines 582-648)
-# ---------------------------------------------------------------------------
-
-function _rule2!(pool::PTDPool{PSet}, ptdur_root::Int, ptdur_data::PTD{PSet}, ptd_root::Int,
-                 weights::Vector{Int}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
-                 is_small_pmc::Vector{Bool},
-                 ptd_roots::Vector{Int}, ptd_inlets::Set{PSet}, cmp_to_ptd_roots, ptd_root_to_cmps,
-                 outlets_already_checked::Set{PSet},
-                 heuristic_completion_in::Int, current_tests_per_gk::Int) where {PSet}
-    V = vertices(ptdur_data)
-    B = bag(ptdur_data)
-    S = outlet(ptdur_data)
-
-    # Compute candidates: common neighbors of all outlet vertices, minus vertices already covered
-    candidates = vertices(graph)
-    first_outlet = true
-    remaining = S
-
-    while !isempty(remaining)
-        v, remaining = popfirst_nonempty(remaining)
-        if first_outlet
-            candidates = neighbors(graph, v)
-            first_outlet = false
-        else
-            candidates = candidates ∩ neighbors(graph, v)
-        end
-    end
-    if first_outlet
-        candidates = PSet()  # empty outlet => no candidates
-    end
-
-    candidates = setdiff(candidates, V)
-
-    # Process each candidate
-    remaining = candidates
-
-    while !isempty(remaining)
-        v, remaining = popfirst_nonempty(remaining)
-
-        N = neighbors(graph, v) ∪ v
-
-        if is_small_pmc[v] && N ⊇ B
-            new_ptd_root = extend_to_pmc_rule2(pool, ptdur_root, N, graph)
-            consumed = false
-            new_ptd_data = pool[new_ptd_root]
-            V_new = vertices(new_ptd_data)
-            R_new = inlet(new_ptd_data)
-            S_new = outlet(new_ptd_data)
-
-            if V_new == vertices(graph)
-                return (Halt, new_ptd_root, PSet(), heuristic_completion_in, current_tests_per_gk)
-            end
-
-            heuristic_completion_in -= 1
-
-            if !(R_new in ptd_inlets)
-                is_ms, cmps = is_minimal_separator(graph, S_new)
-
-                if is_ms && !is_incoming(pool, new_ptd_root, graph) && is_normalized(pool, new_ptd_root)
-                    if COMPLETE_HEURISTICALLY && heuristic_completion_in == 0
-                        success, current_tests_per_gk =
-                            _try_heuristic_completion!(pool, weights, graph, new_ptd_root, k, mutable_graph,
-                                current_tests_per_gk)
-
-                        if success
-                            return (Halt, new_ptd_root, PSet(), heuristic_completion_in, current_tests_per_gk)
-                        end
-                    end
-                    if heuristic_completion_in < 0
-                        heuristic_completion_in = HEURISTIC_COMPLETION_FREQUENCY
-                    end
-
-                    if _outlet_is_safe_separator(pool, new_ptd_root, weights, graph, mutable_graph, outlets_already_checked)
-                        return (Divide, new_ptd_root, outlet(pool[ptd_root]), heuristic_completion_in, current_tests_per_gk)
-                    end
-
-                    _add_to_p!(pool, new_ptd_root, cmps, graph, ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps)
-                    consumed = true
-                end
-            end
-
-            consumed || rem_vertex!(pool, new_ptd_root)
-        end
-    end
-
-    return (Continue, 0, PSet(), heuristic_completion_in, current_tests_per_gk)
-end
-
-# ---------------------------------------------------------------------------
-# Rule 3: Extend by adding neighbors (C# lines 650-713)
-# ---------------------------------------------------------------------------
-
-function _rule3!(work::Vector{PSet}, pool::PTDPool{PSet}, ptdur_root::Int, ptdur_data::PTD{PSet}, ptd_root::Int,
-                 weights::Vector{Int}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
-                 ptd_roots::Vector{Int}, ptd_inlets::Set{PSet}, cmp_to_ptd_roots, ptd_root_to_cmps,
-                 outlets_already_checked::Set{PSet},
-                 heuristic_completion_in::Int, current_tests_per_gk::Int) where {PSet}
-    B = bag(ptdur_data)
-    R = inlet(ptdur_data)
+    # lines 23-27: X = B ∪ (N(v) - inlet) for v ∈ B
+    R = inlet(data)
 
     for v in B
-        pot_new_bag = setdiff(neighbors(graph, v), R) ∪ B
+        X = setdiff(neighbors(graph, v), R) ∪ B
 
-        if wt(weights, pot_new_bag) <= k + 1 && is_pmc!(work, graph, pot_new_bag)
-            new_ptd_root = extend_to_pmc_rule3(pool, ptdur_root, pot_new_bag, graph)
-            consumed = false
-            new_ptd_data = pool[new_ptd_root]
-            V_new = vertices(new_ptd_data)
-            R_new = inlet(new_ptd_data)
-            S_new = outlet(new_ptd_data)
-
-            if V_new == vertices(graph)
-                return (Halt, new_ptd_root, PSet(), heuristic_completion_in, current_tests_per_gk)
-            end
-
-            if !(R_new in ptd_inlets)
-                is_ms, cmps = is_minimal_separator(graph, S_new)
-
-                if is_ms && !is_incoming(pool, new_ptd_root, graph) && is_normalized(pool, new_ptd_root)
-                    heuristic_completion_in -= 1
-
-                    if COMPLETE_HEURISTICALLY && heuristic_completion_in == 0
-                        success, current_tests_per_gk =
-                            _try_heuristic_completion!(pool, weights, graph, new_ptd_root, k, mutable_graph,
-                                current_tests_per_gk)
-
-                        if success
-                            return (Halt, new_ptd_root, PSet(), heuristic_completion_in, current_tests_per_gk)
-                        end
-                    end
-                    if heuristic_completion_in < 0
-                        heuristic_completion_in = HEURISTIC_COMPLETION_FREQUENCY
-                    end
-
-                    if _outlet_is_safe_separator(pool, new_ptd_root, weights, graph, mutable_graph, outlets_already_checked)
-                        return (Divide, new_ptd_root, outlet(pool[ptd_root]), heuristic_completion_in, current_tests_per_gk)
-                    end
-
-                    _add_to_p!(pool, new_ptd_root, cmps, graph, ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps)
-                    consumed = true
-                end
-            end
-
-            consumed || rem_vertex!(pool, new_ptd_root)
+        if wt(weights, X) <= k + 1 && is_pmc!(s.work, graph, X)
+            state, root = _offer_ptd!(s, extend_to_pmc_rule3(pool, rho, X, graph))
+            state == Continue || return (state, root)
         end
     end
 
-    return (Continue, 0, PSet(), heuristic_completion_in, current_tests_per_gk)
+    return (Continue, 0)
+end
+
+# Decide what to do with a freshly built PTD: finish, divide, add to P, or discard.
+function _offer_ptd!(s::Search{PSet}, root::Int) where {PSet}
+    pool = s.pool; graph = s.graph
+    data = pool[root]
+
+    if vertices(data) == vertices(graph)
+        return (Halt, root)
+    end
+
+    if inlet(data) ∉ s.P_inlets
+        is_ms, cmps = is_minimal_separator(graph, outlet(data), s.cmps)
+
+        if is_ms && !is_incoming(pool, root, graph) && is_normalized(pool, root)
+            # Try to complete the PTD heuristically whenever its inlet is
+            # heavier than that of every PTD tried before. This bounds the
+            # number of attempts by the weight of the graph.
+            if COMPLETE_HEURISTICALLY
+                w = wt(s.weights, inlet(data))
+
+                if w > s.heuristic_best
+                    s.heuristic_best = w
+                    _try_heuristic_completion!(s, root) && return (Halt, root)
+                end
+            end
+
+            if _outlet_is_safe_separator(s, root)
+                return (Divide, root)
+            end
+
+            _add_to_p!(s, root, cmps)
+            return (Continue, 0)
+        end
+    end
+
+    rem_vertex!(pool, root)
+    return (Continue, 0)
 end
 
 # ---------------------------------------------------------------------------
-# AddToP  (C# AddToP, lines 896-963)
+# U: add a PTDUR unless one with the same inlet and bag exists. Returns `false`
+# (and frees `rho`) if it was discarded.
+#
+# Section 4.2 of the paper also discards a PTDUR if U contains one with the
+# same inlet and a smaller bag. That is unsound for weighted graphs, and
+# dropping it costs nothing on unweighted ones, so we do not do it.
 # ---------------------------------------------------------------------------
 
-function _add_to_p!(pool::PTDPool{PSet}, ptd_root::Int, cmps, graph::CachedGraph{PSet}, ptd_roots::Vector{Int},
-                    ptd_inlets::Set{PSet}, cmp_to_ptd_roots, ptd_root_to_cmps;
-                    is_confirmed_no_missing::Bool=false) where {PSet}
-    ptd_data = pool[ptd_root]
-    ptd_inlet = inlet(ptd_data)
-    # Mark this PTD as accounted for (C# line 899)
-    push!(ptd_inlets, ptd_inlet)
+function _add_to_u!(s::Search{PSet}, rho::Int) where {PSet}
+    data = s.pool[rho]
+    key = (inlet(data), bag(data))
+
+    if key in s.U
+        rem_vertex!(s.pool, rho)
+        return false
+    end
+
+    push!(s.U, key)
+    s.sieve[rho] = (bag(data), vertices(data))
+    return true
+end
+
+function _flush!(s::Search)
+    flush!(s.sieve)
+    return
+end
+
+# ---------------------------------------------------------------------------
+# P: add a PTD, possibly delaying it until PTDs for its other components exist
+# (Section 4.6, C# AddToP).
+# ---------------------------------------------------------------------------
+
+function _add_to_p!(s::Search{PSet}, root::Int, cmps) where {PSet}
+    R = inlet(s.pool[root])
+    push!(s.P_inlets, R)
+
+    if MORE_THAN_2_COMPONENTS_OPTIMIZATION && cmps !== nothing && length(cmps) > 2
+        nmissing = 0
+
+        for i in 2:length(cmps)   # 1 is always the incoming component
+            C = cmps[i]
+
+            if isdisjoint(C, R) && C ∉ s.P_inlets
+                push!(get!(() -> Int[], s.waiting, C), root)
+                nmissing += 1
+            end
+        end
+
+        if ispositive(nmissing)
+            s.nmissing[root] = nmissing
+            return
+        end
+    end
+
+    _push_p!(s, root)
+    return
+end
+
+function _push_p!(s::Search{PSet}, root::Int) where {PSet}
+    push!(s.P, root)
 
     if MORE_THAN_2_COMPONENTS_OPTIMIZATION
-        # (C# lines 904-933)
-        if !is_confirmed_no_missing && cmps !== nothing && length(cmps) > 2
-            # Determine missing cmps
-            missing_cmps = PSet[]
+        R = inlet(s.pool[root])
+        dependents = pop!(s.waiting, R, nothing)
 
-            for ci in 2:length(cmps)   # start from index 2 (1 is always the incoming cmp)
-                cmp = cmps[ci]
-                if isdisjoint(cmp, ptd_inlet)
-                    if !(cmp in ptd_inlets)
-                        push!(missing_cmps, cmp)
-                        if haskey(cmp_to_ptd_roots, cmp)
-                            push!(cmp_to_ptd_roots[cmp], ptd_root)
-                        else
-                            cmp_to_ptd_roots[cmp] = Int[ptd_root]
-                        end
-                    end
+        if dependents !== nothing
+            for dep in dependents
+                n = s.nmissing[dep] -= 1
+
+                if iszero(n)
+                    delete!(s.nmissing, dep)
+                    _push_p!(s, dep)
                 end
             end
-
-            # If cmps are missing, store and return (C# lines 928-932)
-            if !isempty(missing_cmps)
-                ptd_root_to_cmps[ptd_root] = length(missing_cmps)
-                return
-            end
         end
-
-        # No cmps missing: add to P (C# line 936)
-        push!(ptd_roots, ptd_root)
-
-        # Update dependent PTDs (C# lines 940-956)
-        if haskey(cmp_to_ptd_roots, ptd_inlet)
-            dependents = cmp_to_ptd_roots[ptd_inlet]
-
-            for dep_root in dependents
-                ptd_root_to_cmps[dep_root] -= 1
-                if ptd_root_to_cmps[dep_root] == 0
-                    delete!(ptd_root_to_cmps, dep_root)
-                    _add_to_p!(pool, dep_root, nothing, graph, ptd_roots, ptd_inlets, cmp_to_ptd_roots, ptd_root_to_cmps;
-                               is_confirmed_no_missing=true)
-                end
-            end
-            delete!(cmp_to_ptd_roots, ptd_inlet)
-        end
-    else
-        # (C# lines 958-962)
-        push!(ptd_roots, ptd_root)
     end
+
+    return
+end
+
+# When P runs dry, release every delayed PTD. Returns `true` if there were any.
+function _release_waiting!(s::Search)
+    isempty(s.nmissing) && return false
+
+    for root in keys(s.nmissing)
+        push!(s.P, root)
+    end
+
+    empty!(s.nmissing)
+    empty!(s.waiting)
+    return true
 end
 
 # ---------------------------------------------------------------------------
-# OutletIsSafeSeparator  (C# OutletIsSafeSeparator, lines 971-983)
+# OutletIsSafeSeparator
 # ---------------------------------------------------------------------------
 
-function _outlet_is_safe_separator(pool::PTDPool{PSet}, ptd_root::Int, weights::Vector{Int}, graph::CachedGraph{PSet}, mutable_graph::Graph{PSet}, outlets_checked::Set{PSet}) where {PSet}
-    ptd_data = pool[ptd_root]
+function _outlet_is_safe_separator(s::Search{PSet}, root::Int) where {PSet}
+    S = outlet(s.pool[root])
 
-    if TEST_OUTLET_IS_CLIQUE_MINOR && !(outlet(ptd_data) in outlets_checked)
-        push!(outlets_checked, outlet(ptd_data))
-        return is_safe_separator_heuristic(weights, mutable_graph, outlet(ptd_data))
+    if TEST_OUTLET_IS_CLIQUE_MINOR && S ∉ s.outlets_checked
+        push!(s.outlets_checked, S)
+        return is_safe_separator_heuristic(s.weights, s.mutable_graph, S, s.minor)
     end
+
     return false
 end
 
 # ---------------------------------------------------------------------------
-# TryHeuristicCompletion  (C# TryHeuristicCompletion, lines 1007-1129)
+# TryHeuristicCompletion: complete a PTD to a tree decomposition of the whole
+# graph using the min-degree heuristic. On success the completion is attached
+# below `root`, which then covers the whole graph.
 # ---------------------------------------------------------------------------
 
-function _try_heuristic_completion!(pool::PTDPool{PSet}, weights::Vector{Int}, immutable_graph::CachedGraph{PSet}, ptd_root::Int, k::Int,
-                                    mutable_graph_template::Graph{PSet},
-                                    tests_per_gk::Int) where {PSet}
-    ptd_data = pool[ptd_root]
-    ptd_inlet = inlet(ptd_data)
-    # Inlet ratio check (C# lines 1022-1026)
-    inlet_ratio = Float32(wt(weights, ptd_inlet)) / wt(weights, vertices(immutable_graph))
+function _try_heuristic_completion!(s::Search{PSet}, root::Int) where {PSet}
+    pool = s.pool; weights = s.weights; k = s.k; immutable_graph = s.graph
+    data = pool[root]
+    R = inlet(data)
 
-    if inlet_ratio < HEURISTIC_INLET_MIN || inlet_ratio > HEURISTIC_INLET_MAX
-        return (false, tests_per_gk)
-    end
-
-    tests_per_gk += 1
-
-    if tests_per_gk > MAX_TESTS_PER_GRAPH_AND_K
-        return (false, tests_per_gk)
-    end
-
-    # Build subgraph: remove inlet vertices, make outlet a clique (C# lines 1038-1061)
-    not_removed = setdiff(vertices(immutable_graph), ptd_inlet)
-    graph = Graph(not_removed)
+    # Remove the inlet and make the outlet a clique.
+    graph = Graph(setdiff(vertices(immutable_graph), R))
 
     for u in vertices(immutable_graph)
-        if u in ptd_inlet
+        if u in R
             graph.neighbors[u] = PSet()
         else
-            graph.neighbors[u] = setdiff(neighbors(immutable_graph, u), ptd_inlet)
+            graph.neighbors[u] = setdiff(neighbors(immutable_graph, u), R)
         end
     end
-    make_into_clique!(graph, outlet(ptd_data))
 
-    # Calculate bags using heuristic (C# lines 1064-1077)
-    bags_and_parents_stack = Tuple{PSet, PSet}[]
-    heuristic_pairs, remaining_clique = heuristic_bags_and_neighbors(weights, graph)
+    make_into_clique!(graph, outlet(data))
 
-    for (bag, parent) in heuristic_pairs
-        if wt(weights, bag) > k + 1
-            return (false, tests_per_gk)
-        end
-        push!(bags_and_parents_stack, (bag, parent))
+    pairs, remaining = heuristic_bags_and_neighbors(weights, graph)
+
+    for (B, _) in pairs
+        wt(weights, B) > k + 1 && return false
     end
 
-    # Return also if the remaining clique is too large (C# lines 1074-1077)
-    if wt(weights, remaining_clique) > k + 1
-        return (false, tests_per_gk)
-    end
+    wt(weights, remaining) > k + 1 && return false
 
-    # Build the PTD from those bags (C# lines 1080-1108)
-    other_root = make_ptd(pool, remaining_clique)
-    subtree_list = Int[other_root]
+    # Build the decomposition from the bags.
+    other = make_ptd(pool, remaining)
+    subtrees = Int[other]
 
-    for idx in length(bags_and_parents_stack):-1:1
-        current_bag, current_parent = bags_and_parents_stack[idx]
-        current_root = make_ptd(pool, current_bag)
+    for idx in length(pairs):-1:1
+        B, parent = pairs[idx]
+        node = make_ptd(pool, B)
 
-        # Iterate from most recent to least recent (C# lines 1092-1103)
-        for i in length(subtree_list):-1:1
-            if bag(pool[subtree_list[i]]) ⊇ current_parent
-                add_edge!(pool, subtree_list[i], current_root)
+        for i in length(subtrees):-1:1
+            if bag(pool[subtrees[i]]) ⊇ parent
+                add_edge!(pool, subtrees[i], node)
                 break
             end
         end
-        push!(subtree_list, current_root)
+
+        push!(subtrees, node)
     end
 
-    # Reroot and attach (C# lines 1110-1112)
-    other_root = reroot!(pool, other_root, outlet(ptd_data))
-    add_edge!(pool, ptd_root, other_root)
-
-    return (true, tests_per_gk)
+    other = reroot!(pool, other, outlet(data))
+    add_edge!(pool, root, other)
+    return true
 end

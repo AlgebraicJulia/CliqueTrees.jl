@@ -5,21 +5,30 @@ function pidbt(weights::AbstractVector{Int}, g::Graphs.AbstractGraph, min_k::Int
 end
 
 function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGraph{V}, min_k::Int) where {V, PSet <: AbstractPackedSet}
-    @assert all(weights .> 0)
     n = convert(Int, Graphs.nv(g))
+    @assert all(ispositive, view(weights, 1:n))
 
-    # Sort vertices by weight (increasing order)
+    # Renumber the vertices in Cuthill-McKee order.
     # perm[new_index] = old_index
-    perm = sortperm(weights)
+    #
+    # The vertex order matters twice over. A PTD is only built if it is not
+    # incoming, i.e. if its inlet avoids the smallest vertex outside it, so the
+    # order decides which side of each separator gets built. And the sieve
+    # tests vertices in increasing order. On the PACE 2017 instances,
+    # Cuthill-McKee was about 1.5x faster (geometric mean) than the input
+    # order. Reverse Cuthill-McKee was as fast on average, but it puts
+    # high-degree vertices first on dense graphs, and was over 20x slower on
+    # one instance.
+    perm = cuthill_mckee(g, n)
     old_to_new = invperm(perm)
 
-    # Build graph and sorted weights
+    # Build graph and permuted weights
     mg = Graph{PSet}(n)
-    sorted_weights = Vector{Int}(undef, domain(PSet))
+    new_weights = Vector{Int}(undef, n)
 
     for new_v in 1:n
         old_v = perm[new_v]
-        sorted_weights[new_v] = weights[old_v]
+        new_weights[new_v] = weights[old_v]
 
         s = PSet()
         for old_u in Graphs.neighbors(g, old_v)
@@ -29,11 +38,11 @@ function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGr
         mg.neighbors[new_v] = s
     end
 
-    (tw, (pool, root)) = treewidth(sorted_weights, mg; min_k = max(0, min_k - 1))
+    (tw, (pool, root)) = treewidth(Weights{PSet}(new_weights), mg; min_k = max(0, min_k - 1))
 
     # Map elimination ordering back to original indices
-    sorted_ordering = _elimination_ordering(pool, root)
-    return convert(Vector{V}, perm[sorted_ordering])
+    ordering = _elimination_ordering(pool, root)
+    return convert(Vector{V}, perm[ordering])
 end
 
 function _elimination_ordering(pool::PTDPool{PSet}, root::Int) where {PSet}
@@ -50,4 +59,66 @@ function _postorder!(ordering::Vector{Int}, pool::PTDPool{PSet}, node::Int, pare
     for v in setdiff(B, parent_bag)
         push!(ordering, v)
     end
+end
+
+# ---------------------------------------------------------------------------
+# Cuthill-McKee
+# ---------------------------------------------------------------------------
+
+# Return a permutation of 1:n (perm[new] = old). Each connected component is
+# searched breadth-first from a pseudo-peripheral vertex, visiting neighbors in
+# order of increasing degree.
+function cuthill_mckee(g::Graphs.AbstractGraph, n::Int)
+    adj = Vector{Int}[sort!(Int[u for u in Graphs.neighbors(g, v) if u != v]) for v in 1:n]
+    deg = length.(adj)
+
+    for list in adj
+        sort!(list; by = u -> (deg[u], u))
+    end
+
+    order = Int[]
+    seen = falses(n)
+    mark = falses(n)
+
+    for v in sortperm(deg)
+        seen[v] && continue
+        root = _peripheral_vertex!(mark, adj, v)
+        _bfs!(order, seen, adj, root)
+    end
+
+    return order
+end
+
+# Breadth-first search from `root`, appending newly seen vertices to `order`.
+function _bfs!(order::Vector{Int}, seen::BitVector, adj::Vector{Vector{Int}}, root::Int)
+    i = length(order) + 1
+    seen[root] = true
+    push!(order, root)
+
+    while i <= length(order)
+        v = order[i]; i += 1
+
+        for u in adj[v]
+            seen[u] && continue
+            seen[u] = true
+            push!(order, u)
+        end
+    end
+
+    return order
+end
+
+# Find a vertex far from `v` by repeated breadth-first search.
+function _peripheral_vertex!(mark::BitVector, adj::Vector{Vector{Int}}, v::Int)
+    order = Int[]
+
+    for _ in 1:4
+        fill!(mark, false); empty!(order)
+        _bfs!(order, mark, adj, v)
+        u = last(order)
+        u == v && break
+        v = u
+    end
+
+    return v
 end

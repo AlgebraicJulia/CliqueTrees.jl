@@ -3,10 +3,6 @@
 # All vertex indices are 1-based.
 
 # ---------------------------------------------------------------------------
-const TEST_IF_ADDING_ONE_VERTEX_TO_BAG_FORMS_PMC = true
-const NEIGHBORS_FIRST = true
-
-# ---------------------------------------------------------------------------
 # PTD: value type for node data (stored in DAG pool)
 # ---------------------------------------------------------------------------
 
@@ -67,7 +63,7 @@ end
 # C# AddPTDToPTDUR_CheckBagSize_CheckPossiblyUsable_CheckCliquish
 # Returns (success::Bool, result_root::Int) where result_root=0 on failure.
 function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root::Int, tau_root::Int,
-                                 weights::Vector{Int}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet}) where {PSet}
+                                 weights::AbstractVector{Int}, graph::CachedGraph{PSet}, k::Int) where {PSet}
     tp_data = pool[tp_root]
     tau_data = pool[tau_root]
 
@@ -79,8 +75,17 @@ function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root
 
     B = bag(tp_data) ∪ outlet(tau_data)
 
-    # Check possibly usable: only need to check new child against existing ones
-    if !is_possibly_usable(pool, tp_root, tau_root, graph)
+    # Check that τ is possibly usable together with every child of tp:
+    #
+    #   - no vertex of tp lies in the inlet of τ, and
+    #   - no inlet vertex of a child of tp lies in V(τ).
+    #
+    # The union of the children's inlets is V(tp) - bag(tp), since the children
+    # of a PTDUR are pairwise possibly usable (no child's outlet meets another
+    # child's inlet). The first condition is also the sieve query condition,
+    # but checking it here keeps this function correct on its own.
+    if !isdisjoint(vertices(tp_data), inlet(tau_data)) ||
+       !isdisjoint(setdiff(vertices(tp_data), bag(tp_data)), vertices(tau_data))
         return (false, 0)
     end
 
@@ -92,71 +97,6 @@ function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root
     # Check cliquish
     if !is_csh!(work, graph, B)
         return (false, 0)
-    end
-
-    # One-vertex-to-PMC test
-    if TEST_IF_ADDING_ONE_VERTEX_TO_BAG_FORMS_PMC && future_bag_size == k
-        if !is_pmc!(work, graph, B)
-            useless = true
-
-            for (component, nbrs) in components(graph, B)
-                if nbrs == B && isdisjoint(component, vertices(tp_data)) && isdisjoint(component, vertices(tau_data))
-                    if NEIGHBORS_FIRST
-                        for v in B
-                            v_nbrs = neighbors(graph, v) ∩ component
-
-                            if length(v_nbrs) == 1
-                                candidate = first(v_nbrs)
-                                test_bag = B ∪ candidate
-
-                                if is_csh!(work, graph, test_bag)
-                                    useless = false
-                                    break
-                                end
-                            end
-                        end
-                        if !useless
-                            break
-                        end
-                    end
-
-                    for ap in articulation_points(mutable_graph, component)
-                        test_bag = B ∪ ap
-
-                        if is_pmc!(work, graph, test_bag)
-                            useless = false
-                            break
-                        end
-                    end
-                    if !useless
-                        break
-                    end
-
-                    if !NEIGHBORS_FIRST
-                        for v in B
-                            v_nbrs = neighbors(graph, v) ∩ component
-
-                            if length(v_nbrs) == 1
-                                candidate = first(v_nbrs)
-                                test_bag = B ∪ candidate
-
-                                if is_csh!(work, graph, test_bag)
-                                    useless = false
-                                    break
-                                end
-                            end
-                        end
-                        if !useless
-                            break
-                        end
-                    end
-                end
-            end
-
-            if useless
-                return (false, 0)
-            end
-        end
     end
 
     # Build result
@@ -173,25 +113,6 @@ function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root
     add_edge!(pool, new_root, tau_root)
 
     return (true, new_root)
-end
-
-# C# IsPossiblyUsable: Check only new child against existing children (O(n)).
-function is_possibly_usable(pool::PTDPool{PSet}, parent_root::Int, tau_root::Int, graph::CachedGraph{PSet}) where {PSet}
-    tau_data = pool[tau_root]
-
-    for p in incident(pool, parent_root)
-        child_data = pool[target(pool, p)]
-
-        if !isdisjoint(inlet(child_data), inlet(tau_data))
-            return false
-        end
-        vi = vertices(child_data) ∩ vertices(tau_data)
-
-        if !(outlet(child_data) ⊇ vi) || !(outlet(tau_data) ⊇ vi)
-            return false
-        end
-    end
-    return true
 end
 
 
@@ -292,3 +213,22 @@ function reroot!(pool::PTDPool{PSet}, root::Int, S::PSet) where {PSet}
     return node
 end
 
+
+# Copy the tree rooted at `root` in `src` into `dst`. Returns the new root.
+function copy_tree!(dst::PTDPool{PSet}, src::PTDPool{PSet}, root::Int) where {PSet}
+    new_root = add_vertex!(dst, src[root])
+    stack = Tuple{Int, Int}[(root, new_root)]
+
+    while !isempty(stack)
+        u, v = pop!(stack)
+
+        for p in incident(src, u)
+            x = target(src, p)
+            y = add_vertex!(dst, src[x])
+            add_edge!(dst, v, y)
+            push!(stack, (x, y))
+        end
+    end
+
+    return new_root
+end

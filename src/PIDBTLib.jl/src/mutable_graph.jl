@@ -7,12 +7,88 @@
 
 Sum of vertex weights for all vertices in `set`.
 """
-function wt(weights::Vector{Int}, set::PSet) where {PSet <: AbstractPackedSet}
+function wt(weights::AbstractVector{Int}, set::PSet) where {PSet <: AbstractPackedSet}
     s = 0
 
     for v in set
         s += weights[v]
     end
+    return s
+end
+
+"""
+    Weights{PSet}
+
+Vertex weights, together with the partition of the vertices into weight
+classes. This turns `wt` into a handful of popcounts.
+"""
+struct Weights{PSet <: AbstractPackedSet} <: AbstractVector{Int}
+    data::Vector{Int}
+    values::Vector{Int}     # distinct weights
+    masks::Vector{PSet}     # masks[c] = vertices with weight values[c]
+end
+
+function Weights{PSet}(data::Vector{Int}) where {PSet <: AbstractPackedSet}
+    values = sort!(unique(data))
+    masks = [foldl(∪, (v for v in eachindex(data) if data[v] == x); init=PSet()) for x in values]
+    return Weights{PSet}(data, values, masks)
+end
+
+function Base.size(weights::Weights)
+    return size(weights.data)
+end
+
+@propagate_inbounds function Base.getindex(weights::Weights, i::Int)
+    return weights.data[i]
+end
+
+# Smallest weight of a vertex in the nonempty set `set`.
+function minweight(weights::AbstractVector{Int}, set::AbstractPackedSet)
+    return minimum(v -> weights[v], set)
+end
+
+function minweight(weights::Weights{PSet}, set::PSet) where {PSet <: AbstractPackedSet}
+    for c in eachindex(weights.values)   # values are sorted
+        isdisjoint(set, weights.masks[c]) || return weights.values[c]
+    end
+
+    error("empty set")
+end
+
+# The vertices of weight at least `w`, as a subset of `V`.
+function atleast(weights::AbstractVector{Int}, V::PSet, w::Int) where {PSet <: AbstractPackedSet}
+    U = PSet()
+
+    for v in V
+        weights[v] >= w && (U = U ∪ v)
+    end
+
+    return U
+end
+
+function atleast(weights::Weights{PSet}, V::PSet, w::Int) where {PSet <: AbstractPackedSet}
+    U = PSet()
+
+    for c in eachindex(weights.values)
+        weights.values[c] >= w && (U = U ∪ weights.masks[c])
+    end
+
+    return V ∩ U
+end
+
+function wt(weights::Weights{PSet}, set::PSet) where {PSet <: AbstractPackedSet}
+    values = weights.values; masks = weights.masks
+
+    if isone(length(values))
+        return only(values) * length(set)
+    end
+
+    s = 0
+
+    @inbounds for c in eachindex(values)
+        s += values[c] * length(set ∩ masks[c])
+    end
+
     return s
 end
 

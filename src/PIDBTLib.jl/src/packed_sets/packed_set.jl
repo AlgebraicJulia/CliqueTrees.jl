@@ -100,4 +100,3 @@ end
 function Base.:(==)(left::T, right::T) where {T <: PackedSet}
     return left.data == right.data
 end
-

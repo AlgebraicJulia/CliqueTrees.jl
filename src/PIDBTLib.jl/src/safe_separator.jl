@@ -10,7 +10,7 @@ Separate the graph at a separator found externally (e.g. during HasTreeWidth).
 Returns `(subgraphs, already_calculated_C_index, min_k)`.
 """
 function apply_externally_found_safe_separator!(
-    weights::Vector{Int}, graph::Graph{PSet}, S::PSet,
+    weights::AbstractVector{Int}, graph::Graph{PSet}, S::PSet,
     min_k::Int, already_calc_component::PSet
 ) where {PSet}
     make_into_clique!(graph, S)
@@ -33,7 +33,7 @@ function apply_externally_found_safe_separator!(
         push!(subgraphs, subgraph)
 
         # Check if this component contains the already-calculated component
-        if !isempty(already_calc_component) && !isdisjoint(C, already_calc_component)
+        if !isempty(already_calc_component) && C == already_calc_component
             already_calc_idx = idx
         end
     end
@@ -84,75 +84,6 @@ function recombine_tree_decompositions(pool::PTDPool{PSet}, S::PSet, roots::Abst
     return first_root
 end
 
-# ==================== Articulation Points ====================
-
-"""
-    articulation_points(graph, V)
-
-List all articulation points of the graph restricted to `V`.
-Uses an iterative version of Tarjan's algorithm, faithfully transpiled from C#.
-
-This method can also be used to test for separators of size n by passing a set
-of n-1 vertices as ignored (removed from V), and combining the
-result with the ignored vertices.
-"""
-function articulation_points(graph::Graph{PSet}, V::PSet=vertices(graph)) where {PSet}
-    A = PSet()
-
-    stack = Tuple{Int, Int, Int}[]
-    count = Vector{Int}(undef, domain(V))
-    reach = Vector{Int}(undef, domain(V))
-    queue = Vector{PSet}(undef, domain(V))
-
-    for v in V
-        count[v] = typemax(Int)
-    end
-
-    u = first(V); count[u] = n = 0
-
-    for v in neighbors(graph, u) ∩ V
-        if count[v] == typemax(Int)
-            push!(stack, (v, 1, u))        
-
-            while !isempty(stack)
-                (x, timer, w) = last(stack)
-
-                if count[x] == typemax(Int)
-                    count[x] = timer
-                    reach[x] = timer
-                    queue[x] = setdiff(neighbors(graph, x) ∩ V, w)
-                elseif !isempty(queue[x])
-                    y, queue[x] = popfirst_nonempty(queue[x])
-
-                    if count[y] < typemax(Int)
-                        reach[x] = min(reach[x], count[y])
-                    else
-                        push!(stack, (y, timer + 1, x))
-                    end
-                else
-                    if x != v
-                        reach[w] = min(reach[w], reach[x])
-
-                        if reach[x] ≥ count[w]
-                            A = A ∪ w
-                        end
-                    end
-
-                    pop!(stack)
-                end
-            end
-
-            n += 1
-        end
-    end
-
-    if n > 1
-        A = A ∪ u
-    end
-
-    return A
-end
-
 # ==================== Heuristic Safe Separator Test ====================
 
 const MAX_MISSINGS = 100
@@ -167,7 +98,18 @@ Test heuristically if a candidate separator is a safe separator.
 If this method returns true, the separator is guaranteed safe.
 False negatives are possible.
 """
-function is_safe_separator_heuristic(weights::Vector{Int}, graph::Graph{PSet}, S::PSet) where {PSet}
+# Reusable scratch space for `find_clique_minor`.
+struct MinorWork{PSet <: AbstractPackedSet}
+    edges::Vector{Tuple{Int, Int, Bool}}
+    nodes::Vector{Tuple{PSet, PSet, Int}}
+    layers::Vector{PSet}
+end
+
+function MinorWork{PSet}() where {PSet <: AbstractPackedSet}
+    return MinorWork{PSet}(Tuple{Int, Int, Bool}[], Tuple{PSet, PSet, Int}[], PSet[])
+end
+
+function is_safe_separator_heuristic(weights::AbstractVector{Int}, graph::Graph{PSet}, S::PSet, work::MinorWork{PSet}=MinorWork{PSet}()) where {PSet}
 
     # count missing edges
     n = 0
@@ -183,7 +125,7 @@ function is_safe_separator_heuristic(weights::Vector{Int}, graph::Graph{PSet}, S
     for (C, N) in components(graph, S)
         isfirst && S ∪ C == vertices(graph) && return false
         isfirst = false
-        find_clique_minor(weights, graph, N, setdiff(vertices(graph), N ∪ C)) || return false
+        find_clique_minor(work, weights, graph, N, setdiff(vertices(graph), N ∪ C)) || return false
     end
 
     return true
@@ -206,17 +148,17 @@ end
 # The function works by constructing a mapping D → S, where D ⊆ V, indicating
 # which edges need to be contracted in order to make S into a clique. If such
 # a mapping is found, the function returns `true`; otherwise, `false`.
-function find_clique_minor(weights::Vector{Int}, graph::Graph{PSet}, S::PSet, V::PSet) where {PSet}
+function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, graph::Graph{PSet}, S::PSet, V::PSet) where {PSet}
     # The vector `edges` contains all ordered nonadjacent vertices in S.
     # Each of these "missing edges" needs to be covered by the contraction
     # mapping D → S.
-    edges = Tuple{Int, Int, Bool}[]
+    edges = empty!(work.edges)
 
     # The vector `nodes` contains the contraction mapping D → S. Each element
     # is a triple (Dᵢ, Nᵢ, vᵢ), where vᵢ ∈ S is a vertex in the image of the
     # mapping, Dᵢ ⊆ D is its pre-image, and Nᵢ := N(Dᵢ) is the open neighborhood
     # of Dᵢ.
-    nodes = Tuple{PSet, PSet, Int}[]
+    nodes = empty!(work.nodes)
 
     # Find every ordered pair v < w of nonadjacent vertices in S and append
     # it to `edges`.
@@ -280,7 +222,7 @@ function find_clique_minor(weights::Vector{Int}, graph::Graph{PSet}, S::PSet, V:
         pair = find_covering_pair(edge, nodes, V, weights, graph)
 
         if !isnothing(pair)
-            V = merge_nodes!(pair..., edge, nodes, V, weights, graph)
+            V = merge_nodes!(pair..., edge, nodes, V, weights, graph, work.layers)
         else
             return false
         end
@@ -303,7 +245,7 @@ function find_clique_minor(weights::Vector{Int}, graph::Graph{PSet}, S::PSet, V:
         pair = find_covering_pair(edge, nodes, V, weights, graph)
 
         if !isnothing(pair)
-            V = merge_nodes!(pair..., edge, nodes, V, weights, graph)
+            V = merge_nodes!(pair..., edge, nodes, V, weights, graph, work.layers)
         else
             w₁, w₂, _ = edge; edges[i] = (w₁, w₂, true)
             break
@@ -344,7 +286,7 @@ function find_clique_minor(weights::Vector{Int}, graph::Graph{PSet}, S::PSet, V:
         for v in S
             for (i, (D, N, w)) in enumerate(nodes)
                 # Can only assign if: unassigned, adjacent, and weight constraint satisfied
-                if iszero(w) && v ∈ N && weights[first(D)] >= weights[v]
+                if iszero(w) && v ∈ N && minweight(weights, D) >= weights[v]
                     steps += 1
                     steps < MAX_STEPS || return false
 
@@ -399,14 +341,14 @@ end
 #    {w, x} ⊈ N(D)  or  wmineight(D) < min(weight(w), weight(x))
 #
 # If no such edge exists, return 0.
-function find_zero_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::Vector{Int}) where {PSet}
+function find_zero_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::AbstractVector{Int}) where {PSet}
     for (i, (w, x, _)) in enumerate(edges)
         iscovered = false
         wmin = min(weights[w], weights[x])
 
         for (D, N, v) in nodes
             iscovered && break
-            iscovered = iszero(v) & (w in N) & (x in N) & (weights[first(D)] >= wmin)
+            iscovered = iszero(v) & (w in N) & (x in N) & (minweight(weights, D) >= wmin)
         end
 
         iscovered || return i
@@ -421,7 +363,7 @@ end
 Find the augmentable missing edge potentially covered by the fewest right nodes.
 Returns the index into `edges`, or `0` if no augmentable edge exists.
 """
-function find_least_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::Vector{Int}) where {PSet}
+function find_least_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::AbstractVector{Int}) where {PSet}
     nmin = imin = 0
 
     for (i, (w, x, flag)) in enumerate(edges)
@@ -431,7 +373,7 @@ function find_least_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vect
         wmin = min(weights[w], weights[x])
 
         for (D, N, v) in nodes
-            if iszero(v) & (w in N) & (x in N) & (weights[first(D)] >= wmin)
+            if iszero(v) & (w in N) & (x in N) & (minweight(weights, D) >= wmin)
                 n += 1
             end
         end
@@ -455,16 +397,15 @@ end
 #
 # and there is a path from V₁ to V₂ in V using only vertices with
 # weight >= min(weight(w₁), weight(w₂)).
-function find_covering_pair((w₁, w₂, _)::Tuple{Int, Int, Bool}, nodes::Vector{Tuple{PSet, PSet, Int}}, V::PSet, weights::Vector{Int}, graph::Graph{PSet}) where {PSet}
+function find_covering_pair((w₁, w₂, _)::Tuple{Int, Int, Bool}, nodes::Vector{Tuple{PSet, PSet, Int}}, V::PSet, weights::AbstractVector{Int}, graph::Graph{PSet}) where {PSet}
     wmin = min(weights[w₁], weights[w₂])
-    k = searchsortedfirst(weights, wmin)
-    V = V ∩ upset(PSet, k)
+    V = atleast(weights, V, wmin)
 
     for (i₁, (D₁, N₁, _)) in enumerate(nodes)
-        (w₁ ∈ N₁ && w₂ ∉ N₁ && weights[first(D₁)] >= wmin) || continue
+        (w₁ ∈ N₁ && w₂ ∉ N₁ && minweight(weights, D₁) >= wmin) || continue
 
         for (i₂, (D₂, N₂, _)) in enumerate(nodes)
-            (w₁ ∉ N₂ && w₂ ∈ N₂ && weights[first(D₂)] >= wmin) || continue
+            (w₁ ∉ N₂ && w₂ ∈ N₂ && minweight(weights, D₂) >= wmin) || continue
 
             U = D₁ # visited
             M = N₁ # frontier
@@ -481,14 +422,13 @@ function find_covering_pair((w₁, w₂, _)::Tuple{Int, Int, Bool}, nodes::Vecto
     return
 end
 
-function merge_nodes!(i₁::Int, i₂::Int, (w₁, w₂, _)::Tuple{Int,Int,Bool}, nodes::Vector{Tuple{PSet,PSet,Int}}, V::PSet, weights::Vector{Int}, graph::Graph{PSet}) where {PSet}
+function merge_nodes!(i₁::Int, i₂::Int, (w₁, w₂, _)::Tuple{Int,Int,Bool}, nodes::Vector{Tuple{PSet,PSet,Int}}, V::PSet, weights::AbstractVector{Int}, graph::Graph{PSet}, layers::Vector{PSet}) where {PSet}
     D₁, N₁, _ = nodes[i₁]
     D₂, N₂, _ = nodes[i₂]
 
     # Restrict path search to vertices with weight >= min(w₁, w₂)
     wmin = min(weights[w₁], weights[w₂])
-    k = searchsortedfirst(weights, wmin)
-    U, M = merge_nodes(graph, V ∩ upset(PSet, k), D₁, D₂, N₁, N₂)
+    U, M = merge_nodes(graph, atleast(weights, V, wmin), D₁, D₂, N₁, N₂, layers)
 
     nodes[i₁] = (U, M, 0)
 
@@ -513,8 +453,8 @@ end
 #    U := D₁ ∪ D₂ ∪ P
 #
 # as well as its neighborhood N(U).
-function merge_nodes(graph::Graph{PSet}, V::PSet, D₁::PSet, D₂::PSet, N₁::PSet, N₂::PSet) where {PSet}
-    layers = PSet[]
+function merge_nodes(graph::Graph{PSet}, V::PSet, D₁::PSet, D₂::PSet, N₁::PSet, N₂::PSet, layers::Vector{PSet}=PSet[]) where {PSet}
+    empty!(layers)
 
     U = D₁ # visited
     M = N₁ # frontier
@@ -546,7 +486,7 @@ end
 Determine the minimum number of right nodes that potentially cover
 any non-finally-covered missing edge.
 """
-function min_cover(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::Vector{Int}) where {PSet}
+function min_cover(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::AbstractVector{Int}) where {PSet}
     nmin = typemax(Int); c = 0
 
     for (w₁, w₂, _) in edges
@@ -557,7 +497,7 @@ function min_cover(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,
             b₁ = w₁ ∈ N
             b₂ = w₂ ∈ N
 
-            if iszero(v) & b₁ & b₂ & (weights[first(D)] >= wmin)
+            if iszero(v) & b₁ & b₂ & (minweight(weights, D) >= wmin)
                 n += 1
             elseif ((v == w₁) & b₂) | ((v == w₂) & b₁)
                 n = typemax(Int)

@@ -8,7 +8,6 @@
 
 struct CachedGraph{PSet <: AbstractPackedSet}
     graph::Graph{PSet}                      # the underlying graph
-    cache::Dict{PSet, SeparatorType}        # cache for is_csh! / is_pmc!
 end
 
 vertices(g::CachedGraph) = vertices(g.graph)
@@ -25,7 +24,7 @@ the source Graph may be mutated afterward.
 """
 function CachedGraph(g::Graph{PSet}) where {PSet}
     graph_copy = Graph{PSet}(copy(g.neighbors), vertices(g))
-    return CachedGraph{PSet}(graph_copy, Dict{PSet, SeparatorType}())
+    return CachedGraph{PSet}(graph_copy)
 end
 
 # ==================== Components and Neighbors ====================
@@ -60,12 +59,16 @@ end
 # ==================== Minimal Separator ====================
 
 """
-    is_minimal_separator(g, separator)
+    is_minimal_separator(g, separator, cmps=PSet[])
 
 Returns `(is_minimal::Bool, components::Vector{PSet})`.
+
+The components are written into `cmps`, which is emptied first and returned.
+Callers that pass a reused buffer must be done with the components before
+the next call.
 """
-function is_minimal_separator(g::CachedGraph{PSet}, separator::PSet) where {PSet}
-    cmps = PSet[]; count = 0
+function is_minimal_separator(g::CachedGraph{PSet}, separator::PSet, cmps::Vector{PSet}=PSet[]) where {PSet}
+    empty!(cmps); count = 0
 
     for (component, nbrs) in components(g, separator)
         push!(cmps, component)
@@ -99,8 +102,10 @@ function is_pmc!(work::Vector{PSet}, graph::CachedGraph{PSet}, K::PSet) where {P
     return septype!(work, graph, K) == PotentialMaximalClique
 end
 
+# Caching the result (as the C# does) does not pay: about half of all calls
+# are misses, and the cache grows to millions of entries.
 function septype!(work::Vector{PSet}, graph::CachedGraph{PSet}, K::PSet) where {PSet <: AbstractPackedSet}
-    return get!(graph.cache, K) do
+    return let
         csh = 1
         pmc = 1
 
@@ -136,7 +141,14 @@ Equivalent to: let external = N(bag) \\ vertices; return N(external) ∩ bag.
 Returns an empty bitset if external is empty.
 """
 function outlet(g::CachedGraph{PSet}, B::PSet, V::PSet) where {PSet}
-    external = setdiff(neighbors(g, B), V)
-    return neighbors(g, external) ∩ B
+    S = PSet()
+
+    for v in B
+        if !(neighbors(g, v) ⊆ V)
+            S = S ∪ v
+        end
+    end
+
+    return S
 end
 

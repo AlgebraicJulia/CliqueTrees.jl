@@ -495,6 +495,24 @@ The Bouchitte-Todinca algorithm.
 """
 struct BT <: EliminationAlgorithm end
 
+"""
+    PIDBT{A} <: EliminationAlgorithm
+
+    PIDBT(alg::WidthOrAlgorithm)
+
+    PIDBT()
+
+The positive-instance drivien Bouchitte-Toudina algorithm.
+
+### Parameters
+
+  - `alg`: lower bound algorithm or lower bound
+
+### References
+
+  - Tamaki, Hisao. "Positive-instance driven dynamic programming for treewidth." *Journal of Combinatorial Optimization* 37.4 (2019): 1283-1311.
+  - Althaus, Ernst, Daniela Schnurbusch, Julian Wüschner, and Sarah Ziegler. "On Tamaki's Algorithm to Compute Treewidths." *19th International Symposium on Experimental Algorithms (SEA 2021)*. 2021.
+"""
 struct PIDBT{A <: WidthOrAlgorithm} <: EliminationAlgorithm
     alg::A
 end
@@ -864,7 +882,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S})
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::PIDBT)
-    return permutation(trunc.(Int, weights), graph, alg)
+    return permutation(trunc.(Int, view(weights, oneto(nv(graph)))), graph, alg)
 end
 
 function permutation(weights::AbstractVector{Int}, graph::AbstractGraph, alg::PIDBT)

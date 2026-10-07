@@ -21,7 +21,7 @@ Returns `(pairs, remaining)` where `pairs` is a `Vector{Tuple{PSet, PSet}}` of
 (bag, parent) pairs and `remaining` is the set of vertices still present
 (a clique) when the heuristic stops early.
 """
-function heuristic_bags_and_neighbors(weights::Vector{Int}, graph::Graph{PSet}) where {PSet <: AbstractPackedSet}
+function heuristic_bags_and_neighbors(weights::AbstractVector{Int}, graph::Graph{PSet}) where {PSet <: AbstractPackedSet}
     total_weight = wt(weights, vertices(graph))
     mindegree = total_weight
     result = Tuple{PSet, PSet}[]

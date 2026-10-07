@@ -1,243 +1,185 @@
-# Sieve: a modified trie for storing and querying PTDURs by vertex sets.
-# Flat struct-of-arrays with left-child right-sibling tree representation.
-# Each node stores a stop value and a bitset (the edge label from parent).
-# Leaves have stop < 0 (encoding -ptdur_root); inner nodes have stop ≥ 1.
-# The start of an inner node's interval is parent.stop + 1 (or 1 for the root).
-# Children of each node form a doubly linked list (head/prev/next).
-
-# ==================== Type ====================
+# Sieve: a trie storing key-value pairs i => V, where V is a vertex set (the
+# vertex set of a PTDUR) and i is a PTDUR root. Keys need not be unique.
+# Every value carries a margin m (the PTDUR's remaining weight capacity).
+#
+# Every inner node v compares the keys below it on an interval
+# [start(v), stop(v)] of vertices; the intervals along a root-to-leaf path
+# partition 1:domain. Inner nodes with stop(v) == domain have leaves as
+# children; all other inner nodes have inner children. Every node stores its
+# key and the largest margin in its subtree, so a query can prune a subtree as
+# soon as the margin is exceeded.
+#
+# When a node has too many children, it is split: its interval is shortened,
+# and its children are grouped under new nodes by their keys on the shortened
+# interval.
+#
+# Nodes are stored as a struct of arrays; children form singly linked lists.
 
 const MAX_CHILDREN_PER_NODE = 32
 
 struct Sieve{PSet <: AbstractPackedSet}
-    stop::Vector{Int}       # ≥ 1 for inner nodes (interval stop); negative for leaves (-ptdur_root)
-    set::Vector{PSet}
-    parent::Vector{Int}
-    head::Vector{Int}       # first child; doubles as free-list next
-    prev::Vector{Int}       # previous sibling
+    start::Vector{Int}
+    stop::Vector{Int}
+    mask::Vector{PSet}      # interval [start, stop] as a set (inner nodes)
+    key::Vector{PSet}
+    margin::Vector{Int}     # largest margin in subtree
+    value::Vector{Int}      # PTDUR root (leaves); 0 (inner nodes)
+    head::Vector{Int}       # first child
     next::Vector{Int}       # next sibling
-    outdegree::Vector{Int}
-
-    free::Scalar{Int}
-    leaf::Dict{Int, Int}   # ptdur root index -> trie leaf node
+    degree::Vector{Int}
 end
-
-# ==================== Constructor ====================
 
 function Sieve{PSet}() where {PSet <: AbstractPackedSet}
-    sieve = Sieve{PSet}(
-        Int[], PSet[], Int[], Int[], Int[], Int[], Int[],
-        zeros(Int), Dict{Int, Int}())
-
-    add_vertex!(sieve, domain(PSet), PSet())
+    sieve = Sieve{PSet}(Int[], Int[], PSet[], PSet[], Int[], Int[], Int[], Int[], Int[])
+    add_node!(sieve, 1, domain(PSet), PSet(), -1, 0)
     return sieve
 end
 
-# ==================== Helpers ====================
-
-function children(sieve::Sieve, v::Int)
-    return DoublyLinkedList(view(sieve.head, v), sieve.prev, sieve.next)
+function add_node!(sieve::Sieve{PSet}, start::Int, stop::Int, K::PSet, m::Int, value::Int) where {PSet}
+    push!(sieve.start, start)
+    push!(sieve.stop, stop)
+    push!(sieve.mask, start <= stop ? interval(PSet, start, stop) : PSet())
+    push!(sieve.key, K)
+    push!(sieve.margin, m)
+    push!(sieve.value, value)
+    push!(sieve.head, 0)
+    push!(sieve.next, 0)
+    push!(sieve.degree, 0)
+    return length(sieve.start)
 end
 
-function is_leaf(sieve::Sieve, v::Int)
-    return sieve.stop[v] < 0
+# Make v the first child of u.
+function attach!(sieve::Sieve, u::Int, v::Int)
+    sieve.next[v] = sieve.head[u]
+    sieve.head[u] = v
+    sieve.degree[u] += 1
+    return
 end
 
-function outdegree(sieve::Sieve, v::Int)
-    return sieve.outdegree[v]
+function isleafy(sieve::Sieve{PSet}, v::Int) where {PSet}
+    return sieve.stop[v] == domain(PSet)
 end
 
-function add_vertex!(sieve::Sieve{PSet}, stop::Int, V::PSet) where {PSet}
-    list = SinglyLinkedList(sieve.free, sieve.head)
+# ==================== Insertion ====================
 
-    if isempty(list)
-        push!(sieve.stop, stop)
-        push!(sieve.set, V)
-        push!(sieve.parent, 0)
-        push!(sieve.head, 0)
-        push!(sieve.prev, 0)
-        push!(sieve.next, 0)
-        push!(sieve.outdegree, 0)
-        v = length(sieve.stop)
-    else
-        v = popfirst!(list)
-        sieve.stop[v] = stop
-        sieve.set[v] = V
-        sieve.parent[v] = 0
-        sieve.head[v] = 0
-        sieve.prev[v] = 0
-        sieve.next[v] = 0
-        sieve.outdegree[v] = 0
-    end
+function Base.setindex!(sieve::Sieve{PSet}, (V, m)::Tuple{PSet, Int}, i::Int) where {PSet}
+    v = 1
 
-    return v
-end
+    while !isleafy(sieve, v)
+        sieve.margin[v] = max(sieve.margin[v], m)
+        M = sieve.mask[v]
+        VM = V ∩ M
+        found = 0
+        w = sieve.head[v]
 
-# ==================== setindex! ====================
-
-function Base.setindex!(sieve::Sieve{PSet}, V::PSet, i::Int) where {PSet}
-    v = start = 1; isdone = false
-
-    while !isdone
-        I = packedset(PSet, start:sieve.stop[v])
-
-        isfound = false
-
-        for w in children(sieve, v)
-            W = sieve.set[w]
-
-            if V ∩ I == W ∩ I
-                isfound = true
-
-                if is_leaf(sieve, w)
-                    isdone = true
-                    delete!(sieve.leaf, -sieve.stop[w])
-                    sieve.stop[w] = -i
-                    sieve.leaf[i] = w
-                else
-                    start = sieve.stop[v] + 1
-                    v = w
-                end
-
+        while !iszero(w)
+            if VM == sieve.key[w] ∩ M
+                found = w
                 break
             end
+
+            w = sieve.next[w]
         end
 
-        if !isfound
-            isdone = true
-
-            if sieve.stop[v] < domain(PSet)
-                w = add_vertex!(sieve, domain(PSet), V)
-                add_edge_split!(sieve, v, w, start)
-                start = sieve.stop[v] + 1
-                v = w
-            end
-
-            w = sieve.leaf[i] = add_vertex!(sieve, -i, V)
-            add_edge_split!(sieve, v, w, start)
+        if iszero(found)
+            w = add_node!(sieve, sieve.stop[v] + 1, domain(PSet), V, m, 0)
+            attach!(sieve, v, w)
+            attach!(sieve, w, add_node!(sieve, 0, -1, V, m, i))
+            maybe_split!(sieve, v)
+            return sieve
         end
+
+        v = found
     end
 
+    sieve.margin[v] = max(sieve.margin[v], m)
+    attach!(sieve, v, add_node!(sieve, 0, -1, V, m, i))
+    maybe_split!(sieve, v)
     return sieve
+end
+
+function maybe_split!(sieve::Sieve, v::Int)
+    if sieve.degree[v] > MAX_CHILDREN_PER_NODE && sieve.start[v] < sieve.stop[v]
+        split_node!(sieve, v)
+    end
+
+    return
+end
+
+function split_node!(sieve::Sieve{PSet}, v::Int) where {PSet}
+    start = sieve.start[v]
+    oldstop = sieve.stop[v]
+    newstop = split_index(start, oldstop)
+
+    sieve.stop[v] = newstop
+    M = sieve.mask[v] = interval(PSet, start, newstop)
+
+    x = sieve.head[v]
+    sieve.head[v] = 0
+    sieve.degree[v] = 0
+    groups = Dict{PSet, Int}()   # key on M -> new child
+
+    while !iszero(x)
+        y = sieve.next[x]
+        X = sieve.key[x]
+        g = get(groups, X ∩ M, 0)
+
+        if iszero(g)
+            g = groups[X ∩ M] = add_node!(sieve, newstop + 1, oldstop, X, sieve.margin[x], 0)
+            attach!(sieve, v, g)
+        else
+            sieve.margin[g] = max(sieve.margin[g], sieve.margin[x])
+        end
+
+        attach!(sieve, g, x)
+        x = y
+    end
+
+    return
+end
+
+function split_index(start::Int, stop::Int)
+    return start + (1 << floor(Int, log(stop - start))) - 1
 end
 
 # ==================== Query ====================
 
-# Find all key-value pairs i => V such that
+# Append to `out` the values i of all key-value pairs i => V with margin m
+# such that
 #
 #   - V ∩ R = ∅
-#   - w(S - V) ≤ margin
+#   - w(S - V) ≤ m
 #
+function query!(out::Vector{Int}, sieve::Sieve{PSet}, stack::Vector{Tuple{Int, Int}},
+                R::PSet, S::PSet, weights::AbstractVector{Int}) where {PSet}
+    push!(empty!(stack), (1, 0))
 
-function init!(stack::Vector{Tuple{Int, Int, Int}})
-    push!(empty!(stack), (1, 1, 0))
-    return stack
-end
+    @inbounds while !isempty(stack)
+        v, i = pop!(stack)
+        M = sieve.mask[v]
+        RM = R ∩ M
+        SM = S ∩ M
+        leafy = isleafy(sieve, v)
+        w = sieve.head[v]
 
-function next!(sieve::Sieve{PSet}, stack::Vector{Tuple{Int, Int, Int}}, R::PSet, S::PSet, margin::Int, weights::Vector{Int}) where {PSet}
-    result = 0
+        while !iszero(w)
+            W = sieve.key[w]
 
-    while !isempty(stack)
-        v, start, i = pop!(stack)
+            if isdisjoint(RM, W)
+                j = i + wt(weights, setdiff(SM, W))
 
-        if is_leaf(sieve, v)
-            result = -sieve.stop[v]
-            break
-        else
-            V = packedset(PSet, start:sieve.stop[v])
-
-            for w in children(sieve, v)
-                W = sieve.set[w]
-
-                if isempty(R ∩ W ∩ V)
-                    j = i + wt(weights, setdiff(S ∩ V, W))
-                    j > margin || push!(stack, (w, sieve.stop[v] + 1, j))
+                if j <= sieve.margin[w]
+                    if leafy
+                        push!(out, sieve.value[w])
+                    else
+                        push!(stack, (w, j))
+                    end
                 end
             end
+
+            w = sieve.next[w]
         end
     end
 
-    return result
-end
-
-# ==================== replace_key! ====================
-
-function replace_key!(sieve::Sieve, old_root::Int, new_root::Int)
-    node = sieve.leaf[old_root]
-    delete!(sieve.leaf, old_root)
-    sieve.stop[node] = -new_root
-    sieve.leaf[new_root] = node
-    return sieve
-end
-
-# ==================== delete! ====================
-
-function Base.delete!(sieve::Sieve, i::Int)
-    list = SinglyLinkedList(sieve.free, sieve.head)
-
-    v = pop!(sieve.leaf, i)
-
-    while !isone(v) && iszero(outdegree(sieve, v))
-        u = sieve.parent[v]
-        rem_edge!(sieve, u, v)
-        pushfirst!(list, v)
-        v = u
-    end
-
-    return sieve
-end
-
-# ==================== Internal: add_edge! ====================
-
-function add_edge!(sieve::Sieve, u::Int, v::Int)
-    sieve.parent[v] = u
-    pushfirst!(children(sieve, u), v)
-    sieve.outdegree[u] += 1
-    return
-end
-
-function rem_edge!(sieve::Sieve, u::Int, v::Int)
-    sieve.parent[v] = 0
-    delete!(children(sieve, u), v)
-    sieve.outdegree[u] -= 1
-    return
-end
-
-function add_edge_split!(sieve::Sieve{PSet}, u::Int, v::Int, start::Int) where {PSet}
-    add_edge!(sieve, u, v)
-    outdegree(sieve, u) > MAX_CHILDREN_PER_NODE && split_vertex!(sieve, u, start)
-    return
-end
-
-# ==================== Internal: split_vertex! ====================
-
-function split_vertex!(sieve::Sieve{PSet}, v::Int, start::Int) where {PSet}
-    oldstop = sieve.stop[v]
-    newstop = sieve.stop[v] = split_index(start, oldstop)
-
-    V = packedset(PSet, start:newstop)
-
-    dict = Dict{PSet, Int}()
-
-    for x in children(sieve, v)
-        rem_edge!(sieve, v, x)
-
-        X = sieve.set[x]
-
-        w = get!(dict, X ∩ V) do
-            w = add_vertex!(sieve, oldstop, X)
-            add_edge!(sieve, v, w)
-            return w
-        end
-
-        add_edge!(sieve, w, x)
-    end
-
-    return
-end
-
-# ==================== Internal: _get_split_vertex ====================
-
-function split_index(start::Int, stop::Int)
-    return start + (1 << floor(Int, log(stop - start))) - 1
+    return out
 end

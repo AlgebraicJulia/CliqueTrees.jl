@@ -84,6 +84,14 @@ function Base.symdiff(x::IntegerOrRange, set::T) where {T <: AbstractPackedSet}
     return symdiff(packedset(T, x), set)
 end
 
+function Base.issubset(left::T, right::T) where {T <: AbstractPackedSet}
+    return isempty(setdiff(left, right))
+end
+
+function Base.isdisjoint(left::T, right::T) where {T <: AbstractPackedSet}
+    return isempty(left ∩ right)
+end
+
 function Base.first(set::AbstractPackedSet)
     isempty(set) && error()
     return first_nonempty(set)
@@ -105,14 +113,10 @@ include("subset_iterator.jl")
 function settype(dom::Integer)
     N = 8sizeof(UInt)
 
+    # Narrower words are no faster, and every distinct set type
+    # compiles its own copy of the algorithm.
     if dom ≤ N
-        I = UInt8
-
-        while 8sizeof(I) < dom
-            I = widen(I)
-        end
-
-        T = PackedSet{I}
+        T = PackedSet{UInt}
     else
         P = cld(dom, N) 
         T = NPackedSet{P, UInt}
