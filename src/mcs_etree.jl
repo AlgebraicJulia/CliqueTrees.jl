@@ -21,8 +21,10 @@ function mcs_etree!(order::AbstractVector{V}, index::AbstractVector{V}, graph::A
     work3 = FVector{V}(undef, n)
     work4 = FVector{V}(undef, n)
 
-    mcs_etree_impl!(work1, work2, work3, work4, begptr, endptr,
-        target, tree, sets, fdesc, fancs, stops, count,
+    marks = FVector{V}(undef, n)
+
+    mcs_etree_impl!(work1, work2, work3, work4, marks,
+        begptr, endptr, target, tree, sets, fdesc, fancs, stops, count,
         graph, order, index)
 
     return order, index
@@ -43,6 +45,7 @@ function mcs_etree_impl!(
         work2::AbstractVector{V},
         work3::AbstractVector{V},
         work4::AbstractVector{V},
+        marks::AbstractVector{V},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
         target::AbstractVector{V},
@@ -60,6 +63,7 @@ function mcs_etree_impl!(
     @assert nv(graph) <= length(work2)
     @assert nv(graph) <= length(work3)
     @assert nv(graph) <= length(work4)
+    @assert nv(graph) <= length(marks)
     @assert nv(graph) < length(begptr)
     @assert nv(graph) < length(endptr)
     @assert de(graph) <= length(target)
@@ -91,6 +95,7 @@ function mcs_etree_impl!(
     endptr[one(V)] = p - one(E)
 
     @inbounds for v in vertices(graph)
+        marks[v] = zero(V)
         i = index[v] = work3[index[v]]
         order[i] = v
         begptr[v + one(V)] = p += convert(E, eltypedegree(graph, v))
@@ -110,7 +115,7 @@ function mcs_etree_impl!(
 
         # compute higher degrees and adjust skeleton graph 
         mcs_etree_supcnt!(count, begptr, endptr, target, work1, work2, fdesc,
-            work3, work4, sets, order, index, graph, tree, strt, stop, fanc)
+            work3, marks, sets, order, index, graph, tree, strt, stop, fanc)
 
         # find a special vertex `root` in T of maximum cardinality
         root = stop; maxcnt = count[stop]
@@ -139,7 +144,7 @@ function mcs_etree_impl!(
         mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
 
         # find a block of vertices to number consecutively
-        blck = mcs_etree_findblock!(work1, work2, begptr, endptr, target,
+        blck = mcs_etree_findblock!(marks, work2, begptr, endptr, target,
             order, index, graph, fdesc, tree, strt, stop, root)
 
         # reorder the subtree and change the root to `root`
@@ -248,17 +253,10 @@ function mcs_etree_findblock!(
     @assert nv(graph) == length(tree)
     @assert nv(graph) >= stop >= node >= strt
 
+    # `marks` is all-zero on entry; it is restored before returning
     ndeg = zero(V); blck = stop
 
     @inbounds block[blck] = node
-
-    @inbounds for i in strt:stop
-        marks[i] = zero(V)
-    end
-
-    @inbounds for i in ancestorindices(tree, stop)
-        marks[i] = zero(V)
-    end
 
     if fdesc[node] < node
         nchd = zero(V)
@@ -332,6 +330,22 @@ function mcs_etree_findblock!(
                     blck -= one(V); block[blck] = i
                 end
             end
+        end
+    end
+
+    # restore `marks`: the only entries outside of T that
+    # were written are adjacent to `node`
+    @inbounds for i in strt:stop
+        marks[i] = zero(V)
+    end
+
+    @inbounds if fdesc[node] < node
+        for p in begptr[order[node]]:endptr[order[node]]
+            marks[target[p]] = zero(V)
+        end
+    else
+        for v in neighbors(graph, order[node])
+            marks[index[v]] = zero(V)
         end
     end
 
@@ -644,10 +658,8 @@ function mcs_etree_supcnt!(
         sets.parent[p] = zero(V)
     end
 
-    @inbounds for p in ancestorindices(tree, stop)
-        prev_p[p] = zero(V)
-        prev_nbr[p] = zero(V)
-    end
+    # `prev_nbr` is all-zero on entry, and restored before returning.
+    # `prev_p[u]` is only read after `prev_nbr[u]` is set, so it needs no reset.
 
     function find(u::V)
         v = @inbounds inv1[sets[u]]
@@ -667,10 +679,16 @@ function mcs_etree_supcnt!(
 
         for t in begptr[v]:endptr[v]
             u = target[t]
+            pnbr = prev_nbr[u]
 
-            if iszero(prev_nbr[u]) || prev_nbr[u] < fdesc[p]
-                wt[p] += one(V)            
-                pp = prev_p[u]
+            if iszero(pnbr) || pnbr < fdesc[p]
+                wt[p] += one(V)
+
+                if iszero(pnbr)
+                    pp = zero(V)
+                else
+                    pp = prev_p[u]
+                end
 
                 if !iszero(pp)
                     q = find(pp)
@@ -696,10 +714,17 @@ function mcs_etree_supcnt!(
             u = index[w]
 
             if u > stop
-                if iszero(prev_nbr[u]) || prev_nbr[u] < fdesc[p]
-                    wt[p] += one(V)            
-                    pp = prev_p[u]
-    
+                pnbr = prev_nbr[u]
+
+                if iszero(pnbr) || pnbr < fdesc[p]
+                    wt[p] += one(V)
+
+                    if iszero(pnbr)
+                        pp = zero(V)
+                    else
+                        pp = prev_p[u]
+                    end
+
                     if !iszero(pp)
                         q = find(pp)
                         wt[q] -= one(V)
@@ -722,6 +747,16 @@ function mcs_etree_supcnt!(
     @inbounds for p in strt:stop - one(V)
         r = parentindex(tree, p)::V
         wt[r] += wt[p]
+    end
+
+    # every entry of `prev_nbr` written above is in the skeleton of T:
+    # the first visit to `u` always appends it (or it was already there)
+    @inbounds for p in strt:stop
+        v = order[p]
+
+        for t in begptr[v]:endptr[v]
+            prev_nbr[target[t]] = zero(V)
+        end
     end
 
     return
