@@ -39,7 +39,7 @@ function md(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abstr
 
     @inbounds for node in oneto(neqns)
         weight = trunc(Int, vwght[node])
-        weight < 1 && throw(ArgumentError("vertex weights must be positive"))
+        @assert ispositive(weight)
         total += weight
     end
 
