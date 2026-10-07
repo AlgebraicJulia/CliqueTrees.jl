@@ -407,7 +407,17 @@ function atomtree!(order::AbstractVector{V}, tree::CliqueTree{V, E}, graph::Abst
             mark[v] = node; maxcnt += one(V)
         end
 
+        # pre-filter: a vertex of degree less than |S| - 1
+        # cannot be adjacent to every other vertex of S
         for i in neighbors(sep, node)
+            if eltypedegree(graph, order[i]) + one(V) < maxcnt
+                flag = false
+                break
+            end
+        end
+
+        for i in neighbors(sep, node)
+            flag || break
             v = order[i]; cnt = maxcnt - one(V)
 
             for w in neighbors(graph, v)

@@ -2,17 +2,19 @@ function acsd_find!(
         head::AbstractVector{V},
         next::AbstractVector{V},
         mark::AbstractVector{V},
+        wperm::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
         tree::CliqueTree{V, E},
+        uniform::Bool,
     ) where {W, V, E}
     @assert nv(graph) <= length(head)
     @assert nv(graph) <= length(next)
     @assert nv(graph) <= length(mark)
     @assert nv(graph) <= length(weights)
     @assert nv(graph) <= length(order)
-    
+
     function set(v::V)
         h = view(head, v)
         return SinglyLinkedList(h, next)
@@ -30,43 +32,87 @@ function acsd_find!(
     end
 
     for bag in tree
-        node += one(V); maxcnt = poscnt = negcnt = vert = zero(V)
+        node += one(V)
+        sep = separator(bag)
+        maxcnt = convert(V, length(sep))
 
-        for i in separator(bag)
-            v = order[i]
-            mark[v] = node; maxcnt += one(V)
-        end
+        # pre-filter: a vertex of degree less than |S| - 2 is missing at
+        # least two edges in S; two such vertices rule out an almost clique
+        numlow = zero(V)
 
-        for i in separator(bag)
-            v = order[i]; cnt = maxcnt - one(V)
-            
-            if weights[v] < minwgt + tol
-                flag = true
-            else
-                flag = false
-            end
-            
-            for w in neighbors(graph, v)
-                if w != v && mark[w] == node
-                    cnt -= one(V)
-                end
-            end
-
-            if isone(cnt)
-                negcnt += cnt
-            elseif ispositive(cnt)
-                if flag && !ispositive(vert) && cnt >= negcnt
-                    poscnt = cnt; vert = v
-                else
-                    poscnt = -one(V)
-                    break
-                end
+        for i in sep
+            if eltypedegree(graph, order[i]) + two(V) < maxcnt
+                numlow += one(V)
+                numlow > one(V) && break
             end
         end
 
-        if poscnt == negcnt && ispositive(vert)
-            totcnt += convert(E, poscnt)
-            pushfirst!(set(vert), node)
+        if numlow <= one(V)
+            for i in sep
+                mark[order[i]] = node
+            end
+
+            poscnt = negcnt = vert = alt1 = alt2 = zero(V)
+
+            for i in sep
+                v = order[i]; cnt = maxcnt - one(V)
+
+                for w in neighbors(graph, v)
+                    if w != v && mark[w] == node
+                        cnt -= one(V)
+                    end
+                end
+
+                if isone(cnt)
+                    negcnt += one(V)
+
+                    if iszero(alt1)
+                        alt1 = v
+                    else
+                        alt2 = v
+                    end
+                elseif ispositive(cnt)
+                    if iszero(vert)
+                        poscnt = cnt; vert = v
+                    else
+                        poscnt = -one(V)
+                        break
+                    end
+                end
+            end
+
+            if !isnegative(poscnt) && !(iszero(vert) && iszero(negcnt))
+                # the minimum weight of a vertex outside of S
+                minout = minwgt
+
+                if !uniform
+                    for v in wperm
+                        if mark[v] != node
+                            minout = weights[v]
+                            break
+                        end
+                    end
+                end
+
+                center = zero(V); k = zero(V)
+
+                if ispositive(vert)
+                    if poscnt == negcnt && weights[vert] < minout + tol
+                        center = vert; k = poscnt
+                    end
+                elseif negcnt == two(V)
+                    if weights[alt1] < minout + tol
+                        center = alt1; k = one(V)
+                    elseif weights[alt2] < minout + tol
+                        center = alt2; k = one(V)
+                    end
+                end
+
+                if ispositive(center)
+                    totcnt += convert(E, k)
+                    pushfirst!(set(center), node)
+                end
+            end
         end
     end
 
@@ -204,18 +250,27 @@ function acsd_complete!(
     return BipartiteGraph(n, n, m, pointer, target)
 end
 
-function acsd(weights::AbstractVector, graph::AbstractGraph{V}, alg::MinimalAlgorithm) where {V}
+function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalAlgorithm) where {W, V}
     E = etype(graph); n = nv(graph)
-    
+
     head = FVector{V}(undef, n)
     next = FVector{V}(undef, n)
     mark = FVector{V}(undef, n)
     pointer = FVector{E}(undef, n + one(V))
 
     order, tree = cliquetree(weights, graph, alg)
-   
-    m = acsd_find!(head, next, mark,
-        weights, graph, order, tree)
+
+    minwgt, maxwgt = extrema(weights)
+    uniform = maxwgt < minwgt + tolerance(W)
+
+    if uniform
+        wperm = Vector{V}(undef, 0)
+    else
+        wperm = Vector{V}(sortperm(weights))
+    end
+
+    m = acsd_find!(head, next, mark, wperm,
+        weights, graph, order, tree, uniform)
 
     target = FVector{V}(undef, m)
     return acsd_complete!(pointer, target, head, next, mark, graph, order, tree)
