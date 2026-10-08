@@ -31,7 +31,7 @@ const COMPLETE_HEURISTICALLY = true
 const TEST_OUTLET_IS_CLIQUE_MINOR = true
 const MORE_THAN_2_COMPONENTS_OPTIMIZATION = true
 
-@enum State Continue Divide Halt
+@enum State Continue Divide Halt Timeout
 
 # ---------------------------------------------------------------------------
 # Main entry point
@@ -52,7 +52,7 @@ would be incoming, so no tree decomposition of the whole graph would ever be
 found.) Safe separators found during the search split a connected graph into
 connected pieces, so this needs to be checked only here.
 """
-function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0) where {PSet}
+function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0, deadline::Float64=Inf) where {PSet}
     if count(_ -> true, components(graph, PSet())) > 1
         throw(ArgumentError("PIDBT requires a connected graph. Wrap it with `ConnectedComponents`."))
     end
@@ -70,7 +70,7 @@ function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=
         return (weights[v] - 1, (pool, root))
     end
 
-    return treewidth_computation(weights, graph, min_k)
+    return treewidth_computation(weights, graph, min_k, deadline)
 end
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,8 @@ end
 # Orchestrator  (C# TreeWidth_Computation)
 # ---------------------------------------------------------------------------
 
-function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int) where {PSet}
+# Returns `nothing` if the deadline passes.
+function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int, deadline::Float64=Inf) where {PSet}
     outlets_already_checked = Set{PSet}()
 
     min_k = lower_bound
@@ -139,7 +140,9 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
             end
 
             state, tree_decomp_root, outlet_safe_sep = has_treewidth(
-                pool, weights, CachedGraph(graph_i), min_k, graph_i, outlets_already_checked)
+                pool, weights, CachedGraph(graph_i), min_k, graph_i, outlets_already_checked, deadline)
+
+            state == Timeout && return nothing
 
             if state == Halt
                 push!(ptd_roots, tree_decomp_root)
@@ -213,18 +216,19 @@ mutable struct Search{PSet <: AbstractPackedSet}
 
     const outlets_checked::Set{PSet}
     const minor::MinorWork{PSet}
+    const deadline::Float64
     heuristic_best::Int     # heaviest inlet tried by heuristic completion
 end
 
 function Search(weights::Weights{PSet}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
-                outlets_checked::Set{PSet}) where {PSet}
+                outlets_checked::Set{PSet}, deadline::Float64=Inf) where {PSet}
     return Search{PSet}(
         PTDPool{PSet}(), weights, graph, mutable_graph, k,
         Vector{PSet}(undef, domain(PSet)), Vector{Bool}(undef, domain(PSet)),
         Int[], Set{PSet}(),
         Dict{PSet, Vector{Int}}(), Dict{Int, Int}(),
         LayeredSieve{PSet}(k, weights), Set{Tuple{PSet, PSet}}(), Int[], PSet[],
-        outlets_checked, MinorWork{PSet}(), 0)
+        outlets_checked, MinorWork{PSet}(), deadline, 0)
 end
 
 # ---------------------------------------------------------------------------
@@ -232,19 +236,20 @@ end
 #
 # Returns (state, root, separator). On `Halt`, `root` is a tree decomposition of
 # the graph of width ≤ k. On `Divide`, `root` is a PTD whose outlet `separator`
-# is a safe separator. The returned trees are copied into `pool`.
+# is a safe separator. The returned trees are copied into `pool`. On `Timeout`
+# the deadline has passed.
 # ---------------------------------------------------------------------------
 
 function has_treewidth(pool::PTDPool{PSet}, weights::AbstractVector{Int}, graph::CachedGraph{PSet}, k::Int,
-                       mutable_graph::Graph{PSet}, outlets_already_checked::Set{PSet}) where {PSet}
+                       mutable_graph::Graph{PSet}, outlets_already_checked::Set{PSet}, deadline::Float64=Inf) where {PSet}
     if nv(graph) == 0
         return (Halt, make_ptd(pool, PSet()), PSet())
     end
 
-    search = Search(weights, graph, k, mutable_graph, outlets_already_checked)
+    search = Search(weights, graph, k, mutable_graph, outlets_already_checked, deadline)
     state, root, sep = _search!(search)
 
-    if state != Continue
+    if state == Halt || state == Divide
         root = copy_tree!(pool, search.pool, root)
     end
 
@@ -271,9 +276,17 @@ function _search!(s::Search{PSet}) where {PSet}
     end
 
     # --------- lines 5-27: main loop ----------
+    iter = 0
+
     while true
         if isempty(s.P)
             _release_waiting!(s) || break
+        end
+
+        iter += 1
+
+        if iszero(iter & 63) && isfinite(s.deadline) && time() > s.deadline
+            return (Timeout, 0, PSet())
         end
 
         tau = pop!(s.P)

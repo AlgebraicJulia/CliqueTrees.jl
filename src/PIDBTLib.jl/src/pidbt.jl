@@ -1,10 +1,12 @@
-function pidbt(weights::AbstractVector{Int}, g::Graphs.AbstractGraph, min_k::Int=0)
+# Returns an elimination order, or `nothing` if the deadline (in the sense of
+# `time()`) passes first.
+function pidbt(weights::AbstractVector{Int}, g::Graphs.AbstractGraph, min_k::Int=0; deadline::Float64=Inf)
     n = convert(Int, Graphs.nv(g))
     S = settype(n)
-    return _pidbt(S, weights, g, min_k)
+    return _pidbt(S, weights, g, min_k, deadline)
 end
 
-function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGraph{V}, min_k::Int) where {V, PSet <: AbstractPackedSet}
+function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGraph{V}, min_k::Int, deadline::Float64=Inf) where {V, PSet <: AbstractPackedSet}
     n = convert(Int, Graphs.nv(g))
     @assert all(ispositive, view(weights, 1:n))
 
@@ -38,7 +40,9 @@ function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGr
         mg.neighbors[new_v] = s
     end
 
-    (tw, (pool, root)) = treewidth(Weights{PSet}(new_weights), mg; min_k = max(0, min_k - 1))
+    result = treewidth(Weights{PSet}(new_weights), mg; min_k = max(0, min_k - 1), deadline)
+    isnothing(result) && return nothing
+    (tw, (pool, root)) = result
 
     # Map elimination ordering back to original indices
     ordering = _elimination_ordering(pool, root)

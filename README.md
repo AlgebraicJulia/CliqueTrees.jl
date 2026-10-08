@@ -162,6 +162,13 @@ quickly computing non-optimal ones. These include the following.
 For large graphs, the algorithms `AMD` and `METIS` are the state-of-the practice. They are implemented in the C libraries
 SuiteSparse and METIS. The current default algorithm is `MF`: a slower but more reliable alternative to `AMD`.
 
+When a small width matters more than speed, the anytime heuristic `HBT` (heuristic Bouchitte-Todinca) improves a
+tree decomposition for as long as it is allowed to run.
+
+```julia-repl
+julia> alg = HBT(; time=60.0);
+```
+
 ### Pre-Processing Algorithms
 
 The performance of clique tree algorithms can be improved by wrapping them one or more of the following pre-processing

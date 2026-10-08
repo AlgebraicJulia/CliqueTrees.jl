@@ -762,6 +762,21 @@ function asr_connector!(
 
     iszero(nx) && return false, tag
 
+    # quick rejection: a vertex of X with no heavy neighbor outside
+    # N[`v`] can never be covered, and without this check the search
+    # below would exhaust its budget before giving up
+    @inbounds for i in oneto(d)
+        y = stack8[i]
+
+        if marker2[y] == xtag
+            ok = pr3_reach!(false, stack5, target, begptr, endptr, invptr, y) do ok, _, z
+                @inbounds return ok || (marker[z] != ntag && weight[z] > uwgt - tol)
+            end
+
+            ok || return false, tag
+        end
+    end
+
     # the seeds are the neighbors of `u` outside N[`v`] that
     # are at least as heavy as `u`; store them in `stack2`
     ns = pr3_reach!(0, stack5, target, begptr, endptr, invptr, u) do ns, _, z

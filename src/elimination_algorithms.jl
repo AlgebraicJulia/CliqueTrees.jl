@@ -56,6 +56,14 @@ algorithms, but have worse results.
 These algorithms recursively partition a graph, then call a local algorithm on the leaves.
 These are slower than the local algorithms, but have better results.
 
+# Anytime Treewidth Heuristics
+
+| type           | name                        | time  | space | package |
+|:---------------|:----------------------------|:------|:------|:------- |
+| [`HBT`](@ref)  | heuristic Bouchitte-Todinca |       |       |         |
+
+These algorithms improve a tree decomposition for as long as they are allowed to run.
+
 # Exact Treewidth Algorithms
 
 | type          | name              | time  | space | package                                                                 |
@@ -547,6 +555,93 @@ function PIDBT()
 end
 
 """
+    HBT{A, L} <: EliminationAlgorithm
+
+    HBT(; time=10.0, seed=1, alg=AMF(), lb=MMW(), kwargs...)
+
+The heuristic Bouchitte-Todinca algorithm: an anytime heuristic for small-width tree decompositions.
+
+A solution is a set of potential maximal cliques. Its value is the smallest width of a tree
+decomposition whose bags all belong to the set, computed by the Bouchitte-Todinca dynamic program.
+Solutions are improved by adding potential maximal cliques taken from triangulations of local
+graphs, which are computed exactly with [`PIDBT`](@ref) when they are small and greedily with
+`alg` otherwise. Two strategies are used:
+
+  - *diversification* (Tamaki 2019) picks one of the largest bags of the current decomposition and a random
+    subtree around it, and re-triangulates the corresponding local graph while forcing that bag
+    apart;
+  - *merging* (Tamaki 2022) combines the solution with an independently generated solution of no
+    greater width. It is used when diversification stalls.
+
+Progress is measured by refined widths: a decomposition improves if it has a smaller largest bag,
+or as large a largest bag but fewer of them. The algorithm runs until `time` seconds have elapsed
+or the width reaches the lower bound computed by `lb`. Vertex weights are truncated to integers.
+
+### Parameters
+
+  - `time`: time budget in seconds
+  - `seed`: random seed
+  - `alg`: elimination algorithm used for greedy triangulations (made minimal with [`MinimalChordal`](@ref))
+  - `lb`: lower bound algorithm or lower bound (used as a stopping criterion)
+  - `ninit`: number of randomized greedy triangulations used to seed each solution
+  - `base`: local graphs with at most this many vertices are triangulated exactly
+  - `ntry`: number of local graphs triangulated per merge
+  - `refined`: measure progress by refined widths
+  - `merge`: use merging
+  - `diversify`: use diversification
+  - `dsize`: maximum size of a diversified region (sizes are drawn log-uniformly)
+  - `nsep`: number of separators tried per diversification
+  - `near`: diversification works around a bag of the largest weight k with probability 1/2,
+    of weight k - 1 with probability 1/4, and so on down to k - `near`
+  - `patience`: number of steps without progress before merging
+  - `xtime`: time limit in seconds for each exact triangulation of a local graph (the greedy algorithm is used if it runs out)
+  - `verbose`: print progress
+
+### Example
+
+```julia-repl
+julia> using CliqueTrees
+
+julia> graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia> treewidth(graph; alg=HBT(; time=1.0))
+2
+```
+
+### References
+
+  - Tamaki, Hisao. "A heuristic use of dynamic programming to upperbound treewidth." arXiv preprint arXiv:1909.07647 (2019).
+  - Tamaki, Hisao. "Heuristic computation of exact treewidth." *20th International Symposium on Experimental Algorithms (SEA 2022)*. 2022.
+"""
+@kwdef struct HBT{A <: EliminationAlgorithm, L <: WidthOrAlgorithm} <: EliminationAlgorithm
+    time::Float64 = 10.0
+    seed::Int = 1
+    alg::A = DEFAULT_ELIMINATION_ALGORITHM
+    lb::L = DEFAULT_LOWER_BOUND_ALGORITHM
+    ninit::Int = 10
+    base::Int = 60
+    ntry::Int = 50
+    refined::Bool = true
+    merge::Bool = true
+    diversify::Bool = true
+    dsize::Int = typemax(Int)
+    nsep::Int = 4
+    patience::Int = 100
+    xtime::Float64 = 0.5
+    near::Int = 3
+    verbose::Bool = false
+end
+
+"""
     MinimalChordal{A} <: EliminationAlgorithm
 
     MinimalChordal(alg::PermutationOrAlgorithm)
@@ -913,6 +1008,10 @@ end
 function permutation(weights::AbstractVector{Int}, graph::AbstractGraph, alg::PIDBT)
     order = pidbt(weights, graph, lowerbound(weights, graph, alg.alg))
     return order, invperm(order)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::HBT)
+    return hbt(weights, graph, alg)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal)
@@ -2371,6 +2470,19 @@ function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: PIDBT}
     indent = get(io, :indent, 0)
     println(io, " "^indent * string(A))
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L}) where {A, L}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "HBT{$A, $L}:")
+
+    for name in (:time, :seed, :ninit, :base, :ntry, :refined, :merge, :diversify, :dsize, :nsep, :near, :patience, :xtime)
+        println(io, " "^indent * "    $name: $(getfield(alg, name))")
+    end
+
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     return
 end
 

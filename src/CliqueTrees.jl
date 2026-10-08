@@ -11,6 +11,8 @@ using Graphs
 using Graphs: AbstractSimpleGraph, Coloring, SimpleEdge
 using LinearAlgebra
 using LinearAlgebra: ldiv
+using Random
+using Random: AbstractRNG, Xoshiro, randperm
 using SparseArrays
 using SparseArrays: getcolptr
 
@@ -60,6 +62,7 @@ export BFS,
     FlowCutter,
     BT,
     PIDBT,
+    HBT,
     MinimalChordal,
     CompositeRotations,
     Compression,
@@ -127,5 +130,9 @@ include("./PIDBTLib.jl/src/PIDBTLib.jl")
 include("./Multifrontal.jl/src/Multifrontal.jl")
 
 using .PIDBTLib
+
+include("./HBTLib.jl/src/HBTLib.jl")
+
+using .HBTLib
 
 end

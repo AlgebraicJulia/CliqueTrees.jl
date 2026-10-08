@@ -45,6 +45,7 @@ Spectral
 FlowCutter
 BT
 PIDBT
+HBT
 MinimalChordal
 CompositeRotations
 Compression

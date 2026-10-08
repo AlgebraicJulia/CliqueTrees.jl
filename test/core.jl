@@ -452,6 +452,7 @@ end
             FlowCutter(; time = 1),
             BT(),
             PIDBT(),
+            HBT(; time = 0.1),
             MinimalChordal(),
             CompositeRotations([1, 2, 3]),
             Compression(),
@@ -536,6 +537,7 @@ end
             SafeFlowCutter(; time = 1),
             BT(),
             PIDBT(),
+            HBT(; time = 0.1),
             MinimalChordal(),
             CompositeRotations([]),
             Compression(; tao=1.0),
@@ -605,6 +607,7 @@ end
             SafeFlowCutter(; time = 1),
             BT(),
             PIDBT(),
+            HBT(; time = 0.1),
             CompositeRotations([1]),
             Compression(; tao=1.0),
             Compression(; tao=0.9),
@@ -1682,6 +1685,125 @@ end
             end
         end
     end
+end
+
+@testset "heuristic treewidth (HBT)" begin
+    # brute-force components of G - X, and their neighborhoods
+    function bruteforce_components(graph, X)
+        n = nv(graph); inX = falses(n); inX[X] .= true; seen = falses(n); out = []
+
+        for v0 in 1:n
+            (inX[v0] || seen[v0]) && continue
+            C = Int[]; queue = [v0]; seen[v0] = true
+
+            while !isempty(queue)
+                u = pop!(queue); push!(C, u)
+
+                for x in neighbors(graph, u)
+                    if !inX[x] && !seen[x]
+                        seen[x] = true; push!(queue, x)
+                    end
+                end
+            end
+
+            S = sort!(unique!([x for u in C for x in neighbors(graph, u) if inX[x]]))
+            push!(out, (sort!(C), S))
+        end
+
+        return out
+    end
+
+    function ispmc(graph, X)
+        cmps = bruteforce_components(graph, X)
+        any(S == X for (_, S) in cmps) && return false
+
+        for a in X, b in X
+            (a < b && !has_edge(graph, a, b)) || continue
+            any(a in S && b in S for (_, S) in cmps) || return false
+        end
+
+        return true
+    end
+
+    # check every PMC of a solution: it is a PMC, and its components, their
+    # separators, and its superblocks are right
+    function validate(ctx, st, graph)
+        for X in st.pmcs
+            ispmc(graph, X.verts) || return false
+            cmps = bruteforce_components(graph, X.verts)
+            length(cmps) == length(X.csub) || return false
+
+            for j in eachindex(X.csub)
+                b = X.csub[j]
+                C, S = cmps[findfirst(c -> ctx.bmin[b] in c[1], cmps)]
+                minimum(C) == ctx.bmin[b] || return false
+                length(C) == ctx.bsize[b] || return false
+                ctx.seps[ctx.bsep[b]] == S || return false
+                b = X.csup[j]; rest = setdiff(X.verts, S)
+                D, T = only(filter(c -> rest[1] in c[1], bruteforce_components(graph, S)))
+                issubset(rest, D) && T == S || return false
+                minimum(D) == ctx.bmin[b] && length(D) == ctx.bsize[b] || return false
+            end
+        end
+
+        return true
+    end
+
+    for (n, p) in ((30, 0.10), (40, 0.08), (50, 0.15), (64, 0.05))
+        Random.seed!(n)
+        graph = erdos_renyi(n, p)
+        weights = rand(1:3, n)
+        exact = treewidth(graph; alg = ConnectedComponents(PIDBT()))
+        wexact = treewidth(weights, graph; alg = ConnectedComponents(PIDBT()))
+
+        # base = 8 forces the heuristic machinery onto small graphs
+        for alg in (
+                HBT(; time = 0.2, base = 8),
+                HBT(; time = 0.2, base = 8, merge = false),
+                HBT(; time = 0.2, base = 8, diversify = false),
+                HBT(; time = 0.2, base = 8, refined = false, near = 0),
+                HBT(; time = 0.2, base = 20, dsize = 25, seed = 7, xtime = 0.01),
+            )
+            order, index = permutation(graph; alg = ConnectedComponents(alg))
+            @test sort(order) == 1:n
+            @test index == invperm(order)
+            @test treewidth(graph; alg = order) >= exact
+
+            order, index = permutation(weights, graph; alg = ConnectedComponents(alg))
+            @test sort(order) == 1:n
+            @test treewidth(weights, graph; alg = order) >= wexact
+        end
+
+        # internal invariants of the solutions
+        for merge in (true, false)
+            g, wgt = CliqueTrees.HBTLib.hbt_graph(weights, graph)
+            ctx = CliqueTrees.HBTLib.HBTContext(g, wgt, AMF(), Xoshiro(2), 8, 10, 3, time() + 0.2; merge)
+
+            if is_connected(graph)
+                st = CliqueTrees.HBTLib.hbt_state(ctx, 0)
+                @test validate(ctx, st, graph)
+
+                for _ in 1:20
+                    CliqueTrees.HBTLib.hbt_improve!(ctx, st)
+                end
+
+                @test validate(ctx, st, graph)
+                @test sort(st.order) == 1:n
+                @test treewidth(weights, graph; alg = st.order) <= CliqueTrees.HBTLib.hbt_k(st.width)
+            end
+        end
+    end
+
+    # disconnected graphs and isolated vertices
+    Random.seed!(1)
+    graph = blockdiag(blockdiag(erdos_renyi(40, 0.1), erdos_renyi(70, 0.05)), Graph(3))
+    order, index = permutation(graph; alg = ConnectedComponents(HBT(; time = 0.2, base = 10)))
+    @test sort(order) == 1:nv(graph)
+    @test treewidth(graph; alg = order) >= treewidth(graph; alg = ConnectedComponents(PIDBT()))
+
+    # complete graph: the lower bound is reached immediately
+    graph = complete_graph(80)
+    @test treewidth(graph; alg = HBT(; time = 10.0)) == 79
 end
 
 @testset "lowrank" begin
