@@ -20,136 +20,37 @@ function asr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) wher
         totdeg += weights[v]
     end
 
+    weight = weights
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    fillin = FVector{Int}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    marker = FVector{Int}(undef, n)
+    marker2 = FVector{Int}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
+    stack1 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    stack5 = FVector{V}(undef, n)
+    stack7 = FVector{V}(undef, n)
+    stack8 = FVector{V}(undef, n)
+    arcs = FVector{E}(undef, n)
+    stack2 = FVector{V}(undef, n)
     stack0 = FVector{V}(undef, n)
     tmpptr = FVector{E}(undef, nn)
     tgt = FVector{V}(undef, m)
 
-    work = ASRWorkspace(
-        weights,
-        FVector{W}(undef, n),       # degree
-        FVector{V}(undef, n),       # number
-        FVector{Int}(undef, n),     # fillin
-        FVector{UInt8}(undef, n),   # status
-        FVector{Int}(undef, n),     # marker
-        FVector{Int}(undef, n),     # marker2
-        FVector{V}(undef, m),       # source
-        FVector{V}(undef, m),       # target
-        FVector{E}(undef, nn),      # begptr
-        FVector{E}(undef, n),       # endptr
-        FVector{E}(undef, m),       # invptr
-        FVector{V}(undef, n),       # stack1
-        FVector{V}(undef, n),       # stack4
-        FVector{V}(undef, n),       # stack5
-        FVector{V}(undef, n),       # stack7
-        FVector{V}(undef, n),       # stack8
-        FVector{E}(undef, n),       # arcs
-        width,
-    )
-
-    kernel, stack, inject, width = asr_impl!(work, stack0, tmpptr, tgt, totdeg, graph)
-    return kernel, stack, inject, width
-end
-
-"""
-    ASRWorkspace
-
-Working storage for [`asr`](@ref).
-
-  - quotient graph (see [`pr3_impl!`](@ref)):
-    - `source`: the owner of an arc slot
-    - `target`: the target vertex of an arc
-    - `begptr`: the first arc slot owned by a vertex
-    - `endptr`: one past the last arc incident to a vertex
-    - `invptr`: the reverse of an arc
-  - vertex data:
-    - `weight`: vertex weight
-    - `degree`: weighted degree (weight of the closed neighborhood)
-    - `number`: degree
-    - `fillin`: number of missing edges in the neighborhood
-    - `status`: queue membership and elimination flags
-    - `marker`, `marker2`: marker arrays
-  - work queues:
-    - `stack1`: vertices whose fill-in, degree, or neighborhood
-                has changed
-    - `stack7`: vertices whose last test failed because of `width`
-  - miscellaneous:
-    - `stack4`: eliminated vertices
-    - `stack5`: traversal stack
-    - `stack8`: the neighbors of a vertex
-    - `arcs`: the arcs of a vertex
-"""
-mutable struct ASRWorkspace{
-        W, V, E,
-        Wgt <: AbstractVector{W},
-        WVec <: AbstractVector{W},
-        VVec <: AbstractVector{V},
-        EVec <: AbstractVector{E},
-        IVec <: AbstractVector{Int},
-        SVec <: AbstractVector{UInt8},
-    }
-    const weight::Wgt
-    const degree::WVec
-    const number::VVec
-    const fillin::IVec
-    const status::SVec
-    const marker::IVec
-    const marker2::IVec
-    const source::VVec
-    const target::VVec
-    const begptr::EVec
-    const endptr::EVec
-    const invptr::EVec
-    const stack1::VVec
-    const stack4::VVec
-    const stack5::VVec
-    const stack7::VVec
-    const stack8::VVec
-    const arcs::EVec
-    width::W
-    parked::W
-    tag::Int
-    hi1::V
-    hi4::V
-    hi7::V
-end
-
-function ASRWorkspace(
-        weight::Wgt,
-        degree::WVec,
-        number::VVec,
-        fillin::IVec,
-        status::SVec,
-        marker::IVec,
-        marker2::IVec,
-        source::VVec,
-        target::VVec,
-        begptr::EVec,
-        endptr::EVec,
-        invptr::EVec,
-        stack1::VVec,
-        stack4::VVec,
-        stack5::VVec,
-        stack7::VVec,
-        stack8::VVec,
-        arcs::EVec,
-        width::W,
-    ) where {
-        W, V, E,
-        Wgt <: AbstractVector{W},
-        WVec <: AbstractVector{W},
-        VVec <: AbstractVector{V},
-        EVec <: AbstractVector{E},
-        IVec <: AbstractVector{Int},
-        SVec <: AbstractVector{UInt8},
-    }
-    return ASRWorkspace{W, V, E, Wgt, WVec, VVec, EVec, IVec, SVec}(
+    return asr_impl!(
         weight, degree, number, fillin, status, marker, marker2, source,
         target, begptr, endptr, invptr, stack1, stack4, stack5, stack7,
-        stack8, arcs, width, width, 0, zero(V), zero(V), zero(V))
+        stack8, arcs, stack2, stack0, tmpptr, tgt, totdeg, width, graph)
 end
 
 """
-    asr_impl!(work, stack0, tmpptr, tgt, totdeg, graph)
+    asr_impl!(...)
 
 Safe Reduction Rules for Weighted Treewidth
 Eijkhof, Bodlaender, and Koster
@@ -181,6 +82,37 @@ The graph is stored as a quotient graph, as in [`pr3_impl!`](@ref).
 Contracting an almost simplicial vertex v into u turns v into a
 supernode of u, so no new storage is needed.
 
+The state of the algorithm is a collection of arrays and scalars.
+
+  - quotient graph (see [`pr3_impl!`](@ref)):
+    - `source`: the owner of an arc slot
+    - `target`: the target vertex of an arc
+    - `begptr`: the first arc slot owned by a vertex
+    - `endptr`: one past the last arc incident to a vertex
+    - `invptr`: the reverse of an arc
+  - vertex data:
+    - `weight`: vertex weight
+    - `degree`: weighted degree (weight of the closed neighborhood)
+    - `number`: degree
+    - `fillin`: number of missing edges in the neighborhood
+    - `status`: queue membership and elimination flags
+    - `marker`, `marker2`: marker arrays
+  - work queues:
+    - `stack1`: vertices whose fill-in, degree, or neighborhood
+                has changed
+    - `stack7`: vertices whose last test failed because of `width`
+  - miscellaneous:
+    - `stack2`: common neighbors buffered during contraction
+    - `stack4`: eliminated vertices
+    - `stack5`: traversal stack
+    - `stack8`: the neighbors of a vertex
+    - `arcs`: the arcs of a vertex
+  - scalars:
+    - `width`: treewidth lower bound
+    - `parked`: the value of `width` when the first vertex was parked
+    - `tag`: a running marker tag
+    - `hi1`, `hi4`, `hi7`: the heights of `stack1`, `stack4`, `stack7`
+
 input parameters:
   - `totdeg`: total vertex weight
   - `graph`: input graph
@@ -193,73 +125,100 @@ output parameters:
   - `width`: treewidth lower bound
 """
 function asr_impl!(
-        work::ASRWorkspace{W, V, E},
+        weight::AbstractVector{W},
+        degree::AbstractVector{W},
+        number::AbstractVector{V},
+        fillin::AbstractVector{Int},
+        status::AbstractVector{UInt8},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        source::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        stack1::AbstractVector{V},
+        stack4::AbstractVector{V},
+        stack5::AbstractVector{V},
+        stack7::AbstractVector{V},
+        stack8::AbstractVector{V},
+        arcs::AbstractVector{E},
+        stack2::AbstractVector{V},
         stack0::AbstractVector{V},
         tmpptr::AbstractVector{E},
         tgt::AbstractVector{V},
         totdeg::W,
+        width::W,
         graph::AbstractGraph{V},
     ) where {W, V, E}
     n = nv(graph)
 
-    @assert n <= length(work.weight)
-    @assert n <= length(work.degree)
-    @assert n <= length(work.number)
-    @assert n <= length(work.fillin)
-    @assert n <= length(work.status)
-    @assert n <= length(work.marker)
-    @assert n <= length(work.marker2)
-    @assert de(graph) <= length(work.source)
-    @assert de(graph) <= length(work.target)
-    @assert n < length(work.begptr)
-    @assert n <= length(work.endptr)
-    @assert de(graph) <= length(work.invptr)
-    @assert n <= length(work.stack1)
-    @assert n <= length(work.stack4)
-    @assert n <= length(work.stack5)
-    @assert n <= length(work.stack7)
-    @assert n <= length(work.stack8)
-    @assert n <= length(work.arcs)
+    @assert n <= length(weight)
+    @assert n <= length(degree)
+    @assert n <= length(number)
+    @assert n <= length(fillin)
+    @assert n <= length(status)
+    @assert n <= length(marker)
+    @assert n <= length(marker2)
+    @assert de(graph) <= length(source)
+    @assert de(graph) <= length(target)
+    @assert n < length(begptr)
+    @assert n <= length(endptr)
+    @assert de(graph) <= length(invptr)
+    @assert n <= length(stack1)
+    @assert n <= length(stack4)
+    @assert n <= length(stack5)
+    @assert n <= length(stack7)
+    @assert n <= length(stack8)
+    @assert n <= length(arcs)
+    @assert n <= length(stack2)
     @assert n <= length(stack0)
     @assert n < length(tmpptr)
     @assert de(graph) <= length(tgt)
 
     # initialize the quotient graph, the fill-in, and the work queue
-    asr_init!(work, tmpptr, tgt, totdeg, graph)
+    width, parked, hi1 = asr_init!(weight, degree, number, fillin, status,
+        marker, marker2, source, target, begptr, endptr, invptr, stack1,
+        stack4, stack5, arcs, tmpptr, tgt, totdeg, width, graph)
 
     # apply reduction rules until no more apply
-    asr_loop!(work)
+    width, hi4 = asr_loop!(weight, degree, number, fillin, status, marker,
+        marker2, source, target, begptr, endptr, invptr, stack1, stack4,
+        stack5, stack7, stack8, arcs, stack2, width, parked, 0, hi1,
+        zero(V), zero(V))
 
     # construct the reduced graph
-    m, n = pr3_make!(work.stack4, work.stack5, work.target, work.begptr,
-        work.endptr, work.invptr, stack0, work.number, tmpptr, tgt,
-        work.hi4, n)
+    m, n = pr3_make!(stack4, stack5, target, begptr, endptr, invptr, stack0,
+        number, tmpptr, tgt, hi4, n)
 
     # `kernel` is the reduced graph
     kernel = BipartiteGraph(n, n, m, tmpptr, tgt)
-    return kernel, work.stack4, stack0, work.width
+    return kernel, stack4, stack0, width
 end
 
 function asr_init!(
-        work::ASRWorkspace{W, V, E},
+        weight::AbstractVector{W},
+        degree::AbstractVector{W},
+        number::AbstractVector{V},
+        fillin::AbstractVector{Int},
+        status::AbstractVector{UInt8},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        source::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        stack1::AbstractVector{V},
+        stack4::AbstractVector{V},
+        stack5::AbstractVector{V},
+        arcs::AbstractVector{E},
         tmpptr::AbstractVector{E},
         tgt::AbstractVector{V},
         totdeg::W,
+        width::W,
         graph::AbstractGraph{V},
     ) where {W, V, E}
-    weight = work.weight
-    degree = work.degree
-    number = work.number
-    fillin = work.fillin
-    status = work.status
-    marker = work.marker
-    marker2 = work.marker2
-    source = work.source
-    target = work.target
-    begptr = work.begptr
-    endptr = work.endptr
-    invptr = work.invptr
-
     # `n` is the number of vertices in the graph
     n = nv(graph); nn = n + one(V)
 
@@ -345,33 +304,57 @@ function asr_init!(
 
     # compute the fill-in of each vertex, using `stack5`, `stack4`,
     # `arcs`, and `tgt` as working storage
-    sr_fillin!(fillin, work.stack5, work.stack4, work.arcs, tgt,
+    sr_fillin!(fillin, stack5, stack4, arcs, tgt,
         number, target, begptr, endptr, n)
 
     # the weighted treewidth of the input graph is no less
     # than its minimum weighted degree
-    work.width = work.parked = max(work.width, mindeg)
+    width = max(width, mindeg); parked = width
+
+    # `hi1` is the height of the work queue
+    hi1 = zero(V)
 
     # add vertices to the work queue in reverse order, so
     # that they are tested in increasing order
     @inbounds for v in reverse(vertices(graph))
-        asr_touch!(work, v)
+        hi1 = asr_touch!(status, stack1, hi1, v)
     end
 
-    return
+    return width, parked, hi1
 end
 
-function asr_loop!(work::ASRWorkspace{W, V, E}) where {W, V, E}
+function asr_loop!(
+        weight::AbstractVector{W},
+        degree::AbstractVector{W},
+        number::AbstractVector{V},
+        fillin::AbstractVector{Int},
+        status::AbstractVector{UInt8},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        source::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        stack1::AbstractVector{V},
+        stack4::AbstractVector{V},
+        stack5::AbstractVector{V},
+        stack7::AbstractVector{V},
+        stack8::AbstractVector{V},
+        arcs::AbstractVector{E},
+        stack2::AbstractVector{V},
+        width::W,
+        parked::W,
+        tag::Int,
+        hi1::V,
+        hi4::V,
+        hi7::V,
+    ) where {W, V, E}
     tol = tolerance(W)
-    weight = work.weight
-    degree = work.degree
-    number = work.number
-    fillin = work.fillin
-    status = work.status
 
     @inbounds while true
-        if ispositive(work.hi1)
-            work.hi1, v = pr3_stack_pop!(work.stack1, work.hi1)
+        if ispositive(hi1)
+            hi1, v = pr3_stack_pop!(stack1, hi1)
             flag = status[v]; status[v] = flag & ~ASR_QUEUED
 
             if iszero(flag & ASR_DELETE)
@@ -379,31 +362,38 @@ function asr_loop!(work::ASRWorkspace{W, V, E}) where {W, V, E}
 
                 if iszero(fil)
                     # `v` is simplicial
-                    asr_simplicial!(work, v)
+                    width, hi4, hi1 = asr_simplicial!(weight, degree, number,
+                        fillin, status, source, target, begptr, endptr, invptr,
+                        stack1, stack4, stack5, stack8, arcs, width, hi4, hi1, v)
                 elseif fil < Int(number[v])
                     # `v` may be almost simplicial
-                    if degree[v] < work.width + tol
-                        u = asr_friend!(work, v)
+                    if degree[v] < width + tol
+                        u, tag = asr_friend!(weight, number, fillin, marker,
+                            marker2, stack5, stack8, arcs, target, begptr,
+                            endptr, invptr, tag, v)
 
                         if ispositive(u)
-                            asr_contract!(work, v, u)
+                            hi4, hi1, tag = asr_contract!(weight, degree,
+                                number, fillin, status, marker, marker2, source,
+                                target, begptr, endptr, invptr, stack1, stack4,
+                                stack5, stack8, arcs, stack2, hi4, hi1, tag, v, u)
                         end
                     else
-                        asr_park!(work, v)
+                        parked, hi7 = asr_park!(status, stack7, parked, hi7, width, v)
                     end
                 end
             end
-        elseif ispositive(work.hi7) && work.parked < work.width
+        elseif ispositive(hi7) && parked < width
             # the lower bound has increased: re-test every
             # vertex that failed a test because of it
-            for i in oneto(work.hi7)
-                v = work.stack7[i]
+            for i in oneto(hi7)
+                v = stack7[i]
                 status[v] &= ~ASR_PARKED
-                asr_touch!(work, v)
+                hi1 = asr_touch!(status, stack1, hi1, v)
             end
 
-            work.hi7 = zero(V)
-        elseif ispositive(work.hi7)
+            hi7 = zero(V)
+        elseif ispositive(hi7)
             # the remaining graph is a minor of the input graph, so
             # its minimum weighted degree is a lower bound
             mindeg = typemax(W); alive = false
@@ -414,8 +404,8 @@ function asr_loop!(work::ASRWorkspace{W, V, E}) where {W, V, E}
                 end
             end
 
-            if alive && work.width < mindeg
-                work.width = mindeg
+            if alive && width < mindeg
+                width = mindeg
             else
                 break
             end
@@ -424,51 +414,50 @@ function asr_loop!(work::ASRWorkspace{W, V, E}) where {W, V, E}
         end
     end
 
-    return
+    return width, hi4
 end
 
 # add `v` to the work queue
-function asr_touch!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
-    @inbounds flag = work.status[v]
+function asr_touch!(status::AbstractVector{UInt8}, stack1::AbstractVector{V}, hi1::V, v::V) where {V}
+    @inbounds flag = status[v]
 
     @inbounds if iszero(flag & (ASR_DELETE | ASR_QUEUED))
-        work.status[v] = flag | ASR_QUEUED
-        work.hi1 = pr3_stack_add!(work.stack1, work.hi1, v)
+        status[v] = flag | ASR_QUEUED
+        hi1 = pr3_stack_add!(stack1, hi1, v)
     end
 
-    return
+    return hi1
 end
 
 # a test of `v` failed because of the lower bound
-function asr_park!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
-    @inbounds flag = work.status[v]
+function asr_park!(status::AbstractVector{UInt8}, stack7::AbstractVector{V}, parked::W, hi7::V, width::W, v::V) where {W, V}
+    @inbounds flag = status[v]
 
     @inbounds if iszero(flag & ASR_PARKED)
-        if iszero(work.hi7)
-            work.parked = work.width
+        if iszero(hi7)
+            parked = width
         end
 
-        work.status[v] = flag | ASR_PARKED
-        work.hi7 = pr3_stack_add!(work.stack7, work.hi7, v)
+        status[v] = flag | ASR_PARKED
+        hi7 = pr3_stack_add!(stack7, hi7, v)
     end
 
-    return
-end
-
-# returns a fresh tag
-function asr_tag!(work::ASRWorkspace)
-    work.tag += 1
-    return work.tag
+    return parked, hi7
 end
 
 # write the neighbors of `v` to `stack8` and the corresponding
 # arcs to `arcs`; returns the number of neighbors
-function asr_neighbors!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
-    stack8 = work.stack8
-    arcs = work.arcs
-
-    k = pr3_reach!(zero(V), work.stack5, work.target, work.begptr,
-            work.endptr, work.invptr, v) do k, p, w
+function asr_neighbors!(
+        stack8::AbstractVector{V},
+        arcs::AbstractVector{E},
+        stack5::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        v::V,
+    ) where {V, E}
+    k = pr3_reach!(zero(V), stack5, target, begptr, endptr, invptr, v) do k, p, w
         k += one(V)
         @inbounds stack8[k] = w; arcs[k] = p
         return k
@@ -479,11 +468,17 @@ end
 
 # returns the number of vertices `w` reachable by `x`
 # with `marker[w] == tag`
-function asr_count(work::ASRWorkspace{W, V, E}, x::V, tag::Int) where {W, V, E}
-    marker = work.marker
-
-    c = pr3_reach!(0, work.stack5, work.target, work.begptr,
-            work.endptr, work.invptr, x) do c, _, w
+function asr_count(
+        marker::AbstractVector{Int},
+        stack5::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        x::V,
+        tag::Int,
+    ) where {V, E}
+    c = pr3_reach!(0, stack5, target, begptr, endptr, invptr, x) do c, _, w
         @inbounds if marker[w] == tag
             c += 1
         end
@@ -496,12 +491,19 @@ end
 
 # returns the number of vertices `w` reachable by `x` with
 # `marker[w] == tag`, and sets `marker2[w] = tag2` for each one
-function asr_count_mark(work::ASRWorkspace{W, V, E}, x::V, tag::Int, tag2::Int) where {W, V, E}
-    marker = work.marker
-    marker2 = work.marker2
-
-    c = pr3_reach!(0, work.stack5, work.target, work.begptr,
-            work.endptr, work.invptr, x) do c, _, w
+function asr_count_mark(
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        stack5::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        x::V,
+        tag::Int,
+        tag2::Int,
+    ) where {V, E}
+    c = pr3_reach!(0, stack5, target, begptr, endptr, invptr, x) do c, _, w
         @inbounds if marker[w] == tag
             c += 1; marker2[w] = tag2
         end
@@ -513,32 +515,44 @@ function asr_count_mark(work::ASRWorkspace{W, V, E}, x::V, tag::Int, tag2::Int) 
 end
 
 # eliminate a simplicial vertex `v`
-function asr_simplicial!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
-    weight = work.weight
-    degree = work.degree
-    number = work.number
-    fillin = work.fillin
-    invptr = work.invptr
-    stack8 = work.stack8
-    arcs = work.arcs
-
+function asr_simplicial!(
+        weight::AbstractVector{W},
+        degree::AbstractVector{W},
+        number::AbstractVector{V},
+        fillin::AbstractVector{Int},
+        status::AbstractVector{UInt8},
+        source::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        stack1::AbstractVector{V},
+        stack4::AbstractVector{V},
+        stack5::AbstractVector{V},
+        stack8::AbstractVector{V},
+        arcs::AbstractVector{E},
+        width::W,
+        hi4::V,
+        hi1::V,
+        v::V,
+    ) where {W, V, E}
     # add `v` to the stack of eliminated vertices
-    @inbounds work.status[v] |= ASR_DELETE
-    work.hi4 = pr3_stack_add!(work.stack4, work.hi4, v)
+    @inbounds status[v] |= ASR_DELETE
+    hi4 = pr3_stack_add!(stack4, hi4, v)
 
     # `v` is simplicial: update the lower bound
-    @inbounds work.width = max(work.width, degree[v])
+    @inbounds width = max(width, degree[v])
 
     # `d` is the degree of `v`
     @inbounds d = number[v]; wgt = weight[v]
 
-    k = asr_neighbors!(work, v)
+    k = asr_neighbors!(stack8, arcs, stack5, target, begptr, endptr, invptr, v)
 
     @inbounds for i in oneto(k)
         w = stack8[i]; p = arcs[i]
 
         # remove `v` from the neighborhood of `w`
-        pr3_reach_del!(work.source, work.target, work.endptr, invptr, invptr[p])
+        pr3_reach_del!(source, target, endptr, invptr, invptr[p])
 
         # the missing edges in N(`w`) incident to `v` join
         # `v` to the neighbors of `w` outside N[`v`]
@@ -546,32 +560,41 @@ function asr_simplicial!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
         number[w] -= one(V)
         degree[w] -= wgt
 
-        asr_touch!(work, w)
+        hi1 = asr_touch!(status, stack1, hi1, w)
     end
 
-    return
+    return width, hi4, hi1
 end
 
 # find a neighbor `u` of `v` such that every missing edge in N(`v`) is
 # incident to `u` and weight(`u`) ≤ weight(`v`); returns zero if there
 # is none. The fill-in of `v` is positive.
-function asr_friend!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
+function asr_friend!(
+        weight::AbstractVector{W},
+        number::AbstractVector{V},
+        fillin::AbstractVector{Int},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        stack5::AbstractVector{V},
+        stack8::AbstractVector{V},
+        arcs::AbstractVector{E},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        tag::Int,
+        v::V,
+    ) where {W, V, E}
     tol = tolerance(W)
-    weight = work.weight
-    number = work.number
-    fillin = work.fillin
-    marker = work.marker
-    marker2 = work.marker2
-    stack8 = work.stack8
 
     @inbounds fil = fillin[v]; d = Int(number[v]); wgt = weight[v]
 
-    # mark the neighbors of `v` with `tag`
-    tag = asr_tag!(work)
-    k = asr_neighbors!(work, v)
+    # mark the neighbors of `v` with `ntag`
+    tag += 1; ntag = tag
+    k = asr_neighbors!(stack8, arcs, stack5, target, begptr, endptr, invptr, v)
 
     @inbounds for i in oneto(k)
-        marker[stack8[i]] = tag
+        marker[stack8[i]] = ntag
     end
 
     # search for a missing edge {`x`, `y`}, scanning
@@ -584,49 +607,48 @@ function asr_friend!(work::ASRWorkspace{W, V, E}, v::V) where {W, V, E}
         (Int(number[x]) <= twice(d)) == isone(pass) || continue
 
         # `miss` is the number of missing edges incident to `x`
-        tag2 = asr_tag!(work)
-        miss = d - 1 - asr_count_mark(work, x, tag, tag2)
+        tag += 1; tag2 = tag
+        miss = d - 1 - asr_count_mark(marker, marker2, stack5, target,
+            begptr, endptr, invptr, x, ntag, tag2)
 
         iszero(miss) && continue
 
         if miss == fil
             # `x` is incident to every missing edge
-            weight[x] < wgt + tol && return x
+            weight[x] < wgt + tol && return x, tag
 
             # if there is one missing edge {`x`, `y`},
             # then `y` is also incident to it
             if isone(fil)
-                y = asr_unmarked(work, x, k, tag2)
-                weight[y] < wgt + tol && return y
+                y = asr_unmarked(marker2, stack8, x, k, tag2)
+                weight[y] < wgt + tol && return y, tag
             end
 
-            return zero(V)
+            return zero(V), tag
         elseif isone(miss)
             # `x` is not incident to every missing edge, so the
             # other endpoint `y` of its missing edge must be
-            y = asr_unmarked(work, x, k, tag2)
+            y = asr_unmarked(marker2, stack8, x, k, tag2)
 
-            if weight[y] < wgt + tol && d - 1 - asr_count(work, y, tag) == fil
-                return y
+            if weight[y] < wgt + tol && d - 1 - asr_count(marker, stack5,
+                    target, begptr, endptr, invptr, y, ntag) == fil
+                return y, tag
             end
 
-            return zero(V)
+            return zero(V), tag
         else
             # `x` is incident to two missing edges but not
             # to every missing edge
-            return zero(V)
+            return zero(V), tag
         end
     end
 
-    return zero(V)
+    return zero(V), tag
 end
 
 # returns the neighbor `y` != `x` of `v` (stored in `stack8`) with
 # `marker2[y] != tag2`
-function asr_unmarked(work::ASRWorkspace{W, V, E}, x::V, k::V, tag2::Int) where {W, V, E}
-    marker2 = work.marker2
-    stack8 = work.stack8
-
+function asr_unmarked(marker2::AbstractVector{Int}, stack8::AbstractVector{V}, x::V, k::V, tag2::Int) where {V}
     @inbounds for i in oneto(k)
         y = stack8[i]
 
@@ -639,34 +661,45 @@ function asr_unmarked(work::ASRWorkspace{W, V, E}, x::V, k::V, tag2::Int) where 
 end
 
 # contract an almost simplicial vertex `v` into its neighbor `u`
-function asr_contract!(work::ASRWorkspace{W, V, E}, v::V, u::V) where {W, V, E}
-    weight = work.weight
-    degree = work.degree
-    number = work.number
-    fillin = work.fillin
-    marker = work.marker
-    source = work.source
-    target = work.target
-    endptr = work.endptr
-    invptr = work.invptr
-    stack8 = work.stack8
-    arcs = work.arcs
-
+function asr_contract!(
+        weight::AbstractVector{W},
+        degree::AbstractVector{W},
+        number::AbstractVector{V},
+        fillin::AbstractVector{Int},
+        status::AbstractVector{UInt8},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        source::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        stack1::AbstractVector{V},
+        stack4::AbstractVector{V},
+        stack5::AbstractVector{V},
+        stack8::AbstractVector{V},
+        arcs::AbstractVector{E},
+        stack2::AbstractVector{V},
+        hi4::V,
+        hi1::V,
+        tag::Int,
+        v::V,
+        u::V,
+    ) where {W, V, E}
     # add `v` to the stack of eliminated vertices
-    @inbounds work.status[v] |= ASR_DELETE
-    work.hi4 = pr3_stack_add!(work.stack4, work.hi4, v)
+    @inbounds status[v] |= ASR_DELETE
+    hi4 = pr3_stack_add!(stack4, hi4, v)
 
     @inbounds d = number[v]; wgt = weight[v]; uwgt = weight[u]
 
     # `stack8[1:k]` are the neighbors of `v`, and
     # `arcs[1:k]` are the corresponding arcs
-    k = asr_neighbors!(work, v)
+    k = asr_neighbors!(stack8, arcs, stack5, target, begptr, endptr, invptr, v)
 
     # mark the neighbors of `u` with `tag`
-    tag = asr_tag!(work)
+    tag += 1
 
-    pr3_reach!(nothing, work.stack5, target, work.begptr,
-            endptr, invptr, u) do _, _, w
+    pr3_reach!(nothing, stack5, target, begptr, endptr, invptr, u) do _, _, w
         @inbounds marker[w] = tag
         return
     end
@@ -681,15 +714,20 @@ function asr_contract!(work::ASRWorkspace{W, V, E}, v::V, u::V) where {W, V, E}
         x = stack8[i]
 
         if x != u && marker[x] != tag
-            # `c` is the number of common neighbors of `u` and `x`
-            c = pr3_reach!(0, work.stack5, target, work.begptr,
-                    endptr, invptr, x) do c, _, t
+            # `c` is the number of common neighbors of `u` and `x`;
+            # they are buffered in `stack2[1:c]` to be re-queued
+            # after the traversal (so the traversal reads nothing
+            # that `asr_touch!` would change)
+            c = pr3_reach!(0, stack5, target, begptr, endptr, invptr, x) do c, _, t
                 @inbounds if marker[t] == tag
-                    c += 1; fillin[t] -= 1
-                    asr_touch!(work, t)
+                    c += 1; fillin[t] -= 1; stack2[c] = t
                 end
 
                 return c
+            end
+
+            for j in oneto(c)
+                hi1 = asr_touch!(status, stack1, hi1, stack2[j])
             end
 
             # the neighbors of `u` not adjacent to `x`, and the
@@ -715,7 +753,7 @@ function asr_contract!(work::ASRWorkspace{W, V, E}, v::V, u::V) where {W, V, E}
         z = stack8[i]
         fillin[z] -= Int(number[z] - d)
         number[z] -= one(V)
-        asr_touch!(work, z)
+        hi1 = asr_touch!(status, stack1, hi1, z)
     end
 
     # update the weighted degrees
@@ -761,5 +799,5 @@ function asr_contract!(work::ASRWorkspace{W, V, E}, v::V, u::V) where {W, V, E}
         end
     end
 
-    return
+    return hi4, hi1, tag
 end
