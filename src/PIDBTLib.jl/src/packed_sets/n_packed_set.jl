@@ -149,10 +149,12 @@ function Base.isempty(set::NPackedSet)
     return all(isempty, set.packs)
 end
 
-function Base.in(i::Int, set::NPackedSet{P, I}) where {P, I}
+@inline function Base.in(i::Int, set::NPackedSet{P, I}) where {P, I}
     n = 8sizeof(I)
-    p, b = divrem(i - 1, n) .+ 1
-    return b in getpack(set, p)
+    j = (i - 1) % UInt
+    p = (j ÷ n) % Int + 1
+    p <= P || return false
+    @inbounds return isodd(set.packs[p].data >> (j % n))
 end
 
 function Base.union(left::T, right::T) where {T <: NPackedSet}

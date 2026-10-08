@@ -61,7 +61,8 @@ function create_ptdur_from_ptd(pool::PTDPool{PSet}, tau_root::Int) where {PSet}
 end
 
 # C# AddPTDToPTDUR_CheckBagSize_CheckPossiblyUsable_CheckCliquish
-# Returns (success::Bool, result_root::Int) where result_root=0 on failure.
+# Returns (success::Bool, result_root::Int, ispmc::Bool) where result_root=0 on
+# failure, and ispmc tells whether the new root bag is a PMC.
 function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root::Int, tau_root::Int,
                                  weights::AbstractVector{Int}, graph::CachedGraph{PSet}, k::Int) where {PSet}
     tp_data = pool[tp_root]
@@ -70,7 +71,7 @@ function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root
     # Check bag size (weighted)
     future_bag_size = wt(weights, bag(tp_data) ∪ outlet(tau_data))
     if future_bag_size > k + 1
-        return (false, 0)
+        return (false, 0, false)
     end
 
     B = bag(tp_data) ∪ outlet(tau_data)
@@ -86,17 +87,14 @@ function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root
     # but checking it here keeps this function correct on its own.
     if !isdisjoint(vertices(tp_data), inlet(tau_data)) ||
        !isdisjoint(setdiff(vertices(tp_data), bag(tp_data)), vertices(tau_data))
-        return (false, 0)
+        return (false, 0, false)
     end
 
-    # If bag is at max size and not PMC, reject
-    if future_bag_size == k + 1 && !is_pmc!(work, graph, B)
-        return (false, 0)
-    end
+    # Reject if the bag is not cliquish, or if it is at max size and not a PMC.
+    type = septype!(work, graph, B)
 
-    # Check cliquish
-    if !is_csh!(work, graph, B)
-        return (false, 0)
+    if type == Neither || (future_bag_size == k + 1 && type != PotentialMaximalClique)
+        return (false, 0, false)
     end
 
     # Build result
@@ -112,7 +110,7 @@ function add_ptd_to_ptdur_check(work::Vector{PSet}, pool::PTDPool{PSet}, tp_root
     # Add tau as new child
     add_edge!(pool, new_root, tau_root)
 
-    return (true, new_root)
+    return (true, new_root, type == PotentialMaximalClique)
 end
 
 

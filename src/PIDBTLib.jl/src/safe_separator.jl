@@ -101,12 +101,13 @@ False negatives are possible.
 # Reusable scratch space for `find_clique_minor`.
 struct MinorWork{PSet <: AbstractPackedSet}
     edges::Vector{Tuple{Int, Int, Bool}}
-    nodes::Vector{Tuple{PSet, PSet, Int}}
+    nodes::Vector{Tuple{PSet, PSet, Int, Int}}   # (D, N(D), label, minweight(D))
     layers::Vector{PSet}
+    count::Vector{Int}
 end
 
 function MinorWork{PSet}() where {PSet <: AbstractPackedSet}
-    return MinorWork{PSet}(Tuple{Int, Int, Bool}[], Tuple{PSet, PSet, Int}[], PSet[])
+    return MinorWork{PSet}(Tuple{Int, Int, Bool}[], Tuple{PSet, PSet, Int, Int}[], PSet[], Int[])
 end
 
 function is_safe_separator_heuristic(weights::AbstractVector{Int}, graph::Graph{PSet}, S::PSet, work::MinorWork{PSet}=MinorWork{PSet}()) where {PSet}
@@ -185,7 +186,7 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
             N = neighbors(graph, v)
 
             if length(N) > 1 && weights[v] >= weights[w]
-                push!(nodes, (packedset(PSet, v), N, 0))
+                push!(nodes, (packedset(PSet, v), N, 0, weights[v]))
                 V = setdiff(V, v)
             end
         end
@@ -258,7 +259,7 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
     i = 1
 
     while i ≤ length(nodes)
-        _, N, _ = nodes[i]
+        _, N, _, _ = nodes[i]
 
         iscovered = false
 
@@ -277,22 +278,27 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
     end
 
     # -- PHASE 3 ------------------------------------------------------
+    count = work.count
+
     while !isempty(edges)
         vmax = 0
         imax = 0
         nmax = 0
         cmax = 0
 
+        # No remaining edge is covered by an assigned node (covered edges are
+        # removed below), so assigning one more node changes the cover counts
+        # of `min_cover` only through that node. Count once, then update.
+        potential_cover_counts!(count, edges, nodes, weights)
+
         for v in S
-            for (i, (D, N, w)) in enumerate(nodes)
+            for (i, (D, N, w, mw)) in enumerate(nodes)
                 # Can only assign if: unassigned, adjacent, and weight constraint satisfied
-                if iszero(w) && v ∈ N && minweight(weights, D) >= weights[v]
+                if iszero(w) && v ∈ N && mw >= weights[v]
                     steps += 1
                     steps < MAX_STEPS || return false
 
-                    nodes[i] = (D, N, v)
-                    n, c = min_cover(edges, nodes, weights)
-                    nodes[i] = (D, N, 0)
+                    n, c = min_cover_after_assigning(count, edges, N, mw, v, weights)
 
                     if (n, c) > (nmax, cmax)
                         vmax = v
@@ -305,7 +311,7 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
         end
 
         iszero(nmax) && return false
-        D, N, _ = nodes[imax]; nodes[imax] = (D, N, vmax)
+        D, N, _, mw = nodes[imax]; nodes[imax] = (D, N, vmax, mw)
 
         # Remove...
         i = 1
@@ -315,7 +321,7 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
 
             iscovered = false
 
-            for (_, N, v) in nodes
+            for (_, N, v, _) in nodes
                 iscovered && break
                 iscovered = ((v == w₁) & (w₂ in N)) | ((v == w₂) & (w₁ in N))
             end
@@ -341,14 +347,14 @@ end
 #    {w, x} ⊈ N(D)  or  wmineight(D) < min(weight(w), weight(x))
 #
 # If no such edge exists, return 0.
-function find_zero_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::AbstractVector{Int}) where {PSet}
+function find_zero_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int,Int}}, weights::AbstractVector{Int}) where {PSet}
     for (i, (w, x, _)) in enumerate(edges)
         iscovered = false
         wmin = min(weights[w], weights[x])
 
-        for (D, N, v) in nodes
+        for (D, N, v, mw) in nodes
             iscovered && break
-            iscovered = iszero(v) & (w in N) & (x in N) & (minweight(weights, D) >= wmin)
+            iscovered = iszero(v) & (w in N) & (x in N) & (mw >= wmin)
         end
 
         iscovered || return i
@@ -363,7 +369,7 @@ end
 Find the augmentable missing edge potentially covered by the fewest right nodes.
 Returns the index into `edges`, or `0` if no augmentable edge exists.
 """
-function find_least_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::AbstractVector{Int}) where {PSet}
+function find_least_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int,Int}}, weights::AbstractVector{Int}) where {PSet}
     nmin = imin = 0
 
     for (i, (w, x, flag)) in enumerate(edges)
@@ -372,8 +378,8 @@ function find_least_covered_edge(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vect
         n = 0
         wmin = min(weights[w], weights[x])
 
-        for (D, N, v) in nodes
-            if iszero(v) & (w in N) & (x in N) & (minweight(weights, D) >= wmin)
+        for (D, N, v, mw) in nodes
+            if iszero(v) & (w in N) & (x in N) & (mw >= wmin)
                 n += 1
             end
         end
@@ -397,15 +403,15 @@ end
 #
 # and there is a path from V₁ to V₂ in V using only vertices with
 # weight >= min(weight(w₁), weight(w₂)).
-function find_covering_pair((w₁, w₂, _)::Tuple{Int, Int, Bool}, nodes::Vector{Tuple{PSet, PSet, Int}}, V::PSet, weights::AbstractVector{Int}, graph::Graph{PSet}) where {PSet}
+function find_covering_pair((w₁, w₂, _)::Tuple{Int, Int, Bool}, nodes::Vector{Tuple{PSet, PSet, Int, Int}}, V::PSet, weights::AbstractVector{Int}, graph::Graph{PSet}) where {PSet}
     wmin = min(weights[w₁], weights[w₂])
     V = atleast(weights, V, wmin)
 
-    for (i₁, (D₁, N₁, _)) in enumerate(nodes)
-        (w₁ ∈ N₁ && w₂ ∉ N₁ && minweight(weights, D₁) >= wmin) || continue
+    for (i₁, (D₁, N₁, _, mw₁)) in enumerate(nodes)
+        (w₁ ∈ N₁ && w₂ ∉ N₁ && mw₁ >= wmin) || continue
 
-        for (i₂, (D₂, N₂, _)) in enumerate(nodes)
-            (w₁ ∉ N₂ && w₂ ∈ N₂ && minweight(weights, D₂) >= wmin) || continue
+        for (i₂, (D₂, N₂, _, mw₂)) in enumerate(nodes)
+            (w₁ ∉ N₂ && w₂ ∈ N₂ && mw₂ >= wmin) || continue
 
             U = D₁ # visited
             M = N₁ # frontier
@@ -422,15 +428,15 @@ function find_covering_pair((w₁, w₂, _)::Tuple{Int, Int, Bool}, nodes::Vecto
     return
 end
 
-function merge_nodes!(i₁::Int, i₂::Int, (w₁, w₂, _)::Tuple{Int,Int,Bool}, nodes::Vector{Tuple{PSet,PSet,Int}}, V::PSet, weights::AbstractVector{Int}, graph::Graph{PSet}, layers::Vector{PSet}) where {PSet}
-    D₁, N₁, _ = nodes[i₁]
-    D₂, N₂, _ = nodes[i₂]
+function merge_nodes!(i₁::Int, i₂::Int, (w₁, w₂, _)::Tuple{Int,Int,Bool}, nodes::Vector{Tuple{PSet,PSet,Int,Int}}, V::PSet, weights::AbstractVector{Int}, graph::Graph{PSet}, layers::Vector{PSet}) where {PSet}
+    D₁, N₁, _, _ = nodes[i₁]
+    D₂, N₂, _, _ = nodes[i₂]
 
     # Restrict path search to vertices with weight >= min(w₁, w₂)
     wmin = min(weights[w₁], weights[w₂])
     U, M = merge_nodes(graph, atleast(weights, V, wmin), D₁, D₂, N₁, N₂, layers)
 
-    nodes[i₁] = (U, M, 0)
+    nodes[i₁] = (U, M, 0, minweight(weights, U))
 
     if i₂ != length(nodes)
         nodes[i₂] = nodes[end]
@@ -480,33 +486,46 @@ function merge_nodes(graph::Graph{PSet}, V::PSet, D₁::PSet, D₂::PSet, N₁::
     return (U, setdiff(M, U))
 end
 
-"""
-    min_cover(edges, nodes, weights)
+# For every missing edge e = {w₁, w₂}, count[e] is the number of unassigned
+# nodes (D, N) that potentially cover e: {w₁, w₂} ⊆ N and minweight(D) ≥
+# min(weight(w₁), weight(w₂)).
+function potential_cover_counts!(count::Vector{Int}, edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int,Int}}, weights::AbstractVector{Int}) where {PSet}
+    resize!(count, length(edges))
 
-Determine the minimum number of right nodes that potentially cover
-any non-finally-covered missing edge.
-"""
-function min_cover(edges::Vector{Tuple{Int,Int,Bool}}, nodes::Vector{Tuple{PSet,PSet,Int}}, weights::AbstractVector{Int}) where {PSet}
-    nmin = typemax(Int); c = 0
-
-    for (w₁, w₂, _) in edges
+    @inbounds for (e, (w₁, w₂, _)) in enumerate(edges)
         n = 0
         wmin = min(weights[w₁], weights[w₂])
 
-        for (D, N, v) in nodes
-            b₁ = w₁ ∈ N
-            b₂ = w₂ ∈ N
-
-            if iszero(v) & b₁ & b₂ & (minweight(weights, D) >= wmin)
-                n += 1
-            elseif ((v == w₁) & b₂) | ((v == w₂) & b₁)
-                n = typemax(Int)
-                c += 1
-                break
-            end
+        for (_, N, v, mw) in nodes
+            n += iszero(v) & (w₁ ∈ N) & (w₂ ∈ N) & (mw >= wmin)
         end
 
-        nmin = min(nmin, n)
+        count[e] = n
+    end
+
+    return count
+end
+
+# The value of `min_cover` (the number of unassigned nodes potentially covering
+# the least covered edge, and the number of finally covered edges) after the
+# unassigned node (D, N) with minweight(D) = mw is assigned the label v.
+#
+# This relies on no edge being finally covered before the assignment. The
+# assigned node finally covers {v, x} for x ∈ N, and stops counting as a
+# potential cover of the other edges.
+function min_cover_after_assigning(count::Vector{Int}, edges::Vector{Tuple{Int,Int,Bool}}, N::PSet, mw::Int, v::Int, weights::AbstractVector{Int}) where {PSet}
+    nmin = typemax(Int); c = 0
+
+    @inbounds for (e, (w₁, w₂, _)) in enumerate(edges)
+        b₁ = w₁ ∈ N
+        b₂ = w₂ ∈ N
+
+        if ((v == w₁) & b₂) | ((v == w₂) & b₁)
+            c += 1
+        else
+            n = count[e] - (b₁ & b₂ & (mw >= min(weights[w₁], weights[w₂])))
+            nmin = min(nmin, n)
+        end
     end
 
     return (nmin, c)

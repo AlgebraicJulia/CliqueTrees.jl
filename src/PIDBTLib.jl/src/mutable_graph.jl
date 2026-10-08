@@ -26,12 +26,15 @@ struct Weights{PSet <: AbstractPackedSet} <: AbstractVector{Int}
     data::Vector{Int}
     values::Vector{Int}     # distinct weights
     masks::Vector{PSet}     # masks[c] = vertices with weight values[c]
+    planes::Vector{PSet}    # planes[b] = vertices whose weight has bit b - 1 set
 end
 
 function Weights{PSet}(data::Vector{Int}) where {PSet <: AbstractPackedSet}
     values = sort!(unique(data))
     masks = [foldl(∪, (v for v in eachindex(data) if data[v] == x); init=PSet()) for x in values]
-    return Weights{PSet}(data, values, masks)
+    nplanes = 8sizeof(Int) - leading_zeros(maximum(data; init=1))
+    planes = [foldl(∪, (v for v in eachindex(data) if isodd(data[v] >> (b - 1))); init=PSet()) for b in 1:nplanes]
+    return Weights{PSet}(data, values, masks, planes)
 end
 
 function Base.size(weights::Weights)
@@ -40,6 +43,15 @@ end
 
 @propagate_inbounds function Base.getindex(weights::Weights, i::Int)
     return weights.data[i]
+end
+
+# Test whether w(set) ≤ budget, avoiding the full sum when |set| decides it.
+@inline function wtatmost(weights::Weights{PSet}, set::PSet, budget::Int) where {PSet <: AbstractPackedSet}
+    n = length(set)
+    values = weights.values
+    @inbounds n * first(values) > budget && return false
+    @inbounds n * last(values) <= budget && return true
+    return wt(weights, set) <= budget
 end
 
 # Smallest weight of a vertex in the nonempty set `set`.
@@ -76,7 +88,7 @@ function atleast(weights::Weights{PSet}, V::PSet, w::Int) where {PSet <: Abstrac
     return V ∩ U
 end
 
-function wt(weights::Weights{PSet}, set::PSet) where {PSet <: AbstractPackedSet}
+@inline function wt(weights::Weights{PSet}, set::PSet) where {PSet <: AbstractPackedSet}
     values = weights.values; masks = weights.masks
 
     if isone(length(values))
@@ -84,9 +96,17 @@ function wt(weights::Weights{PSet}, set::PSet) where {PSet <: AbstractPackedSet}
     end
 
     s = 0
+    planes = weights.planes
 
-    @inbounds for c in eachindex(values)
-        s += values[c] * length(set ∩ masks[c])
+    # w(set) = Σ_c values[c] |set ∩ masks[c]| = Σ_b 2ᵇ⁻¹ |set ∩ planes[b]|
+    if length(planes) < length(values)
+        @inbounds for b in eachindex(planes)
+            s += length(set ∩ planes[b]) << (b - 1)
+        end
+    else
+        @inbounds for c in eachindex(values)
+            s += values[c] * length(set ∩ masks[c])
+        end
     end
 
     return s

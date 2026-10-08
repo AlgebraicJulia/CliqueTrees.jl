@@ -104,30 +104,29 @@ end
 
 # Caching the result (as the C# does) does not pay: about half of all calls
 # are misses, and the cache grows to millions of entries.
+#
+# If K has a full component C, then any two vertices of K are joined by a path
+# through C, so K is cliquish but not a PMC. We return as soon as one is found.
+# (The components are enumerated starting from the smallest vertex outside K,
+# which usually lies in the full component, if there is one.)
 function septype!(work::Vector{PSet}, graph::CachedGraph{PSet}, K::PSet) where {PSet <: AbstractPackedSet}
-    return let
-        csh = 1
-        pmc = 1
-
-        @inbounds for v in K
-            work[v] = neighbors(graph, v) ∪ v
-        end
-
-        for (_, N) in components(graph, K)
-            pmc &= N != K
-
-            @inbounds for v in N
-                work[v] = work[v] ∪ N
-            end
-        end
-
-        @inbounds for v in K
-            csh &= K ⊆ work[v]
-        end
-
-        pmc &= csh
-        return SeparatorType(csh + pmc)
+    @inbounds for v in K
+        work[v] = neighbors(graph, v) ∪ v
     end
+
+    for (_, N) in components(graph, K)
+        N == K && return Cliquish
+
+        @inbounds for v in N
+            work[v] = work[v] ∪ N
+        end
+    end
+
+    @inbounds for v in K
+        K ⊆ work[v] || return Neither
+    end
+
+    return PotentialMaximalClique
 end
 
 # ==================== Outlet ====================

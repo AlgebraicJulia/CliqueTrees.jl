@@ -24,14 +24,23 @@
 #   - The caller (`pidbt`) renumbers the vertices in Cuthill-McKee order,
 #     which the algorithm is sensitive to (see pidbt.jl). Vertices need not be
 #     sorted by weight.
+#   - The sieve is keyed by bags rather than vertex sets, and tests the bag
+#     size condition of a combination exactly (see sieve.jl).
+#   - On weighted graphs, the widths are not tried one by one: after a few
+#     failures, the search skips ahead and then bisects (see "Galloping"
+#     in `treewidth_computation`).
 #
 # All vertex indices are 1-based.
 
 const COMPLETE_HEURISTICALLY = true
 const TEST_OUTLET_IS_CLIQUE_MINOR = true
 const MORE_THAN_2_COMPONENTS_OPTIMIZATION = true
+const GALLOP = true
+const GALLOP_GROWTH = 1.7       # gallop if failed rounds grow by at most this factor per width
+const GALLOP_MIN_EFFORT = 10000 # ignore cheaper rounds when estimating the growth
+const GALLOP_BUDGET = 3.0       # budget of a speculative round, relative to its predicted cost
 
-@enum State Continue Divide Halt Timeout
+@enum State Continue Divide Halt Abort Timeout
 
 # ---------------------------------------------------------------------------
 # Main entry point
@@ -114,6 +123,11 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
     pool = PTDPool{PSet}()
     sums = achievable_sums(weights, graph)
 
+    # Galloping (see below) only pays for weighted graphs, where the widths
+    # to try are finely spaced. On unweighted graphs, failed rounds usually
+    # double in cost from one width to the next, and it is a wash.
+    gallop = GALLOP && weights isa Weights && length(weights.values) > 1
+
     sub_graphs = Graph{PSet}[graph]
     separators = PSet[]                          # index j -> separator
     separator_subgraph_indices = Int[]           # index j -> subgraph index i
@@ -127,33 +141,74 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
             continue
         end
 
-        first_k = true
+        if nv(graph_i) == 0
+            push!(ptd_roots, make_ptd(pool, PSet()))
+            continue
+        end
 
-        while min_k < wt(weights, vertices(graph_i)) - 1
-            if nv(graph_i) == 0
-                push!(ptd_roots, make_ptd(pool, PSet()))
-                break
+        empty!(outlets_already_checked)
+
+        # Find the least width k = sums[ihi] ≥ min_k at which graph_i has a
+        # tree decomposition. Invariants: graph_i has no decomposition of width
+        # sums[ilo] (or sums[ilo] < min_k), and has one of width sums[ihi]:
+        # `root` (or a single bag, if root == 0).
+        ilo = searchsortedfirst(sums, min_k) - 1
+        ihi = searchsortedfirst(sums, wt(weights, vertices(graph_i)) - 1)
+        root = 0
+        divided = false
+
+        # Galloping. Failed rounds get more expensive as k grows, by a factor
+        # `growth` per step (estimated from the last two failed rounds). If it
+        # is small, there are many rounds of similar cost below tw, and it pays
+        # to skip ahead: probe ilo + step, doubling `step` after every failure,
+        # and binary search once a decomposition is found. Every failed probe
+        # is a round that k-by-k search would run as well, so the only risk is
+        # a successful probe far above tw, which can be expensive. So a probe
+        # beyond ilo + 1 runs with a budget of a few times the predicted cost
+        # of a failure; if it runs out, we go back to k-by-k search.
+        step = 1
+        effort = 0               # effort of the last failed round
+        growth = Inf
+
+        while ilo + 1 < ihi
+            if !gallop || ilo + 1 >= ihi - 1 || growth > GALLOP_GROWTH
+                p = ilo + 1
+            elseif iszero(root)
+                p = min(ilo + step, ihi - 1)
+            else
+                p = (ilo + ihi) ÷ 2
             end
 
-            if first_k
-                empty!(outlets_already_checked)
+            if p == ilo + 1
+                budget = typemax(Int)
+            else
+                budget = round(Int, min(GALLOP_BUDGET * effort * growth^(p - ilo), 1e15))
             end
 
-            state, tree_decomp_root, outlet_safe_sep = has_treewidth(
-                pool, weights, CachedGraph(graph_i), min_k, graph_i, outlets_already_checked, deadline)
+            state, tree_decomp_root, outlet_safe_sep, n = has_treewidth(
+                pool, weights, CachedGraph(graph_i), sums[p], graph_i, outlets_already_checked, budget, deadline)
 
             state == Timeout && return nothing
 
-            if state == Halt
-                push!(ptd_roots, tree_decomp_root)
-                break
-            elseif state == Divide
+            if state == Continue
+                # (cheap rounds say little about the growth)
+                growth = p == ilo + 1 && n >= GALLOP_MIN_EFFORT && ispositive(effort) ? n / effort : growth
+                ilo = p; effort = n
+                step = growth > GALLOP_GROWTH ? 1 : 2step
+            elseif state == Halt
+                ihi = searchsortedfirst(sums, treewidth(pool, tree_decomp_root, weights))
+                root = tree_decomp_root
+            elseif state == Abort
+                step = 1
+                growth = Inf   # stop galloping
+            else # state == Divide
+                # Safe separators do not depend on k. But the PTD for one of
+                # the pieces has width ≤ sums[p], which is only known to be
+                # optimal if p == ilo + 1.
                 separated_graphs, already_calc_idx, min_k = apply_externally_found_safe_separator!(
-                    weights, graph_i, outlet_safe_sep, min_k, inlet(pool[tree_decomp_root]))
+                    weights, graph_i, outlet_safe_sep, sums[ilo + 1], inlet(pool[tree_decomp_root]))
 
-                # The PTD whose outlet is the separator is already a tree
-                # decomposition of one of the pieces.
-                if ispositive(already_calc_idx)
+                if ispositive(already_calc_idx) && p == ilo + 1
                     precomputed[length(sub_graphs) + already_calc_idx] = tree_decomp_root
                 end
 
@@ -163,17 +218,15 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
                 push!(separator_subgraph_indices, i)
                 push!(child_stop, length(sub_graphs))
                 push!(ptd_roots, 0)
+                divided = true
                 break
             end
-
-            j = searchsortedfirst(sums, min_k + 1)
-            min_k = sums[j]
-            first_k = false
         end
 
-        # If graph is smaller than min bound (all vertices form a single bag)
-        if length(ptd_roots) < i
-            push!(ptd_roots, make_ptd(pool, vertices(graph_i)))
+        if !divided
+            min_k = max(min_k, sums[ihi])
+            # If no round succeeded, all vertices form a single bag.
+            push!(ptd_roots, iszero(root) ? make_ptd(pool, vertices(graph_i)) : root)
         end
     end
 
@@ -187,13 +240,30 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
     return (min_k, (pool, ptd_roots[1]))
 end
 
+# The width (largest bag weight, minus one) of the tree decomposition at `root`.
+function treewidth(pool::PTDPool{PSet}, root::Int, weights::AbstractVector{Int}) where {PSet}
+    width = -1
+    stack = Int[root]
+
+    while !isempty(stack)
+        node = pop!(stack)
+        width = max(width, wt(weights, bag(pool[node])) - 1)
+
+        for p in incident(pool, node)
+            push!(stack, target(pool, p))
+        end
+    end
+
+    return width
+end
+
 # ---------------------------------------------------------------------------
 # Search state for a single call to `has_treewidth`
 # ---------------------------------------------------------------------------
 
 mutable struct Search{PSet <: AbstractPackedSet}
     const pool::PTDPool{PSet}             # scratch pool for this search
-    const weights::AbstractVector{Int}
+    const weights::Weights{PSet}
     const graph::CachedGraph{PSet}
     const mutable_graph::Graph{PSet}
     const k::Int
@@ -212,48 +282,54 @@ mutable struct Search{PSet <: AbstractPackedSet}
     const sieve::LayeredSieve{PSet}
     const U::Set{Tuple{PSet, PSet}}
     const results::Vector{Int}               # query results
+    const tried::Vector{PSet}                # rule-3 bags tried (see _extend!)
     const cmps::Vector{PSet}                 # components of an outlet (reused buffer; see is_minimal_separator)
 
     const outlets_checked::Set{PSet}
     const minor::MinorWork{PSet}
     const deadline::Float64
     heuristic_best::Int     # heaviest inlet tried by heuristic completion
+    const budget::Int       # give up (Abort) once `effort` exceeds this
+    effort::Int             # PTDs processed plus PTDURs they were combined with
 end
 
 function Search(weights::Weights{PSet}, graph::CachedGraph{PSet}, k::Int, mutable_graph::Graph{PSet},
-                outlets_checked::Set{PSet}, deadline::Float64=Inf) where {PSet}
+                outlets_checked::Set{PSet}, budget::Int=typemax(Int), deadline::Float64=Inf) where {PSet}
     return Search{PSet}(
         PTDPool{PSet}(), weights, graph, mutable_graph, k,
         Vector{PSet}(undef, domain(PSet)), Vector{Bool}(undef, domain(PSet)),
         Int[], Set{PSet}(),
         Dict{PSet, Vector{Int}}(), Dict{Int, Int}(),
-        LayeredSieve{PSet}(k, weights), Set{Tuple{PSet, PSet}}(), Int[], PSet[],
-        outlets_checked, MinorWork{PSet}(), deadline, 0)
+        LayeredSieve{PSet}(k, weights), Set{Tuple{PSet, PSet}}(), Int[], PSet[], PSet[],
+        outlets_checked, MinorWork{PSet}(), deadline, 0, budget, 0)
 end
 
 # ---------------------------------------------------------------------------
 # Core DP algorithm  (C# HasTreeWidth)
 #
-# Returns (state, root, separator). On `Halt`, `root` is a tree decomposition of
-# the graph of width ≤ k. On `Divide`, `root` is a PTD whose outlet `separator`
-# is a safe separator. The returned trees are copied into `pool`. On `Timeout`
-# the deadline has passed.
+# Returns (state, root, separator, effort). On `Halt`, `root` is a tree
+# decomposition of the graph of width ≤ k. On `Divide`, `root` is a PTD whose
+# outlet `separator` is a safe separator. The returned trees are copied into
+# `pool`. `effort` is the number of PTDs processed plus the number of PTDURs
+# they were combined with, a deterministic measure of running time. On `Abort`,
+# the effort exceeded `budget` before a decision was reached. On `Timeout`, the
+# deadline has passed.
 # ---------------------------------------------------------------------------
 
 function has_treewidth(pool::PTDPool{PSet}, weights::AbstractVector{Int}, graph::CachedGraph{PSet}, k::Int,
-                       mutable_graph::Graph{PSet}, outlets_already_checked::Set{PSet}, deadline::Float64=Inf) where {PSet}
+                       mutable_graph::Graph{PSet}, outlets_already_checked::Set{PSet}, budget::Int=typemax(Int), deadline::Float64=Inf) where {PSet}
     if nv(graph) == 0
-        return (Halt, make_ptd(pool, PSet()), PSet())
+        return (Halt, make_ptd(pool, PSet()), PSet(), 0)
     end
 
-    search = Search(weights, graph, k, mutable_graph, outlets_already_checked, deadline)
+    search = Search(weights, graph, k, mutable_graph, outlets_already_checked, budget, deadline)
     state, root, sep = _search!(search)
 
     if state == Halt || state == Divide
         root = copy_tree!(pool, search.pool, root)
     end
 
-    return (state, root, sep)
+    return (state, root, sep, search.effort)
 end
 
 function _search!(s::Search{PSet}) where {PSet}
@@ -290,6 +366,7 @@ function _search!(s::Search{PSet}) where {PSet}
         end
 
         tau = pop!(s.P)
+        (s.effort += 1) > s.budget && return (Abort, 0, PSet())
 
         # line 6-7: the PTDUR with τ as its only child
         rho = create_ptdur_from_ptd(pool, tau)
@@ -299,17 +376,21 @@ function _search!(s::Search{PSet}) where {PSet}
         R = inlet(pool[tau])
         S = outlet(pool[tau])
 
-        # line 9-10: Tb = Te
-        state, root = _extend!(s, rho, tau)
+        # line 9-10: Tb = Te. The root bag of rho is the outlet of tau, a
+        # minimal separator, which has full components and is not a PMC.
+        state, root = _extend!(s, rho, tau, false)
         state == Continue || return (state, root, outlet(pool[root]))
 
         # lines 8, 11-16: Tb = T' + τ
-        for rho2 in query!(s.results, s.sieve, R, S)
-            success, rho3 = add_ptd_to_ptdur_check(s.work, pool, rho2, tau, weights, graph, k)
+        query!(s.results, s.sieve, R, S)
+        s.effort += length(s.results)
+
+        for rho2 in s.results
+            success, rho3, ispmc = add_ptd_to_ptdur_check(s.work, pool, rho2, tau, weights, graph, k)
             success || continue
             _add_to_u!(s, rho3) || continue
 
-            state, root = _extend!(s, rho3, tau)
+            state, root = _extend!(s, rho3, tau, ispmc)
             state == Continue || return (state, root, outlet(pool[root]))
         end
 
@@ -319,15 +400,16 @@ function _search!(s::Search{PSet}) where {PSet}
     return (Continue, 0, PSet())
 end
 
-# lines 17-27: try to turn the PTDUR `rho` into PTDs
-function _extend!(s::Search{PSet}, rho::Int, tau::Int) where {PSet}
+# lines 17-27: try to turn the PTDUR `rho` into PTDs. `ispmc` tells whether
+# the root bag of `rho` is a PMC.
+function _extend!(s::Search{PSet}, rho::Int, tau::Int, ispmc::Bool) where {PSet}
     pool = s.pool; graph = s.graph; weights = s.weights; k = s.k
     data = pool[rho]
     B = bag(data)
 
     # lines 17-18: the root bag is already a PMC. No proper superset of a PMC
     # is a PMC, so there is nothing else to try.
-    if wt(weights, B) == k + 1 || is_pmc!(s.work, graph, B)
+    if ispmc || wt(weights, B) == k + 1
         return _offer_ptd!(s, copy_ptd(pool, rho))
     end
 
@@ -352,13 +434,21 @@ function _extend!(s::Search{PSet}, rho::Int, tau::Int) where {PSet}
         end
     end
 
-    # lines 23-27: X = B ∪ (N(v) - inlet) for v ∈ B
+    # lines 23-27: X = B ∪ (N(v) - inlet) for v ∈ B. Different v often give
+    # the same X, so remember the ones tried. (X = B is not a PMC; see above.)
     R = inlet(data)
+    tried = empty!(s.tried)
+
+    budget = k + 1 - wt(weights, B)
 
     for v in B
-        X = setdiff(neighbors(graph, v), R) ∪ B
+        D = setdiff(neighbors(graph, v), R ∪ B)
+        (isempty(D) || !wtatmost(weights, D, budget)) && continue
+        X = B ∪ D
+        X in tried && continue
+        push!(tried, X)
 
-        if wt(weights, X) <= k + 1 && is_pmc!(s.work, graph, X)
+        if is_pmc!(s.work, graph, X)
             state, root = _offer_ptd!(s, extend_to_pmc_rule3(pool, rho, X, graph))
             state == Continue || return (state, root)
         end

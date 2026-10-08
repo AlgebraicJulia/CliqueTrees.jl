@@ -77,6 +77,10 @@ function Base.isempty(set::PackedSet)
     return iszero(set.data)
 end
 
+@inline function Base.in(i::Int, set::PackedSet)
+    return isodd(set.data >> ((i - 1) % UInt))
+end
+
 function Base.union(left::T, right::T) where {T <: PackedSet}
     return T(left.data | right.data)
 end
