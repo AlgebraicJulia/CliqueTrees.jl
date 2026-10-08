@@ -1817,6 +1817,8 @@ end
                 HBT(; time = 0.2, base = 8, diversify = false),
                 HBT(; time = 0.2, base = 8, refined = false, near = 0),
                 HBT(; time = 0.2, base = 20, dsize = 25, seed = 7, xtime = 0.01),
+                HBT(; time = 0.2, base = 8, margin = 0, pexact = 0.0),
+                HBT(; time = 0.2, base = 8, margin = 10, pexact = 1.0, near = 0),
             )
             order, index = permutation(graph; alg = ConnectedComponents(alg))
             @test sort(order) == 1:n
@@ -1829,9 +1831,9 @@ end
         end
 
         # internal invariants of the solutions
-        for merge in (true, false)
+        for merge in (true, false), margin in (0, 40)
             g, wgt = CliqueTrees.HBTLib.hbt_graph(weights, graph)
-            ctx = CliqueTrees.HBTLib.HBTContext(g, wgt, AMF(), Xoshiro(2), 8, 10, 3, time() + 0.2; merge)
+            ctx = CliqueTrees.HBTLib.HBTContext(g, wgt, AMF(), Xoshiro(2), 8, 10, 3, time() + 0.2; merge, margin)
 
             if is_connected(graph)
                 st = CliqueTrees.HBTLib.hbt_state(ctx, 0)

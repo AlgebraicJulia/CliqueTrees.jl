@@ -33,7 +33,15 @@
 #     also re-triangulates around bags slightly smaller than the largest
 #     (see `near`), which helps on instances where it otherwise stalls.
 #   - Exact local triangulations ask PIDBT for the target width directly
-#     rather than for the optimum, and give up after `xtime` seconds.
+#     rather than for the optimum, and give up after `xtime` seconds. They
+#     are used for local graphs of up to max(`base`, |X₀| + `margin`)
+#     vertices, and a fraction `pexact` of the diversified regions are drawn
+#     from just above the size of X₀. With a fixed limit of 60 (the
+#     reference's), no region of a graph of width ~100 is ever solved
+#     exactly; yet such a region, slightly larger than one bag, has a nearly
+#     complete local graph that PIDBT usually solves in milliseconds, often
+#     below the current width. This was the largest single improvement on
+#     wide instances.
 #   - The component structure of a PMC (its components, their separators, and
 #     the superblocks it caps) is computed once, when the PMC is created, and
 #     shared by every solution that contains it; the reference recomputes it
@@ -42,9 +50,11 @@
 #     local graph get their structure from the local graph in linear time.
 #   - The focus for Y is the component of G - Y containing the smallest vertex
 #     outside the scope, rather than the first component that leaves the scope.
-#   - Greedy triangulations use `alg` (default AMF) on a random relabeling,
-#     followed by MinimalChordal, instead of MMAF. Exact local triangulations
-#     use PIDBT.
+#   - Greedy triangulations use `alg` (default MF(strategy = 1), minimum
+#     average fill) on a random relabeling, followed by MinimalChordal; the
+#     reference uses MMAF, a minimal variant of minimum average fill. The
+#     choice matters a great deal: with AMF, the widths on wide PACE
+#     instances were 10-20% larger. Exact local triangulations use PIDBT.
 #   - Widths are measured by bag weight, so integer vertex weights are
 #     supported.
 #
@@ -150,6 +160,8 @@ mutable struct HBTContext{A, R <: AbstractRNG}
     const patience::Int
     const xtime::Float64
     const near::Int
+    const margin::Int
+    const pexact::Float64
 
     # interned separators
     const sepindex::Dict{Vector{Int}, Int}
@@ -197,12 +209,12 @@ end
 function HBTContext(graph::BipartiteGraph{Int, Int, Vector{Int}, Vector{Int}}, wgt::Vector{Int}, alg::A, rng::R, base::Int, ntry::Int, ninit::Int, deadline::Float64;
         t0::Float64=time(), verbose::Bool=false, refined::Bool=true, merge::Bool=true, diversify::Bool=true,
         dsize::Int=typemax(Int), nsep::Int=4, patience::Int=100, xtime::Float64=0.5,
-        near::Int=3) where {A, R}
+        near::Int=3, margin::Int=40, pexact::Float64=0.5) where {A, R}
     n = nv(graph)
 
     return HBTContext{A, R}(
         graph, wgt, alg, rng, base, ntry, ninit, deadline, t0, verbose,
-        refined, merge, diversify, dsize, nsep, patience, xtime, near,
+        refined, merge, diversify, dsize, nsep, patience, xtime, near, margin, pexact,
         Dict{Vector{Int}, Int}(), Vector{Int}[], Int[],
         0, zeros(Int, n), zeros(Int, n), zeros(Int, n), zeros(Int, n), Int[], Int[],
         Dict{Tuple{Int, Int}, Int}(), Int[], Int[], Int[], Int[],
@@ -377,6 +389,7 @@ mutable struct HBTState
     bags::Vector{Vector{Int}}       # the best decomposition: its bags...
     parent::Vector{Int}             # ... and their parents
     order::Vector{Int}              # elimination order of the best decomposition
+    maxbag::Int                     # number of vertices in its largest bag
     side::Union{Nothing, HBTState}
     const depth::Int
     stall::Int                      # steps since the last improvement
@@ -612,6 +625,7 @@ function hbt_record!(ctx::HBTContext, st::HBTState, width::Int, root::Int)
     st.width = width
     st.bags, st.parent = hbt_td(ctx, st, root)
     st.order = hbt_tdorder(ctx, st.bags, st.parent)
+    st.maxbag = maximum(length, st.bags)
     return
 end
 
@@ -724,7 +738,7 @@ function hbt_state(ctx::HBTContext, depth::Int)
         end
     end
 
-    st = HBTState(HBTPMC[], Dict{Vector{Int}, Int}(), typemax(Int), Vector{Int}[], Int[], Int[], nothing, depth, 0)
+    st = HBTState(HBTPMC[], Dict{Vector{Int}, Int}(), typemax(Int), Vector{Int}[], Int[], Int[], 0, nothing, depth, 0)
 
     for X in hbt_pmcs(ctx, bestlabel, besttree)
         hbt_add!(st, X)
@@ -764,11 +778,17 @@ function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, tar
     return order
 end
 
-# Exact if small enough and quick enough, greedy otherwise.
-function hbt_triangulate(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int)
-    order = nv(H) <= ctx.base ? hbt_exact(ctx, weights, H, target) : nothing
+# Exact if the local graph has at most `limit` vertices and PIDBT finishes
+# in time, greedy otherwise.
+function hbt_triangulate(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int, limit::Int=ctx.base)
+    order = nv(H) <= limit ? hbt_exact(ctx, weights, H, target) : nothing
     return isnothing(order) ? hbt_greedy(ctx, weights, H) : order
 end
+
+# The size limit for exact triangulations of a region around bags with up to
+# `size` vertices. A local graph only slightly larger than one bag is nearly
+# complete, and PIDBT solves it quickly even when the bag is wide.
+@inline hbt_limit(ctx::HBTContext, size::Int) = max(ctx.base, size + ctx.margin)
 
 # ---------------------------------------------------------------------------
 # Local graphs
@@ -940,7 +960,7 @@ function hbt_local!(ctx::HBTContext, st::HBTState, side::HBTState, U::Vector{Int
     H = L.graph; weights = L.wgt; nu = length(U)
     ctx.nlocal += 1
 
-    order = hbt_triangulate(ctx, weights, H, hbt_k(st.width))
+    order = hbt_triangulate(ctx, weights, H, hbt_k(st.width), hbt_limit(ctx, st.maxbag))
 
     label, tree = cliquetree(weights, H, order)
     hbt_treewidth(weights, label, tree) <= hbt_k(st.width) || return
@@ -1160,10 +1180,18 @@ function hbt_diversify!(ctx::HBTContext, st::HBTState)
         end
     end
 
-    # region size: log-uniform between |X₀| and `dsize`, so that every scale
+    # region size: with probability `pexact`, just above |X₀| (up to `margin`
+    # more vertices), where exact triangulation is fast even for wide bags;
+    # otherwise log-uniform between |X₀| and `dsize`, so that every scale
     # gets tried
-    lo = length(X0); hi = max(lo, min(ctx.dsize, nv(g)))
-    target = round(Int, exp(log(lo) + rand(rng) * (log(hi) - log(lo))))
+    lo = length(X0)
+
+    if rand(rng) < ctx.pexact
+        target = lo + rand(rng, 1:max(1, ctx.margin))
+    else
+        hi = max(lo, min(ctx.dsize, nv(g)))
+        target = round(Int, exp(log(lo) + rand(rng) * (log(hi) - log(lo))))
+    end
     su = hbt_stamp!(ctx); sn = hbt_stamp!(ctx)
     U = Int[]
 
@@ -1207,6 +1235,15 @@ function hbt_diversify!(ctx::HBTContext, st::HBTState)
     H = L.graph; nu = length(U); weights = L.wgt
     x0 = Int[loc[v] for v in X0]     # X₀ in local numbering (set by hbt_local)
     lmark = zeros(Int, nu); lcomp = zeros(Int, nu)
+    limit = hbt_limit(ctx, length(X0))
+
+    # a region small enough to be solved exactly is also triangulated as it
+    # is: PIDBT finds a decomposition of H below the current width if there
+    # is one
+    if nu <= limit
+        order = hbt_triangulate(ctx, weights, H, k - 1, limit)
+        hbt_addcliques!(ctx, st, L, H, order, k, lmark, lcomp)
+    end
 
     # minimal separators crossing X₀: for nonadjacent a, b ∈ X₀, the
     # neighborhood of the component of H - N[a] containing b
@@ -1263,19 +1300,35 @@ function hbt_diversify!(ctx::HBTContext, st::HBTState)
 
         HS = BipartiteGraph{Int, Int}(nu, nu, length(tgt), ptr, tgt)
 
-        order = hbt_triangulate(ctx, weights, HS, k - 1)
+        order = hbt_triangulate(ctx, weights, HS, k - 1, limit)
+        hbt_addcliques!(ctx, st, L, HS, order, k, lmark, lcomp)
+    end
 
-        ctx.nlocal += 1
-        label, tree = cliquetree(weights, HS, order)
+    return
+end
 
-        for clique in tree
-            K = Int[label[v] for v in clique]
-            sort!(K)
-            K in L.nbrs && continue
-            X = U[K]
-            haskey(st.index, X) && continue
-            hbt_add!(st, hbt_pmc(ctx, L, K, lmark, lcomp))
+# Add the maximal cliques of the triangulation of HS (a minimal triangulation
+# of the local graph L) given by `order` to the solution, skipping cliques
+# heavier than k: they cannot be bags of a decomposition of width at most k.
+function hbt_addcliques!(ctx::HBTContext, st::HBTState, L::HBTLocal, HS::BipartiteGraph, order::Vector{Int}, k::Int, lmark::Vector{Int}, lcomp::Vector{Int})
+    U = L.U; weights = L.wgt
+    ctx.nlocal += 1
+    label, tree = cliquetree(weights, HS, order)
+
+    for clique in tree
+        w = 0
+
+        for v in clique
+            w += weights[label[v]]
         end
+
+        w > k && continue
+        K = Int[label[v] for v in clique]
+        sort!(K)
+        K in L.nbrs && continue
+        X = U[K]
+        haskey(st.index, X) && continue
+        hbt_add!(st, hbt_pmc(ctx, L, K, lmark, lcomp))
     end
 
     return
@@ -1341,7 +1394,7 @@ function hbt(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT) where {
         end
     end
 
-    ctx = HBTContext(bgraph, wgt, alg.alg, rng, alg.base, alg.ntry, alg.ninit, deadline; t0, verbose = alg.verbose, refined = alg.refined, merge = alg.merge, diversify = alg.diversify, dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, near = alg.near)
+    ctx = HBTContext(bgraph, wgt, alg.alg, rng, alg.base, alg.ntry, alg.ninit, deadline; t0, verbose = alg.verbose, refined = alg.refined, merge = alg.merge, diversify = alg.diversify, dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, near = alg.near, margin = alg.margin, pexact = alg.pexact)
     st = hbt_state(ctx, 0)
     alg.verbose && println("hbt: n = $n, initial width $(hbt_string(st.width)) at $(round(time() - t0; digits = 2)) s")
 

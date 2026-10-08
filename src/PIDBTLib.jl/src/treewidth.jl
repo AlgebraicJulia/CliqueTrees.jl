@@ -352,16 +352,15 @@ function _search!(s::Search{PSet}) where {PSet}
     end
 
     # --------- lines 5-27: main loop ----------
-    iter = 0
-
+    # The deadline is checked on every iteration, and every 64 combinations
+    # within one: a single iteration can combine τ with very many PTDURs, and
+    # on dense graphs 64 iterations can take long enough to exhaust memory.
     while true
         if isempty(s.P)
             _release_waiting!(s) || break
         end
 
-        iter += 1
-
-        if iszero(iter & 63) && isfinite(s.deadline) && time() > s.deadline
+        if isfinite(s.deadline) && time() > s.deadline
             return (Timeout, 0, PSet())
         end
 
@@ -385,7 +384,11 @@ function _search!(s::Search{PSet}) where {PSet}
         query!(s.results, s.sieve, R, S)
         s.effort += length(s.results)
 
-        for rho2 in s.results
+        for (i, rho2) in enumerate(s.results)
+            if iszero(i & 63) && isfinite(s.deadline) && time() > s.deadline
+                return (Timeout, 0, PSet())
+            end
+
             success, rho3, ispmc = add_ptd_to_ptdur_check(s.work, pool, rho2, tau, weights, graph, k)
             success || continue
             _add_to_u!(s, rho3) || continue

@@ -9,29 +9,98 @@ const ASR_DELETE = 0x04 # the vertex has been eliminated
 const ASR_CONNECTOR_BASE = 1 << 16
 const ASR_CONNECTOR_DEGREE = 1 << 12
 
-function pr5(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
-    weights0 = weights; graph0 = graph; width0 = width
-    n0 = nv(graph0); weights1 = Vector{W}(undef, n0)
+function pr5(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::Number) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
-    graph1, stack1, inject1, width1 = pr3(weights0, graph0, width0)
-    n1 = nv(graph1); m1 = n0 - n1
+    weight1 = FVector{W}(undef, n)
 
-    @inbounds for i in oneto(n1)
-        weights1[i] = weights0[inject1[i]]
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    marker = FVector{V}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
+    stack1 = FVector{V}(undef, n)
+    stack2 = FVector{V}(undef, n)
+    stack3 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    stack5 = FVector{V}(undef, n)
+    stack6 = FVector{V}(undef, n)
+    stack7 = FVector{V}(undef, n)
+    stack8 = FVector{V}(undef, n)
+    stack0 = FVector{V}(undef, n)
+    tmpptr = FVector{E}(undef, nn)
+
+    afillin = FVector{Int}(undef, n)
+    amarker = FVector{Int}(undef, n)
+    amarker2 = FVector{Int}(undef, n)
+    asource = FVector{V}(undef, m)
+    atarget = FVector{V}(undef, m)
+    abegptr = FVector{E}(undef, nn)
+    atmpptr = FVector{E}(undef, nn)
+    atgt = FVector{V}(undef, m)
+
+    return pr5_impl!(
+        degree, number, status, marker, source, target, begptr, endptr, invptr,
+        stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
+        afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt,
+        weight1, weights, graph, convert(W, width))
+end
+
+function pr5_impl!(
+        degree::AbstractVector{W}, number::AbstractVector{V}, status::AbstractVector{UInt8},
+        marker::AbstractVector{V}, source::AbstractVector{V}, target::AbstractVector{V},
+        begptr::AbstractVector{E}, endptr::AbstractVector{E}, invptr::AbstractVector{E},
+        stack1::AbstractVector{V}, stack2::AbstractVector{V}, stack3::AbstractVector{V},
+        stack4::AbstractVector{V}, stack5::AbstractVector{V}, stack6::AbstractVector{V},
+        stack7::AbstractVector{V}, stack8::AbstractVector{V}, stack0::AbstractVector{V},
+        tmpptr::AbstractVector{E},
+        afillin::AbstractVector{Int}, amarker::AbstractVector{Int}, amarker2::AbstractVector{Int},
+        asource::AbstractVector{V}, atarget::AbstractVector{V}, abegptr::AbstractVector{E},
+        atmpptr::AbstractVector{E}, atgt::AbstractVector{V},
+        weight1::AbstractVector{W}, weight::AbstractVector{W}, graph::AbstractGraph{V}, width::W,
+    ) where {W, V, E}
+    n0 = nv(graph)
+
+    totdeg = zero(W)
+
+    @inbounds for v in oneto(n0)
+        totdeg += weight[v]
     end
 
-    graph2, stack2, inject2, width2 = asr(weights1, graph1, width1)
+    graph1, stack, inject1, width1 = pr3_impl!(
+        weight, degree, number, status, marker, source, target, begptr,
+        endptr, invptr, stack1, stack2, stack3, stack4, stack5, stack6,
+        stack7, stack8, stack0, tmpptr, totdeg, width, graph)
+
+    n1 = nv(graph1); m1 = n0 - n1
+
+    totdeg1 = zero(W)
+
+    @inbounds for i in oneto(n1)
+        w = weight[inject1[i]]
+        weight1[i] = w; totdeg1 += w
+    end
+
+    graph2, astack, inject2, width2 = asr_impl!(
+        weight1, degree, number, afillin, status, amarker, amarker2, asource,
+        atarget, abegptr, endptr, invptr, stack1, stack2, stack3, stack5,
+        stack6, stack7, atmpptr, atgt, totdeg1, width1, graph1)
+
     n2 = nv(graph2); m2 = n1 - n2
 
     @inbounds for i in oneto(m2)
-        stack1[i + m1] = inject1[stack2[i]]
+        stack[i + m1] = inject1[astack[i]]
     end
 
     @inbounds for i in oneto(n2)
         inject2[i] = inject1[inject2[i]]
     end
 
-    return (graph2, stack1, inject2, width2)
+    return (graph2, stack, inject2, width2)
 end
 
 function asr(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}

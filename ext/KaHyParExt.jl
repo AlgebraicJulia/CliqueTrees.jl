@@ -3,7 +3,7 @@ module KaHyParExt
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc, compresstwins
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, connect!, hcompresspart, hseparator!, implicitarcs, implicitsplit!, popelements!, prepare!, quotientsplit!, sympermute!_impl!, twinfreelabel, nov, simplegraph, qcc, compresstwins
 using CliqueTrees.Utilities
 using Graphs
 
@@ -95,15 +95,52 @@ function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) wher
     return order
 end
 
+# Nested dissection on one global quotient graph (see dissection_algorithms.jl). A node
+# of the separator tree stores its clique cover (the hypergraph that KaHyPar
+# partitions, in which the separator S of each ancestor is a single clique),
+# its vertex set and its twin classes. A node is split without realizing its
+# graph G'[W] (see `implicitsplit!`); the graph is realized, compressed, only at
+# leaves and at postorders, and at most one realized graph is alive at a time.
 function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VINT2, EINT}, graph::BipartiteGraph{PINT, PINT}, label::BipartiteGraph{PINT, PINT}, alg::ND{S}) where {S}
     h = nov(hgraph); n = nv(graph); m = ne(graph); nn = n + one(PINT)
     maxlevel = convert(PINT, alg.level)
     minwidth = convert(WINT2, alg.width)
     imbalance = convert(PINT, alg.imbalance)
 
+    # the separators of the ancestors of the current node (a stack)
+    nelm = FScalar{PINT}(undef); nelm[] = zero(PINT)
+    elmptr = FVector{PINT}(undef, maxlevel + two(PINT)); elmptr[begin] = one(PINT)
+    pinvtx = Vector{PINT}(undef, n)
+    pinlvl = Vector{PINT}(undef, n)
+    pinnext = Vector{PINT}(undef, n)
+    pinhead = FVector{PINT}(undef, n)
+
+    # the realization of the current node
+    tag = FScalar{Int}(undef); tag[] = 0
+    stamp = FVector{Int}(undef, n)
+    vclass = FVector{PINT}(undef, n)
+    marker = FVector{PINT}(undef, max(n, maxlevel + two(PINT)))
+    mask = FVector{UInt64}(undef, n)
+    clsptr = FVector{PINT}(undef, maxlevel + two(PINT))
+    clstgt = Vector{PINT}(undef, n)
+    lblptr = FVector{PINT}(undef, nn)
+    lbltgt = FVector{PINT}(undef, n)
+    pointer = FVector{PINT}(undef, nn)
+    target = Vector{PINT}(undef, max(m, one(PINT)))
+
+    # the implicit split (it needs one bit per level)
+    implicit = maxlevel < 64
+    gtag = FScalar{Int}(undef); gtag[] = 0
+    gmark = FVector{Int}(undef, n)
+    gbuf = FVector{PINT}(undef, n)
+
+    @inbounds for v in oneto(n)
+        pinhead[v] = zero(PINT); stamp[v] = 0; gmark[v] = 0
+    end
+
     work00 = FScalar{WINT2}(undef)
-    work01 = Vector{PINT}(undef, m)
-    work02 = Vector{PINT}(undef, m)
+    work01 = Vector{PINT}(undef, half(m))
+    work02 = Vector{PINT}(undef, half(m))
     work03 = FVector{PINT}(undef, max(h, n))
     work04 = FVector{PINT}(undef, n)
     work05 = FVector{PINT}(undef, max(h, n))
@@ -127,141 +164,200 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     parts = FVector{PINT}[]
     orders = FVector{PINT}[]
 
+    HGraph = BipartiteGraph{VINT2, EINT, FVector{EINT}, FVector{VINT2}}
+
     nodes = Tuple{
-        BipartiteGraph{VINT2, EINT, FVector{EINT}, FVector{VINT2}}, # hgraph
-        BipartiteGraph{PINT, PINT, FVector{PINT}, FVector{PINT}},   # graph
-        FVector{PINT},                                              # weights
-        BipartiteGraph{PINT, PINT, FVector{PINT}, FVector{PINT}},   # label
-        FVector{PINT},                                              # clique
-        PINT,                                                       # level
+        HGraph,        # clique cover (empty at postorder)
+        FVector{PINT}, # vertex set
+        FVector{PINT}, # classes
+        PINT,          # number of classes
+        PINT,          # level (negative: postorder)
     }[]
 
-    clique = FVector{PINT}(undef, zero(PINT))
-    level = zero(PINT)
-    push!(nodes, (hgraph, graph, weights, label, clique, level))
+    nohgraph = BipartiteGraph{VINT2, EINT}(zero(VINT2), zero(VINT2), zero(EINT))
+    vertexset = FVector{PINT}(undef, n)
+    cls = FVector{PINT}(undef, n)
 
-    @inbounds while !isempty(nodes)
-        hgraph, graph, weights, label, clique, level = pop!(nodes)
-        n = nv(graph); m = ne(graph); l = ne(label); k = convert(PINT, length(clique))
-
-        if !isnegative(level) # unprocessed
-            isleaf = n <= minwidth || level >= maxlevel || m == n * (n - one(PINT))
-
-            if isleaf # leaf
-                push!(nodes, (hgraph, graph, weights, label, clique, -one(PINT)))
-            else      # branch
-                if m > length(work01)
-                    resize!(work01, half(m))
-                    resize!(work02, half(m))
-                end
-
-                part = FVector{PINT}(undef, n)
-                separator!(work00, work03, hwght, weights, hgraph, imbalance, alg.dis)
-
-                child0, child1, order2 = hpartition!(work00, work14, work04, work07, work08,
-                     work11, work12, work13, work09, work10, work01, work02, work15, work16,
-                     work05, work06, work03, part, weights, hgraph, graph)
-
-                push!(
-                    nodes,
-                    (hgraph, graph, weights, label, clique, -two(PINT)),
-                    (child0..., level + one(PINT)),
-                    (child1..., level + one(PINT)),
-                )
-
-                push!(parts, part)
-                push!(orders, order2)
-            end
-        else                  # processed
-            isleaf = isone(-level)
-            iscomplete = m == n * (n - one(PINT))
-
-            if iscomplete # complete graph
-                for v in oneto(n)
-                    work03[v] = v
-                end
-            else
-                tree = Parent(n, work06)
-                upper = BipartiteGraph(n, n, half(m), work09, work01)
-                lower = BipartiteGraph(n, n, half(m), work10, work02)
-
-                if isleaf # leaf
-                    order, index = permutation(weights, graph, alg.alg)
-                else      # branch
-                    part = pop!(parts)
-                    ndsorder = Vector{PINT}(undef, n)
-                    ndsindex = Vector{PINT}(undef, n)
-                    i = zero(PINT)
-
-                    for v in pop!(orders)
-                        if !istwo(part[v])
-                            ndsindex[v] = i += one(PINT)
-                            ndsorder[i] = v
-                        end
-                    end
-
-                    for v in pop!(orders)
-                        if !istwo(part[v])
-                            ndsindex[v] = i += one(PINT)
-                            ndsorder[i] = v
-                        end
-                    end
-
-                    for v in pop!(orders)
-                        ndsindex[v] = i += one(PINT)
-                        ndsorder[i] = v
-                    end
-
-                    if isone(S) || istwo(S)
-                        sets = UnionFind(n, work03, work04, work05)
-                        grdorder, grdindex = permutation(weights, graph, alg.alg)
-
-                        if isone(S)
-                            best = bestwidth_impl!(lower, upper, tree, sets, work07,
-                                work08, work11, work12, work13, work14, work15,
-                                work16, weights, graph, (ndsindex, grdindex))
-                        else
-                            best = bestfill_impl!(lower, upper, tree, sets, work07,
-                                work08, work11, work12, work13, work14, work15,
-                                work16, weights, graph, (ndsindex, grdindex))
-                        end
-
-                        order = (ndsorder, grdorder)[best]
-                        index = (ndsindex, grdindex)[best]
-                    else
-                        order, index = ndsorder, ndsindex
-                    end
-                end
-
-                sympermute!_impl!(upper, graph, index, Forward)
-
-                for i in oneto(k)
-                    clique[i] = index[clique[i]]
-                end
-
-                compositerotations_impl!(index, work03, work04,
-                    work05, lower, tree, upper, clique)
-
-                for v in oneto(n)
-                    i = index[v]; work03[i] = order[v]
-                end
-            end
-
-            j = zero(PINT); outorder = FVector{PINT}(undef, l)
-
-            for i in oneto(n)
-                v = work03[i]
-
-                for w in neighbors(label, v)
-                    j += one(PINT); outorder[j] = w
-                end
-            end
-
-            push!(orders, outorder)
-        end
+    @inbounds for v in oneto(n)
+        vertexset[v] = cls[v] = v
     end
 
-    return only(orders)
+    push!(nodes, (hgraph, vertexset, cls, n, zero(PINT)))
+
+    @inbounds while !isempty(nodes)
+        hgraph, vertexset, cls, nc, level = pop!(nodes)
+        unprocessed = !isnegative(level)
+        curlevel = unprocessed ? level : -level - one(PINT)
+
+        popelements!(nelm, elmptr, pinvtx, pinnext, pinhead, curlevel)
+
+        cmpweights, cmplabel = prepare!(tag, stamp, vclass, marker, mask, clsptr,
+            clstgt, lblptr, lbltgt, nelm, elmptr, pinlvl, pinnext, pinhead,
+            weights, vertexset, cls, nc, curlevel, graph)
+
+        # a node is split without realizing its graph
+        if implicit && unprocessed
+            n = nc
+
+            m = implicitarcs(gtag, gmark, gbuf, tag, stamp, vclass, mask, lblptr,
+                lbltgt, graph, nc)
+        else
+            cmpgraph, clique = connect!(tag, stamp, vclass, marker, clsptr, clstgt,
+                lblptr, lbltgt, pointer, target, elmptr, pinvtx, pinlvl, pinnext,
+                pinhead, nc, curlevel, graph)
+
+            n = nv(cmpgraph); m = ne(cmpgraph)
+        end
+
+        iscomplete = m == n * (n - one(PINT))
+
+        # a leaf is processed as soon as it is reached
+        isleaf = unprocessed
+
+        if unprocessed && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
+            part = FVector{PINT}(undef, n)
+            separator!(work00, work03, hwght, cmpweights, hgraph, imbalance, alg.dis)
+            h0, h1 = hseparator!(work05, work06, work03, part, hgraph)
+
+            if implicit
+                child0, child1, order2 = implicitsplit!(work04, work09, work10, work11,
+                    work12, work13, work14, work15, work16, gtag, gmark, gbuf, tag, stamp,
+                    vclass, mask, clsptr, clstgt, lblptr, lbltgt, nelm, elmptr, pinvtx,
+                    pinlvl, pinnext, pinhead, vertexset, cls, part, nc, level, graph)
+            else
+                child0, child1, order2 = quotientsplit!(work04, work09, work10, work11,
+                    work12, work13, work14, work15, work16, nelm, elmptr, pinvtx, pinlvl,
+                    pinnext, pinhead, vertexset, cls, part, level, cmpgraph)
+            end
+
+            label0, clique0 = twinfreelabel(work15, part, zero(PINT), child0[3], n)
+            label1, clique1 = twinfreelabel(work16, part, one(PINT), child1[3], n)
+
+            htag = one(PINT)
+            hgraph0, htag = hcompresspart(h0, htag, hgraph, work05, work03, label0, clique0)
+            hgraph1, htag = hcompresspart(h1, htag, hgraph, work06, work03, label1, clique1)
+
+            push!(
+                nodes,
+                (nohgraph, vertexset, cls, nc, -level - one(PINT)),
+                (hgraph0, child0..., level + one(PINT)),
+                (hgraph1, child1..., level + one(PINT)),
+            )
+
+            push!(parts, part)
+            push!(orders, order2)
+            continue
+        end
+
+        if implicit && unprocessed # a leaf needs its graph after all
+            cmpgraph, clique = connect!(tag, stamp, vclass, marker, clsptr, clstgt,
+                lblptr, lbltgt, pointer, target, elmptr, pinvtx, pinlvl, pinnext,
+                pinhead, nc, curlevel, graph)
+        end
+
+        k = convert(PINT, length(clique))
+
+        if half(m) > length(work01)
+            resize!(work01, half(m))
+            resize!(work02, half(m))
+        end
+
+        if iscomplete # complete graph
+            for v in oneto(n)
+                work03[v] = v
+            end
+        else
+            tree = Parent(n, work06)
+            upper = BipartiteGraph(n, n, half(m), work09, work01)
+            lower = BipartiteGraph(n, n, half(m), work10, work02)
+
+            if isleaf # leaf
+                order, index = permutation(cmpweights, cmpgraph, alg.alg)
+            else      # branch
+                part = pop!(parts)
+                ndsorder = Vector{PINT}(undef, n)
+                ndsindex = Vector{PINT}(undef, n)
+                i = zero(PINT)
+
+                # the children's orders list vertices of the
+                # quotient graph: read each class at its first vertex
+                seen = marker
+
+                for c in oneto(n)
+                    seen[c] = zero(PINT)
+                end
+
+                for pass in oneto(two(PINT))
+                    for v in pop!(orders)
+                        c = vclass[v]
+
+                        if !istwo(part[c]) && seen[c] != pass
+                            seen[c] = pass
+                            ndsindex[c] = i += one(PINT)
+                            ndsorder[i] = c
+                        end
+                    end
+                end
+
+                for c in pop!(orders)
+                    ndsindex[c] = i += one(PINT)
+                    ndsorder[i] = c
+                end
+
+                if isone(S) || istwo(S)
+                    sets = UnionFind(n, work03, work04, work05)
+                    grdorder, grdindex = permutation(cmpweights, cmpgraph, alg.alg)
+
+                    if isone(S)
+                        best = bestwidth_impl!(lower, upper, tree, sets, work07,
+                            work08, work11, work12, work13, work14, work15,
+                            work16, cmpweights, cmpgraph, (ndsindex, grdindex))
+                    else
+                        best = bestfill_impl!(lower, upper, tree, sets, work07,
+                            work08, work11, work12, work13, work14, work15,
+                            work16, cmpweights, cmpgraph, (ndsindex, grdindex))
+                    end
+
+                    order = (ndsorder, grdorder)[best]
+                    index = (ndsindex, grdindex)[best]
+                else
+                    order, index = ndsorder, ndsindex
+                end
+            end
+
+            sympermute!_impl!(upper, cmpgraph, index, Forward)
+
+            for i in oneto(k)
+                clique[i] = index[clique[i]]
+            end
+
+            compositerotations_impl!(index, work03, work04,
+                work05, lower, tree, upper, clique)
+
+            for v in oneto(n)
+                i = index[v]; work03[i] = order[v]
+            end
+        end
+
+        j = zero(PINT); outorder = FVector{PINT}(undef, ne(cmplabel))
+
+        for i in oneto(n)
+            for v in neighbors(cmplabel, work03[i])
+                j += one(PINT); outorder[j] = v
+            end
+        end
+
+        push!(orders, outorder)
+    end
+
+    # expand the vertices of the twin-free graph
+    j = zero(PINT); result = FVector{PINT}(undef, ne(label))
+
+    @inbounds for v in only(orders), w in neighbors(label, v)
+        j += one(PINT); result[j] = w
+    end
+
+    return result
 end
 
 end

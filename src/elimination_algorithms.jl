@@ -571,7 +571,7 @@ end
 """
     HBT{A, L} <: EliminationAlgorithm
 
-    HBT(; time=10.0, seed=1, alg=AMF(), lb=MMW(), kwargs...)
+    HBT(; time=10.0, seed=1, alg=MF(; strategy=1), lb=MMW(), kwargs...)
 
 The heuristic Bouchitte-Todinca algorithm: an anytime heuristic for small-width tree decompositions.
 
@@ -595,15 +595,20 @@ or the width reaches the lower bound computed by `lb`. Vertex weights are trunca
 
   - `time`: time budget in seconds
   - `seed`: random seed
-  - `alg`: elimination algorithm used for greedy triangulations (made minimal with [`MinimalChordal`](@ref))
+  - `alg`: elimination algorithm used for greedy triangulations (made minimal with [`MinimalChordal`](@ref));
+    the default is minimum average fill, as in the reference implementation
   - `lb`: lower bound algorithm or lower bound (used as a stopping criterion)
   - `ninit`: number of randomized greedy triangulations used to seed each solution
   - `base`: local graphs with at most this many vertices are triangulated exactly
+  - `margin`: local graphs around a bag with b vertices are also triangulated exactly if they have
+    at most b + `margin` vertices
+  - `pexact`: probability that a diversified region is drawn from just above the size of its bag
+    (at most `margin` more vertices), where exact triangulation is fast
   - `ntry`: number of local graphs triangulated per merge
   - `refined`: measure progress by refined widths
   - `merge`: use merging
   - `diversify`: use diversification
-  - `dsize`: maximum size of a diversified region (sizes are drawn log-uniformly)
+  - `dsize`: maximum size of a diversified region (other sizes are drawn log-uniformly)
   - `nsep`: number of separators tried per diversification
   - `near`: diversification works around a bag of the largest weight k with probability 1/2,
     of weight k - 1 with probability 1/4, and so on down to k - `near`
@@ -639,7 +644,7 @@ julia> treewidth(graph; alg=HBT(; time=1.0))
 @kwdef struct HBT{A <: EliminationAlgorithm, L <: WidthOrAlgorithm} <: EliminationAlgorithm
     time::Float64 = 10.0
     seed::Int = 1
-    alg::A = DEFAULT_ELIMINATION_ALGORITHM
+    alg::A = MF(; strategy = 1)
     lb::L = DEFAULT_LOWER_BOUND_ALGORITHM
     ninit::Int = 10
     base::Int = 60
@@ -652,6 +657,8 @@ julia> treewidth(graph; alg=HBT(; time=1.0))
     patience::Int = 100
     xtime::Float64 = 0.5
     near::Int = 3
+    margin::Int = 40
+    pexact::Float64 = 0.5
     verbose::Bool = false
 end
 
@@ -2501,7 +2508,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L}) where {A, L}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "HBT{$A, $L}:")
 
-    for name in (:time, :seed, :ninit, :base, :ntry, :refined, :merge, :diversify, :dsize, :nsep, :near, :patience, :xtime)
+    for name in (:time, :seed, :ninit, :base, :ntry, :refined, :merge, :diversify, :dsize, :nsep, :near, :patience, :xtime, :margin, :pexact)
         println(io, " "^indent * "    $name: $(getfield(alg, name))")
     end
 

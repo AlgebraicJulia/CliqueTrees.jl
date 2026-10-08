@@ -53,33 +53,22 @@ function KaHyParND(order::Ordering = Forward; beta::Number = 1.0)
     return KaHyParND(order, beta)
 end
 
-function hpartition!(
-        work00::AbstractScalar{V},
-        work01::AbstractVector{V},
-        work02::AbstractVector{V},
-        work03::AbstractVector{V},
-        work04::AbstractVector{V},
-        work05::AbstractVector{V},
-        work06::AbstractVector{V},
-        work07::AbstractVector{V},
-        work08::AbstractVector{E},
-        work09::AbstractVector{E},
-        work10::AbstractVector{V},
-        work11::AbstractVector{V},
-        work12::AbstractVector{V},
-        work13::AbstractVector{V},
+# Turn a bipartition `hpart` of the cliques of a clique cover into a vertex
+# separator of the covered graph: a vertex is in A (part 0) or B (part 1) if
+# all of its cliques lie on that side, and in S (part 2) if they lie on both.
+# The cliques of each side are numbered 2, 3, ... in `hproject0` and
+# `hproject1`; number 1 is left for S, which is a clique of both children.
+# Returns the number of cliques of each child, counting S.
+function hseparator!(
         hproject0::AbstractVector{V},
         hproject1::AbstractVector{V},
-        hpart::AbstractVector{V},
+        hpart::AbstractVector,
         part::AbstractVector{V},
-        weights::AbstractVector{W},
-        hgraph::AbstractGraph{HV},
-        graph::AbstractGraph{V},
-    ) where {W, V, E, HV}
+        hgraph::AbstractGraph,
+    ) where {V}
     @assert nov(hgraph) <= length(hproject0)
     @assert nov(hgraph) <= length(hproject1)
     @assert nv(hgraph) <= length(part)
-    @assert nv(hgraph) == nv(graph)
 
     h0 = one(V)
     h1 = one(V)
@@ -97,7 +86,7 @@ function hpartition!(
     end
 
     # V = W ∪ B
-    for v in vertices(graph)
+    for v in vertices(hgraph)
         vv = three(V)
 
         for hv in neighbors(hgraph, v)
@@ -125,22 +114,7 @@ function hpartition!(
         part[v] = vv
     end
 
-    child0, child1, label2 = twinfreepartition!(work00, work01, work02, work03, work04,
-        work05, work06, work07, work08, work09, work10, work11, work12, work13,
-        part, weights, graph)
-
-    graph0, weights0, label0, clique0 = child0
-    graph1, weights1, label1, clique1 = child1
-
-    tag = one(V)
-
-    hgraph0, tag = hcompresspart(h0, tag, hgraph, hproject0, hpart, label0, clique0)
-    hgraph1, tag = hcompresspart(h1, tag, hgraph, hproject1, hpart, label1, clique1)
-
-    hchild0 = (hgraph0, graph0, weights0, label0, clique0)
-    hchild1 = (hgraph1, graph1, weights1, label1, clique1)
-
-    return hchild0, hchild1, label2
+    return h0, h1
 end
 
 # Merge the twins of a simple graph. If there are none, return the graph
@@ -175,6 +149,84 @@ function compresstwins(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}) 
     return cmpgraph, cmpweights, project
 end
 
+# The separator S = { v : part[v] = 2 } of a twin-free graph, together with
+#
+#     count[v] = | N(v) ∩ S |
+#
+# and, for each x ∈ S, the size and checksum of N(x) ∩ A (side 0) and N(x) ∩ B
+# (side 1): the keys of S in the two children.
+function twinfreekeys!(
+        count::AbstractVector{V},
+        degree0::AbstractVector{V},
+        degree1::AbstractVector{V},
+        part::AbstractVector{V},
+        graph::AbstractGraph{V},
+    ) where {V}
+    @assert nv(graph) <= length(count)
+    @assert nv(graph) <= length(part)
+
+    # S = W ∩ B
+    n2 = zero(V)
+
+    @inbounds for v in vertices(graph)
+        if istwo(part[v])
+            n2 += one(V)
+        end
+    end
+
+    @assert n2 <= length(degree0)
+    @assert n2 <= length(degree1)
+    label2 = FVector{V}(undef, n2); t2 = zero(V)
+
+    @inbounds for v in vertices(graph)
+        if istwo(part[v])
+            t2 += one(V); label2[t2] = v
+        end
+    end
+
+    @inbounds for v in vertices(graph)
+        count[v] = zero(V)
+    end
+
+    checksum0 = FVector{UInt64}(undef, n2)
+    checksum1 = FVector{UInt64}(undef, n2)
+
+    @inbounds for i in oneto(n2)
+        x = label2[i]
+        d0 = zero(V); h0 = zero(UInt64)
+        d1 = zero(V); h1 = zero(UInt64)
+
+        for w in neighbors(graph, x)
+            count[w] += one(V); pw = part[w]
+
+            if iszero(pw)    # w ∈ W - B
+                d0 += one(V); h0 += twinhash(w)
+            elseif isone(pw) # w ∈ B - W
+                d1 += one(V); h1 += twinhash(w)
+            end
+        end
+
+        degree0[i] = d0; checksum0[i] = h0
+        degree1[i] = d1; checksum1[i] = h1
+    end
+
+    return label2, checksum0, checksum1
+end
+
+# splitmix64 finalizer
+@inline function twinhash(v::Integer)
+    x = convert(UInt64, v) * 0x9e3779b97f4a7c15
+    x = (x ⊻ (x >> 30)) * 0xbf58476d1ce4e5b9
+    x = (x ⊻ (x >> 27)) * 0x94d049bb133111eb
+    return x ⊻ (x >> 31)
+end
+
+# v ∈ S ∪ A*, where A* = { u on `side` : S ⊆ N(u) }
+@inline function twinfreeinx(v::V, side::V, n2::V, part::AbstractVector{V}, count::AbstractVector{V}) where {V}
+    @inbounds pv = part[v]
+    return istwo(pv) || (pv == side && ispositive(n2) && @inbounds count[v] == n2)
+end
+
 # Split a twin-free graph G, i.e. a graph in which no two vertices have the
 # same closed neighborhood, along a vertex separator, and compress the two
 # children. The children are again twin-free, so the input graph only needs
@@ -203,119 +255,17 @@ end
 # We group S ∪ A* by the size and checksum of each key, confirm each group
 # exactly with a marker, and then build the quotient graph directly from G.
 # The keys of S for both children are read in a single pass over N(S).
-function twinfreepartition!(
-        work0::AbstractScalar{V},
-        work1::AbstractVector{V},
-        work2::AbstractVector{V},
-        work3::AbstractVector{V},
-        work4::AbstractVector{V},
-        work5::AbstractVector{V},
-        label0::AbstractVector{V},
-        label1::AbstractVector{V},
-        pointer0::AbstractVector{E},
-        pointer1::AbstractVector{E},
-        target0::AbstractVector{V},
-        target1::AbstractVector{V},
-        project0::AbstractVector{V},
-        project1::AbstractVector{V},
-        part::AbstractVector{V},
-        weights::AbstractVector{W},
-        graph::AbstractGraph{V},
-    ) where {W, V, E}
-    @assert nv(graph) <= length(work1)
-    @assert nv(graph) <= length(work2)
-    @assert nv(graph) <= length(work3)
-    @assert nv(graph) <= length(work4)
-    @assert nv(graph) <= length(work5)
-    @assert nv(graph) <= length(label0)
-    @assert nv(graph) <= length(label1)
-    @assert nv(graph) <= length(part)
-    @assert nv(graph) <= length(project0)
-    @assert nv(graph) <= length(project1)
-    @assert nv(graph) <= length(weights)
 
-    # S = W ∩ B
-    n2 = zero(V)
-
-    @inbounds for v in vertices(graph)
-        if istwo(part[v])
-            n2 += one(V)
-        end
-    end
-
-    label2 = FVector{V}(undef, n2); t2 = zero(V)
-
-    @inbounds for v in vertices(graph)
-        if istwo(part[v])
-            t2 += one(V); label2[t2] = v
-        end
-    end
-
-    # count[v] = | N(v) ∩ S |
-    count = project1
-
-    @inbounds for v in vertices(graph)
-        count[v] = zero(V)
-    end
-
-    # keys of S in both children: sizes and checksums
-    degree0 = work2; checksum0 = FVector{UInt64}(undef, n2)
-    degree1 = label1; checksum1 = FVector{UInt64}(undef, n2)
-
-    @inbounds for i in oneto(n2)
-        x = label2[i]
-        d0 = zero(V); h0 = zero(UInt64)
-        d1 = zero(V); h1 = zero(UInt64)
-
-        for w in neighbors(graph, x)
-            count[w] += one(V); pw = part[w]
-
-            if iszero(pw)    # w ∈ W - B
-                d0 += one(V); h0 += twinhash(w)
-            elseif isone(pw) # w ∈ B - W
-                d1 += one(V); h1 += twinhash(w)
-            end
-        end
-
-        degree0[i] = d0; checksum0[i] = h0
-        degree1[i] = d1; checksum1[i] = h1
-    end
-
-    child0 = twinfreechild!(work1, work3, work4, work5, label0, project0,
-        degree0, checksum0, count, label2, zero(V), part, weights, graph)
-
-    child1 = twinfreechild!(work1, work3, work4, work5, label0, project0,
-        degree1, checksum1, count, label2, one(V), part, weights, graph)
-
-    # the caller relies on `target0` and `target1`
-    # being long enough to hold the arcs of either child
-    m01 = max(ne(first(child0)), ne(first(child1)))
-
-    if m01 > length(target0)
-        resize!(target0, m01)
-    end
-
-    if m01 > length(target1)
-        resize!(target1, m01)
-    end
-
-    return child0, child1, label2
-end
-
-# splitmix64 finalizer
-@inline function twinhash(v::Integer)
-    x = convert(UInt64, v) * 0x9e3779b97f4a7c15
-    x = (x ⊻ (x >> 30)) * 0xbf58476d1ce4e5b9
-    x = (x ⊻ (x >> 27)) * 0x94d049bb133111eb
-    return x ⊻ (x >> 31)
-end
-
-function twinfreechild!(
+# The twin classes of a child of a twin-free graph (steps 1–3 below), without
+# building the child. On return, `project` maps every vertex v of the child
+# (part[v] ∈ {side, 2}) to its class, the classes are numbered by their first
+# vertex, `xrep[u]` is the first vertex of class u, and `class`/`size` describe
+# the classes of S ∪ A*. Returns the number of classes and of vertices.
+function twinfreeclasses!(
         mark::AbstractVector{V},
         class::AbstractVector{V},
         size::AbstractVector{V},
         xrep::AbstractVector{V},
-        marker::AbstractVector{V},
         project::AbstractVector{V},
         sdegree::AbstractVector{V},
         schecksum::AbstractVector{UInt64},
@@ -323,17 +273,17 @@ function twinfreechild!(
         label2::AbstractVector{V},
         side::V,
         part::AbstractVector{V},
-        weights::AbstractVector{W},
         graph::AbstractGraph{V},
-    ) where {W, V}
+    ) where {V}
+    @assert nv(graph) <= length(mark)
+    @assert nv(graph) <= length(class)
+    @assert nv(graph) <= length(size)
+    @assert nv(graph) <= length(xrep)
+    @assert nv(graph) <= length(project)
     n = nv(graph); n2 = convert(V, length(label2))
-    E = etype(graph)
 
     # v ∈ S ∪ A*
-    @inline function inx(v::V)
-        @inbounds pv = part[v]
-        return istwo(pv) || (pv == side && ispositive(n2) && @inbounds count[v] == n2)
-    end
+    @inline inx(v::V) = twinfreeinx(v, side, n2, part, count)
 
     ##############################
     # 1. X = S ∪ A* and its keys #
@@ -478,116 +428,7 @@ function twinfreechild!(
         end
     end
 
-    nncmp = ncmp + one(V)
-    prjptr = FVector{V}(undef, nncmp)
-    prjtgt = FVector{V}(undef, nsub)
-    cmpweights = FVector{W}(undef, ncmp)
-    cursor = marker
-
-    @inbounds prjptr[begin] = q = one(V)
-
-    @inbounds for u in oneto(ncmp)
-        r = xrep[u]
-        s = inx(r) ? size[class[r]] : one(V)
-        cursor[u] = q
-        prjptr[u + one(V)] = q += s
-        cmpweights[u] = zero(W)
-    end
-
-    @inbounds for v in vertices(graph)
-        pv = part[v]
-
-        if pv == side || istwo(pv)
-            u = project[v]
-            prjtgt[cursor[u]] = v; cursor[u] += one(V)
-            cmpweights[u] += weights[v]
-        end
-    end
-
-    cmplabel = BipartiteGraph(convert(V, n), ncmp, nsub, prjptr, prjtgt)
-
-    # classes containing a separator vertex
-    flag = marker; kcmp = zero(V)
-
-    @inbounds for u in oneto(ncmp)
-        flag[u] = zero(V)
-    end
-
-    @inbounds for x in label2
-        u = project[x]
-
-        if iszero(flag[u])
-            flag[u] = one(V); kcmp += one(V)
-        end
-    end
-
-    cmpclique = FVector{V}(undef, kcmp); kcmp = zero(V)
-
-    @inbounds for u in oneto(ncmp)
-        if isone(flag[u])
-            kcmp += one(V); cmpclique[kcmp] = u
-        end
-    end
-
-    ##################################
-    # 4. build the quotient directly #
-    ##################################
-
-    mcmp = zero(E)
-
-    @inbounds for u in oneto(ncmp)
-        r = xrep[u]
-
-        if istwo(part[r]) # N₀[r] = (N(r) ∩ A) ∪ S
-            mcmp += convert(E, outdegree(graph, r) - count[r] + kcmp)
-        else              # N₀[r] = N[r]
-            mcmp += convert(E, outdegree(graph, r))
-        end
-    end
-
-    cmpptr = FVector{E}(undef, nncmp)
-    cmptgt = FVector{V}(undef, mcmp)
-
-    @inbounds for u in oneto(ncmp)
-        marker[u] = zero(V)
-    end
-
-    @inbounds cmpptr[begin] = p = one(E)
-
-    @inbounds for u in oneto(ncmp)
-        r = xrep[u]; marker[u] = u
-
-        if istwo(part[r])
-            for w in neighbors(graph, r)
-                if part[w] == side
-                    t = project[w]
-
-                    if marker[t] != u
-                        marker[t] = u; cmptgt[p] = t; p += one(E)
-                    end
-                end
-            end
-
-            for t in cmpclique
-                if marker[t] != u
-                    marker[t] = u; cmptgt[p] = t; p += one(E)
-                end
-            end
-        else
-            for w in neighbors(graph, r)
-                t = project[w]
-
-                if marker[t] != u
-                    marker[t] = u; cmptgt[p] = t; p += one(E)
-                end
-            end
-        end
-
-        cmpptr[u + one(V)] = p
-    end
-
-    cmpgraph = BipartiteGraph(ncmp, ncmp, p - one(E), cmpptr, cmptgt)
-    return (cmpgraph, cmpweights, cmplabel, cmpclique)
+    return ncmp, nsub
 end
 
 function hcompresspart(
@@ -828,3 +669,1040 @@ end
 The default dissection algorithm.
 """
 const DEFAULT_DISSECTION_ALGORITHM = METISND()
+
+# Nested dissection on one global quotient graph.
+#
+# The dissection stores, once, a twin-free graph G, together with the
+# separators of the ancestors of the node being processed: a stack of
+# elements, one per level. A subproblem is a sorted list W of vertices of G,
+# together with its twin classes. Its graph is
+#
+#     G'[W] = G[W] + Σ K(e ∩ W),
+#
+# where the sum ranges over the separators e on the stack. It is realized on
+# demand, already compressed (one vertex per twin class), into buffers that
+# are reused by the next realization. Before a node at level L is processed,
+# the stack is cut back to its first L separators: the separators of the
+# node's ancestors.
+#
+# The children of a node are numbered and compressed by `twinfreeclasses!`, so
+# that every realized graph is twin-free, and the classes of a child are unions
+# of classes of its parent.
+#
+# The state of the dissection is a collection of arrays and scalars, owned
+# by the caller and passed to every routine.
+#
+#   - separators of the ancestors (a stack):
+#     - `nelm`: number of separators on the stack
+#     - `elmptr`: the members of the separator of the level-(l - 1) ancestor
+#       are `pinvtx[elmptr[l]:elmptr[l + 1] - 1]`
+#     - `pinvtx`: members of the separators, in stack order
+#     - `pinlvl`: level of the separator of each member
+#     - `pinnext`: the next (older) entry of the same vertex, or 0
+#     - `pinhead`: the newest entry of each vertex, or 0
+#   - realization of the current subproblem (W, cls):
+#     - `tag`: a running marker tag
+#     - `stamp`: `stamp[v] = tag` if and only if v ∈ W
+#     - `vclass`: the class of each v ∈ W
+#     - `mask`: bit l of `mask[c]` is set if and only if the first vertex of
+#       class c lies in the separator of the level-l ancestor
+#     - `clsptr`, `clstgt`: the classes whose first vertex lies in the separator
+#       of the level-(l - 1) ancestor are `clstgt[clsptr[l]:clsptr[l + 1] - 1]`,
+#       in increasing order
+#     - `lblptr`, `lbltgt`: the vertices of class c are
+#       `lbltgt[lblptr[c]:lblptr[c + 1] - 1]`, in increasing order
+#     - `pointer`, `target`: the realized graph
+#     - `marker`: marker array
+#
+# The arrays `elmptr` and `clsptr` have length maxlevel + 2, `marker` has
+# length max(n, maxlevel + 2), `pointer` and `lblptr` have length n + 1, and
+# the other arrays over vertices or classes have length n. The arrays `pinvtx`,
+# `pinlvl`, `pinnext`, `clstgt`, and `target` grow as needed.
+
+# Cut the stack back to its first `level` separators.
+function popelements!(
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::AbstractVector{V},
+        pinnext::AbstractVector{V},
+        pinhead::AbstractVector{V},
+        level::V,
+    ) where {V}
+    @inbounds if nelm[] > level
+        pstart = elmptr[level + one(V)]
+        pstop = elmptr[nelm[] + one(V)] - one(V)
+
+        # the newest entry of each vertex is on top
+        for p in pstop:-one(V):pstart
+            pinhead[pinvtx[p]] = pinnext[p]
+        end
+
+        nelm[] = level
+    end
+
+    return
+end
+
+# Push the separator `members` of a node at `level` (= `nelm`).
+function pushelement!(
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::Vector{V},
+        pinlvl::Vector{V},
+        pinnext::Vector{V},
+        pinhead::AbstractVector{V},
+        members::AbstractVector{V},
+        level::V,
+    ) where {V}
+    @assert nelm[] == level
+    @assert level + two(V) <= length(elmptr)
+    @inbounds p = elmptr[level + one(V)] - one(V)
+    q = p + convert(V, length(members))
+
+    if q > length(pinvtx)
+        len = max(q, twice(length(pinvtx)))
+        resize!(pinvtx, len)
+        resize!(pinlvl, len)
+        resize!(pinnext, len)
+    end
+
+    @inbounds for v in members
+        p += one(V)
+        pinvtx[p] = v
+        pinlvl[p] = level
+        pinnext[p] = pinhead[v]
+        pinhead[v] = p
+    end
+
+    @inbounds elmptr[level + two(V)] = p + one(V)
+    nelm[] = level + one(V)
+    return
+end
+
+# Steps 1 and 2 of `realize!`: the classes of W (weights, vertices, masks, and
+# their lists per separator), without their neighborhoods. The stack must hold
+# the separators of the ancestors of the subproblem, `level` of them.
+function prepare!(
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        marker::AbstractVector{V},
+        mask::AbstractVector{UInt64},
+        clsptr::AbstractVector{V},
+        clstgt::Vector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinlvl::AbstractVector{V},
+        pinnext::AbstractVector{V},
+        pinhead::AbstractVector{V},
+        weights::AbstractVector{W},
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        nc::V,
+        level::V,
+        graph::AbstractGraph{V},
+    ) where {W, V}
+    @assert nelm[] == level
+    @assert level + one(V) <= length(clsptr)
+    @assert nc <= length(mask)
+    n = convert(V, length(vertexset)); t = tag[] += 1
+
+    ###########################
+    # 1. the twin classes of W #
+    ###########################
+
+    cmpweights = FVector{W}(undef, nc)
+
+    @inbounds for c in oneto(nc)
+        cmpweights[c] = zero(W); lblptr[c + one(V)] = zero(V)
+    end
+
+    @inbounds for i in oneto(n)
+        v = vertexset[i]; c = cls[i]
+        stamp[v] = t; vclass[v] = c
+        lblptr[c + one(V)] += one(V); cmpweights[c] += weights[v]
+    end
+
+    @inbounds lblptr[begin] = one(V)
+
+    @inbounds for c in oneto(nc)
+        lblptr[c + one(V)] += lblptr[c]
+        marker[c] = lblptr[c]
+    end
+
+    @inbounds for i in oneto(n)
+        c = cls[i]; lbltgt[marker[c]] = vertexset[i]; marker[c] += one(V)
+    end
+
+    label = BipartiteGraph(convert(V, nv(graph)), nc, n, lblptr, lbltgt)
+
+    #######################################################
+    # 2. the separators on the stack, as lists of classes #
+    #######################################################
+
+    @inbounds npin = elmptr[level + one(V)] - one(V)
+
+    if npin > length(clstgt)
+        resize!(clstgt, npin)
+    end
+
+    @inbounds for l in oneto(level + one(V))
+        clsptr[l] = zero(V)
+    end
+
+    @inbounds for c in oneto(nc)
+        p = pinhead[lbltgt[lblptr[c]]]; μ = zero(UInt64)
+
+        while ispositive(p)
+            l = pinlvl[p]; μ |= one(UInt64) << l
+            clsptr[l + two(V)] += one(V)
+            p = pinnext[p]
+        end
+
+        mask[c] = μ
+    end
+
+    @inbounds clsptr[begin] = one(V)
+
+    @inbounds for l in oneto(level)
+        clsptr[l + one(V)] += clsptr[l]
+        marker[l] = clsptr[l]
+    end
+
+    @inbounds for c in oneto(nc)
+        p = pinhead[lbltgt[lblptr[c]]]
+
+        while ispositive(p)
+            l = pinlvl[p] + one(V)
+            clstgt[marker[l]] = c; marker[l] += one(V)
+            p = pinnext[p]
+        end
+    end
+
+    return cmpweights, label
+end
+
+# Steps 3 and 4 of `realize!`, after `prepare!`.
+function connect!(
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        marker::AbstractVector{V},
+        clsptr::AbstractVector{V},
+        clstgt::AbstractVector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        pointer::AbstractVector{V},
+        target::Vector{V},
+        elmptr::AbstractVector{V},
+        pinvtx::AbstractVector{V},
+        pinlvl::AbstractVector{V},
+        pinnext::AbstractVector{V},
+        pinhead::AbstractVector{V},
+        nc::V,
+        level::V,
+        graph::AbstractGraph{V},
+    ) where {V}
+    @assert nc < length(pointer)
+    t = tag[]
+
+    ##################################
+    # 3. the neighborhoods of classes #
+    ##################################
+
+    @inbounds for c in oneto(nc)
+        marker[c] = zero(V)
+    end
+
+    @inbounds pointer[begin] = p = one(V)
+
+    @inbounds for c in oneto(nc)
+        v = lbltgt[lblptr[c]]; marker[c] = c
+
+        for w in neighbors(graph, v)
+            if stamp[w] == t
+                u = vclass[w]
+
+                if marker[u] != c
+                    marker[u] = c
+
+                    if p > length(target)
+                        resize!(target, twice(length(target)))
+                    end
+
+                    target[p] = u; p += one(V)
+                end
+            end
+        end
+
+        q = pinhead[v]
+
+        while ispositive(q)
+            l = pinlvl[q] + one(V)
+            rstart = clsptr[l]; rstop = clsptr[l + one(V)] - one(V)
+
+            if p + (rstop - rstart) >= length(target)
+                resize!(target, twice(length(target)) + rstop - rstart + one(V))
+            end
+
+            for r in rstart:rstop
+                u = clstgt[r]
+
+                if marker[u] != c
+                    marker[u] = c; target[p] = u; p += one(V)
+                end
+            end
+
+            q = pinnext[q]
+        end
+
+        pointer[c + one(V)] = p
+    end
+
+    cmpgraph = BipartiteGraph(nc, nc, p - one(V), pointer, target)
+
+    #####################################################
+    # 4. the classes meeting the parent's separator, S #
+    #####################################################
+
+    k = zero(V)
+
+    if ispositive(level)
+        @inbounds for c in oneto(nc)
+            marker[c] = zero(V)
+        end
+
+        @inbounds for q in elmptr[level]:(elmptr[level + one(V)] - one(V))
+            u = vclass[pinvtx[q]]
+
+            if iszero(marker[u])
+                marker[u] = one(V); k += one(V)
+            end
+        end
+    end
+
+    clique = FVector{V}(undef, k); k = zero(V)
+
+    if ispositive(level)
+        @inbounds for c in oneto(nc)
+            if isone(marker[c])
+                k += one(V); clique[k] = c
+            end
+        end
+    end
+
+    return cmpgraph, clique
+end
+
+# Realize the compressed graph of the subproblem (W, cls) at level `level`:
+#
+#   - `graph`:   one vertex per twin class; the neighborhood of a class is the
+#                closed neighborhood of its first vertex in G'[W]
+#   - `weights`: the total weight of each class
+#   - `label`:   the vertices of each class, in increasing order
+#   - `clique`:  the classes meeting the parent's separator, in increasing order
+#
+# The classes whose first vertex lies in a separator e suffice to realize
+# K(e ∩ W): if a class meets e only through a later vertex, then its first
+# vertex is adjacent to every vertex of e ∩ W through some other edge of
+# G'[W], since the vertices of a class have the same closed neighborhood.
+function realize!(
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        marker::AbstractVector{V},
+        mask::AbstractVector{UInt64},
+        clsptr::AbstractVector{V},
+        clstgt::Vector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        pointer::AbstractVector{V},
+        target::Vector{V},
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::AbstractVector{V},
+        pinlvl::AbstractVector{V},
+        pinnext::AbstractVector{V},
+        pinhead::AbstractVector{V},
+        weights::AbstractVector,
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        nc::V,
+        level::V,
+        graph::AbstractGraph{V},
+    ) where {V}
+    cmpweights, label = prepare!(tag, stamp, vclass, marker, mask, clsptr, clstgt,
+        lblptr, lbltgt, nelm, elmptr, pinlvl, pinnext, pinhead, weights,
+        vertexset, cls, nc, level, graph)
+
+    cmpgraph, clique = connect!(tag, stamp, vclass, marker, clsptr, clstgt,
+        lblptr, lbltgt, pointer, target, elmptr, pinvtx, pinlvl, pinnext,
+        pinhead, nc, level, graph)
+
+    return cmpgraph, cmpweights, label, clique
+end
+
+# Split the subproblem (W, cls) along a vertex separator of its realized graph,
+# with part[c] ∈ {0, 1, 2} for each class c. The separator is pushed onto the
+# stack, and the children are returned as (W₀, cls₀, nc₀), (W₁, cls₁, nc₁),
+# along with the separator classes in increasing order.
+function quotientsplit!(
+        work0::AbstractVector{V},
+        work1::AbstractVector{V},
+        work2::AbstractVector{V},
+        work3::AbstractVector{V},
+        work4::AbstractVector{V},
+        work5::AbstractVector{V},
+        work6::AbstractVector{V},
+        work7::AbstractVector{V},
+        work8::AbstractVector{V},
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::Vector{V},
+        pinlvl::Vector{V},
+        pinnext::Vector{V},
+        pinhead::AbstractVector{V},
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        part::AbstractVector{V},
+        level::V,
+        graph::AbstractGraph{V},
+    ) where {V}
+    count = work0; degree0 = work1; degree1 = work2
+    mark = work3; class = work4; size = work5; xrep = work6
+    project0 = work7; project1 = work8
+
+    label2, checksum0, checksum1 = twinfreekeys!(count, degree0, degree1, part, graph)
+
+    nc0, _ = twinfreeclasses!(mark, class, size, xrep, project0,
+        degree0, checksum0, count, label2, zero(V), part, graph)
+
+    nc1, _ = twinfreeclasses!(mark, class, size, xrep, project1,
+        degree1, checksum1, count, label2, one(V), part, graph)
+
+    child0, child1 = splitchildren!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead,
+        vertexset, cls, part, project0, project1, nc0, nc1, level)
+
+    return child0, child1, label2
+end
+
+# The vertex sets and classes of the children of (W, cls), given the class maps
+# `project0` and `project1` of `twinfreeclasses!`. The separator is pushed onto
+# the stack.
+function splitchildren!(
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::Vector{V},
+        pinlvl::Vector{V},
+        pinnext::Vector{V},
+        pinhead::AbstractVector{V},
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        part::AbstractVector{V},
+        project0::AbstractVector{V},
+        project1::AbstractVector{V},
+        nc0::V,
+        nc1::V,
+        level::V,
+    ) where {V}
+    n0 = zero(V); n1 = zero(V); n2 = zero(V)
+
+    @inbounds for i in eachindex(vertexset)
+        pc = part[cls[i]]
+
+        if !isone(pc)
+            n0 += one(V)
+        end
+
+        if !iszero(pc)
+            n1 += one(V)
+        end
+
+        if istwo(pc)
+            n2 += one(V)
+        end
+    end
+
+    set0 = FVector{V}(undef, n0); cls0 = FVector{V}(undef, n0); i0 = zero(V)
+    set1 = FVector{V}(undef, n1); cls1 = FVector{V}(undef, n1); i1 = zero(V)
+    set2 = FVector{V}(undef, n2); i2 = zero(V)
+
+    @inbounds for i in eachindex(vertexset)
+        v = vertexset[i]; c = cls[i]; pc = part[c]
+
+        if !isone(pc)
+            i0 += one(V); set0[i0] = v; cls0[i0] = project0[c]
+        end
+
+        if !iszero(pc)
+            i1 += one(V); set1[i1] = v; cls1[i1] = project1[c]
+        end
+
+        if istwo(pc)
+            i2 += one(V); set2[i2] = v
+        end
+    end
+
+    pushelement!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead, set2, level)
+    return (set0, cls0, nc0), (set1, cls1, nc1)
+end
+
+# The `label` and `clique` of a child, from the map `project` computed by
+# `twinfreeclasses!`: the vertices of the parent in each class of the child,
+# in increasing order, and the classes of the child that meet the separator,
+# in increasing order.
+function twinfreelabel(project::AbstractVector{V}, part::AbstractVector{V}, side::V, nc::V, n::V) where {V}
+    nnc = nc + one(V)
+    pointer = FVector{V}(undef, nnc)
+    flag = FVector{V}(undef, nc)
+
+    @inbounds for u in oneto(nnc)
+        pointer[u] = zero(V)
+    end
+
+    @inbounds for u in oneto(nc)
+        flag[u] = zero(V)
+    end
+
+    nsub = zero(V)
+
+    @inbounds for v in oneto(n)
+        pv = part[v]
+
+        if pv == side || istwo(pv)
+            u = project[v]; nsub += one(V)
+            pointer[u + one(V)] += one(V)
+
+            if istwo(pv)
+                flag[u] = one(V)
+            end
+        end
+    end
+
+    @inbounds pointer[begin] = one(V)
+    k = zero(V)
+
+    @inbounds for u in oneto(nc)
+        pointer[u + one(V)] += pointer[u]
+        k += flag[u]
+    end
+
+    target = FVector{V}(undef, nsub)
+    clique = FVector{V}(undef, k); k = zero(V)
+
+    @inbounds for u in oneto(nc)
+        if isone(flag[u])
+            k += one(V); clique[k] = u
+        end
+    end
+
+    cursor = flag
+
+    @inbounds for u in oneto(nc)
+        cursor[u] = pointer[u]
+    end
+
+    @inbounds for v in oneto(n)
+        pv = part[v]
+
+        if pv == side || istwo(pv)
+            u = project[v]
+            target[cursor[u]] = v; cursor[u] += one(V)
+        end
+    end
+
+    label = BipartiteGraph(n, nc, nsub, pointer, target)
+    return label, clique
+end
+
+###############################################
+# Splitting a node without realizing its graph #
+###############################################
+#
+# After `prepare!`, a class t is listed for the level-l separator if and only
+# if bit l of `mask[t]` is set, so the union of the separators in `mask[c]` is
+#
+#     U(c) = { t : mask[t] ∩ mask[c] ≠ ∅ },
+#
+# which contains c whenever mask[c] ≠ ∅. Let G(c) be the classes of the
+# neighbors in G of the first vertex of c, other than c. The neighborhood of
+# c in the realized graph is
+#
+#     N(c) = (U(c) - {c}) ∪ G(c),
+#
+# and t ∈ G(c) lies in U(c) if and only if mask[t] ∩ mask[c] ≠ ∅. So the size
+# and checksum of N(c) ∩ X, for a part X, are read from a table of |U ∩ X| and
+# its checksum for each distinct mask, plus one scan of G(c); membership in
+# N(c) is a mark or a mask test. No edge of a clique K(e) is ever enumerated.
+#
+# The masks need one bit per level: this applies when maxlevel < 64.
+#
+#   - G(c):
+#     - `gtag`: a running marker tag, one per scan
+#     - `gmark`: `gmark[t] = gtag` if and only if t ∈ G(c)
+#     - `gbuf`: G(c), without repetition
+#   - mask tables (per subproblem):
+#     - `column`: the column of `mask[c]`
+#     - `ucount`: `ucount[p + 1, k]` = |U ∩ X_p| for the k-th distinct mask
+#     - `uchecksum`: the sum of `twinhash(t)` over the same set
+
+# The distinct masks of the classes, and the tables `ucount` and `uchecksum`.
+# If `part` is `nothing`, all classes count as part 0.
+function masktable(mask::AbstractVector{UInt64}, part::Union{Nothing, AbstractVector{V}}, nc::V) where {V}
+    order = FVector{V}(undef, nc)
+    column = FVector{V}(undef, nc)
+    value = FVector{UInt64}(undef, nc)
+
+    @inbounds for c in oneto(nc)
+        order[c] = c
+    end
+
+    sort!(order; by = c -> (@inbounds mask[c]))
+    nm = zero(V)
+
+    @inbounds for i in oneto(nc)
+        c = order[i]; μ = mask[c]
+
+        if iszero(nm) || value[nm] != μ
+            nm += one(V); value[nm] = μ
+        end
+
+        column[c] = nm
+    end
+
+    owncount = FMatrix{Int}(undef, 3, nm)
+    ownchecksum = FMatrix{UInt64}(undef, 3, nm)
+    ucount = FMatrix{Int}(undef, 3, nm)
+    uchecksum = FMatrix{UInt64}(undef, 3, nm)
+
+    @inbounds for k in oneto(nm), p in 1:3
+        owncount[p, k] = 0; ownchecksum[p, k] = zero(UInt64)
+        ucount[p, k] = 0; uchecksum[p, k] = zero(UInt64)
+    end
+
+    @inbounds for c in oneto(nc)
+        k = column[c]; p = isnothing(part) ? 1 : part[c] + 1
+        owncount[p, k] += 1; ownchecksum[p, k] += twinhash(c)
+    end
+
+    @inbounds for k in oneto(nm), j in oneto(nm)
+        if !iszero(value[j] & value[k])
+            for p in 1:3
+                ucount[p, k] += owncount[p, j]
+                uchecksum[p, k] += ownchecksum[p, j]
+            end
+        end
+    end
+
+    return column, ucount, uchecksum
+end
+
+# G(c), without repetition, in `gbuf[1:k]`; returns k.
+function gclasses!(
+        gtag::AbstractScalar{Int},
+        gmark::AbstractVector{Int},
+        gbuf::AbstractVector{V},
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        graph::AbstractGraph{V},
+        c::V,
+    ) where {V}
+    t = tag[]; g = gtag[] += 1; k = zero(V)
+    @inbounds v = lbltgt[lblptr[c]]; @inbounds gmark[c] = g
+
+    @inbounds for w in neighbors(graph, v)
+        if stamp[w] == t
+            u = vclass[w]
+
+            if gmark[u] != g
+                gmark[u] = g; k += one(V); gbuf[k] = u
+            end
+        end
+    end
+
+    return k
+end
+
+# The number of arcs of the realized graph, after `prepare!`.
+function implicitarcs(
+        gtag::AbstractScalar{Int},
+        gmark::AbstractVector{Int},
+        gbuf::AbstractVector{V},
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        mask::AbstractVector{UInt64},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        graph::AbstractGraph{V},
+        nc::V,
+    ) where {V}
+    column, ucount, _ = masktable(mask, nothing, nc); m = 0
+
+    @inbounds for c in oneto(nc)
+        μ = mask[c]; m += ucount[1, column[c]] - !iszero(μ)
+        k = gclasses!(gtag, gmark, gbuf, tag, stamp, vclass, lblptr, lbltgt, graph, c)
+
+        for i in oneto(k)
+            m += iszero(mask[gbuf[i]] & μ)
+        end
+    end
+
+    return convert(V, m)
+end
+
+# `twinfreekeys!`, after `prepare!`.
+function implicitkeys!(
+        count::AbstractVector{V},
+        degree0::AbstractVector{V},
+        degree1::AbstractVector{V},
+        gtag::AbstractScalar{Int},
+        gmark::AbstractVector{Int},
+        gbuf::AbstractVector{V},
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        mask::AbstractVector{UInt64},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        column::AbstractVector{V},
+        ucount::AbstractMatrix{Int},
+        uchecksum::AbstractMatrix{UInt64},
+        part::AbstractVector{V},
+        graph::AbstractGraph{V},
+        nc::V,
+    ) where {V}
+    n2 = zero(V)
+
+    @inbounds for c in oneto(nc)
+        if istwo(part[c])
+            n2 += one(V)
+        end
+    end
+
+    label2 = FVector{V}(undef, n2); t2 = zero(V)
+
+    @inbounds for c in oneto(nc)
+        if istwo(part[c])
+            t2 += one(V); label2[t2] = c
+        end
+    end
+
+    # count[c] = | N(c) ∩ S |
+    @inbounds for c in oneto(nc)
+        μ = mask[c]; x = ucount[3, column[c]] - (istwo(part[c]) && !iszero(μ))
+        k = gclasses!(gtag, gmark, gbuf, tag, stamp, vclass, lblptr, lbltgt, graph, c)
+
+        for i in oneto(k)
+            u = gbuf[i]
+            x += istwo(part[u]) && iszero(mask[u] & μ)
+        end
+
+        count[c] = x
+    end
+
+    checksum0 = FVector{UInt64}(undef, n2)
+    checksum1 = FVector{UInt64}(undef, n2)
+
+    @inbounds for i in oneto(n2)
+        x = label2[i]; μ = mask[x]; j = column[x]
+        d0 = ucount[1, j]; h0 = uchecksum[1, j]
+        d1 = ucount[2, j]; h1 = uchecksum[2, j]
+        k = gclasses!(gtag, gmark, gbuf, tag, stamp, vclass, lblptr, lbltgt, graph, x)
+
+        for r in oneto(k)
+            u = gbuf[r]
+
+            if iszero(mask[u] & μ)
+                pu = part[u]
+
+                if iszero(pu)    # u ∈ A
+                    d0 += 1; h0 += twinhash(u)
+                elseif isone(pu) # u ∈ B
+                    d1 += 1; h1 += twinhash(u)
+                end
+            end
+        end
+
+        degree0[i] = d0; checksum0[i] = h0
+        degree1[i] = d1; checksum1[i] = h1
+    end
+
+    return label2, checksum0, checksum1
+end
+
+# `twinfreeclasses!`, after `prepare!`.
+function implicitclasses!(
+        mark::AbstractVector{V},
+        class::AbstractVector{V},
+        size::AbstractVector{V},
+        xrep::AbstractVector{V},
+        project::AbstractVector{V},
+        sdegree::AbstractVector{V},
+        schecksum::AbstractVector{UInt64},
+        count::AbstractVector{V},
+        label2::AbstractVector{V},
+        side::V,
+        part::AbstractVector{V},
+        gtag::AbstractScalar{Int},
+        gmark::AbstractVector{Int},
+        gbuf::AbstractVector{V},
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        mask::AbstractVector{UInt64},
+        clsptr::AbstractVector{V},
+        clstgt::AbstractVector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        column::AbstractVector{V},
+        ucount::AbstractMatrix{Int},
+        uchecksum::AbstractMatrix{UInt64},
+        graph::AbstractGraph{V},
+        nc::V,
+    ) where {V}
+    n = nc; n2 = convert(V, length(label2)); p = side + one(V)
+
+    # v ∈ S ∪ A*
+    @inline inx(v::V) = twinfreeinx(v, side, n2, part, count)
+
+    ##############################
+    # 1. X = S ∪ A* and its keys #
+    ##############################
+
+    nx = zero(V)
+
+    if ispositive(n2)
+        @inbounds for x in label2
+            nx += one(V); xrep[nx] = x
+        end
+
+        # A* = { v ∈ A : S ⊆ N(v) }
+        @inbounds for v in oneto(n)
+            if part[v] == side && count[v] == n2
+                nx += one(V); xrep[nx] = v
+            end
+        end
+    end
+
+    xdegree = FVector{V}(undef, nx)
+    xchecksum = FVector{UInt64}(undef, nx)
+
+    @inbounds for i in oneto(n2)
+        xdegree[i] = sdegree[i]
+        xchecksum[i] = schecksum[i]
+    end
+
+    @inbounds for i in (n2 + one(V)):nx # y ∈ A*: the key is N[y] ∩ A
+        y = xrep[i]; μ = mask[y]; j = column[y]
+        d = ucount[p, j] + iszero(μ)
+        h = uchecksum[p, j] + (iszero(μ) ? twinhash(y) : zero(UInt64))
+        k = gclasses!(gtag, gmark, gbuf, tag, stamp, vclass, lblptr, lbltgt, graph, y)
+
+        for r in oneto(k)
+            u = gbuf[r]
+
+            if part[u] == side && iszero(mask[u] & μ)
+                d += 1; h += twinhash(u)
+            end
+        end
+
+        xdegree[i] = d; xchecksum[i] = h
+    end
+
+    #################################################
+    # 2. group X by key size and checksum, and      #
+    #    confirm each group exactly                 #
+    #################################################
+
+    xorder = FVector{V}(undef, nx)
+
+    @inbounds for i in oneto(nx)
+        xorder[i] = i
+    end
+
+    sort!(xorder; by = i -> (@inbounds (xdegree[i], xchecksum[i])))
+
+    @inbounds for v in oneto(n)
+        mark[v] = zero(V)
+    end
+
+    nc = zero(V); stamp2 = zero(V); lo = one(V)
+
+    @inbounds while lo <= nx
+        # xorder[lo:hi] have the same key size and checksum
+        i = xorder[lo]; hi = lo
+
+        while hi < nx && xdegree[xorder[hi + one(V)]] == xdegree[i] && xchecksum[xorder[hi + one(V)]] == xchecksum[i]
+            hi += one(V)
+        end
+
+        next = hi + one(V)
+
+        while lo <= hi
+            # the key of the leader y: the marked classes, and
+            # the classes of U(y) on this side (a mask test)
+            y = xrep[xorder[lo]]; μy = mask[y]; stamp2 += one(V)
+            k = gclasses!(gtag, gmark, gbuf, tag, stamp, vclass, lblptr, lbltgt, graph, y)
+
+            for r in oneto(k)
+                u = gbuf[r]
+
+                if part[u] == side
+                    mark[u] = stamp2
+                end
+            end
+
+            if part[y] == side
+                mark[y] = stamp2
+            end
+
+            nc += one(V); class[y] = nc; size[nc] = one(V)
+
+            # compare the other keys against it; keys of equal size
+            # are equal iff one is contained in the other
+            keep = lo
+
+            for kk in (lo + one(V)):hi
+                z = xrep[xorder[kk]]; μz = mask[z]
+                same = part[z] != side || mark[z] == stamp2 || !iszero(mask[z] & μy)
+
+                if same
+                    k = gclasses!(gtag, gmark, gbuf, tag, stamp, vclass, lblptr, lbltgt, graph, z)
+
+                    for r in oneto(k)
+                        u = gbuf[r]
+
+                        if part[u] == side && mark[u] != stamp2 && iszero(mask[u] & μy)
+                            same = false; break
+                        end
+                    end
+                end
+
+                # the separators in mask[z] but not in mask[y]
+                extra = μz & ~μy
+
+                while same && !iszero(extra)
+                    l = convert(V, trailing_zeros(extra)) + one(V)
+                    extra &= extra - one(UInt64)
+
+                    for r in clsptr[l]:(clsptr[l + one(V)] - one(V))
+                        u = clstgt[r]
+
+                        if u != z && part[u] == side && mark[u] != stamp2 && iszero(mask[u] & μy)
+                            same = false; break
+                        end
+                    end
+                end
+
+                if same
+                    class[z] = nc; size[nc] += one(V)
+                else
+                    keep += one(V); xorder[keep] = xorder[kk]
+                end
+            end
+
+            lo += one(V); hi = keep
+        end
+
+        lo = next
+    end
+
+    #####################################
+    # 3. number the classes of the child #
+    #####################################
+
+    newid = mark; nsub = zero(V); ncmp = zero(V)
+
+    @inbounds for c in oneto(nc)
+        newid[c] = zero(V)
+    end
+
+    @inbounds for v in oneto(n)
+        pv = part[v]
+
+        if pv == side || istwo(pv)
+            nsub += one(V)
+
+            if inx(v)
+                c = class[v]
+
+                if iszero(newid[c])
+                    ncmp += one(V); newid[c] = ncmp; xrep[ncmp] = v
+                end
+
+                project[v] = newid[c]
+            else
+                ncmp += one(V); project[v] = ncmp; xrep[ncmp] = v
+            end
+        end
+    end
+
+    return ncmp, nsub
+end
+
+# `quotientsplit!`, after `prepare!`: the graph of (W, cls) is never realized.
+function implicitsplit!(
+        work0::AbstractVector{V},
+        work1::AbstractVector{V},
+        work2::AbstractVector{V},
+        work3::AbstractVector{V},
+        work4::AbstractVector{V},
+        work5::AbstractVector{V},
+        work6::AbstractVector{V},
+        work7::AbstractVector{V},
+        work8::AbstractVector{V},
+        gtag::AbstractScalar{Int},
+        gmark::AbstractVector{Int},
+        gbuf::AbstractVector{V},
+        tag::AbstractScalar{Int},
+        stamp::AbstractVector{Int},
+        vclass::AbstractVector{V},
+        mask::AbstractVector{UInt64},
+        clsptr::AbstractVector{V},
+        clstgt::AbstractVector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::Vector{V},
+        pinlvl::Vector{V},
+        pinnext::Vector{V},
+        pinhead::AbstractVector{V},
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        part::AbstractVector{V},
+        nc::V,
+        level::V,
+        graph::AbstractGraph{V},
+    ) where {V}
+    count = work0; degree0 = work1; degree1 = work2
+    mark = work3; class = work4; size = work5; xrep = work6
+    project0 = work7; project1 = work8
+
+    column, ucount, uchecksum = masktable(mask, part, nc)
+
+    label2, checksum0, checksum1 = implicitkeys!(count, degree0, degree1,
+        gtag, gmark, gbuf, tag, stamp, vclass, mask, lblptr, lbltgt,
+        column, ucount, uchecksum, part, graph, nc)
+
+    nc0, _ = implicitclasses!(mark, class, size, xrep, project0, degree0,
+        checksum0, count, label2, zero(V), part, gtag, gmark, gbuf, tag, stamp,
+        vclass, mask, clsptr, clstgt, lblptr, lbltgt, column, ucount, uchecksum,
+        graph, nc)
+
+    nc1, _ = implicitclasses!(mark, class, size, xrep, project1, degree1,
+        checksum1, count, label2, one(V), part, gtag, gmark, gbuf, tag, stamp,
+        vclass, mask, clsptr, clstgt, lblptr, lbltgt, column, ucount, uchecksum,
+        graph, nc)
+
+    child0, child1 = splitchildren!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead,
+        vertexset, cls, part, project0, project1, nc0, nc1, level)
+
+    return child0, child1, label2
+end
