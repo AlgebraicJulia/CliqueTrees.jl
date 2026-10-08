@@ -119,6 +119,7 @@ include("mcs_etree.jl")
 include("acsd.jl")
 include("pr3.jl")
 include("pr4.jl")
+include("asr.jl")
 include("io.jl")
 
 # Submodules

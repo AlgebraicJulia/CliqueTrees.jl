@@ -97,7 +97,7 @@ end
 # Preprocessing Rules for Triangulation of Probabilistic Networks
 # Bodlaender, Koster, Eijkhof, and van der Gaag
 #
-#  PR-4 (PR-3 + Simplicial)
+#  PR-4 (PR-3 + Simplicial + Almost Simplicial)
 function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
     weights0 = weights; graph0 = graph; width0 = width
     n0 = nv(graph0); weights1 = Vector{W}(undef, n0)
@@ -109,7 +109,7 @@ function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) wh
         weights1[i] = weights0[inject1[i]]
     end
 
-    graph2, stack2, inject2, width2 = sr(weights1, graph1, width1)
+    graph2, stack2, inject2, width2 = asr(weights1, graph1, width1)
     n2 = nv(graph2); m2 = n1 - n2
 
     @inbounds for i in oneto(m2)
