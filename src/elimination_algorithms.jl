@@ -50,6 +50,7 @@ algorithms, but have worse results.
 | type             | name              | time   | space | package                                             |
 |:-----------------|:------------------|:-------|:----- | :-------------------------------------------------- |
 | [`METIS`](@ref)  | nested dissection |        |       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl) |
+| [`SCOTCH`](@ref) | nested dissection |        |       | [Scotch.jl](https://github.com/Keluaa/Scotch.jl)    |
 | [`ND`](@ref)     | nested dissection |        |       |                                                     |
 
 These algorithms recursively partition a graph, then call a local algorithm on the leaves.
@@ -346,6 +347,30 @@ The multilevel [nested dissection](https://en.wikipedia.org/wiki/Nested_dissecti
     ccorder::Int = -1
     pfactor::Int = -1
     ufactor::Int = -1
+end
+
+"""
+    SCOTCH <: EliminationAlgorithm
+
+    SCOTCH(; strategy=:default, level=0, imbalance=0.0)
+
+The [SCOTCH](https://gitlab.inria.fr/scotch/scotch) nested dissection ordering.
+This algorithm requires the package [Scotch.jl](https://github.com/Keluaa/Scotch.jl).
+
+### Parameters
+
+  - `strategy`: ordering strategy (`:default`, `:balance`, `:quality`, `:safety`, or `:speed`)
+  - `level`: maximum number of dissection levels (`0` for no limit)
+  - `imbalance`: maximum load imbalance ratio
+
+### References
+
+  - Pellegrini, François, and Jean Roman. "Scotch: A software package for static mapping by dual recursive bipartitioning of process and architecture graphs." *International Conference on High-Performance Computing and Networking*. Springer, 1996.
+"""
+@kwdef struct SCOTCH <: EliminationAlgorithm
+    strategy::Symbol = :default
+    level::Int = 0
+    imbalance::Float64 = 0.0
 end
 
 """
