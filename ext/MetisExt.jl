@@ -3,7 +3,7 @@ module MetisExt
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, simplegraph, partition!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!, nov
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, simplegraph, compresstwins, twinfreepartition!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!, nov
 using CliqueTrees.MMDLib: mmd_impl!
 using CliqueTrees.Utilities
 using Graphs
@@ -139,11 +139,15 @@ end
 
 function dissect(weights::FVector{INT}, graph::AbstractGraph{V}, alg::ND) where {V <: Integer}
     simple = simplegraph(INT, INT, graph)
-    order = convert(Vector{V}, dissectsimple(weights, simple, alg))
+
+    # merge twins up front: every graph in the dissection is then twin-free
+    cmpgraph, cmpweights, project = compresstwins(weights, simple)
+
+    order = convert(Vector{V}, dissectsimple(cmpweights, cmpgraph, project, alg))
     return order
 end
 
-function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::ND{S}) where {S}
+function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, label::BipartiteGraph{INT, INT}, alg::ND{S}) where {S}
     n = nv(graph); m = ne(graph); nn = n + one(INT)
     maxlevel = convert(INT, alg.level)
     minwidth = convert(INT, alg.width)
@@ -178,16 +182,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
         INT,                                                  # level
     }[]
 
-    label = BipartiteGraph{INT, INT}(n, n, n)
     clique = FVector{INT}(undef, zero(INT))
     level = zero(INT)
-
-    @inbounds for v in oneto(n)
-        pointers(label)[v] = v
-        targets(label)[v] = v
-    end
-
-    pointers(label)[nn] = nn
     push!(nodes, (graph, weights, label, clique, level))
 
     @inbounds while !isempty(nodes)
@@ -208,7 +204,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 part = FVector{INT}(undef, n)
                 separator!(work03, work00, part, weights, graph, imbalance, alg.dis)
 
-                child0, child1, order2 = partition!(work00, work03, work04, work07, work08,
+                child0, child1, order2 = twinfreepartition!(work00, work03, work04, work07, work08,
                     work11, work12, work13, work09, work10, work01, work02, work05, work06,
                     part, weights, graph)
 

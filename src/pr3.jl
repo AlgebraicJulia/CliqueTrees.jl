@@ -5,10 +5,6 @@ const PR3_STACK3 = 0x04 # the vertex is in the queue of degree 3 vertices
 const PR3_PARKED = 0x08 # the vertex failed a test because of `width`
 const PR3_DELETE = 0x10 # the vertex has been eliminated
 
-# adjacency queries between vertices whose degrees both exceed
-# this threshold are cached
-const PR3_CACHE_DEGREE = 32
-
 function pr3(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}
     return pr3(weights, graph, convert(W, width))
 end
@@ -44,14 +40,13 @@ function pr3(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) wher
     stack6 = FVector{V}(undef, n)
     stack7 = FVector{V}(undef, n)
     stack8 = FVector{V}(undef, n)
-    cache = Dict{Tuple{V, V}, UInt8}()
     stack0 = FVector{V}(undef, n)
     tmpptr = FVector{E}(undef, nn)
 
     return pr3_impl!(
         weight, degree, number, status, marker, source, target, begptr,
         endptr, invptr, stack1, stack2, stack3, stack4, stack5, stack6,
-        stack7, stack8, cache, stack0, tmpptr, totdeg, width, graph)
+        stack7, stack8, stack0, tmpptr, totdeg, width, graph)
 end
 
 """
@@ -126,10 +121,6 @@ The state of the algorithm is a collection of arrays and scalars.
     - `stack5`: traversal stack
     - `stack6`: traversal stack (nested traversals)
     - `stack8`: scratch space
-    - `cache`: adjacency between high-degree vertices
-      (1: adjacent, 2: not adjacent). Two vertices are never
-      disconnected while they both exist, and an edge is only
-      created by a rule, which updates the cache.
   - scalars:
     - `width`: treewidth lower bound
     - `parked`: the value of `width` when the first vertex was parked
@@ -167,7 +158,6 @@ function pr3_impl!(
         stack6::AbstractVector{V},
         stack7::AbstractVector{V},
         stack8::AbstractVector{V},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         stack0::AbstractVector{V},
         tmpptr::AbstractVector{E},
         totdeg::W,
@@ -205,7 +195,7 @@ function pr3_impl!(
     # apply reduction rules until no more apply
     width, hi4 = pr3_loop!(weight, degree, number, status, marker, source,
         target, begptr, endptr, invptr, stack1, stack2, stack3, stack4,
-        stack5, stack6, stack7, stack8, cache, width, parked, one(V), hi1,
+        stack5, stack6, stack7, stack8, width, parked, one(V), hi1,
         hi2, hi3, zero(V), zero(V))
 
     # if no vertex was eliminated, then the quotient graph is
@@ -389,7 +379,6 @@ function pr3_loop!(
         stack6::AbstractVector{V},
         stack7::AbstractVector{V},
         stack8::AbstractVector{V},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         width::W,
         parked::W,
         tag::V,
@@ -424,7 +413,7 @@ function pr3_loop!(
                 width, parked, hi1, hi2, hi3, hi4, hi7 = pr3_series!(weight,
                     degree, number, status, source, target, begptr, endptr,
                     invptr, stack1, stack2, stack3, stack4, stack5, stack7,
-                    stack8, cache, width, parked, hi1, hi2, hi3, hi4, hi7, v)
+                    stack8, width, parked, hi1, hi2, hi3, hi4, hi7, v)
             end
         elseif ispositive(hi3)
             # `v` is a vertex with degree 3 (probably)
@@ -435,7 +424,7 @@ function pr3_loop!(
                 width, parked, tag, hi1, hi2, hi3, hi4, hi7 = pr3_triangle!(
                     weight, degree, number, status, marker, source, target,
                     begptr, endptr, invptr, stack1, stack2, stack3, stack4,
-                    stack5, stack6, stack7, stack8, cache, width, parked, tag,
+                    stack5, stack6, stack7, stack8, width, parked, tag,
                     hi1, hi2, hi3, hi4, hi7, v)
             end
         elseif ispositive(hi7) && parked < width
@@ -535,7 +524,6 @@ function pr3_series!(
         stack5::AbstractVector{V},
         stack7::AbstractVector{V},
         stack8::AbstractVector{V},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         width::W,
         parked::W,
         hi1::V,
@@ -555,7 +543,7 @@ function pr3_series!(
         p, w, pp, ww = pp, ww, p, w
     end
 
-    @inbounds if pr3_adjacent!(number, cache, stack5, target, begptr, endptr, invptr, w, ww)
+    @inbounds if pr3_adjacent!(number, stack5, target, begptr, endptr, invptr, w, ww)
         # w ─── ww
         # │  ╱
         # v
@@ -618,7 +606,7 @@ function pr3_series!(
 
             # the edge {`w`, `ww`} was created
             hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, w, ww)
+                stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, w, ww)
         else
             # the test failed because of the lower bound
             parked, hi7 = pr3_park!(status, stack7, parked, hi7, width, v)
@@ -648,7 +636,6 @@ function pr3_triangle!(
         stack6::AbstractVector{V},
         stack7::AbstractVector{V},
         stack8::AbstractVector{V},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         width::W,
         parked::W,
         tag::V,
@@ -672,10 +659,10 @@ function pr3_triangle!(
 
     # `f` is true if `ww` is reachable by `w`
     # `ff` is true if `www` is reachable by `w`
-    f, ff = pr3_adjacent2!(number, cache, stack5, target, begptr, endptr, invptr, w, ww, www)
+    f, ff = pr3_adjacent2!(stack5, target, begptr, endptr, invptr, w, ww, www)
 
     # `fff` is true if `www` is reachable by `ww`
-    fff = pr3_adjacent!(number, cache, stack5, target, begptr, endptr, invptr, ww, www)
+    fff = pr3_adjacent!(number, stack5, target, begptr, endptr, invptr, ww, www)
 
     # sort `f`, `ff`, and `fff` by true value
     if f
@@ -777,7 +764,7 @@ function pr3_triangle!(
 
                 # the edge {`w`, `ww`} was created
                 hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                    stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, w, ww)
+                    stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, w, ww)
             else
                 # the test failed because of the lower bound
                 parked, hi7 = pr3_park!(status, stack7, parked, hi7, width, v)
@@ -832,9 +819,9 @@ function pr3_triangle!(
 
                 # the edges {`w`, `ww`} and {`w`, `www`} were created
                 hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                    stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, w, ww)
+                    stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, w, ww)
                 hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                    stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, w, www)
+                    stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, w, www)
             else
                 # the test failed because of the lower bound
                 parked, hi7 = pr3_park!(status, stack7, parked, hi7, width, v)
@@ -887,11 +874,11 @@ function pr3_triangle!(
                 # the edges {`w`, `ww`}, {`w`, `www`}, and
                 # {`ww`, `www`} were created
                 hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                    stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, w, ww)
+                    stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, w, ww)
                 hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                    stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, w, www)
+                    stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, w, www)
                 hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                    stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, ww, www)
+                    stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, ww, www)
 
                 flag = true
             end
@@ -944,11 +931,11 @@ function pr3_triangle!(
                     # the edges {`x`, `y`}, {`y`, `z`}, and {`z`, `x`}
                     # may have been created
                     hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                        stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, x, y)
+                        stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, x, y)
                     hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                        stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, y, z)
+                        stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, y, z)
                     hi1, hi2, hi3 = pr3_edge!(number, status, stack1, stack2, stack3,
-                        stack5, stack8, target, begptr, endptr, invptr, cache, hi1, hi2, hi3, z, x)
+                        stack5, stack8, target, begptr, endptr, invptr, hi1, hi2, hi3, z, x)
 
                     flag = true
                 end
@@ -1130,22 +1117,12 @@ function pr3_edge!(
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
         invptr::AbstractVector{E},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         hi1::V,
         hi2::V,
         hi3::V,
         v::V,
         w::V,
     ) where {V, E}
-    # update the cache
-    if !isempty(cache)
-        key = minmax(v, w)
-
-        if haskey(cache, key)
-            cache[key] = 0x01
-        end
-    end
-
     # search the smaller reachable set: `a` is the endpoint
     # with smaller degree and `b` is the other endpoint
     @inbounds a, b = number[w] < number[v] ? (w, v) : (v, w)
@@ -1169,7 +1146,7 @@ function pr3_edge!(
     @inbounds for i in oneto(num)
         x = stack8[i]
 
-        if pr3_adjacent!(number, cache, stack5, target, begptr, endptr, invptr, x, b)
+        if pr3_adjacent!(number, stack5, target, begptr, endptr, invptr, x, b)
             hi1, hi2, hi3 = pr3_touch!(number, status, stack1, stack2, stack3, hi1, hi2, hi3, x)
         end
     end
@@ -1225,7 +1202,6 @@ end
 # returns true if `w` is reachable by `v`
 function pr3_adjacent!(
         number::AbstractVector{V},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         stack5::AbstractVector{V},
         target::AbstractVector{V},
         begptr::AbstractVector{E},
@@ -1237,22 +1213,10 @@ function pr3_adjacent!(
     # search the smaller reachable set
     @inbounds a, b = number[w] < number[v] ? (w, v) : (v, w)
 
-    # if both vertices have high degree, consult the cache
-    @inbounds cached = number[a] > PR3_CACHE_DEGREE; key = minmax(v, w)
-
-    if cached
-        val = get(cache, key, zero(UInt8))
-        ispositive(val) && return isone(val)
-    end
-
     flag, _ = pr3_reach_until!(false, stack5, target,
             begptr, endptr, invptr, a) do flag, _, x
         flag = x == b
         return flag, flag
-    end
-
-    if cached
-        cache[key] = ifelse(flag, 0x01, 0x02)
     end
 
     return flag
@@ -1260,8 +1224,6 @@ end
 
 # returns (`w` reachable by `v`, `ww` reachable by `v`)
 function pr3_adjacent2!(
-        number::AbstractVector{V},
-        cache::AbstractDict{Tuple{V, V}, UInt8},
         stack5::AbstractVector{V},
         target::AbstractVector{V},
         begptr::AbstractVector{E},
@@ -1271,19 +1233,6 @@ function pr3_adjacent2!(
         w::V,
         ww::V,
     ) where {V, E}
-    # if all three vertices have high degree, consult the cache
-    @inbounds cached = min(number[v], number[w], number[ww]) > PR3_CACHE_DEGREE
-    key = minmax(v, w); kkey = minmax(v, ww)
-
-    if cached
-        val = get(cache, key, zero(UInt8))
-        vval = get(cache, kkey, zero(UInt8))
-
-        if ispositive(val) && ispositive(vval)
-            return isone(val), isone(vval)
-        end
-    end
-
     # bit 1 of `flag` is set if `w` is reachable by `v`
     # bit 2 of `flag` is set if `ww` is reachable by `v`
     flag, _ = pr3_reach_until!(zero(V), stack5, target,
@@ -1292,14 +1241,7 @@ function pr3_adjacent2!(
         return flag, flag == three(V)
     end
 
-    f = isodd(flag); ff = flag >= two(V)
-
-    if cached
-        cache[key] = ifelse(f, 0x01, 0x02)
-        cache[kkey] = ifelse(ff, 0x01, 0x02)
-    end
-
-    return f, ff
+    return isodd(flag), flag >= two(V)
 end
 
 # returns true if `w` and `ww` are both reachable by `v`

@@ -3,7 +3,7 @@ module KaHyParExt
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, hpartition!, sympermute!_impl!, nov, outvertices, simplegraph, qcc, compresstwins
 using CliqueTrees.Utilities
 using Graphs
 
@@ -86,12 +86,16 @@ end
 
 function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) where {V}
     simple = simplegraph(PINT, PINT, graph)
-    cover = qcc(VINT2, EINT, simple, alg.dis.beta, alg.dis.order)
-    order = convert(Vector{V}, dissectsimple(weights, reverse(cover), simple, alg))
+
+    # merge twins up front: every graph in the dissection is then twin-free
+    cmpgraph, cmpweights, project = compresstwins(weights, simple)
+
+    cover = qcc(VINT2, EINT, cmpgraph, alg.dis.beta, alg.dis.order)
+    order = convert(Vector{V}, dissectsimple(cmpweights, reverse(cover), cmpgraph, project, alg))
     return order
 end
 
-function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VINT2, EINT}, graph::BipartiteGraph{PINT, PINT}, alg::ND{S}) where {S}
+function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VINT2, EINT}, graph::BipartiteGraph{PINT, PINT}, label::BipartiteGraph{PINT, PINT}, alg::ND{S}) where {S}
     h = nov(hgraph); n = nv(graph); m = ne(graph); nn = n + one(PINT)
     maxlevel = convert(PINT, alg.level)
     minwidth = convert(WINT2, alg.width)
@@ -132,16 +136,8 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
         PINT,                                                       # level
     }[]
 
-    label = BipartiteGraph{PINT, PINT}(n, n, n)
     clique = FVector{PINT}(undef, zero(PINT))
     level = zero(PINT)
-
-    @inbounds for v in oneto(n)
-        pointers(label)[v] = v
-        targets(label)[v] = v
-    end
-
-    pointers(label)[nn] = nn
     push!(nodes, (hgraph, graph, weights, label, clique, level))
 
     @inbounds while !isempty(nodes)
