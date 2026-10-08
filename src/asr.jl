@@ -3,6 +3,12 @@ const ASR_QUEUED = 0x01 # the vertex is in the work queue
 const ASR_PARKED = 0x02 # the vertex failed a test because of `width`
 const ASR_DELETE = 0x04 # the vertex has been eliminated
 
+# the connector search (see `asr_connector!`) for a vertex of
+# degree d scans at most ASR_CONNECTOR_BASE + ASR_CONNECTOR_DEGREE × d
+# arcs before giving up
+const ASR_CONNECTOR_BASE = 1 << 16
+const ASR_CONNECTOR_DEGREE = 1 << 12
+
 function asr(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}
     return asr(weights, graph, convert(W, width))
 end
@@ -60,6 +66,14 @@ vertices of any degree.
     of v, with weight(u) ≤ weight(v) and weight(N[v]) ≤ `width`.
     Then v is contracted into u.
 
+If weight(N[v]) > `width`, the almost simplicial rule may still
+apply: a *connector* is a connected set Q of vertices outside N[v],
+each at least as heavy as u, that is adjacent to u and to every
+vertex of N(v) \\ N[u]. Contracting Q into u makes N[v] a clique
+in a weighted minor of the graph, so weight(N[v]) is a lower bound
+for the treewidth: `width` is raised to it, and v is contracted
+into u (see `asr_connector!`).
+
 Each vertex v stores its fill-in: the number of missing edges in
 N(v), computed by [`sr_fillin!`](@ref). A vertex is simplicial if
 its fill-in is zero, and it is almost simplicial only if its
@@ -100,10 +114,12 @@ The state of the algorithm is a collection of arrays and scalars.
                 has changed
     - `stack7`: vertices whose last test failed because of `width`
   - miscellaneous:
-    - `stack2`: common neighbors buffered during contraction
+    - `stack2`: common neighbors buffered during contraction, and
+                the seeds of a connector search
     - `stack4`: eliminated vertices
     - `stack5`: traversal stack
-    - `stack8`: the neighbors of a vertex
+    - `stack8`: the neighbors of a vertex, and the queue of a
+                connector search
     - `arcs`: the arcs of a vertex
   - scalars:
     - `width`: treewidth lower bound
@@ -372,7 +388,32 @@ function asr_loop!(
                                 stack5, stack8, arcs, stack2, hi4, hi1, tag, v, u)
                         end
                     else
-                        parked, hi7 = asr_park!(status, stack7, parked, hi7, width, v)
+                        # the lower bound is too small to certify `v`;
+                        # search for a connector instead
+                        u, tag = asr_friend!(weight, number, fillin, marker,
+                            marker2, stack5, stack8, arcs, target, begptr,
+                            endptr, invptr, tag, v)
+
+                        found = false
+
+                        if ispositive(u)
+                            found, tag = asr_connector!(weight, number, marker,
+                                marker2, stack2, stack5, stack8, target, begptr,
+                                endptr, invptr, tag, v, u)
+                        end
+
+                        if found
+                            # the clique N[`v`] is a minor: update the
+                            # lower bound
+                            width = max(width, degree[v])
+
+                            hi4, hi1, tag = asr_contract!(weight, degree,
+                                number, fillin, status, marker, marker2, source,
+                                target, begptr, endptr, invptr, stack1, stack4,
+                                stack5, stack8, arcs, stack2, hi4, hi1, tag, v, u)
+                        else
+                            parked, hi7 = asr_park!(status, stack7, parked, hi7, width, v)
+                        end
                     end
                 end
             end
@@ -651,6 +692,144 @@ function asr_unmarked(marker2::AbstractVector{Int}, stack8::AbstractVector{V}, x
     end
 
     return zero(V)
+end
+
+# returns true if there is a connector for the almost simplicial
+# vertex `v` with friend `u`: a connected set Q of vertices outside
+# N[`v`], each at least as heavy as `u`, such that some vertex of Q
+# is adjacent to `u` and every vertex of N(`v`) not adjacent to `u`
+# has a neighbor in Q. Contracting Q into `u` makes N[`v`] a clique
+# in a weighted minor of the graph, so weight(N[`v`]) is a lower
+# bound. The search gives up after a fixed number of steps.
+#
+# On entry, `stack8[1:number[v]]` holds N(`v`). On exit, `stack8`,
+# `stack2`, `marker`, and `marker2` are overwritten.
+function asr_connector!(
+        weight::AbstractVector{W},
+        number::AbstractVector{V},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        stack2::AbstractVector{V},
+        stack5::AbstractVector{V},
+        stack8::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        tag::Int,
+        v::V,
+        u::V,
+    ) where {W, V, E}
+    tol = tolerance(W)
+
+    # `d` is the degree of `v`
+    @inbounds d = Int(number[v])
+
+    # `uwgt` is the weight of `u`: every vertex of Q
+    # must be at least this heavy
+    @inbounds uwgt = weight[u]
+
+    # mark N[`v`] with `ntag`
+    tag += 1; ntag = tag
+    @inbounds marker[v] = ntag
+
+    @inbounds for i in oneto(d)
+        marker[stack8[i]] = ntag
+    end
+
+    # mark N(`u`) with `utag`
+    tag += 1; utag = tag
+
+    pr3_reach!(nothing, stack5, target, begptr, endptr, invptr, u) do _, _, y
+        @inbounds marker2[y] = utag
+        return
+    end
+
+    # mark X = N(`v`) minus N[`u`] with `xtag`; later in the search,
+    # a vertex `y` is in X if and only if `marker2[y] >= xtag`
+    tag += 1; xtag = tag
+
+    # `nx` is the size of X
+    nx = 0
+
+    @inbounds for i in oneto(d)
+        y = stack8[i]
+
+        if y != u && marker2[y] != utag
+            marker2[y] = xtag; nx += 1
+        end
+    end
+
+    iszero(nx) && return false, tag
+
+    # the seeds are the neighbors of `u` outside N[`v`] that
+    # are at least as heavy as `u`; store them in `stack2`
+    ns = pr3_reach!(0, stack5, target, begptr, endptr, invptr, u) do ns, _, z
+        @inbounds if marker[z] != ntag && weight[z] > uwgt - tol
+            ns += 1; stack2[ns] = z
+        end
+
+        return ns
+    end
+
+    # `budget` is the number of arcs the search may scan
+    budget = ASR_CONNECTOR_BASE + ASR_CONNECTOR_DEGREE * d
+
+    # `visits` is the number of arcs scanned so far
+    visits = 0
+
+    # vertices visited by the search are marked with `vtag`
+    tag += 1; vtag = tag
+
+    # for each seed `z`...
+    @inbounds for s in oneto(ns)
+        z = stack2[s]
+
+        # if `z` was reached from an earlier seed, its
+        # region has already been searched
+        marker[z] == vtag && continue
+
+        # search the region of `z`: the heavy vertices outside
+        # N[`v`] connected to `z` through heavy vertices. The
+        # vertices of X that it covers are marked with `rtag`.
+        tag += 1; rtag = tag
+
+        # `covered` is the number of vertices of X covered
+        # by the region
+        covered = 0
+
+        # `stack8[hd:tl]` is the breadth-first search queue
+        hd = tl = 1; stack8[1] = z; marker[z] = vtag
+
+        while hd <= tl
+            q = stack8[hd]; hd += 1
+
+            tl, covered, visits = pr3_reach!((tl, covered, visits), stack5,
+                    target, begptr, endptr, invptr, q) do (tl, covered, visits), _, y
+                visits += 1
+
+                @inbounds if marker2[y] >= xtag
+                    # `y` is in X: it is covered by the region
+                    if marker2[y] != rtag
+                        marker2[y] = rtag; covered += 1
+                    end
+                elseif marker[y] != ntag && marker[y] != vtag && weight[y] > uwgt - tol
+                    # `y` is a heavy vertex outside N[`v`]
+                    marker[y] = vtag; tl += 1; stack8[tl] = y
+                end
+
+                return (tl, covered, visits)
+            end
+
+            # the region covers X: it is a connector
+            covered == nx && return true, tag
+
+            # the search has run out of steps
+            visits > budget && return false, tag
+        end
+    end
+
+    return false, tag
 end
 
 # contract an almost simplicial vertex `v` into its neighbor `u`
