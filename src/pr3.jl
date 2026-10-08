@@ -1,3 +1,14 @@
+# status flags used by `pr3`
+const PR3_STACK1 = 0x01 # the vertex is in the queue of degree 0 and 1 vertices
+const PR3_STACK2 = 0x02 # the vertex is in the queue of degree 2 vertices
+const PR3_STACK3 = 0x04 # the vertex is in the queue of degree 3 vertices
+const PR3_PARKED = 0x08 # the vertex failed a test because of `width`
+const PR3_DELETE = 0x10 # the vertex has been eliminated
+
+# adjacency queries between vertices whose degrees both exceed
+# this threshold are cached
+const PR3_CACHE_DEGREE = 32
+
 function pr3(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}
     return pr3(weights, graph, convert(W, width))
 end
@@ -15,39 +26,144 @@ function pr3(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) wher
         totdeg += weights[v]
     end
 
-    marker = FVector{V}(undef, n)    
     stack0 = FVector{V}(undef, n)
-    stack1 = FVector{V}(undef, n)
-    stack2 = FVector{V}(undef, n)
-    stack3 = FVector{V}(undef, n)
-    stack4 = FVector{V}(undef, n)
-    stack5 = FVector{V}(undef, n)
-    index0 = FVector{V}(undef, n)
-    index1 = FVector{V}(undef, n)
-    index2 = FVector{V}(undef, n)
-    index3 = FVector{V}(undef, n)
     tmpptr = FVector{E}(undef, nn)
 
-    degree = FVector{W}(undef, n)
-    number = FVector{V}(undef, n)
-    source = FVector{V}(undef, m)
-    target = FVector{V}(undef, m)
-    begptr = FVector{E}(undef, nn)
-    endptr = FVector{E}(undef, n)
-    invptr = FVector{E}(undef, m)
+    work = PR3Workspace(
+        weights,
+        FVector{W}(undef, n),       # degree
+        FVector{V}(undef, n),       # number
+        FVector{UInt8}(undef, n),   # status
+        FVector{V}(undef, n),       # marker
+        FVector{V}(undef, m),       # source
+        FVector{V}(undef, m),       # target
+        FVector{E}(undef, nn),      # begptr
+        FVector{E}(undef, n),       # endptr
+        FVector{E}(undef, m),       # invptr
+        FVector{V}(undef, n),       # stack1
+        FVector{V}(undef, n),       # stack2
+        FVector{V}(undef, n),       # stack3
+        FVector{V}(undef, n),       # stack4
+        FVector{V}(undef, n),       # stack5
+        FVector{V}(undef, n),       # stack6
+        FVector{V}(undef, n),       # stack7
+        FVector{V}(undef, n),       # stack8
+        width,
+    )
 
-    kernel, stack, inject, width = pr3_impl!(marker, stack0, stack1, stack2, stack3, stack4, stack5, 
-        index0, index1, index2, index3, tmpptr, degree, number, source,
-        target, begptr, endptr, invptr, totdeg, weights, graph, width)
-
+    kernel, stack, inject, width = pr3_impl!(work, stack0, tmpptr, totdeg, graph)
     return kernel, stack, inject, width
 end
 
 """
-    pr3_impl!(marker, stack0, stack1, stack2, stack3, stack4,
-        stack5, index0, index1, index2, index3, tmpptr, degree,
-        number, source, target, begptr, endptr, invptr, totdeg,
-        weight, graph, width)
+    PR3Workspace
+
+Working storage for [`pr3`](@ref).
+
+  - quotient graph:
+    - `source`: the owner of an arc slot
+    - `target`: the target vertex of an arc
+      - positive vertices are elements
+      - negative vertices are supernodes
+    - `begptr`: the first arc slot owned by a vertex
+    - `endptr`: one past the last arc incident to a vertex
+    - `invptr`: the reverse of an arc
+  - vertex data:
+    - `weight`: vertex weight
+    - `degree`: weighted degree (weight of the closed neighborhood)
+    - `number`: degree
+    - `status`: queue membership and elimination flags
+    - `marker`: marker array
+  - work queues:
+    - `stack1`: vertices of degree at most 1
+    - `stack2`: degree 2 vertices whose neighborhood has changed
+    - `stack3`: degree 3 vertices whose neighborhood has changed
+    - `stack7`: vertices whose last test failed because of `width`
+  - miscellaneous:
+    - `stack4`: eliminated vertices
+    - `stack5`: traversal stack
+    - `stack6`: traversal stack (nested traversals)
+    - `stack8`: scratch space
+    - `cache`: adjacency between high-degree vertices
+      (1: adjacent, 2: not adjacent). Two vertices are never
+      disconnected while they both exist, and an edge is only
+      created by a rule, which updates the cache.
+"""
+mutable struct PR3Workspace{
+        W, V, E,
+        Wgt <: AbstractVector{W},
+        WVec <: AbstractVector{W},
+        VVec <: AbstractVector{V},
+        EVec <: AbstractVector{E},
+        SVec <: AbstractVector{UInt8},
+    }
+    const weight::Wgt
+    const degree::WVec
+    const number::VVec
+    const status::SVec
+    const marker::VVec
+    const source::VVec
+    const target::VVec
+    const begptr::EVec
+    const endptr::EVec
+    const invptr::EVec
+    const stack1::VVec
+    const stack2::VVec
+    const stack3::VVec
+    const stack4::VVec
+    const stack5::VVec
+    const stack6::VVec
+    const stack7::VVec
+    const stack8::VVec
+    const cache::Dict{Tuple{V, V}, UInt8}
+    width::W
+    parked::W
+    tag::V
+    hi1::V
+    hi2::V
+    hi3::V
+    hi4::V
+    hi7::V
+end
+
+function PR3Workspace(
+        weight::Wgt,
+        degree::WVec,
+        number::VVec,
+        status::SVec,
+        marker::VVec,
+        source::VVec,
+        target::VVec,
+        begptr::EVec,
+        endptr::EVec,
+        invptr::EVec,
+        stack1::VVec,
+        stack2::VVec,
+        stack3::VVec,
+        stack4::VVec,
+        stack5::VVec,
+        stack6::VVec,
+        stack7::VVec,
+        stack8::VVec,
+        width::W,
+    ) where {
+        W, V, E,
+        Wgt <: AbstractVector{W},
+        WVec <: AbstractVector{W},
+        VVec <: AbstractVector{V},
+        EVec <: AbstractVector{E},
+        SVec <: AbstractVector{UInt8},
+    }
+    return PR3Workspace{W, V, E, Wgt, WVec, VVec, EVec, SVec}(
+        weight, degree, number, status, marker, source, target,
+        begptr, endptr, invptr, stack1, stack2, stack3, stack4,
+        stack5, stack6, stack7, stack8, Dict{Tuple{V, V}, UInt8}(),
+        width, width, one(V),
+        zero(V), zero(V), zero(V), zero(V), zero(V))
+end
+
+"""
+    pr3_impl!(work, stack0, tmpptr, totdeg, graph)
 
 Pre-processing for Triangulation of Probabilistic Networks
 Bodlaender, Koster, Eijkhof, and van der Gaag
@@ -59,26 +175,28 @@ Safe Reduction Rules for Weighted Treewidth
 Eijkhof, Bodlaender, and Koster
 
 Preprocess a graph by applying a set of *safe* reduction
-rules.
-  - islet
-  - twig
-  - series
-  - triangle
+rules to vertices of degree at most three.
+  - islet (degree 0, simplicial)
+  - twig (degree 1, simplicial)
+  - series (degree 2, simplicial or almost simplicial)
+  - triangle (degree 3, simplicial or almost simplicial)
   - buddy
   - cube
-The algorithm runs in a loop, testing each degree 0, 1, 2,
-and 3 vertex to see if it can be eliminated according to one
-of the rules. The algorithm terminates when no more vertices
-can be eliminated.
+
+The algorithm is driven by work queues: a vertex is (re-)tested
+only when something that its test depends on has changed. These
+dependencies are
+  - the neighborhood of the vertex,
+  - the adjacency between its neighbors,
+  - the neighborhoods of its degree-3 neighbors (cube rule), and
+  - the lower bound `width`.
+When the queues are empty, no rule applies to any vertex.
 
 The output is a reduced graph R and a sequence (v₁, ..., vₙ) of
 eliminated vertices. Any minimum-treewidth elimination ordering
 (w₁, ..., wₘ) of R can be appended to the sequence to create
 a minimum-treewidth elimination ordering of the input graph.
    (v₁, ..., vₙ, w₁, ..., wₘ).
-If the input graph has treewidth at most three, then the
-algorithm will eliminate every vertex, and the reduced graph
-R will have no vertices.
 
 The algorithm employs a data structure called a *quotient graph.*
 It is a directed graph with two types of vertices: elements and
@@ -92,9 +210,7 @@ relation on the set of elements.
 
 input parameters:
   - `totdeg`: total vertex weight
-  - `weight`: vertex weight
   - `graph`: input graph
-  - `width`: treewidth lower bound
 
 output parameters:
   - `kernel`: reduced graph
@@ -102,137 +218,959 @@ output parameters:
   - `inject`: mapping from the vertices of `kernel` to the vertices
               of `graph`
   - `width`: treewidth lower bound
-
-working arrays:
-  - miscellaneous:
-    - `marker`: marker array
-    - `stack5`: vertex stack
-    - `tmpptr`: temporary pointer array
-  - vertex-degree bucket queue:
-    - `stack0`: stack of degree 0 vertices
-    - `stack1`: stack of degree 1 vertices
-    - `stack2`: stack of degree 2 vertices
-    - `stack3`: stack of degree 3 vertices
-    - `index0`: the index of a vertex in `stack0`
-    - `index1`: the index of a vertex in `stack1`
-    - `index2`: the index of a vertex in `stack2`
-    - `index3`: the index of a vertex in `stack3`
-  - quotient graph:
-    - `source`: the source vertex of an edge
-    - `target`: the target vertex of an edge
-      - positive vertices are elements
-      - negative vertices are supernodes
-    - `begptr`: the first edge incident to a vertex
-    - `endptr`: the final edge incident to a vertex
-    - `invptr`: the reverse of an edge
 """
 function pr3_impl!(
-        marker::AbstractVector{V},
+        work::PR3Workspace{W, V, E},
         stack0::AbstractVector{V},
-        stack1::AbstractVector{V},
-        stack2::AbstractVector{V},
-        stack3::AbstractVector{V},
-        stack4::AbstractVector{V},
-        stack5::AbstractVector{V},
-        index0::AbstractVector{V},
-        index1::AbstractVector{V},
-        index2::AbstractVector{V},
-        index3::AbstractVector{V},
         tmpptr::AbstractVector{E},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        source::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
         totdeg::W,
-        weight::AbstractVector{W},
         graph::AbstractGraph{V},
-        width::W,
     ) where {W, V, E}
-    @assert nv(graph) <= length(marker)
-    @assert nv(graph) <= length(stack0)
-    @assert nv(graph) <= length(stack1)
-    @assert nv(graph) <= length(stack2)
-    @assert nv(graph) <= length(stack3)
-    @assert nv(graph) <= length(stack4)
-    @assert nv(graph) <= length(stack5)
-    @assert nv(graph) <= length(index0)
-    @assert nv(graph) <= length(index1)
-    @assert nv(graph) <= length(index2)
-    @assert nv(graph) <= length(index3)
-    @assert nv(graph) < length(tmpptr)
-    @assert nv(graph) <= length(degree)
-    @assert nv(graph) <= length(number)
-    @assert de(graph) <= length(source)
-    @assert de(graph) <= length(target)
-    @assert nv(graph) < length(begptr)
-    @assert nv(graph) <= length(endptr)
-    @assert de(graph) <= length(invptr)
-
-    # `n` is the number of vertices in the input graph
     n = nv(graph)
 
-    # initialize vertex-degree bucket queue and quotient graph
-    hi0, hi1, hi2, hi3, mindeg = pr3_init!(marker, stack0, stack1, stack2,
-        stack3, index0, index1, index2, index3, tmpptr, degree, number,
-        source, target, begptr, endptr, invptr, totdeg, weight, graph)
+    @assert n <= length(work.weight)
+    @assert n <= length(work.degree)
+    @assert n <= length(work.number)
+    @assert n <= length(work.status)
+    @assert n <= length(work.marker)
+    @assert de(graph) <= length(work.source)
+    @assert de(graph) <= length(work.target)
+    @assert n < length(work.begptr)
+    @assert n <= length(work.endptr)
+    @assert de(graph) <= length(work.invptr)
+    @assert n <= length(work.stack1)
+    @assert n <= length(work.stack2)
+    @assert n <= length(work.stack3)
+    @assert n <= length(work.stack4)
+    @assert n <= length(work.stack5)
+    @assert n <= length(work.stack6)
+    @assert n <= length(work.stack7)
+    @assert n <= length(work.stack8)
+    @assert n <= length(stack0)
+    @assert n < length(tmpptr)
 
-    # the weighted treewidth of the input graph is no less
-    # than its minimum weighted degree
-    width = max(width, mindeg)
+    # initialize the quotient graph and the work queues
+    pr3_init!(work, tmpptr, totdeg, graph)
 
-    # `tag` is used to mark vertices
-    tag = one(V)
+    # apply reduction rules until no more apply
+    pr3_loop!(work)
 
-    # `lo4` is the previous number of eliminated vertices
-    lo4 = -one(V)
+    # if no vertex was eliminated, then the quotient graph is
+    # the input graph, stored in `begptr` and `target`
+    if iszero(work.hi4)
+        @inbounds for v in oneto(n)
+            stack0[v] = v
+        end
 
-    # `hi4` is the current number of eliminated vertices
-    hi4 = zero(V)
-
-    # if a vertex was eliminated during the previous loop... 
-    @inbounds while lo4 < hi4
-        # update `lo4`
-        lo4 = hi4
-
-        # test every degree 0 vertex
-        width, hi4 = pr3_0!(stack0, stack4, degree, number, width, hi0, hi4)
-
-        # every degree 0 vertex has been eliminated
-        hi0 = zero(V)
-
-        # test every degree 1 vertex
-        width, hi0, hi2, hi3, hi4 = pr3_1!(stack0, stack1, stack2, stack3,
-            stack4, stack5, index0, index1, index2, index3, degree, number, source,
-            target, begptr, endptr, invptr, weight, width, hi0, hi1, hi2, hi3, hi4)
-
-        # every degree 1 vertex has been eliminated
-        hi1 = zero(V)
-
-        # test every degree 2 vertex
-        width, hi0, hi1, hi2, hi3, hi4 = pr3_2!(stack0, stack1,
-            stack2, stack3, stack4, stack5, index0, index1, index2, index3,
-            degree, number, source, target, begptr, endptr, invptr, weight,
-            width, hi0, hi1, hi2, hi3, hi4)
-
-        # test every degree 3 vertex
-        width, tag, hi0, hi1, hi2, hi3, hi4 = pr3_3!(marker, stack0, stack1,
-            stack2, stack3, stack4, stack5, index0, index1, index2, index3,
-            degree, number, source, target, begptr, endptr, invptr, weight,
-            width, tag, hi0, hi1, hi2, hi3, hi4)
+        @inbounds m = work.begptr[n + one(V)] - one(E)
+        kernel = BipartiteGraph(n, n, m, work.begptr, work.target)
+        return kernel, work.stack4, stack0, work.width
     end
 
     # construct the reduced graph R = (V, E):
     #  - V is the set of elements in the quotient graph
     #  - E contains an arc (v, w) if w is reachable by v in the quotient graph
-    m, n = pr3_make!(stack4, stack5, target, begptr, endptr,
-        invptr, stack0, number, tmpptr, source, hi4, n)
+    m, n = pr3_make!(work.stack4, work.stack5, work.target, work.begptr,
+        work.endptr, work.invptr, stack0, work.number, tmpptr, work.source,
+        work.hi4, n)
 
     # `kernel` is the reduced graph
-    kernel = BipartiteGraph(n, n, m, tmpptr, source)
-    return kernel, stack4, stack0, width
+    kernel = BipartiteGraph(n, n, m, tmpptr, work.source)
+    return kernel, work.stack4, stack0, work.width
+end
+
+function pr3_init!(
+        work::PR3Workspace{W, V, E},
+        tmpptr::AbstractVector{E},
+        totdeg::W,
+        graph::AbstractGraph{V},
+    ) where {W, V, E}
+    weight = work.weight
+    degree = work.degree
+    number = work.number
+    status = work.status
+    marker = work.marker
+    source = work.source
+    target = work.target
+    begptr = work.begptr
+    endptr = work.endptr
+    invptr = work.invptr
+
+    # `n` is the number of vertices in the graph
+    n = nv(graph); nn = n + one(V)
+
+    # `mindeg` is the minimum weighted degree
+    mindeg = totdeg
+
+    # `sorted` is true if every neighborhood is sorted
+    sorted = true
+
+    # `p` is the current arc
+    p = one(E)
+
+    # copy the graph into the arrays `source` and `target`
+    @inbounds for v in vertices(graph)
+        status[v] = zero(UInt8)
+        marker[v] = zero(V)
+        begptr[v] = p
+
+        # `deg` is the weighted degree of `v`
+        deg = weight[v]
+
+        # `num` is the unweighted degree of `v`
+        num = zero(V)
+
+        # `prv` is the previous neighbor of `v`
+        prv = zero(V)
+
+        # for all neighbors `w` of `v`...
+        for w in neighbors(graph, v)
+            # ignore self loops
+            if v != w
+                # `p` is the arc (`v`, `w`)
+                source[p] = v; target[p] = w; p += one(E)
+
+                # check if the neighborhood of `v` is sorted
+                sorted = sorted && prv < w; prv = w
+
+                # increase the weighted degree of `v` by
+                # the weight of `w`
+                deg += weight[w]
+
+                # increment the degree of `v`
+                num += one(V)
+            end
+        end
+
+        endptr[v] = p
+
+        # update the minimum weighted degree
+        mindeg = min(mindeg, deg)
+
+        # store the weighted degree of `v`
+        degree[v] = deg
+
+        # store the degree of `v`
+        number[v] = num
+    end
+
+    @inbounds begptr[nn] = p
+
+    # if the neighborhoods are not sorted, sort them by
+    # transposing the graph
+    @inbounds if !sorted
+        for v in vertices(graph)
+            tmpptr[v] = begptr[v]
+        end
+
+        for v in vertices(graph)
+            p = begptr[v]; pend = endptr[v]
+
+            while p < pend
+                # `p` is the arc (`v`, `w`)
+                w = target[p]; p += one(E)
+
+                # `q` is the arc (`w`, `v`)
+                q = tmpptr[w]; invptr[q] = v; tmpptr[w] = q + one(E)
+            end
+        end
+
+        copyto!(target, begptr[begin], invptr, begptr[begin], begptr[nn] - one(E))
+    end
+
+    # compute the reverse of every arc: since the neighborhoods
+    # are sorted, the reverse of the arc (`v`, `w`) is the first
+    # unvisited arc incident to `w`
+    @inbounds for v in vertices(graph)
+        tmpptr[v] = begptr[v]
+    end
+
+    @inbounds for v in vertices(graph)
+        # the arcs {`p`, ..., `pend` - 1} are incident
+        # to `v`
+        p = begptr[v]; pend = endptr[v]
+
+        while p < pend
+            # `p` is the arc (`v`, `w`)
+            w = target[p]
+
+            # `q` is the arc (`w`, `v`)
+            q = tmpptr[w]; invptr[p] = q; tmpptr[w] = q + one(E)
+            p += one(E)
+        end
+    end
+
+    # the weighted treewidth of the input graph is no less
+    # than its minimum weighted degree
+    work.width = work.parked = max(work.width, mindeg)
+
+    # add vertices to the work queues in reverse order, so
+    # that they are tested in increasing order
+    @inbounds for v in reverse(vertices(graph))
+        pr3_touch!(work, v)
+    end
+
+    return
+end
+
+function pr3_loop!(work::PR3Workspace{W, V, E}) where {W, V, E}
+    number = work.number
+    status = work.status
+
+    @inbounds while true
+        if ispositive(work.hi1)
+            # `v` is a vertex with degree 0 or 1
+            work.hi1, v = pr3_stack_pop!(work.stack1, work.hi1)
+            flag = status[v]; status[v] = flag & ~PR3_STACK1
+
+            if iszero(flag & PR3_DELETE)
+                if iszero(number[v])
+                    pr3_islet!(work, v)
+                elseif isone(number[v])
+                    pr3_twig!(work, v)
+                end
+            end
+        elseif ispositive(work.hi2)
+            # `v` is a vertex with degree 2 (probably)
+            work.hi2, v = pr3_stack_pop!(work.stack2, work.hi2)
+            flag = status[v]; status[v] = flag & ~PR3_STACK2
+
+            if iszero(flag & PR3_DELETE) && istwo(number[v])
+                pr3_series!(work, v)
+            end
+        elseif ispositive(work.hi3)
+            # `v` is a vertex with degree 3 (probably)
+            work.hi3, v = pr3_stack_pop!(work.stack3, work.hi3)
+            flag = status[v]; status[v] = flag & ~PR3_STACK3
+
+            if iszero(flag & PR3_DELETE) && isthree(number[v])
+                pr3_triangle!(work, v)
+            end
+        elseif ispositive(work.hi7) && work.parked < work.width
+            # the lower bound has increased: re-test every
+            # vertex that failed a test because of it
+            pr3_unpark!(work)
+        else
+            break
+        end
+    end
+
+    return
+end
+
+# eliminate a vertex `v` with degree 0
+function pr3_islet!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    # add `v` to the stack of eliminated vertices
+    pr3_delete!(work, v)
+
+    # `v` is simplicial: update the lower bound
+    @inbounds work.width = max(work.width, work.degree[v])
+    return
+end
+
+# eliminate a vertex `v` with degree 1
+function pr3_twig!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    weight = work.weight
+    degree = work.degree
+    number = work.number
+
+    # add `v` to the stack of eliminated vertices
+    pr3_delete!(work, v)
+
+    # `v` is simplicial: update the lower bound
+    @inbounds work.width = max(work.width, degree[v])
+
+    # `w` is the unique element reachable by `v`
+    p, w = pr3_reach1!(work, v)
+
+    # remove `v` from the reachable set of `w`
+    @inbounds pr3_reach_del!(work.source, work.target, work.endptr, work.invptr, work.invptr[p])
+
+    # decrement the degree of `w`
+    @inbounds number[w] -= one(V)
+
+    # decrease the weighted degree of `w` by the weight
+    # of `v`
+    @inbounds degree[w] -= weight[v]
+
+    # the neighborhood of `w` has changed
+    pr3_touch_nbr!(work, w)
+    return
+end
+
+# test a vertex `v` with degree 2
+function pr3_series!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    tol = tolerance(W)
+
+    weight = work.weight
+    degree = work.degree
+    number = work.number
+    source = work.source
+    target = work.target
+    endptr = work.endptr
+    invptr = work.invptr
+
+    # `w` and `ww` are the elements reachable by `v`
+    p, w, pp, ww = pr3_reach2!(work, v)
+
+    # sort `w` and `ww` by degree
+    @inbounds if number[ww] < number[w]
+        p, w, pp, ww = pp, ww, p, w
+    end
+
+    @inbounds if pr3_adjacent!(work, w, ww)
+        # w ─── ww
+        # │  ╱
+        # v
+
+        # add `v` to the stack of eliminated vertices
+        pr3_delete!(work, v)
+
+        # `v` is simplicial: update the lower bound
+        work.width = max(work.width, degree[v])
+
+        # remove `v` from the reachable sets of `w` and `ww`
+        pr3_reach_del!(source, target, endptr, invptr, invptr[p])
+        pr3_reach_del!(source, target, endptr, invptr, invptr[pp])
+
+        # decrement the degree of `w` and `ww`
+        number[w] -= one(V)
+        number[ww] -= one(V)
+
+        # decrease the weighted degree of `w` and `ww` by the
+        # weight of `v`
+        degree[w] -= weight[v]
+        degree[ww] -= weight[v]
+
+        # the neighborhoods of `w` and `ww` have changed
+        pr3_touch_nbr!(work, w)
+        pr3_touch_nbr!(work, ww)
+    elseif min(weight[w], weight[ww]) < weight[v] + tol
+        if degree[v] < work.width + tol
+            # w     ww
+            # │  ╱
+            # v
+
+            # add `v` to the stack of eliminated vertices
+            pr3_delete!(work, v)
+
+            pinv = invptr[p]
+            ppinv = invptr[pp]
+
+            # replace `v` with `ww` in the reachable set of `w`
+            target[pinv] = ww; invptr[pinv] = ppinv
+
+            # replace `v` with `w` in the reachable set of `ww`
+            target[ppinv] = w; invptr[ppinv] = pinv
+
+            # increase the weighted degree of `w` by the weight
+            # of `ww` and decrease it by the weight of `v`
+            degree[w] -= (weight[v] - weight[ww])
+
+            # increase the weighted degree of `ww` by the weight
+            # of `w` and decrease it by the weight of `v`
+            degree[ww] -= (weight[v] - weight[w])
+
+            # the neighborhoods of `w` and `ww` have changed
+            pr3_touch_nbr!(work, w)
+            pr3_touch_nbr!(work, ww)
+
+            # the edge {`w`, `ww`} was created
+            pr3_edge!(work, w, ww)
+        else
+            # the test failed because of the lower bound
+            pr3_park!(work, v)
+        end
+    end
+
+    return
+end
+
+# test a vertex `v` with degree 3
+function pr3_triangle!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    tol = tolerance(W)
+
+    weight = work.weight
+    degree = work.degree
+    number = work.number
+    source = work.source
+    target = work.target
+    endptr = work.endptr
+    invptr = work.invptr
+
+    # `w`, `ww`, and `www` are the elements reachable by `v`
+    p, w, pp, ww, ppp, www = pr3_reach3!(work, v)
+
+    # sort `w`, `ww`, and `www` by degree
+    (p, w), (pp, ww), (ppp, www) = sortthree((p, w), (pp, ww), (ppp, www)) do (p, w)
+        @inbounds wnum = number[w]
+        return wnum
+    end
+
+    # `f` is true if `ww` is reachable by `w`
+    # `ff` is true if `www` is reachable by `w`
+    f, ff = pr3_adjacent2!(work, w, ww, www)
+
+    # `fff` is true if `www` is reachable by `ww`
+    fff = pr3_adjacent!(work, ww, www)
+
+    # sort `f`, `ff`, and `fff` by true value
+    if f
+        pp, ppp = ppp, pp
+        ww, www = www, ww
+        f, ff = ff, f
+    end
+
+    if ff
+        p, pp = pp, p
+        w, ww = ww, w
+        ff, fff = fff, ff
+    end
+
+    if f
+        pp, ppp = ppp, pp
+        ww, www = www, ww
+        f, ff = ff, f
+    end
+
+    @inbounds if f
+        # w ─── ww
+        # │  ╳  │
+        # v ─── www
+
+        # add `v` to the stack of eliminated vertices
+        pr3_delete!(work, v)
+
+        # `v` is simplicial: update the lower bound
+        work.width = max(work.width, degree[v])
+
+        # remove `v` from the reachable sets of `w`, `ww`, and `www`
+        pr3_reach_del!(source, target, endptr, invptr, invptr[p])
+        pr3_reach_del!(source, target, endptr, invptr, invptr[pp])
+        pr3_reach_del!(source, target, endptr, invptr, invptr[ppp])
+
+        # decrement the degrees of `w`, `ww`, and `www`
+        number[w] -= one(V)
+        number[ww] -= one(V)
+        number[www] -= one(V)
+
+        # decrease the weighted degrees of `w`, `ww`, and `www`
+        # by the weight of `v`
+        degree[w] -= weight[v]
+        degree[ww] -= weight[v]
+        degree[www] -= weight[v]
+
+        # the neighborhoods of `w`, `ww`, and `www` have changed
+        pr3_touch_nbr!(work, w)
+        pr3_touch_nbr!(work, ww)
+        pr3_touch_nbr!(work, www)
+    elseif ff
+        if min(weight[w], weight[ww]) < weight[v] + tol
+            if degree[v] < work.width + tol
+                # w     ww
+                # │  ╳  │
+                # v ─── www
+
+                # add `v` to the stack of eliminated vertices
+                pr3_delete!(work, v)
+
+                # remove `v` from the reachable set of `www`
+                pr3_reach_del!(source, target, endptr, invptr, invptr[ppp])
+
+                # decrement the degree of `www`
+                number[www] -= one(V)
+
+                # decrease the weighted degree of `www` by the
+                # weight of `v`
+                degree[www] -= weight[v]
+
+                pinv = invptr[p]
+                ppinv = invptr[pp]
+
+                # replace `v` with `ww` in the reachable set of `w`
+                target[pinv] = ww; invptr[pinv] = ppinv
+
+                # replace `v` with `w` in the reachable set of `ww`
+                target[ppinv] = w; invptr[ppinv] = pinv
+
+                # increase the weighted degree of `w` by the weight of
+                # `ww` and decrease it by the weight of `v`
+                degree[w] -= (weight[v] - weight[ww])
+
+                # increase the weighted degree of `ww` by the weight of
+                # `w` and decrease it by the weight of `v`
+                degree[ww] -= (weight[v] - weight[w])
+
+                # the neighborhoods of `w`, `ww`, and `www` have changed
+                pr3_touch_nbr!(work, w)
+                pr3_touch_nbr!(work, ww)
+                pr3_touch_nbr!(work, www)
+
+                # the edge {`w`, `ww`} was created
+                pr3_edge!(work, w, ww)
+            else
+                # the test failed because of the lower bound
+                pr3_park!(work, v)
+            end
+        end
+    elseif fff
+        if weight[w] < weight[v] + tol
+            if degree[v] < work.width + tol
+                # w     ww
+                # │  ╱  │
+                # v ─── www
+
+                # add `v` to the stack of eliminated vertices
+                pr3_delete!(work, v)
+
+                # increment the degree of `w`
+                number[w] += one(V)
+
+                pinv = invptr[p]
+                ppinv = invptr[pp]
+                pppinv = invptr[ppp]
+
+                # turn `v` into a supernode
+                target[pinv] = -v
+
+                # replace `v` with `w` in the reachable sets of `ww` and `www`
+                target[ppinv] = w
+                target[pppinv] = w
+
+                # increase the weighted degree of `w` by the weights of
+                # `ww` and `www` and decrease it by the weight of `v`
+                degree[w] -= (weight[v] - weight[ww] - weight[www])
+
+                # increase the weighted degree of `ww` by the weight
+                # of `w` and decrease it by the weight of `v`
+                degree[ww] -= (weight[v] - weight[w])
+
+                # increase the weighted degree of `www` by the weight
+                # of `w` and decrease it by the weight of `v`
+                degree[www] -= (weight[v] - weight[w])
+
+                # remove `w` from the reachable set of `v`
+                pr3_reach_del!(source, target, endptr, invptr, p)
+
+                # the neighborhoods of `w`, `ww`, and `www` have changed
+                pr3_touch_nbr!(work, w)
+                pr3_touch_nbr!(work, ww)
+                pr3_touch_nbr!(work, www)
+
+                # the edges {`w`, `ww`} and {`w`, `www`} were created
+                pr3_edge!(work, w, ww)
+                pr3_edge!(work, w, www)
+            else
+                # the test failed because of the lower bound
+                pr3_park!(work, v)
+            end
+        end
+    else
+        # w     ww
+        # │  ╱
+        # v ─── www
+
+        # `flag` is true if a rule was applied
+        flag = false
+
+        # `park` is true if a test failed because
+        # of the lower bound
+        park = false
+
+        if min(weight[w], weight[ww], weight[www]) >= weight[v] + tol
+            # `v` cannot be contracted to any of its neighbors,
+            # so it has no buddy
+        elseif degree[v] < work.width + tol
+            # search for a buddy `vv`
+            vv, park = pr3_buddy_search!(work, v, w, ww, www)
+
+            # if a buddy was found ...
+            if ispositive(vv)
+                # w ────────── vv
+                # │         ╱  │
+                # │     ww     │
+                # │  ╱         │
+                # v ────────── www
+
+                # add `v` and `vv` to the stack of eliminated vertices
+                pr3_delete!(work, v)
+                pr3_delete!(work, vv)
+
+                # eliminate `v` and `vv`
+                pr3_buddy!(work.stack5, degree, source, target, work.begptr, endptr,
+                    invptr, weight, v, vv, p, w, pp, ww, ppp, www)
+
+                # the neighborhoods of `w`, `ww`, and `www` have changed
+                pr3_touch_nbr!(work, w)
+                pr3_touch_nbr!(work, ww)
+                pr3_touch_nbr!(work, www)
+
+                # the edges {`w`, `ww`}, {`w`, `www`}, and
+                # {`ww`, `www`} were created
+                pr3_edge!(work, w, ww)
+                pr3_edge!(work, w, www)
+                pr3_edge!(work, ww, www)
+
+                flag = true
+            end
+        else
+            park = true
+        end
+
+        if !flag && isthree(number[w]) && isthree(number[ww]) && isthree(number[www])
+            if max(degree[w], degree[ww], degree[www]) < work.width + tol
+                # search for a cube `x`, `y`, and `z`
+                q, qq, r, rr, s, ss, x, y, z = pr3_cube_reach!(work, v, w, ww, www)
+
+                # if a cube was found...
+                if ispositive(q)
+                    #       x
+                    #    ╱     ╲
+                    # w           ww
+                    # │  ╲     ╱  │
+                    # │     v     │
+                    # z     │     y
+                    #    ╲  │  ╱
+                    #      www
+
+                    # `v` will be simplicial after eliminating `w`, `ww`, and
+                    # `www`, with neighborhood {`x`, `y`, `z`}: update the lower
+                    # bound
+                    work.width = max(work.width, weight[v] + weight[x] + weight[y] + weight[z])
+
+                    # add `w`, `ww`, `www`, and `v` to the stack of
+                    # eliminated vertices
+                    pr3_delete!(work, w)
+                    pr3_delete!(work, ww)
+                    pr3_delete!(work, www)
+                    pr3_delete!(work, v)
+
+                    # eliminate `w`, `ww`, `www`, and `v`
+                    pr3_cube!(work, w, ww, www, q, qq, r, rr, s, ss, x, y, z)
+
+                    # the neighborhoods of `x`, `y`, and `z` have changed
+                    pr3_touch_nbr!(work, x)
+                    pr3_touch_nbr!(work, y)
+                    pr3_touch_nbr!(work, z)
+
+                    # the edges {`x`, `y`}, {`y`, `z`}, and {`z`, `x`}
+                    # may have been created
+                    pr3_edge!(work, x, y)
+                    pr3_edge!(work, y, z)
+                    pr3_edge!(work, z, x)
+
+                    flag = true
+                end
+            else
+                park = true
+            end
+        end
+
+        if !flag && park
+            # the test failed because of the lower bound
+            pr3_park!(work, v)
+        end
+    end
+
+    return
+end
+
+# search for a buddy of `v`: a vertex `vv` != `v` whose
+# neighborhood is {`w`, `ww`, `www`}
+function pr3_buddy_search!(
+        work::PR3Workspace{W, V, E},
+        v::V,
+        w::V,
+        ww::V,
+        www::V,
+    ) where {W, V, E}
+    tol = tolerance(W)
+
+    weight = work.weight
+    degree = work.degree
+    number = work.number
+
+    # `width` is the treewidth lower bound
+    width = work.width
+
+    # `vwgt` is the weight of `v`
+    @inbounds vwgt = weight[v]
+
+    # sort the weights of `w`, `ww`, and `www`
+    @inbounds minwgt, medwgt, maxwgt = sortthree(weight[w], weight[ww], weight[www])
+
+    # `vv` is a buddy of `v`
+    # `park` is nonzero if a buddy was rejected because of `width`
+    #
+    # the accumulator is a homogeneous tuple: a loop-carried
+    # tuple of type (Int, Bool) is not kept in registers
+    (vv, park), _ = pr3_reach_until!((zero(V), zero(V)), work.stack5, work.target,
+            work.begptr, work.endptr, work.invptr, w) do (vv, park), _, x
+
+        if x != v && isthree(number[x])
+            @inbounds xwgt = weight[x]
+
+            if minwgt < min(vwgt, xwgt) + tol && medwgt < max(vwgt, xwgt) + tol
+                # `x` is a buddy if `ww` and `www` are reachable by `x`
+                if pr3_contains2!(work, x, ww, www)
+                    @inbounds xdeg = degree[x]
+
+                    if xdeg < width + tol
+                        return (x, park), true
+                    else
+                        park = one(V)
+                    end
+                end
+            end
+        end
+
+        return (vv, park), false
+    end
+
+    return vv, ispositive(park)
+end
+
+# remove a vertex from the graph
+function pr3_delete!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    @inbounds work.status[v] |= PR3_DELETE
+    work.hi4 = pr3_stack_add!(work.stack4, work.hi4, v)
+    return
+end
+
+# the neighborhood of `v` has changed: add it to the
+# appropriate work queue
+function pr3_touch!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    @inbounds flag = work.status[v]
+
+    @inbounds if iszero(flag & PR3_DELETE)
+        num = work.number[v]
+
+        if num <= one(V)
+            if iszero(flag & PR3_STACK1)
+                work.status[v] = flag | PR3_STACK1
+                work.hi1 = pr3_stack_add!(work.stack1, work.hi1, v)
+            end
+        elseif istwo(num)
+            if iszero(flag & PR3_STACK2)
+                work.status[v] = flag | PR3_STACK2
+                work.hi2 = pr3_stack_add!(work.stack2, work.hi2, v)
+            end
+        elseif isthree(num)
+            if iszero(flag & PR3_STACK3)
+                work.status[v] = flag | PR3_STACK3
+                work.hi3 = pr3_stack_add!(work.stack3, work.hi3, v)
+            end
+        end
+    end
+
+    return
+end
+
+# the neighborhood of `v` has changed: add `v` to a work queue.
+# if `v` has degree 3, it may belong to a cube centered at
+# one of its degree 3 neighbors, so add them to a queue too.
+function pr3_touch_nbr!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    number = work.number
+    status = work.status
+
+    pr3_touch!(work, v)
+
+    @inbounds if isthree(number[v])
+        pr3_reach!(nothing, work.stack5, work.target, work.begptr,
+                work.endptr, work.invptr, v) do _, _, w
+            @inbounds if isthree(number[w]) && iszero(status[w] & PR3_STACK3)
+                pr3_touch!(work, w)
+            end
+
+            return
+        end
+    end
+
+    return
+end
+
+# the edge {`v`, `w`} was created: every vertex of degree 2 or 3
+# adjacent to both `v` and `w` must be tested again
+function pr3_edge!(work::PR3Workspace{W, V, E}, v::V, w::V) where {W, V, E}
+    number = work.number
+    status = work.status
+    stack8 = work.stack8
+
+    # update the cache
+    if !isempty(work.cache)
+        key = minmax(v, w)
+
+        if haskey(work.cache, key)
+            work.cache[key] = 0x01
+        end
+    end
+
+    # search the smaller reachable set: `a` is the endpoint
+    # with smaller degree and `b` is the other endpoint
+    @inbounds a, b = number[w] < number[v] ? (w, v) : (v, w)
+
+    # collect the untested vertices of degree 2 and 3 adjacent to `a`
+    num = pr3_reach!(zero(V), work.stack5, work.target, work.begptr,
+            work.endptr, work.invptr, a) do num, _, x
+
+        if x != b
+            @inbounds xnum = number[x]
+            @inbounds xflag = status[x]
+
+            if (istwo(xnum) && iszero(xflag & PR3_STACK2)) || (isthree(xnum) && iszero(xflag & PR3_STACK3))
+                num += one(V); @inbounds stack8[num] = x
+            end
+        end
+
+        return num
+    end
+
+    # add the ones adjacent to `b` to a work queue
+    @inbounds for i in oneto(num)
+        x = stack8[i]
+
+        if pr3_adjacent!(work, x, b)
+            pr3_touch!(work, x)
+        end
+    end
+
+    return
+end
+
+# the lower bound has increased: re-test the parked vertices
+function pr3_unpark!(work::PR3Workspace{W, V, E}) where {W, V, E}
+    @inbounds for i in oneto(work.hi7)
+        v = work.stack7[i]
+        work.status[v] &= ~PR3_PARKED
+        pr3_touch!(work, v)
+    end
+
+    work.hi7 = zero(V)
+    return
+end
+
+# a test of `v` failed because of the lower bound
+function pr3_park!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    @inbounds flag = work.status[v]
+
+    @inbounds if iszero(flag & PR3_PARKED)
+        if iszero(work.hi7)
+            work.parked = work.width
+        end
+
+        work.status[v] = flag | PR3_PARKED
+        work.hi7 = pr3_stack_add!(work.stack7, work.hi7, v)
+    end
+
+    return
+end
+
+# returns true if `w` is reachable by `v`
+function pr3_adjacent!(work::PR3Workspace{W, V, E}, v::V, w::V) where {W, V, E}
+    number = work.number
+
+    # search the smaller reachable set
+    @inbounds a, b = number[w] < number[v] ? (w, v) : (v, w)
+
+    # if both vertices have high degree, consult the cache
+    @inbounds cached = number[a] > PR3_CACHE_DEGREE; key = minmax(v, w)
+
+    if cached
+        val = get(work.cache, key, zero(UInt8))
+        ispositive(val) && return isone(val)
+    end
+
+    flag, _ = pr3_reach_until!(false, work.stack5, work.target,
+            work.begptr, work.endptr, work.invptr, a) do flag, _, x
+        flag = x == b
+        return flag, flag
+    end
+
+    if cached
+        work.cache[key] = ifelse(flag, 0x01, 0x02)
+    end
+
+    return flag
+end
+
+# returns (`w` reachable by `v`, `ww` reachable by `v`)
+function pr3_adjacent2!(work::PR3Workspace{W, V, E}, v::V, w::V, ww::V) where {W, V, E}
+    number = work.number
+
+    # if all three vertices have high degree, consult the cache
+    @inbounds cached = min(number[v], number[w], number[ww]) > PR3_CACHE_DEGREE
+    key = minmax(v, w); kkey = minmax(v, ww)
+
+    if cached
+        val = get(work.cache, key, zero(UInt8))
+        vval = get(work.cache, kkey, zero(UInt8))
+
+        if ispositive(val) && ispositive(vval)
+            return isone(val), isone(vval)
+        end
+    end
+
+    # bit 1 of `flag` is set if `w` is reachable by `v`
+    # bit 2 of `flag` is set if `ww` is reachable by `v`
+    flag, _ = pr3_reach_until!(zero(V), work.stack5, work.target,
+            work.begptr, work.endptr, work.invptr, v) do flag, _, x
+        flag |= ifelse(x == w, one(V), zero(V)) | ifelse(x == ww, two(V), zero(V))
+        return flag, flag == three(V)
+    end
+
+    f = isodd(flag); ff = flag >= two(V)
+
+    if cached
+        work.cache[key] = ifelse(f, 0x01, 0x02)
+        work.cache[kkey] = ifelse(ff, 0x01, 0x02)
+    end
+
+    return f, ff
+end
+
+# returns true if `w` and `ww` are both reachable by `v`
+# uses the nested traversal stack
+@noinline function pr3_contains2!(work::PR3Workspace{W, V, E}, v::V, w::V, ww::V) where {W, V, E}
+    flag, _ = pr3_reach_until!(zero(V), work.stack6, work.target,
+            work.begptr, work.endptr, work.invptr, v) do flag, _, x
+        flag |= ifelse(x == w, one(V), zero(V)) | ifelse(x == ww, two(V), zero(V))
+        return flag, flag == three(V)
+    end
+
+    return flag == three(V)
+end
+
+function pr3_reach1!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    p = zero(E); w = zero(V)
+
+    p, w = pr3_reach!((p, w), work.stack5, work.target,
+            work.begptr, work.endptr, work.invptr, v) do _, p, w
+        return (p, w)
+    end
+
+    return p, w
+end
+
+function pr3_reach2!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    p = pp = zero(E); w = ww = zero(V)
+
+    p, w, pp, ww = pr3_reach!((p, w, pp, ww), work.stack5, work.target,
+            work.begptr, work.endptr, work.invptr, v) do (p, w, pp, ww), ppp, www
+
+        if iszero(w)
+            p, w = ppp, www
+        else
+            pp, ww = ppp, www
+        end
+
+        return (p, w, pp, ww)
+    end
+
+    return p, w, pp, ww
+end
+
+function pr3_reach3!(work::PR3Workspace{W, V, E}, v::V) where {W, V, E}
+    return pr3_3_reach!(work.stack5, work.target, work.begptr, work.endptr, work.invptr, v)
 end
 
 function pr3_make!(
@@ -304,764 +1242,6 @@ function pr3_make!(
     return m, n
 end
 
-function pr3_init!(
-        marker::AbstractVector{V},
-        stack0::AbstractVector{V},
-        stack1::AbstractVector{V},
-        stack2::AbstractVector{V},
-        stack3::AbstractVector{V},
-        index0::AbstractVector{V},
-        index1::AbstractVector{V},
-        index2::AbstractVector{V},
-        index3::AbstractVector{V},
-        tmpptr::AbstractVector{E},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        source::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        totdeg::W,
-        weight::AbstractVector{W},
-        graph::AbstractGraph{V},
-    ) where {W, V, E}
-    
-    # `n` is the number of vertices in the graph
-    n = nv(graph); nn = n + one(V)
-
-    # `hi0` is the top of the stack of degree 0 vertices
-    # `hi1` is the top of the stack of degree 1 vertices
-    # `hi2` is the top of the stack of degree 2 vertices
-    # `hi3` is the top of the stack of degree 3 vertices    
-    hi0 = hi1 = hi2 = hi3 = zero(V)
-    
-    # `mindeg` is the minimum weighted degree
-    mindeg = totdeg
-    
-    # `p` is the current arc
-    p = one(E)
-
-    @inbounds for v in vertices(graph)
-        marker[v] = zero(V)
-        tmpptr[v] = begptr[v] = endptr[v] = p
-
-        # `deg` is the weighted degree of `v`
-        deg = weight[v]
-        
-        # `num` is the unweighted degree of `v`
-        num = zero(V)
-
-        # for all neighbors `w` of `v`...
-        for w in neighbors(graph, v)
-            # ignore self loops
-            if v != w
-                # `p` is the arc (`v`, `w`)
-                source[p] = v; p += one(E)
-
-                # increase the weighted degree of `v` by
-                # the weight of `w`
-                deg += weight[w]
-
-                # increment the degree of `v`
-                num += one(V)
-            end
-        end
-        
-        # if `v` has degree 0 ...
-        if iszero(num)
-            # ... add it to the stack of degree 0 vertices
-            index0[v] = hi0 += one(V); stack0[hi0] = v
-
-        # if `v` has degree 1 ...
-        elseif isone(num)
-            # ... add it to the stack of degree 1 vertices
-            index1[v] = hi1 += one(V); stack1[hi1] = v
-
-        # if `v` has degree 2 ...
-        elseif istwo(num)
-            # ... add it to the stack of degree 2 vertices
-            index2[v] = hi2 += one(V); stack2[hi2] = v
-
-        # if `v` has degree 3 ...
-        elseif isthree(num)
-            # ... add it to the stack of degree 3 vertices
-            index3[v] = hi3 += one(V); stack3[hi3] = v
-        end
-
-        # update the minimum weighted degree
-        mindeg = min(mindeg, deg)
-
-        # store the weighted degree of `v`
-        degree[v] = deg
-
-        # store the degree of `v`
-        number[v] = num
-    end
-
-    # for all arcs (`v`, `w`)...
-    @inbounds for v in vertices(graph), w in neighbors(graph, v)
-        # ignore self loops
-        if v != w
-            # `q` is the arc (`w`, `v`)
-            q = endptr[w]; target[q] = v; endptr[w] = q + one(E)
-        end
-    end
-
-    # for all vertices `v`...
-    @inbounds for v in vertices(graph)
-        # the arcs {`p`, ..., `pend` - 1} are incident
-        # to `v`
-        p = begptr[v]; pend = endptr[v]
-
-        while p < pend
-            # `p` is the arc (`v`, `w`)
-            w = target[p]
-
-            # `q` is the arc (`w`, `v`)
-            q = tmpptr[w]; invptr[p] = q; tmpptr[w] = q + one(E)
-            p += one(E)
-        end
-    end
-
-    if ispositive(n)
-        @inbounds begptr[nn] = endptr[n]
-    end
-
-    return hi0, hi1, hi2, hi3, mindeg
-end
-
-function pr3_0!(
-        stack0::AbstractVector{V},
-        stack4::AbstractVector{V},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        width::W,
-        hi0::V,
-        hi4::V,
-    ) where {W, V}
-
-    # for all elements with degree 0...
-    @inbounds while ispositive(hi0)
-        # `v` is an element with degree 0
-        hi0, v = pr3_stack_pop!(stack0, hi0)
-
-        # add `v` to the stack of eliminated vertices
-        hi4 = pr3_stack_add!(stack4, hi4, v)
-
-        # `v` is simplicial: update the lower bound
-        width = max(width, degree[v])
-    end
-    
-    return width, hi4
-end
-
-function pr3_1!(
-        stack0::AbstractVector{V},
-        stack1::AbstractVector{V},
-        stack2::AbstractVector{V},
-        stack3::AbstractVector{V},
-        stack4::AbstractVector{V},
-        stack5::AbstractVector{V},
-        index0::AbstractVector{V},
-        index1::AbstractVector{V},
-        index2::AbstractVector{V},
-        index3::AbstractVector{V},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        source::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        weight::AbstractVector{W},
-        width::W,
-        hi0::V,
-        hi1::V,
-        hi2::V,
-        hi3::V,
-        hi4::V,
-    ) where {W, V, E}
-    
-    # for all elements with degree 1...
-    @inbounds while ispositive(hi1)
-        # `v` is an element with degree 1
-        hi1, v = pr3_stack_pop!(stack1, hi1)
-
-        # add `v` to the stack of eliminated vertices
-        hi4 = pr3_stack_add!(stack4, hi4, v)
-
-        # `v` is simplicial: update the lower bound
-        width = max(width, degree[v])
-        
-        # `w` is the unique element reachable by `v`
-        w = zero(V)
-        p = zero(E)
-
-        p, w = pr3_reach!((p, w), stack5,
-            target, begptr, endptr, invptr, v) do _, p, w
-            return (p, w)
-        end
-                
-        if isone(number[w])
-            # if `w` has degree 1, remove it from the stack
-            # of degree 1 elements
-            hi1 = pr3_stack_del!(stack1, index1, hi1, w)
-
-            # add `w` to the stack of degree 0 elements
-            hi0 = pr3_stack_add!(stack0, index0, hi0, w)
-        elseif istwo(number[w])
-            # if `w` has degree 2, remove it from the stack
-            # of degree 2 elements
-            hi2 = pr3_stack_del!(stack2, index2, hi2, w)
-
-            # add `w` to the stack of degree 1 elements
-            hi1 = pr3_stack_add!(stack1, index1, hi1, w)
-        elseif isthree(number[w])
-            # if `w` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, w)
-
-            # add `w` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, w)
-        elseif isfour(number[w])
-            # if `w` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, w)
-        end
-
-        # remove `v` from the reachable set of `w`
-        pr3_reach_del!(source, target, endptr, invptr, invptr[p])
-
-        # decrement the degree of `w`
-        number[w] -= one(V)
-
-        # decrease the weighted degree of `w` by the weight
-        # of `v`
-        degree[w] -= weight[v]
-    end
-    
-    return width, hi0, hi2, hi3, hi4
-end
-
-function pr3_2!(
-        stack0::AbstractVector{V},
-        stack1::AbstractVector{V},
-        stack2::AbstractVector{V},
-        stack3::AbstractVector{V},
-        stack4::AbstractVector{V},
-        stack5::AbstractVector{V},
-        index0::AbstractVector{V},
-        index1::AbstractVector{V},
-        index2::AbstractVector{V},
-        index3::AbstractVector{V},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        source::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        weight::AbstractVector{W},
-        width::W,
-        hi0::V,
-        hi1::V,
-        hi2::V,
-        hi3::V,
-        hi4::V,
-    ) where {W, V, E}
-    tol = tolerance(W)
-    
-    # `i` is an index into the stack of degree 2 elements
-    i = one(V)
-
-    # for all elements with degree 2    
-    @inbounds while i <= hi2
-        # `v` is an element with degree 2
-        v = stack2[i]
-       
-        # `w` and `ww` are the elements reachable by `v` 
-        w = ww = zero(V)
-        p = pp = zero(E)
-        
-        p, w, pp, ww = pr3_reach!((p, w, pp, ww),
-            stack5, target, begptr, endptr, invptr, v) do (p, w, pp, ww), ppp, www
-            
-            if iszero(w)
-                p, w = ppp, www
-            else
-                pp, ww = ppp, www
-            end
-            
-            return (p, w, pp, ww)    
-        end
-
-        # sort `w` and `ww` by degree        
-        if number[ww] < number[w]
-            p, w, pp, ww = pp, ww, p, w
-        end
-
-        # if `flag` is zero, then `ww` is reachable by `w`
-        flag = pr3_reach!(ww, stack5,
-            target, begptr, endptr, invptr, w) do ww, qq, xx
-            
-            if ww == xx
-                ww = zero(V)
-            end
-
-            return ww
-        end
-        
-        if iszero(flag)
-            # w ─── ww
-            # │  ╱
-            # v
-
-            # remove `v` from the stack of degree 2 elements
-            hi2 = pr3_stack_del!(stack2, index2, hi2, v)
-
-            # add `v` to the stack of eliminated vertices
-            hi4 = pr3_stack_add!(stack4, hi4, v)
-
-            # `v` is simplicial: update the lower bound
-            width = max(width, degree[v])
-
-            if istwo(number[w])
-                # if `w` has degree 2, remove it from the stack
-                # of degree 2 elements
-                hi2 = pr3_stack_del!(stack2, index2, hi2, w)
-
-                # add `w` to the stack of degree 1 elements
-                hi1 = pr3_stack_add!(stack1, index1, hi1, w)
-            elseif isthree(number[w])
-                # if `w` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, w)
-
-                # add `w` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, w)
-            elseif isfour(number[w])
-                # if `w` has degree 4, add it to the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, w)
-            end
-
-            if istwo(number[ww])
-                # if `ww` has degree 2, remove it from the stack
-                # of degree 2 elements
-                hi2 = pr3_stack_del!(stack2, index2, hi2, ww)
-
-                # add `ww` to the stack of degree 1 elements
-                hi1 = pr3_stack_add!(stack1, index1, hi1, ww)
-            elseif isthree(number[ww])
-                # if `ww` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, ww)
-
-                # add `ww` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, ww)
-            elseif isfour(number[ww])
-                # if `ww` has degree 4, add it to the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, ww)
-            end
-
-            # remove `v` from the reachable sets of `w` and `ww`
-            pr3_reach_del!(source, target, endptr, invptr, invptr[p])
-            pr3_reach_del!(source, target, endptr, invptr, invptr[pp])
-
-            # decrement the degree of `w` and `ww`
-            number[w] -= one(V)
-            number[ww] -= one(V)
-
-            # decrease the weighted degree of `w` and `ww` by the
-            # weight of `v`
-            degree[w] -= weight[v]
-            degree[ww] -= weight[v]
-        elseif degree[v] < width + tol && min(weight[w], weight[ww]) < weight[v] + tol
-            # w     ww
-            # │  ╱
-            # v
-
-            # add `v` to the stack of eliminated vertices
-            hi4 = pr3_stack_add!(stack4, hi4, v)
-
-            # remove `v` from the stack of degree 2 vertices
-            hi2 = pr3_stack_del!(stack2, index2, hi2, v)
-
-            pinv = invptr[p]
-            ppinv = invptr[pp]
-            
-            # replace `v` with `ww` in the reachable set of `w`
-            target[pinv] = ww; invptr[pinv] = ppinv
-
-            # replace `v` with `w` in the reachable set of `ww`
-            target[ppinv] = w; invptr[ppinv] = pinv
-
-            # increase the weighted degree of `w` by the weight
-            # of `ww` and decrease it by the weight of `v`          
-            degree[w] -= (weight[v] - weight[ww])
-
-            # increase the weighted degree of `ww` by the weight
-            # of `w` and decrease it by the weight of `v`          
-            degree[ww] -= (weight[v] - weight[w])
-        else
-            i += one(V)
-        end
-    end
-    
-    return width, hi0, hi1, hi2, hi3, hi4
-end
-
-function pr3_3!(
-        marker::AbstractVector{V},
-        stack0::AbstractVector{V},
-        stack1::AbstractVector{V},
-        stack2::AbstractVector{V},
-        stack3::AbstractVector{V},
-        stack4::AbstractVector{V},
-        stack5::AbstractVector{V},
-        index0::AbstractVector{V},
-        index1::AbstractVector{V},
-        index2::AbstractVector{V},
-        index3::AbstractVector{V},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        source::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        weight::AbstractVector{W},
-        width::W,
-        tag::V,
-        hi0::V,
-        hi1::V,
-        hi2::V,
-        hi3::V,
-        hi4::V,
-    ) where {W, V, E}
-    tol = tolerance(W)
-
-    # `i` is an index into the stack of degree 3 elements
-    i = one(V)
-
-    # for all elements with degree 3...    
-    @inbounds while i <= hi3
-        # `v` is an element with degree 3
-        v = stack3[i]
-
-        # `w`, `ww`, and `www` are the elements reachable by `v`
-        p, w, pp, ww, ppp, www = pr3_3_reach!(stack5,
-            target, begptr, endptr, invptr, v)
-
-        # sort `w`, `ww`, and `www` by degree
-        (p, w), (pp, ww), (ppp, www) = sortthree((p, w), (pp, ww), (ppp, www)) do (p, w)
-            @inbounds wnum = number[w]
-            return wnum
-        end
-
-        # mark the elements reachable by `w` and not `ww` with `tag`
-        # mark the elements reachable by `w` and `ww` with `tag` + 1
-        # mark the elements reachable by `ww` and not `w` with `tag` + 2
-        pr3_3_mark!(marker, stack5, target,
-            begptr, endptr, invptr, tag, w, ww)
-
-        # `f` is true if `ww` is reachable by `w`
-        f = marker[ww] == tag
-
-        # `ff` is true if `w` is reachable by `www`
-        ff = tag <= marker[www] <= tag + one(V)
-
-        # `fff` is true if `www` is reachable by `ww`
-        fff = tag + one(V) <= marker[www]
-
-        # sort `f`, `ff`, and `fff` by true value
-        if f
-            pp, ppp = ppp, pp
-            ww, www = www, ww
-            f, ff = ff, f
-        end
-        
-        if ff
-            p, pp = pp, p
-            w, ww = ww, w
-            ff, fff = fff, ff
-        end
-        
-        if f
-            pp, ppp = ppp, pp
-            ww, www = www, ww
-            f, ff = ff, f
-        end
-        
-        if f
-            # w ─── ww
-            # │  ╳  │
-            # v ─── www
-
-            # remove `v` from the stack of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, v)
-
-            # add `v` to the stack of eliminated vertices
-            hi4 = pr3_stack_add!(stack4, hi4, v)
-
-            # `v` is simplicial: update the lower bound
-            width = max(width, degree[v])
-
-            if isthree(number[w])
-                # if `w` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, w)
-
-                # add `w` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, w)
-            elseif isfour(number[w])
-                # if `w` has degree 4, add it to the stack of
-                # degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, w)
-            end
-
-            if isthree(number[ww])
-                # if `ww` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, ww)
-
-                # add `ww` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, ww)
-            elseif isfour(number[ww])
-                # if `ww` has degree 4, add it to the stack of
-                # degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, ww)
-            end
-
-            if isthree(number[www])
-                # if `www` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, www)
-
-                # add `www` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, www)
-            elseif isfour(number[www])
-                # if `www` has degree 4, add it to the stack of
-                # degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, www)
-            end
-
-            # remove `v` from the reachable sets of `w`, `ww`, and `www`
-            pr3_reach_del!(source, target, endptr, invptr, invptr[p])
-            pr3_reach_del!(source, target, endptr, invptr, invptr[pp])
-            pr3_reach_del!(source, target, endptr, invptr, invptr[ppp])
-
-            # decrement the degrees of `w`, `ww`, and `www`
-            number[w] -= one(V)
-            number[ww] -= one(V)
-            number[www] -= one(V)
-
-            # decrease the weighted degrees of `w`, `ww`, and `www`
-            # by the weight of `v`
-            degree[w] -= weight[v]
-            degree[ww] -= weight[v]
-            degree[www] -= weight[v]
-        elseif ff && degree[v] < width + tol && min(weight[w], weight[ww]) < weight[v] + tol
-            # w     ww
-            # │  ╳  │
-            # v ─── www
-
-            # remove `v` from the stack of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, v)
-
-            # add `v` to the stack of eliminated vertices
-            hi4 = pr3_stack_add!(stack4, hi4, v)
-
-            if isthree(number[www])
-                # if `www` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, www)
-
-                # add `www` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, www)
-            elseif isfour(number[www])
-                # if `www` has degree 4, add it to the stack of
-                # degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, www)
-            end
-
-            # remove `v` from the reachable set of `www`
-            pr3_reach_del!(source, target, endptr, invptr, invptr[ppp])
-
-            # decrement the degree of `www`
-            number[www] -= one(V)
-
-            # decrease the weighted degree of `www` by the
-            # weight of `v`
-            degree[www] -= weight[v]
-            
-            pinv = invptr[p]
-            ppinv = invptr[pp]
-            
-            # replace `v` with `ww` in the reachable set of `w`
-            target[pinv] = ww; invptr[pinv] = ppinv
-
-            # replace `v` with `w` in the reachable set of `ww`
-            target[ppinv] = w; invptr[ppinv] = pinv
-
-            # increase the weighted degree of `w` by the weight of
-            # `ww` and decrease it by the weight of `v`        
-            degree[w] -= (weight[v] - weight[ww])
-
-            # increase the weighted degree of `ww` by the weight of
-            # `w` and decrease it by the weight of `v`        
-            degree[ww] -= (weight[v] - weight[w])
-        elseif fff && degree[v] < width + tol && weight[w] < weight[v] + tol
-            # w     ww
-            # │  ╱  │
-            # v ─── www
-
-            # remove `v` from the stack of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, v)
-
-            # add `v` to the stack of eliminated vertices
-            hi4 = pr3_stack_add!(stack4, hi4, v)
-
-            if isone(number[w])
-                # if `w` has degree 1, remove it from the stack
-                # of degree 1 elements
-                hi1 = pr3_stack_del!(stack1, index1, hi1, w)
-
-                # add `w` to the stack of degree 2 elements
-                hi2 = pr3_stack_add!(stack2, index2, hi2, w)
-            elseif istwo(number[w])
-                # if `w` has degree 2, remove it from the stack
-                # of degree 2 elements
-                hi2 = pr3_stack_del!(stack2, index2, hi2, w)
-
-                # add `w` to the stack of degree 3 elements
-                hi3 = pr3_stack_add!(stack3, index3, hi3, w)
-            elseif isthree(number[w])
-                # if `w` has degree 3, remove it from the stack
-                # of degree 3 elements
-                hi3 = pr3_stack_del!(stack3, index3, hi3, w)
-            end
-            
-            # increment the degree of `w`
-            number[w] += one(V)
-            
-            pinv = invptr[p]
-            ppinv = invptr[pp]
-            pppinv = invptr[ppp]
-     
-            # turn `v` into a supernode       
-            target[pinv] = -v
-
-            # replace `v` with `w` in the reachable sets of `ww` and `www`
-            target[ppinv] = w
-            target[pppinv] = w
-
-            # increase the weighted degree of `w` by the weights of
-            # `ww` and `www` and decrease it by the weight of `v`        
-            degree[w] -= (weight[v] - weight[ww] - weight[www])
-
-            # increase the weighted degree of `ww` by the weight
-            # of `w` and decrease it by the weight of `v`
-            degree[ww] -= (weight[v] - weight[w])
-
-            # increase the weighted degree of `www` by the weight
-            # of `w` and decrease it by the weight of `v`
-            degree[www] -= (weight[v] - weight[w])
-
-            # remove `w` from the reachable set of `v`
-            pr3_reach_del!(source, target, endptr, invptr, p)
-        else
-            flag = false
-
-            if !fff && degree[v] < width + tol
-                # w     ww
-                # │  ╱  
-                # v ─── www
-
-                # search for a buddy `vv`
-                vv = pr3_buddy_reach!(marker, stack5, degree, number, target,
-                    begptr, endptr, invptr, weight, width, tag, v, w, ww, www)
-
-                # if a buddy was found ...
-                if ispositive(vv)
-                    # w ────────── vv
-                    # │         ╱  │
-                    # │     ww     │
-                    # │  ╱         │
-                    # v ────────── www
-
-                    # remove `v` and `vv` from the stack of degree 3 elements
-                    hi3 = pr3_stack_del!(stack3, index3, hi3, v)
-                    hi3 = pr3_stack_del!(stack3, index3, hi3, vv)
-
-                    # add `v` and `vv` to the stack of eliminated vertices
-                    hi4 = pr3_stack_add!(stack4, hi4, v)
-                    hi4 = pr3_stack_add!(stack4, hi4, vv)
-
-                    # eliminate `v` and `vv`
-                    pr3_buddy!(stack5, degree, source, target, begptr, endptr,
-                        invptr, weight, v, vv, p, w, pp, ww, ppp, www)
-
-                    flag = true
-                end
-            end
-
-            if !fff && !flag && isthree(number[w]) && isthree(number[ww]) && isthree(number[www]) && max(degree[w], degree[ww], degree[www]) < width + tol
-                # search for a cube `x`, `y`, and `z`
-                q, qq, r, rr, s, ss, x, y, z = pr3_cube_reach!(stack5,
-                    target, begptr, endptr, invptr, weight, v, w, ww, www)
-
-                # if a cube was found...
-                if ispositive(q)
-                    #       x
-                    #    ╱     ╲
-                    # w           ww
-                    # │  ╲     ╱  │
-                    # │     v     │
-                    # z     │     y
-                    #    ╲  │  ╱
-                    #      www
-
-                    # `v` will be simplicial after eliminating `w`, `ww`, and `www`:
-                    # update the lower bound
-                    width = max(width, degree[v])
-
-                    # remove `w`, `ww`, `www`, and `v` from the stack
-                    # of degree 3 elements
-                    hi3 = pr3_stack_del!(stack3, index3, hi3, w)
-                    hi3 = pr3_stack_del!(stack3, index3, hi3, ww)
-                    hi3 = pr3_stack_del!(stack3, index3, hi3, www)
-                    hi3 = pr3_stack_del!(stack3, index3, hi3, v)
-
-                    # add `w`, `ww`, `www`, and `v` to the stack of
-                    # eliminated vertices
-                    hi4 = pr3_stack_add!(stack4, hi4, w)
-                    hi4 = pr3_stack_add!(stack4, hi4, ww)
-                    hi4 = pr3_stack_add!(stack4, hi4, www)
-                    hi4 = pr3_stack_add!(stack4, hi4, v)
-
-                    # eliminate `w`, `ww`, `www`, and `v`
-                    hi2, hi3 = pr3_cube!(marker, stack2, stack3, stack5, index2, index3, 
-                        number, degree, source, target, begptr, endptr, invptr,
-                        weight, tag, hi2, hi3, w, ww, www, q, qq, r, rr, s, ss, x, y, z)
-
-                    flag = true
-                end
-            end
-
-            if !flag
-                i += one(V)
-            end
-        end
-
-        tag += six(V)
-    end
-
-    return width, tag, hi0, hi1, hi2, hi3, hi4
-end
-
 function pr3_buddy!(
         stack5::AbstractVector{V},
         degree::AbstractVector{W},
@@ -1109,7 +1289,7 @@ function pr3_buddy!(
     @inbounds qqinv = invptr[qq]
     @inbounds qqqinv = invptr[qqq]
 
-    # replace `v` with `ww` in the reachable set of `w`   
+    # replace `v` with `ww` in the reachable set of `w`
     @inbounds target[pinv] = ww
     @inbounds invptr[pinv] = qqinv
 
@@ -1121,7 +1301,7 @@ function pr3_buddy!(
     @inbounds target[pppinv] = w
     @inbounds invptr[pppinv] = qinv
 
-    # replace `vv` with `www` in the reachable set of `w` 
+    # replace `vv` with `www` in the reachable set of `w`
     @inbounds target[qinv] = www
     @inbounds invptr[qinv] = pppinv
 
@@ -1133,17 +1313,17 @@ function pr3_buddy!(
     @inbounds target[qqqinv] = ww
     @inbounds invptr[qqqinv] = ppinv
 
-    # decrease the weighted degree of `w` by the weights of `v` 
+    # decrease the weighted degree of `w` by the weights of `v`
     # and `vv`, and increase it by the weights of `ww` and `www`
     @inbounds degree[w] -= (weight[v] + weight[vv] - weight[ww] - weight[www])
 
-    # decrease the weighted degree of `ww` by the weights of `v` 
+    # decrease the weighted degree of `ww` by the weights of `v`
     # and `vv`, and increase it by the weights of `w` and `www`
     @inbounds degree[ww] -= (weight[v] + weight[vv] - weight[w] - weight[www])
 
-    # decrease the weighted degree of `www` by the weights of `v` 
+    # decrease the weighted degree of `www` by the weights of `v`
     # and `vv`, and increase it by the weights of `w` and `ww`
-    @inbounds degree[www] -= (weight[v] + weight[vv] - weight[w] - weight[ww])                
+    @inbounds degree[www] -= (weight[v] + weight[vv] - weight[w] - weight[ww])
     return
 end
 
@@ -1157,10 +1337,10 @@ function pr3_3_reach!(
     ) where {V, E}
     p = pp = ppp = zero(E)
     w = ww = www = zero(V)
-    
+
     p, w, pp, ww, ppp, www = pr3_reach!((p, w, pp, ww, ppp, www),
         stack5, target, begptr, endptr, invptr, v) do (p, w, pp, ww, ppp, www), pnxt, wnxt
-        
+
         if iszero(w)
             p, w = pnxt, wnxt
         elseif iszero(ww)
@@ -1168,8 +1348,8 @@ function pr3_3_reach!(
         elseif iszero(www)
             ppp, www = pnxt, wnxt
         end
-        
-        return (p, w, pp, ww, ppp, www)    
+
+        return (p, w, pp, ww, ppp, www)
     end
 
     return (p, w, pp, ww, ppp, www)
@@ -1211,97 +1391,24 @@ function pr3_3_mark!(
     return
 end
 
-function pr3_buddy_reach!(
-        marker::AbstractVector{V},
-        stack5::AbstractVector{V},
-        degree::AbstractVector{W},
-        number::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        weight::AbstractVector{W},
-        width::W,
-        tag::V,
-        v::V, 
-        w::V,
-        ww::V,
-        www::V,
-    ) where {V, E, W}
-    tol = tolerance(W)
-
-    # `vwgt` is the weight of `v`
-    @inbounds vwgt = weight[v]
-
-    # `wwgt` is the weight of `w`
-    @inbounds wwgt = weight[w]
-
-    # `wwwgt` is the weight of `ww`
-    @inbounds wwwgt = weight[ww]
-
-    # `wwwwgt` is the weight of `www`
-    @inbounds wwwwgt = weight[www]
-
-    # sort the weights of `w`, `ww`, and `www`
-    minwgt, medwgt, maxwgt = sortthree(wwgt, wwwgt, wwwwgt)
-
-    # `vv` is a buddy of `v`
-    vv = zero(V)
-
-    vv = pr3_reach!(vv, stack5,
-        target, begptr, endptr, invptr, www) do vv, _, vnxt
-
-        if iszero(vv) && v != vnxt
-            @inbounds nxtdeg = degree[vnxt]
-
-            if nxtdeg < width + tol
-                @inbounds nxtnum = number[vnxt]
-
-                if isthree(nxtnum)
-                    @inbounds nxttag = marker[vnxt]
-
-                    if nxttag == tag + one(V)
-                        @inbounds nxtwgt = weight[vnxt]
-
-                        if minwgt < min(vwgt, nxtwgt) + tol && medwgt < max(vwgt, nxtwgt) + tol
-                            vv = vnxt
-                        end
-                    end
-                end
-            end
-        end
-
-        return vv
-    end
-
-    return vv
-end
-
 function pr3_cube_reach!(
-        stack5::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        weight::AbstractVector{W},
-        v::V, 
+        work::PR3Workspace{W, V, E},
+        v::V,
         w::V,
         ww::V,
         www::V,
-    ) where {V, E, W}
+    ) where {W, V, E}
     tol = tolerance(W)
+    weight = work.weight
 
     # `x`, `xx` and `xxx` are elements reachable by `w`
-    q, x, qq, xx, qqq, xxx = pr3_3_reach!(stack5,
-        target, begptr, endptr, invptr, w)        
+    q, x, qq, xx, qqq, xxx = pr3_reach3!(work, w)
 
     # `y`, `yy` and `yyy` are elements reachable by `ww`
-    r, y, rr, yy, rrr, yyy = pr3_3_reach!(stack5,
-        target, begptr, endptr, invptr, ww)        
+    r, y, rr, yy, rrr, yyy = pr3_reach3!(work, ww)
 
     # `z`, `zz`, and `zzz` are elements reachable by `www`
-    s, z, ss, zz, sss, zzz = pr3_3_reach!(stack5,
-        target, begptr, endptr, invptr, www)        
+    s, z, ss, zz, sss, zzz = pr3_reach3!(work, www)
 
     # ensure that `v` = `xxx`
     (q, x), (qq, xx), (qqq, xxx) = sortthree((q, x), (qq, xx), (qqq, xxx)) do (_, x)
@@ -1316,6 +1423,11 @@ function pr3_cube_reach!(
     # ensure that `v` = `zzz`
     (s, z), (ss, zz), (sss, zzz) = sortthree((s, z), (ss, zz), (sss, zzz)) do (_, z)
         return z == v
+    end
+
+    # ensure that `z` is reachable by `w`
+    if zz == x || zz == xx
+        s, z, ss, zz = ss, zz, s, z
     end
 
     # copy `z` to avoid boxing
@@ -1349,7 +1461,7 @@ function pr3_cube_reach!(
     # `ywgt` is the weight of `y`
     @inbounds ywgt = weight[y]
 
-    # `zwgt` is the weight of `x`
+    # `zwgt` is the weight of `z`
     @inbounds zwgt = weight[z]
 
     if x != yy || y != zz || z != xx || (
@@ -1365,23 +1477,7 @@ function pr3_cube_reach!(
 end
 
 function pr3_cube!(
-        marker::AbstractVector{V},
-        stack2::AbstractVector{V},
-        stack3::AbstractVector{V},
-        stack5::AbstractVector{V},
-        index2::AbstractVector{V},
-        index3::AbstractVector{V},
-        number::AbstractVector{V},
-        degree::AbstractVector{W},
-        source::AbstractVector{V},
-        target::AbstractVector{V},
-        begptr::AbstractVector{E},
-        endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        weight::AbstractVector{W},
-        tag::V,
-        hi2::V,
-        hi3::V,
+        work::PR3Workspace{W, V, E},
         w::V, ww::V, www::V,
         q::E, qq::E, r::E, rr::E,
         s::E, ss::E, x::V, y::V, z::V,
@@ -1394,12 +1490,23 @@ function pr3_cube!(
     # z     │     y
     #    ╲  │  ╱
     #      www
+    marker = work.marker
+    number = work.number
+    degree = work.degree
+    weight = work.weight
+    source = work.source
+    target = work.target
+    endptr = work.endptr
+    invptr = work.invptr
 
-    # mark elements reachable by `x` and not `y` with `tag` + 3
-    # mark elements reachable by `y` and `x` with `tag` + 4
-    # mark elements reachable by `y` and not `x` with `tag` + 5
-    pr3_3_mark!(marker, stack5, target, begptr,
-        endptr, invptr, tag + three(V), x, y)
+    # `tag` is used to mark vertices
+    tag = pr3_tag!(work)
+
+    # mark elements reachable by `x` and not `y` with `tag`
+    # mark elements reachable by `y` and `x` with `tag` + 1
+    # mark elements reachable by `y` and not `x` with `tag` + 2
+    pr3_3_mark!(marker, work.stack5, target, work.begptr,
+        endptr, invptr, tag, x, y)
 
     @inbounds xtag = marker[x]
     @inbounds ztag = marker[z]
@@ -1422,8 +1529,8 @@ function pr3_cube!(
 
     @inbounds qinv = invptr[q]
     @inbounds qqinv = invptr[qq]
-   
-    if tag + three(V) <= ztag <= tag + four(V)  
+
+    if tag <= ztag <= tag + one(V)
         # w ─── x
         # │  ╱
         # z
@@ -1431,32 +1538,6 @@ function pr3_cube!(
         # remove `w` from the reachable sets of `x` and `z`
         pr3_reach_del!(source, target, endptr, invptr, qinv)
         pr3_reach_del!(source, target, endptr, invptr, qqinv)
-
-        if isthree(xnum)
-            # if `x` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, x)
-
-            # add `x` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, x)
-        elseif isfour(xnum)
-            # if `x` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, x)
-        end
-
-        if isthree(znum)
-            # if `z` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, z)
-
-            # add `x` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, z)
-        elseif isfour(znum)
-            # if `z` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, z)
-        end
 
         # decrement the degree of `x` and `z`
         xnum -= one(V)
@@ -1488,8 +1569,8 @@ function pr3_cube!(
 
     @inbounds rinv = invptr[r]
     @inbounds rrinv = invptr[rr]
-  
-    if tag + four(V) <= xtag
+
+    if tag + one(V) <= xtag
         # ww ─── y
         #  │  ╱
         #  x
@@ -1497,32 +1578,6 @@ function pr3_cube!(
         # remove `ww` from the reachable sets of `y` and `x`
         pr3_reach_del!(source, target, endptr, invptr, rinv)
         pr3_reach_del!(source, target, endptr, invptr, rrinv)
-
-        if isthree(ynum)
-            # if `y` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, y)
-
-            # add `y` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, y)
-        elseif isfour(ynum)
-            # if `y` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, y)
-        end
-
-        if isthree(xnum)
-            # if `x` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, x)
-
-            # add `x` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, x)
-        elseif isfour(xnum)
-            # if `x` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, x)
-        end
 
         # decrement the degree of `y` and `x`
         ynum -= one(V)
@@ -1554,8 +1609,8 @@ function pr3_cube!(
 
     @inbounds sinv = invptr[s]
     @inbounds ssinv = invptr[ss]
-   
-    if tag + four(V) <= ztag
+
+    if tag + one(V) <= ztag
         # www ─── z
         #   │  ╱
         #   y
@@ -1563,32 +1618,6 @@ function pr3_cube!(
         # remove `www` from the reachable sets of `z` and `y`
         pr3_reach_del!(source, target, endptr, invptr, sinv)
         pr3_reach_del!(source, target, endptr, invptr, ssinv)
-
-        if isthree(znum)
-            # if `z` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, z)
-
-            # add `x` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, z)
-        elseif isfour(znum)
-            # if `z` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, z)
-        end
-
-        if isthree(ynum)
-            # if `y` has degree 3, remove it from the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_del!(stack3, index3, hi3, y)
-
-            # add `y` to the stack of degree 2 elements
-            hi2 = pr3_stack_add!(stack2, index2, hi2, y)
-        elseif isfour(ynum)
-            # if `y` has degree 4, add it to the stack
-            # of degree 3 elements
-            hi3 = pr3_stack_add!(stack3, index3, hi3, y)
-        end
 
         # decrement the degree of `z` and `y`
         znum -= one(V)
@@ -1606,7 +1635,7 @@ function pr3_cube!(
         # replace `www` with `y` in the reachable set of `z`
         @inbounds target[sinv] = y; invptr[sinv] = ssinv
 
-        # replace `www` with `z` in the reachable set of `x`
+        # replace `www` with `z` in the reachable set of `y`
         @inbounds target[ssinv] = z; invptr[ssinv] = sinv
 
         # increase the weighted degree of of `z` by the weight
@@ -1626,23 +1655,20 @@ function pr3_cube!(
     @inbounds degree[y] = ydeg
     @inbounds degree[z] = zdeg
 
-    return hi2, hi3
+    return
 end
 
-function pr3_stack_del!(stack::AbstractVector{V}, index::AbstractVector{V}, hi::V, v::V) where {V}
-    @inbounds i = index[v]
-    
-    if i < hi
-        @inbounds x = stack[i] = stack[hi]; index[x] = i
+# returns a fresh tag `tag`: the values `tag`, `tag` + 1,
+# and `tag` + 2 do not appear in `marker`
+function pr3_tag!(work::PR3Workspace{W, V, E}) where {W, V, E}
+    tag = work.tag
+
+    if tag > typemax(V) - four(V)
+        fill!(work.marker, zero(V)); tag = one(V)
     end
 
-    hi -= one(V)
-    return hi
-end
-
-function pr3_stack_add!(stack::AbstractVector{V}, index::AbstractVector{V}, hi::V, v::V) where {V}
-    @inbounds hi = index[v] = pr3_stack_add!(stack, hi, v)
-    return hi
+    work.tag = tag + three(V)
+    return tag
 end
 
 function pr3_stack_add!(stack::AbstractVector{V}, hi::V, v::V) where {V}
@@ -1709,6 +1735,28 @@ function pr3_reach!(
         invptr::AbstractVector{E},
         v::V,
     ) where {V, E}
+    result, _ = pr3_reach_until!(result, vstack, target,
+            begptr, endptr, invptr, v) do result, p, w
+        return (@inline combine(result, p, w)), false
+    end
+
+    return result
+end
+
+# Fold `combine` over the elements reachable by `v`. The
+# function `combine` returns a pair (`result`, `stop`); the
+# traversal terminates early if `stop` is true. As a side
+# effect, supernodes are compressed.
+function pr3_reach_until!(
+        combine::Function,
+        result,
+        vstack::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        v::V,
+    ) where {V, E}
     # push `v` to the stack
     @inbounds num = one(V); vstack[num] = v
 
@@ -1726,7 +1774,13 @@ function pr3_reach!(
 
             # if `ww` is an element, fold it into `result`
             if ispositive(ww)
-                result = combine(result, pp, ww)
+                result, stop = @inline combine(result, pp, ww)
+
+                if stop
+                    endptr[vv] = ppend
+                    return result, true
+                end
+
                 pp += one(E)
 
             # otherwise, `ww` is a supernode
@@ -1738,7 +1792,7 @@ function pr3_reach!(
                 # to `ww`
                 ww = -ww; qq = begptr[ww]; qqend = endptr[ww]
 
-                # while there is space, move neighbors of `ww` 
+                # while there is space, move neighbors of `ww`
                 # into the neighborhood of `vv`
                 while ppend < ppnxt && qq < qqend
                     qqend -= one(E)
@@ -1765,7 +1819,7 @@ function pr3_reach!(
                     pp += one(E)
 
                 # if `ww` has only one neighbor `xx`, replace
-                # `ww` with `xx` in the neighborhood of `vv` 
+                # `ww` with `xx` in the neighborhood of `vv`
                 elseif qq == qqend - one(E)
                     xx = target[pp] = target[qq]
 
@@ -1799,5 +1853,5 @@ function pr3_reach!(
         endptr[vv] = ppend
     end
 
-    return result
+    return result, false
 end
