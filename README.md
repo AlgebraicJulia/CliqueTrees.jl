@@ -154,6 +154,7 @@ quickly computing non-optimal ones. These include the following.
 - `RCM`: reverse Cuthill-McKee
 - `MMD`: multiple minimum degree
 - `MF`: minimum fill
+- `MAF`: minimum average fill
 - `AMD`: approximate minimum degree
 - `AMF`: approximate minimum fill
 - `METIS`: nested dissection

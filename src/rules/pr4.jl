@@ -1,103 +1,3 @@
-function compressreduce(reduce::F, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W, tao::Number) where {F <: Function, W <: Number, V <: Integer}
-    weights00 = weights; graph00 = graph; width00 = width; n00 = nv(graph00)
-    inject03 = Vector{V}(undef, n00); n03 = zero(V)
-    # V01
-    #  ↓ inject01
-    # V00
-    #  ↑ inject02
-    # V02
-    #  ↓ project10
-    # V10
-    graph02, inject01, inject02, width10 = reduce(weights00, graph00, width00)
-    graph10, project10 = compress(graph02, Val(true), tao)
-    n02 = nv(graph02); n10 = nv(graph10)
-
-    @inbounds for v01 in oneto(n00 - n02)
-        v00 = inject01[v01]
-        n03 += one(V); inject03[n03] = v00
-    end
-    #   inject02 V02
-    #        ↙    ↓ project10
-    #   V00  →   V10
-    #     project11
-    weights10 = Vector{W}(undef, n10)
-    project11 = BipartiteGraph{V, V}(n00, n10, n00 - n03)
-    @inbounds pointers(project11)[begin] = p = one(V)
-
-    @inbounds for v10 in vertices(graph10)
-        w10 = zero(W); vv10 = v10 + one(V)
-
-        for v02 in neighbors(project10, v10)
-            v00 = inject02[v02]
-            w10 += weights00[v00]
-            targets(project11)[p] = v00; p += one(V)
-        end
-
-        weights10[v10] = w10
-        pointers(project11)[vv10] = p
-    end
-
-    lo = n10; hi = n00
-
-    @inbounds while lo < hi
-        hi = lo
-        # V11
-        #  ↓ inject11
-        # V10
-        #  ↑ inject12
-        # V12
-        #  ↓ project20
-        # V20
-        graph12, inject11, inject12, width20 = reduce(weights10, graph10, width10)
-        graph20, project20 = compress(graph12, Val(true), tao)
-        n12 = nv(graph12); n20 = nv(graph20)
-
-        for v11 in oneto(n10 - n12)
-            v10 = inject11[v11]
-
-            for v00 in neighbors(project11, v10)
-                n03 += one(V); inject03[n03] = v00
-            end
-        end
-        #            inject12
-        #          V10  ←   V12
-        # project11 ↑        ↓ project20
-        #          V00  →   V20
-        #           project21
-
-        weights20 = Vector{W}(undef, n20)
-        project21 = BipartiteGraph{V, V}(n00, n20, n00 - n03)
-        pointers(project21)[begin] = p = one(V)
-
-        for v20 in vertices(graph20)
-            w20 = zero(W); vv20 = v20 + one(V)
-
-            for v12 in neighbors(project20, v20)
-                v10 = inject12[v12]
-                w20 += weights10[v10]
-
-                for v00 in neighbors(project11, v10)
-                    targets(project21)[p] = v00; p += one(V)
-                end
-            end
-
-            weights20[v20] = w20
-            pointers(project21)[vv20] = p
-        end
-
-        lo = n10 = n20; weights10 = weights20; graph10 = graph20; width10 = width20; project11 = project21
-    end
-
-    return weights10, graph10, view(inject03, oneto(n03)), project11, width10
-end
-
-# Pre-processing for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Eijkhof, and van der Gaag
-#
-# Preprocessing Rules for Triangulation of Probabilistic Networks
-# Bodlaender, Koster, Eijkhof, and van der Gaag
-#
-#  PR-4 (PR-3 + Simplicial + Almost Simplicial)
 function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
     weights0 = weights; graph0 = graph; width0 = width
     n0 = nv(graph0); weights1 = Vector{W}(undef, n0)
@@ -109,7 +9,7 @@ function pr4(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) wh
         weights1[i] = weights0[inject1[i]]
     end
 
-    graph2, stack2, inject2, width2 = asr(weights1, graph1, width1)
+    graph2, stack2, inject2, width2 = sr(weights1, graph1, width1)
     n2 = nv(graph2); m2 = n1 - n2
 
     @inbounds for i in oneto(m2)
@@ -481,7 +381,7 @@ function sr_init!(
     end
 
     # compute the fill-in of each vertex
-    sr_fillin!(fillin, marker, stack0, tmpptr, source, number, target, begptr, endptr, n)
+    fillin!(fillin, marker, stack0, tmpptr, source, number, target, begptr, endptr, n)
 
     @inbounds for v in vertices(graph)
         # if `v` is simplicial...
@@ -495,24 +395,31 @@ function sr_init!(
 end
 
 """
-    sr_fillin!(fillin, marker, order, tail, adjtgt, number,
+    fillin!(fillin, marker, order, tail, adjtgt, number,
         target, begptr, endptr, n)
 
-Compute the fill-in of each vertex: the number of missing edges
-in its neighborhood. Starting from the empty graph, add the edges
-back one at a time, keeping the fill-in of every vertex up to
-date with Wing-Huang updates. When the edge {`u`, `w`} is added,
+    fillin!(fillin, weights, wdegree, marker, order, tail, adjtgt,
+        number, target, begptr, endptr, n)
 
-  - every common neighbor of `u` and `w` loses one unit of fill-in
-  - `u` gains one unit for each neighbor of `u` that is not a
-    neighbor of `w`, and vice versa.
+Compute the fill-in of each vertex: the weight of the missing edges
+in its neighborhood, where a missing edge {`a`, `b`} has weight
+`weights[a] * weights[b]`. Without `weights`, every vertex has
+weight one, and the fill-in is the number of missing edges.
+
+Starting from the empty graph, add the edges back one at a time,
+keeping the fill-in of every vertex up to date with Wing-Huang
+updates. When the edge {`u`, `w`} is added,
+
+  - every common neighbor of `u` and `w` loses `weights[u] * weights[w]`
+  - `u` gains `weights[w] * weights[x]` for each neighbor `x` of `u`
+    that is not a neighbor of `w`, and vice versa.
 
 The vertices are processed in order of decreasing degree; when a
 vertex `u` is processed, the edges joining `u` to unprocessed
 vertices are added. The common neighbors of `u` and `w` are found
 by scanning the processed neighbors of `w`, each of which has
 degree at least that of `w`, so there are at most √(2m) of them,
-and this takes O(m√m) time.
+and this takes O(m√m) time. The weights do not affect the order.
 
 The neighbors of `v` are `target[begptr[v]:endptr[v] - 1]`, in any
 order, and `number[v]` is the degree of `v`. The graph must be
@@ -524,8 +431,10 @@ working arrays:
   - `tail`: the end of the processed neighbors of a vertex (length ≥ n)
   - `adjtgt`: the processed neighbors of a vertex, stored at the
     same positions as its neighbors in `target`
+  - `wdegree`: the weighted degree of a vertex in the growing graph
+    (length ≥ n); unused if `weights` is a `Ones`
 """
-function sr_fillin!(
+function fillin!(
         fillin::AbstractVector{F},
         marker::AbstractVector{V},
         order::AbstractVector{V},
@@ -537,11 +446,27 @@ function sr_fillin!(
         endptr::AbstractVector{E},
         n::V,
     ) where {V, E, F}
+    weights = Ones{F}(n)
+    return fillin!(fillin, weights, fillin, marker, order, tail, adjtgt, number, target, begptr, endptr, n)
+end
 
-    iszero(n) && return
+function fillin!(
+        fillin::AbstractVector{F},
+        weights::AbstractVector,
+        wdegree::AbstractVector{F},
+        marker::AbstractVector{V},
+        order::AbstractVector{V},
+        tail::AbstractVector{E},
+        adjtgt::AbstractVector{V},
+        number::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        n::V,
+    ) where {V, E, F}
 
     # `maxnum` is the maximum degree
-    maxnum = zero(V)
+    maxnum = -one(V)
 
     @inbounds for v in oneto(n)
         maxnum = max(maxnum, number[v])
@@ -579,6 +504,8 @@ function sr_fillin!(
         fillin[v] = zero(F)
     end
 
+    fillin_init!(wdegree, weights, n)
+
     # for each vertex `u`, in order of decreasing degree...
     @inbounds for i in oneto(n)
         u = order[i]
@@ -589,8 +516,9 @@ function sr_fillin!(
             marker[adjtgt[p]] = i
         end
 
-        # `unum` is the degree of `u` in the growing graph
-        unum = convert(F, tail[u] - begptr[u])
+        # `unum` is the weighted degree of `u` in the growing graph
+        unum = fillin_degree(wdegree, weights, begptr, tail, u)
+        uwgt = convert(F, weights[u])
 
         # `ufil` is the fill-in gained by `u`
         ufil = zero(F)
@@ -605,9 +533,10 @@ function sr_fillin!(
                 # the neighbors of `w` in the growing graph
                 # are the arcs {`wbeg`, ..., `wtail` - 1}
                 wbeg = begptr[w]; wtail = tail[w]
+                wwgt = convert(F, weights[w]); uwwgt = uwgt * wwgt
 
-                # `cnt` is the number of common neighbors
-                # of `u` and `w`
+                # `cnt` is the weight of the common
+                # neighbors of `u` and `w`
                 cnt = zero(F)
 
                 for q in wbeg:wtail - one(E)
@@ -617,25 +546,57 @@ function sr_fillin!(
                     # then {`u`, `w`} is no longer missing from
                     # the neighborhood of `x`
                     if marker[x] == i
-                        cnt += one(F); fillin[x] -= one(F)
+                        cnt += convert(F, weights[x]); fillin[x] -= uwwgt
                     end
                 end
 
-                # `u` and `w` gain one unit of fill-in for each
-                # of their neighbors that are not common
-                ufil += unum - cnt
-                fillin[w] += convert(F, wtail - wbeg) - cnt
+                # `u` and `w` gain fill-in for each of
+                # their neighbors that are not common
+                ufil += wwgt * (unum - cnt)
+                fillin[w] += uwgt * (fillin_degree(wdegree, weights, begptr, tail, w) - cnt)
 
                 # add `u` to the neighbors of `w`
                 adjtgt[wtail] = u; tail[w] = wtail + one(E)
+                fillin_addarc!(wdegree, weights, w, uwgt)
 
-                # increment the degree of `u`
-                unum += one(F)
+                # increment the weighted degree of `u`
+                unum += wwgt
             end
         end
 
         fillin[u] += ufil
     end
 
+    return
+end
+
+# With unit weights, the weighted degree of a vertex in the growing graph
+# is its number of processed neighbors, and `wdegree` is not used.
+@inline function fillin_init!(wdegree::AbstractVector{F}, weights::Ones, n::Integer) where {F}
+    return
+end
+
+@inline function fillin_init!(wdegree::AbstractVector{F}, weights::AbstractVector, n::Integer) where {F}
+    @inbounds for v in oneto(n)
+        wdegree[v] = zero(F)
+    end
+
+    return
+end
+
+@inline function fillin_degree(wdegree::AbstractVector{F}, weights::Ones, begptr::AbstractVector, tail::AbstractVector, v::Integer) where {F}
+    return @inbounds convert(F, tail[v] - begptr[v])
+end
+
+@inline function fillin_degree(wdegree::AbstractVector{F}, weights::AbstractVector, begptr::AbstractVector, tail::AbstractVector, v::Integer) where {F}
+    return @inbounds wdegree[v]
+end
+
+@inline function fillin_addarc!(wdegree::AbstractVector{F}, weights::Ones, w::Integer, uwgt::F) where {F}
+    return
+end
+
+@inline function fillin_addarc!(wdegree::AbstractVector{F}, weights::AbstractVector, w::Integer, uwgt::F) where {F}
+    @inbounds wdegree[w] += uwgt
     return
 end

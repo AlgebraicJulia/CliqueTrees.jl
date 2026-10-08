@@ -19,7 +19,10 @@
 #       MAKES THE HEAP.
 #
 #     INPUT PARAMETERS:
+#       SCORE       - NODE-SELECTION SCORE (AN MLFSCORE).
 #       NEQNS       - NUMBER OF EQUATIONS.
+#       VWGHT(*)    - ARRAY OF LENGTH NEQNS, CONTAINING THE VERTEX
+#                     WEIGHTS.
 #       XADJ(*)     - ARRAY OF LENGTH NEQNS+1, CONTAINING POINTERS
 #                     TO THE ADJACENCY STRUCTURE OF THE COMPRESSED
 #                     GRAPH.
@@ -72,12 +75,13 @@
 #**********************************************************************
 #
 function mfinit_heap(
+        score::MLFScore,
         neqns::V,
         xadj::AbstractVector{E},
         degree::AbstractVector{W},
         qsize::AbstractVector{W},
         defncy::AbstractVector{W},
-        heap::AbstractVector{W},
+        heap::AbstractVector{S},
         heapinv::AbstractVector{V},
         marker::AbstractVector{I},
         nvtxs::AbstractVector{V},
@@ -86,70 +90,67 @@ function mfinit_heap(
         changed::AbstractVector{Bool},
         umark::AbstractVector{I},
         invp::AbstractVector{V},
-    ) where {V, E, I, W}
-    @inbounds begin
-    
-        #       ---------------------------------------------------------
-        #       MORE INITIALIZATIONS AND ALSO PLACE EACH NODE AND ITS
-        #       DEFICIENCY-BASED SCORE IN THE HEAP STRUCTURE IN ARBITRARY
-        #       ORDER.
-        #       ---------------------------------------------------------
-    
-        heapcnt = zero(V)
+    ) where {V, E, I, W, S}
 
-        #       -------------------------
-        #       FOR EACH VERTEX JNODE ...
-        #       -------------------------
-        for jnode in oneto(neqns)
+    #       ---------------------------------------------------------
+    #       MORE INITIALIZATIONS AND ALSO PLACE EACH NODE AND ITS
+    #       DEFICIENCY-BASED SCORE IN THE HEAP STRUCTURE IN ARBITRARY
+    #       ORDER.
+    #       ---------------------------------------------------------
 
-            #           ----------------------------------------------
-            #           NVTXS(JNODE) WILL BE -1 FOR ABSORBED VERTICES.
-            #           ----------------------------------------------
-            nvtxs[jnode] = -one(V)
+    heapcnt = zero(V)
 
-            #           -------------------------------------
-            #           IF JNODE IS A REPRESENTATIVE NODE ...
-            #           -------------------------------------
-            if !iszero(qsize[jnode])
+    #       -------------------------
+    #       FOR EACH VERTEX JNODE ...
+    #       -------------------------
+    @inbounds for jnode in oneto(neqns)
 
-                #               ---------------------------
-                #               INITIALIZE VARIOUS VECTORS.
-                #               ---------------------------
-                ecforw[jnode] = -one(V)
-                changed[jnode] = false
-                umark[jnode] = zero(I)
-                work[jnode] = zero(V)
-                invp[jnode] = zero(V)
-                marker[jnode] = zero(I)
-                nvtxs[jnode] = convert(V, xadj[jnode + one(V)] - xadj[jnode])
-            
-                #               ------------------------------------------
-                #               DJ WILL BE THE DEGREE OF JNODE (PLUS ONE).
-                #               ------------------------------------------
-                def = defncy[jnode]
-            
-                #               -------------------------------
-                #               COMPUTE DEFICIENCY-BASED SCORE.
-                #               -------------------------------
-            
-                #               ---------------------------------------------
-                #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE
-                #               INTO THE HEAP IN THE NEXT AVAILABLE LOCATION.
-                #               ---------------------------------------------
-                heapcnt += one(V)
-                heapinv[jnode] = heapcnt
-                heap[twice(heapcnt) - one(V)] = def
-                heap[twice(heapcnt)] = convert(W, jnode)
-            
-            end
+        #           ----------------------------------------------
+        #           NVTXS(JNODE) WILL BE -1 FOR ABSORBED VERTICES.
+        #           ----------------------------------------------
+        nvtxs[jnode] = -one(V)
+
+        #           -------------------------------------
+        #           IF JNODE IS A REPRESENTATIVE NODE ...
+        #           -------------------------------------
+        if !iszero(qsize[jnode])
+
+            #               ---------------------------
+            #               INITIALIZE VARIOUS VECTORS.
+            #               ---------------------------
+            ecforw[jnode] = -one(V)
+            changed[jnode] = false
+            umark[jnode] = zero(I)
+            work[jnode] = zero(V)
+            invp[jnode] = zero(V)
+            marker[jnode] = zero(I)
+            nvtxs[jnode] = convert(V, xadj[jnode + one(V)] - xadj[jnode])
+        
+            #               ------------------------------------------
+            #               DJ WILL BE THE DEGREE OF JNODE (PLUS ONE).
+            #               ------------------------------------------
+            #               -------------------------------
+            #               COMPUTE DEFICIENCY-BASED SCORE.
+            #               -------------------------------
+            key = mlfscore(score, defncy, degree, jnode)
+        
+            #               ---------------------------------------------
+            #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE
+            #               INTO THE HEAP IN THE NEXT AVAILABLE LOCATION.
+            #               ---------------------------------------------
+            heapcnt += one(V)
+            heapinv[jnode] = heapcnt
+            heap[twice(heapcnt) - one(V)] = key
+            heap[twice(heapcnt)] = convert(S, jnode)
         
         end
     
-        #       ------------------------------
-        #       IMPOSE HEAP ORDER ON THE HEAP.
-        #       ------------------------------
-        heapsize = build_heap(heap, heapinv, heapcnt)
-    
-        return heapsize
     end
+
+    #       ------------------------------
+    #       IMPOSE HEAP ORDER ON THE HEAP.
+    #       ------------------------------
+    heapsize = build_heap(heap, heapinv, heapcnt)
+
+    return heapsize
 end

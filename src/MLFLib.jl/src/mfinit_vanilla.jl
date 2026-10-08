@@ -57,84 +57,82 @@ function mfinit_vanilla(
         defcy2::AbstractVector{W},
         umark::AbstractVector{I},
     ) where {V, E, I, W}
-    @inbounds begin
-    
-        #       -------------------
-        #       LOCAL VARIABLES ...
-        #       -------------------
-    
-        #       ----------------
-        #       INITIALIZATIONS.
-        #       ----------------
-        for unode in oneto(neqns)
-            if !iszero(qsize[unode])
-                umark[unode] = zero(I)
-            end
-        end
-    
-        #       -----------------------
-        #       FOR EACH NODE UNODE ...
-        #       -----------------------
-        for unode in oneto(neqns)
-            #           PRINT *, 'UNODE:', UNODE
-        
-            #           ----------------------------------------------
-            #           IF UNODE IS A REPRESENTATIVE NODE (UNABSORBED)
-            #           IN THE COMPRESSED GRAPH ...
-            #           ----------------------------------------------
-            if !iszero(qsize[unode])
-            
-                #               ---------------------------------------
-                #               INITIALIZE UNODE'S DEFICIENCY COUNT AND
-                #               ITS ACTIVE NEIGHBORHOOD SIZE.
-                #               ---------------------------------------
-                def = zero(W)
-                ucount = degree[unode] - qsize[unode]
-                #               ----------------------------
-                #               MARK THE NEIGHBORS OF UNODE.
-                #               ----------------------------
-                for w in xadj[unode]:xadj[unode + one(V)] - one(E)
-                    wnode = adjncy[w]
-                    umark[wnode] = one(I)
-                end
-                #               ------------------------------------
-                #               FOR EACH NEIGHBOR WNODE OF UNODE ...
-                #               ------------------------------------
-                for w = xadj[unode]:xadj[unode + one(V)] - one(E)
-                    wnode = adjncy[w]
-                    qw = qsize[wnode]
-                    ucount -= qw
-                    cnt = ucount
-                    #                   PRINT *,'   WNODE,CNT:',WNODE,CNT
-                    #                   -------------------------------
-                    #                   COMPUTE WNODE'S CONTRIBUTION TO
-                    #                   UNODE'S DEFICIENCY.
-                    #                   -------------------------------
-                    for x in xadj[wnode]:xadj[wnode + one(V)] - one(E)
-                        xnode = adjncy[x]
 
-                        if isone(umark[xnode])
-                            cnt -= qsize[xnode]
-                            #                           PRINT *,'      XNODE,CNT:',XNODE,CNT
-                        end
-                    end
-                    #                   ------------------------------------
-                    #                   ACCUMULATE WNODE'S CONTRIBUTION TO
-                    #                   UNODE'S DEFICIENCY AND UNMARK WNODE.
-                    #                   ------------------------------------
-                    def += cnt * qw
-                    #                   PRINT *,'   WNODE,CNT:',WNODE,CNT
-                    umark[wnode] = zero(I)
-                end
-                #               -------------------------------------
-                #               RECORD THE DEFICIENCY SCORE OF UNODE.
-                #               -------------------------------------
-                defcy2[unode] = def
-            
+    #       -------------------
+    #       LOCAL VARIABLES ...
+    #       -------------------
+
+    #       ----------------
+    #       INITIALIZATIONS.
+    #       ----------------
+    @inbounds for unode in oneto(neqns)
+        if !iszero(qsize[unode])
+            umark[unode] = zero(I)
+        end
+    end
+
+    #       -----------------------
+    #       FOR EACH NODE UNODE ...
+    #       -----------------------
+    @inbounds for unode in oneto(neqns)
+        #           PRINT *, 'UNODE:', UNODE
+    
+        #           ----------------------------------------------
+        #           IF UNODE IS A REPRESENTATIVE NODE (UNABSORBED)
+        #           IN THE COMPRESSED GRAPH ...
+        #           ----------------------------------------------
+        if !iszero(qsize[unode])
+        
+            #               ---------------------------------------
+            #               INITIALIZE UNODE'S DEFICIENCY COUNT AND
+            #               ITS ACTIVE NEIGHBORHOOD SIZE.
+            #               ---------------------------------------
+            def = zero(W)
+            ucount = degree[unode] - qsize[unode]
+            #               ----------------------------
+            #               MARK THE NEIGHBORS OF UNODE.
+            #               ----------------------------
+            for w in xadj[unode]:xadj[unode + one(V)] - one(E)
+                wnode = adjncy[w]
+                umark[wnode] = one(I)
             end
+            #               ------------------------------------
+            #               FOR EACH NEIGHBOR WNODE OF UNODE ...
+            #               ------------------------------------
+            for w = xadj[unode]:xadj[unode + one(V)] - one(E)
+                wnode = adjncy[w]
+                qw = qsize[wnode]
+                ucount -= qw
+                cnt = ucount
+                #                   PRINT *,'   WNODE,CNT:',WNODE,CNT
+                #                   -------------------------------
+                #                   COMPUTE WNODE'S CONTRIBUTION TO
+                #                   UNODE'S DEFICIENCY.
+                #                   -------------------------------
+                for x in xadj[wnode]:xadj[wnode + one(V)] - one(E)
+                    xnode = adjncy[x]
+
+                    if isone(umark[xnode])
+                        cnt -= qsize[xnode]
+                        #                           PRINT *,'      XNODE,CNT:',XNODE,CNT
+                    end
+                end
+                #                   ------------------------------------
+                #                   ACCUMULATE WNODE'S CONTRIBUTION TO
+                #                   UNODE'S DEFICIENCY AND UNMARK WNODE.
+                #                   ------------------------------------
+                def += cnt * qw
+                #                   PRINT *,'   WNODE,CNT:',WNODE,CNT
+                umark[wnode] = zero(I)
+            end
+            #               -------------------------------------
+            #               RECORD THE DEFICIENCY SCORE OF UNODE.
+            #               -------------------------------------
+            defcy2[unode] = def
         
         end
     
-        return
     end
+
+    return
 end

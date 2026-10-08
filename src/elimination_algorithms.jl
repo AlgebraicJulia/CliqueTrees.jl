@@ -214,28 +214,42 @@ struct MCSM <: MinimalAlgorithm end
 """
     AMF <: EliminationAlgorithm
 
-    AMF()
+    AMF(; exact=false)
 
 The approximate minimum fill algorithm.
+
+### Parameters
+
+  - `exact`: compute the initial score of each vertex from its exact fill-in, rather than its degree
 
 ### References
 
   - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
 """
-struct AMF <: EliminationAlgorithm end
+@kwdef struct AMF <: EliminationAlgorithm
+    exact::Bool = false
+end
 
 """
     MF <: EliminationAlgorithm
 
-    MF()
+    MF(; strategy=0)
 
 The greedy minimum fill algorithm.
+
+### Parameters
+
+  - `strategy`: node-selection score (`0` for minimum fill, `1` for minimum average fill)
 
 ### References
 
   - Ng, Esmond G., and Barry W. Peyton. "Fast implementation of the minimum local fill ordering heuristic." *CSC14: The Sixth SIAM Workshop on Combinatorial Scientific Computing.* 2014.
+  - Otsuka, Hiromu, et al. "Experimental evaluation of greedy treewidth heuristics on huge graphs." *IPSJ SIG Technical Report* 2018-AL-166-12 (2018). (In Japanese.)
+  - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." *arXiv preprint* arXiv:2108.07551 (2021).
 """
-struct MF <: EliminationAlgorithm end
+@kwdef struct MF <: EliminationAlgorithm
+    strategy::Int = 0
+end
 
 """
     MMD <: EliminationAlgorithm
@@ -697,7 +711,7 @@ end
 """
     Compression{A} <: EliminationAlgorithm
 
-    Compression(alg::EliminationAlgorithm; tao = 1.0)
+    Compression(alg::EliminationAlgorithm; tau = 1.0)
 
 Preprocess a graph by identifying indistinguishable vertices.
 The algorithm `alg` is run on the compressed graph.
@@ -705,7 +719,7 @@ The algorithm `alg` is run on the compressed graph.
 ### Parameters
 
   - `alg`: elimination algorithm
-  - `tao`: threshold parameter for graph compression
+  - `tau`: threshold parameter for graph compression
 
 
 ### References
@@ -715,11 +729,11 @@ The algorithm `alg` is run on the compressed graph.
 """
 struct Compression{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
-    tao::Float64
+    tau::Float64
 end
 
-function Compression(alg::EliminationAlgorithm; tao::Float64 = 1.0)
-    return Compression(alg, tao)
+function Compression(alg::EliminationAlgorithm; tau::Float64 = 1.0)
+    return Compression(alg, tau)
 end
 
 function Compression(; kwargs...)
@@ -741,7 +755,7 @@ to the treewidth; better lower bounds allow the algorithm to perform more reduct
   - `alg`: elimination algorithm
   - `lb`: lower bound algorithm (used to lower bound the treiwidth)
   - `ub`: elimination algorithm (used to upper bound the treewidth)
-  - `tao`: threshold parameter for graph compression
+  - `rules`: reduction level (`3`, `4`, or `5`)
 
 ### References
 
@@ -753,11 +767,11 @@ struct SafeRules{A <: EliminationAlgorithm, L <: WidthOrAlgorithm, U <: Eliminat
     alg::A
     lb::L
     ub::U
-    tao::Float64
+    rules::Int
 end
 
-function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm; tao::Float64 = 1.0)
-    return SafeRules(alg, lb, ub, tao)
+function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm; rules::Int = 5)
+    return SafeRules(alg, lb, ub, rules)
 end
 
 function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm; kwargs...)
@@ -774,15 +788,10 @@ end
 
 struct SimplicialRule{A <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
-    tao::Float64
 end
 
-function SimplicialRule(alg::EliminationAlgorithm; tao::Float64 = 1.0)
-    return SimplicialRule(alg, tao)
-end
-
-function SimplicialRule(; kwargs...)
-    return SimplicialRule(DEFAULT_ELIMINATION_ALGORITHM; kwargs...)
+function SimplicialRule()
+    return SimplicialRule(DEFAULT_ELIMINATION_ALGORITHM)
 end
 
 """
@@ -980,11 +989,11 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCSM)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF)
-    return amf(weights, graph)
+    return amf(weights, graph; exact = alg.exact)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF)
-    return convert.(Vector, mlf(weights, graph))
+    return convert.(Vector, mlf(alg.strategy, weights, graph))
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD)
@@ -1023,17 +1032,17 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Composi
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Compression)
-    order = compress(weights, graph, alg.alg, alg.tao)
+    order = compress(weights, graph, alg.alg, alg.tau)
     return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules)
-    order = saferules(weights, graph, alg.alg, alg.lb, alg.tao)
+    order = saferules(weights, graph, alg.alg, alg.lb, alg.rules)
     return order, invperm(order)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SimplicialRule)
-    order = simplicialrule(weights, graph, alg.alg, alg.tao)
+    order = simplicialrule(weights, graph, alg.alg)
     return order, invperm(order)
 end
 
@@ -1722,29 +1731,37 @@ function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V)
     return alpha
 end
 
-function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph)
+function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     simple = simplegraph(graph)
-    return amf(nv(simple), weights, pointers(simple), targets(simple))
+    return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
-function mlf(weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
+function mlf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    return mlf(MinFill, weights, graph; kwargs...)
+end
+
+function mlf(strategy::Integer, weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    return mlf(MLFScore(strategy), weights, graph; kwargs...)
+end
+
+function mlf(score::MLFScore, weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
     intweights = FVector{Int}(undef, nv(graph))
 
     @inbounds for v in vertices(graph)
         intweights[v] = convert(Int, weights[v])
     end
 
-    return mlf(intweights, graph; kwargs...)
+    return mlf(score, intweights, graph; kwargs...)
 end
 
-function mlf(weights::AbstractVector, graph::AbstractGraph{V}; kwargs...) where {V}
+function mlf(score::MLFScore, weights::AbstractVector, graph::AbstractGraph{V}; kwargs...) where {V}
     E = etype(graph)
     n = nv(graph)
     m = de(graph)
     ptr = FVector{E}(undef, n + 1)
     tgt = FVector{V}(undef, m + 2n)
     simple = simplegraph!(ptr, tgt, graph)
-    return mlf!(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
+    return mlf!(score, nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
 function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
@@ -1928,8 +1945,8 @@ end
 # Yousef Saad
 #
 # Algorithm 2.2: Cosine-based compression
-function twins(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
-    if isone(tao)
+function twins(graph::AbstractGraph{V}, ::Val{S}, tau::Number) where {V, S}
+    if isone(tau)
         return twins(graph, Val(S))
     else
         n = nv(graph); nn = n + one(V)
@@ -1939,7 +1956,7 @@ function twins(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
         adjmap = FVector{V}(undef, n)
         cosine = FVector{V}(undef, n)
         degree = FVector{V}(undef, n)
-        partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tao)
+        partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tau)
         return adjmap, partition
     end
 end
@@ -1953,14 +1970,14 @@ function twins_impl!(
         degree::AbstractVector{V},
         graph::AbstractGraph{V},
         ::Val{S},
-        tao::T,
+        tau::T,
     ) where {V, S, T}
     @assert nv(graph) < length(prev)
     @assert nv(graph) <= length(next)
     @assert nv(graph) <= length(adjmap)
     @assert nv(graph) <= length(cosine)
     @assert nv(graph) <= length(degree)
-    @assert zero(T) < tao <= one(T)
+    @assert zero(T) < tau <= one(T)
     n = nv(graph); nb = zero(V)
     list = DoublyLinkedList(head, prev, next)
 
@@ -2037,7 +2054,7 @@ function twins_impl!(
                 nzk = convert(T, degree[k])
 
                 # test similarity of row patterns
-                if cos * cos >= tao * tao * nzi * nzk
+                if cos * cos >= tau * tau * nzi * nzk
                     adjmap[k] = nb
                 end
 
@@ -2145,8 +2162,8 @@ function compress_impl!(
     return outgraph, partition
 end
 
-function compress(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
-    if isone(tao)
+function compress(graph::AbstractGraph{V}, ::Val{S}, tau::Number) where {V, S}
+    if isone(tau)
         return compress(graph, Val(S))
     else
         E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
@@ -2158,7 +2175,7 @@ function compress(graph::AbstractGraph{V}, ::Val{S}, tao::Number) where {V, S}
         degree = FVector{V}(undef, n)
         outptr = FVector{E}(undef, nn)
         outtgt = FVector{V}(undef, m)
-        return compress_impl!(head, prev, next, adjmap, cosine, degree, outptr, outtgt, graph, Val(S), tao)
+        return compress_impl!(head, prev, next, adjmap, cosine, degree, outptr, outtgt, graph, Val(S), tau)
     end
 end
 
@@ -2173,12 +2190,12 @@ function compress_impl!(
         outtgt::AbstractVector{V},
         graph::AbstractGraph{V},
         ::Val{S},
-        tao::Number,
+        tau::Number,
     ) where {V, E, S}
     @assert nv(graph) < length(outptr)
     @assert ne(graph) <= length(outtgt)
 
-    partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tao)
+    partition = twins_impl!(head, prev, next, adjmap, cosine, degree, graph, Val(S), tau)
     project = adjmap; marker = cosine; tag = zero(V)
 
     @inbounds for v in vertices(graph)
@@ -2206,9 +2223,9 @@ function compress_impl!(
     return outgraph, partition
 end
 
-function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tao::Number) where {W, V}
+function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tau::Number) where {W, V}
     order = Vector{V}(undef, nv(graph))
-    cmpgraph, project = compress(graph, Val(true), tao)
+    cmpgraph, project = compress(graph, Val(true), tau)
     cmpweights = compressweights(weights, project)
     cmporder, cmpindex = permutation(cmpweights, cmpgraph, alg)
     i = zero(V)
@@ -2243,10 +2260,10 @@ function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVect
     return
 end
 
-function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, tao::Number) where {V}
+function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, rules::Int) where {V}
     n = nv(graph)
     width = lowerbound(weights, graph, lb)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(pr4, weights, graph, width, tao)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(rules, weights, graph, width)
     innerorder, innerindex = permutation(innerweights, innergraph, alg)
 
     order = Vector{V}(undef, n); i = zero(V)
@@ -2262,10 +2279,10 @@ function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::Elimin
     return order
 end
 
-function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tao::Number) where {W, V}
+function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
     n = nv(graph)
     width = zero(W)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, weights, graph, width, tao)
+    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, weights, graph, width)
     innerorder, innerindex = permutation(innerweights, innergraph, alg)
 
     order = Vector{V}(undef, n); i = zero(V)
@@ -2400,6 +2417,13 @@ function Base.show(io::IO, ::MIME"text/plain", alg::RCMGL{A}) where {A}
     return
 end
 
+function Base.show(io::IO, ::MIME"text/plain", alg::AMF)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "AMF:")
+    println(io, " "^indent * "    exact: $(alg.exact)")
+    return
+end
+
 function Base.show(io::IO, ::MIME"text/plain", alg::MMD)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "MMD:")
@@ -2505,7 +2529,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::Compression{A}) where {A}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "Compression{$A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
-    println(io, " "^indent * "    tao: $(alg.tao)")
+    println(io, " "^indent * "    tau: $(alg.tau)")
     return
 end
 
@@ -2513,7 +2537,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SimplicialRule{A}) where {A}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "SimplicialRule{$A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
-    println(io, " "^indent * "    tao: $(alg.tao)")
     return
 end
 
@@ -2522,7 +2545,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{A, L, U}) where {A
     println(io, " "^indent * "SafeRules{$A, $L, $U}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
-    println(io, " "^indent * "    tao: $(alg.tao)")
     return
 end
 

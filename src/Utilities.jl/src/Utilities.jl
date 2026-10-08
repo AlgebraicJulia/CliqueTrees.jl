@@ -1,8 +1,9 @@
 module Utilities
 
-using Base: @propagate_inbounds
+using Base: @propagate_inbounds, oneto
 using Base.Iterators
 using Base.Order
+using FillArrays: Ones
 using FixedSizeArrays
 using Graphs
 

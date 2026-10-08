@@ -44,6 +44,7 @@ module AMFLib
 using Base: oneto
 using FillArrays
 using ..Utilities
+using ..CliqueTrees
 
 export amf
 
@@ -53,12 +54,14 @@ function anint(::Type{I}, x::F) where {I, F}
     return floor(I, x + convert(F, 0.5))
 end
 
-function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
+function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; kwargs...) where {V, E}
     vwght = Ones{V}(n)
-    return amf(n, vwght, xadj, adjncy)
+    return amf(n, vwght, xadj, adjncy; kwargs...)
 end
 
-function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
+# If `exact` is true, then the initial score of each variable is computed from
+# its exact fill-in, as for every later score, rather than from its degree.
+function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; exact::Bool = false) where {V, E}
     @assert n <= length(vwght)
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
@@ -85,9 +88,42 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
 
     perm, invp = amf_impl!(norig, n, nbbuck, iwlen, pe,
         len, iw, nv, elen, last, degree, wf, next, w, head,
-        vwght, xadj, adjncy)
+        vwght, xadj, adjncy, exact)
 
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
+end
+
+# The weighted fill-in of each variable: the sum of `weights[a] * weights[b]`
+# over the missing edges {`a`, `b`} in its neighborhood. Computed with
+# Wing-Huang updates in O(m√m) time.
+function amf_fillin(n::V, weights::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
+    @inbounds m = xadj[n + one(V)] - one(E)
+    vfill = FVector{Int}(undef, n)
+    wdegree = FVector{Int}(undef, n)
+    marker = FVector{V}(undef, n)
+    order = FVector{V}(undef, n)
+    tail = FVector{E}(undef, n)
+    adjtgt = FVector{V}(undef, m)
+    number = FVector{V}(undef, n)
+
+    @inbounds for v in oneto(n)
+        number[v] = convert(V, xadj[v + one(V)] - xadj[v])
+    end
+
+    begptr = view(xadj, oneto(n))
+    endptr = view(xadj, (one(V) + one(V)):(n + one(V)))
+    CliqueTrees.fillin!(vfill, weights, wdegree, marker, order, tail, adjtgt, number, adjncy, begptr, endptr, n)
+    return vfill
+end
+
+# the weights used for the fill-in: `nv[i]` is `trunc(vwght[i])`, so unit
+# weights stay a `Ones`, which `fillin!` handles without the weight lookups
+function amf_fillweights(vwght::Ones, nv::AbstractVector{V}, n::V) where {V}
+    return Ones{V}(n)
+end
+
+function amf_fillweights(vwght::AbstractVector, nv::AbstractVector{V}, n::V) where {V}
+    return view(nv, oneto(n))
 end
 
 function amf_impl!(
@@ -109,6 +145,7 @@ function amf_impl!(
         vwght::AbstractVector,
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
+        exact::Bool,
     ) where {V, E}
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
@@ -128,8 +165,14 @@ function amf_impl!(
         p = pp
     end
 
+    if exact
+        vfill = amf_fillin(n, amf_fillweights(vwght, nv, n), xadj, adjncy)
+    else
+        vfill = nothing
+    end
+
     ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe,
-        pfree, len, iw, nv, elen, last, degree, wf, next, w, head)
+        pfree, len, iw, nv, elen, last, degree, wf, next, w, head, vfill)
 
     @inbounds for j in oneto(norig)
         head[j] = zero(V)
@@ -718,6 +761,7 @@ function hamf_impl!(
         next::AbstractVector{V},   # linked list structure
         w::AbstractVector{I},      # flag array
         head::AbstractVector{V},   # linked list structure
+        vfill::Union{Nothing, AbstractVector}, # exact initial fill-in (optional)
     ) where {I, V, E}
     @assert nbelts <= n
     @assert pfree <= iwlen <= length(iw)
@@ -932,10 +976,32 @@ function hamf_impl!(
                 next[i] = zero(V)
             end
         elseif ispositive(deg)
-            wf[i] = convert(I, deg)           # version 1
+            if isnothing(vfill)
+                wf[i] = convert(I, deg)           # version 1
 
-            if deg > norig
-                deg = min(div(deg - norig, pas) + norig, nbbuck)  # note the if `deg == 0`, no fill-in will occur but one variable adjacent to i
+                if deg > norig
+                    deg = min(div(deg - norig, pas) + norig, nbbuck)  # note the if `deg == 0`, no fill-in will occur but one variable adjacent to i
+                end
+            else                                  # score from the exact fill-in, as in the score update below
+                rmf = twice(convert(FLOAT, vfill[i])) / convert(FLOAT, nv[i] + one(V))
+
+                if rmf < dummy
+                    wf[i] = anint(E, rmf)
+                elseif rmf / convert(FLOAT, n) < dummy
+                    wf[i] = anint(E, rmf / convert(FLOAT, n))
+                else
+                    wf[i] = idummy
+                end
+
+                if !ispositive(wf[i])
+                    wf[i] = one(E)
+                end
+
+                if wf[i] > norig
+                    deg = convert(V, min(div(wf[i] - norig, pas) + norig, nbbuck))
+                else
+                    deg = convert(V, wf[i])
+                end
             end
 
             inext = head[deg + one(V)]

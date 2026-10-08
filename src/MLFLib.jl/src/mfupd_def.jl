@@ -112,369 +112,367 @@ function mfupd_def(
         dset::AbstractVector{V},
         deginc::AbstractVector{W},
     ) where {V, E, I, W}
-    @inbounds begin
+
+    #       -------------------
+    #       LOCAL VARIABLES ...
+    #       -------------------
+
+    #       ------------------------------------------------------------
+    #       INITIALIZE THE CHANGES IN THE DEGREES TO ZERO.
+    #       K: LAST OCCUPIED LOCATION IN THE ELIMINATION CLIQUE (ECLIQ).
+    #       ------------------------------------------------------------
+    @inbounds for j in oneto(nnodes)
+        unode = ecliq[j]
+        deginc[unode] = zero(W)
+    end
+
+    k = nnodes
+
+    #       -----------------------------------------------------
+    #       FOR EACH NODE UNODE IN ENODE'S ELIMINATION CLIQUE ...
+    #       (STARTING FIRST WITH NODE FNODE)
+    #       -----------------------------------------------------
+    @inbounds for j in fnode:nnodes
     
-        #       -------------------
-        #       LOCAL VARIABLES ...
-        #       -------------------
+        #           ----------
+        #           GET UNODE.
+        #           ----------
+        unode = ecliq[j]
+        qu = abs(qsize[unode])
     
-        #       ------------------------------------------------------------
-        #       INITIALIZE THE CHANGES IN THE DEGREES TO ZERO.
-        #       K: LAST OCCUPIED LOCATION IN THE ELIMINATION CLIQUE (ECLIQ).
-        #       ------------------------------------------------------------
-        for j in oneto(nnodes)
-            unode = ecliq[j]
-            deginc[unode] = zero(W)
+        #           ---------
+        #           BUMP TAG.
+        #           ---------
+        if tag <= maxint(I) - convert(I, j) - one(I)
+            tag0 = tag
+            tag += convert(I, j)
+        else
+            tag0 = zero(I)
+            tag = convert(I, j)
+
+            for i in oneto(neqns)
+                if marker[i] < maxint(I)
+                    marker[i] = zero(I)
+                end
+            end
         end
-    
-        k = nnodes
-    
-        #       -----------------------------------------------------
-        #       FOR EACH NODE UNODE IN ENODE'S ELIMINATION CLIQUE ...
-        #       (STARTING FIRST WITH NODE FNODE)
-        #       -----------------------------------------------------
-        for j in fnode:nnodes
-        
-            #           ----------
-            #           GET UNODE.
-            #           ----------
-            unode = ecliq[j]
-            qu = abs(qsize[unode])
-        
-            #           ---------
-            #           BUMP TAG.
-            #           ---------
-            if tag <= maxint(I) - convert(I, j) - one(I)
-                tag0 = tag
-                tag += convert(I, j)
-            else
-                tag0 = zero(I)
-                tag = convert(I, j)
 
-                for i in oneto(neqns)
-                    if marker[i] < maxint(I)
-                        marker[i] = zero(I)
-                    end
+        #           ----------
+        #           BUMP UTAG.
+        #           ----------
+        if utag <= maxint(I) - two(I)
+            utag += one(I)
+        else
+            utag = one(I)
+
+            for i in oneto(neqns)
+                if marker[i] < maxint(I)
+                    umark[i] = zero(I)
                 end
             end
+        end
 
-            #           ----------
-            #           BUMP UTAG.
-            #           ----------
-            if utag <= maxint(I) - two(I)
-                utag += one(I)
-            else
-                utag = one(I)
+        #           ------------------------------------------------
+        #           INITIALIZE NUMBER OF EXTERNAL NEIGHBORS OF UNODE
+        #           TO ZERO.
+        #           ------------------------------------------------
+        ucount = zero(W)
+        #           ------------------------------------------
+        #           FOR EVERY UNABSORBED VERTEX NEIGHBOR WNODE
+        #           OF UNODE ...
+        #           ------------------------------------------
+        istart = xadj[unode]
+        istop = istart + convert(E, nvtxs[unode]) - one(E)
 
-                for i in oneto(neqns)
-                    if marker[i] < maxint(I)
-                        umark[i] = zero(I)
-                    end
+        for i in istart:istop
+            wnode = adjncy[i]
+            #               --------------------------------------------
+            #               IF WNODE IS A FIRST-TIME UNABSORBED NEIGHBOR
+            #               OF UNODE ...
+            #               --------------------------------------------
+            if umark[wnode] < utag
+                #                   --------------------------------------
+                #                   IF WNODE IS NOT IN ENODE'S ELIMINATION
+                #                   CLIQUE ...
+                #                   --------------------------------------
+                if ispositive(qsize[wnode])
+                    #                       ------------------------------------
+                    #                       COUNT WNODE AS AN EXTERNAL NEIGHBOR.
+                    #                       ------------------------------------
+                    ucount += qsize[wnode]
                 end
+                #                   --------------------
+                #                   ... THEN MARK WNODE.
+                #                   --------------------
+                umark[wnode] = utag
             end
+        end
+        #           --------------------------------------------
+        #           FOR EVERY CLIQUE NEIGHBOR CNODE OF UNODE ...
+        #           --------------------------------------------
+        cstart = xadj[unode] + convert(E, nvtxs[unode])
+        cstop = cstart + convert(E, work[unode]) - one(E)
 
-            #           ------------------------------------------------
-            #           INITIALIZE NUMBER OF EXTERNAL NEIGHBORS OF UNODE
-            #           TO ZERO.
-            #           ------------------------------------------------
-            ucount = zero(W)
-            #           ------------------------------------------
-            #           FOR EVERY UNABSORBED VERTEX NEIGHBOR WNODE
-            #           OF UNODE ...
-            #           ------------------------------------------
-            istart = xadj[unode]
-            istop = istart + convert(E, nvtxs[unode]) - one(E)
+        for c in cstart:cstop
+            cnode = adjncy[c]
+            #               ----------------------------------------
+            #               FOR EVERY NODE WNODE IN CLIQUE CNODE ...
+            #               ----------------------------------------
+            istart = xadj[cnode]
+            istop = istart + convert(E, nvtxs[cnode]) - one(E)
 
             for i in istart:istop
                 wnode = adjncy[i]
-                #               --------------------------------------------
-                #               IF WNODE IS A FIRST-TIME UNABSORBED NEIGHBOR
-                #               OF UNODE ...
-                #               --------------------------------------------
+                #                   -----------------------------------
+                #                   IF WNODE IS A FIRST-TIME UNABSORBED
+                #                   NEIGHBOR OF UNODE ...
+                #                   -----------------------------------
                 if umark[wnode] < utag
-                    #                   --------------------------------------
-                    #                   IF WNODE IS NOT IN ENODE'S ELIMINATION
-                    #                   CLIQUE ...
-                    #                   --------------------------------------
+                    #                       --------------------------
+                    #                       IF WNODE IS NOT IN ENODE'S
+                    #                       ELIMINATION CLIQUE ...
+                    #                       --------------------------
                     if ispositive(qsize[wnode])
-                        #                       ------------------------------------
-                        #                       COUNT WNODE AS AN EXTERNAL NEIGHBOR.
-                        #                       ------------------------------------
+                        #                           ------------------------------------
+                        #                           COUNT WNODE AS AN EXTERNAL NEIGHBOR.
+                        #                           ------------------------------------
                         ucount += qsize[wnode]
                     end
-                    #                   --------------------
-                    #                   ... THEN MARK WNODE.
-                    #                   --------------------
+                    #                       --------------------
+                    #                       ... THEN MARK WNODE.
+                    #                       --------------------
                     umark[wnode] = utag
                 end
             end
-            #           --------------------------------------------
-            #           FOR EVERY CLIQUE NEIGHBOR CNODE OF UNODE ...
-            #           --------------------------------------------
-            cstart = xadj[unode] + convert(E, nvtxs[unode])
-            cstop = cstart + convert(E, work[unode]) - one(E)
+        end
+    
+        #           ----------------------------------
+        #           FOR EVERY EARLIER WNODE IN ENODE'S
+        #           ELIMINATION CLIQUE ...
+        #           (NOTE THAT UNODE = ECLIQ(J))
+        #           ----------------------------------
+        dvtxs = zero(V)
+
+        for i in oneto(j - one(V))
+            wnode = ecliq[i]
+            #               ---------------------------------------
+            #               IF WNODE IS NOT A NEIGHBOR OF UNODE ...
+            #               ---------------------------------------
+            if umark[wnode] < utag
+                #                   ---------------------------------------------
+                #                   ... THEN THERE IS A NEW FILL EDGE JOINING
+                #                   UNODE AND WNODE.
+                #                   ACCUMULATE THE CONTRIBUTION OF THE FILL
+                #                   EDGE TO UNODE'S AND WNODE'S DEGREE INCREMENT.
+                #                   ---------------------------------------------
+                deginc[unode] -= qsize[wnode]
+                deginc[wnode] += qu
+                dvtxs += one(V)
+                dset[dvtxs] = wnode
+            end
+        end
+
+        #           ---------------------------------------------
+        #           FOR EACH NEW FILL NEIGHBOR WNODE OF UNODE ...
+        #           ---------------------------------------------
+        for w in oneto(dvtxs)
+
+            #               --------------------------------------
+            #               INITIALIZE COUNTS FOR UNODE AND WNODE.
+            #               --------------------------------------
+            wnode = dset[w]
+            cntu = ucount
+            cntw = zero(W)
+            tag0 += one(I)
+            uwfill = qsize[unode] * qsize[wnode]
+
+            #               -------------------------------------------------------
+            #               FOR EVERY UNABSORBED VERTEX NEIGHBOR XNODE OF WNODE ...
+            #               -------------------------------------------------------
+            istart = xadj[wnode]
+            istop = istart + convert(E, nvtxs[wnode]) - one(E)
+
+            for i in istart:istop
+                xnode = adjncy[i]
+
+                if marker[xnode] < tag0
+                    #                       ------------------------------------
+                    #                       FIRST TIME VISIT TO UNABSORBED XNODE
+                    #                       AS A NEIGHBOR OF WNODE.
+                    #                       ------------------------------------
+                    if ispositive(qsize[xnode])
+                        #                           --------------------------------
+                        #                           XNODE IS NOT A MEMBER OF ENODE'S
+                        #                           ELIMINATION CLIQUE.
+                        #                           --------------------------------
+                        if umark[xnode] == utag
+                            #                               ----------------------------------
+                            #                               XNODE IS ALSO A NEIGHBOR OF UNODE.
+                            #                               ----------------------------------
+                        
+                            #                               ---------------------------
+                            #                               DECREMENT UNODE'S COUNT AND
+                            #                               DEFICIENCY OF XNODE.
+                            #                               ---------------------------
+                            cntu -= qsize[xnode]
+                            defncy[xnode] -= uwfill
+                            #                               ---------------------------------
+                            #                               IF XNODE'S DEFICIENCY IS CHANGED
+                            #                               FOR THE FIRST TIME, THEN STORE IT
+                            #                               AND MARK IT AS CHANGED.
+                            #                               ---------------------------------
+                            if !changed[xnode]
+                                k += one(V)
+                                ecliq[k] = xnode
+                                changed[xnode] = true
+                            end
+                        else
+                            #                               ------------------------------------
+                            #                               XNODE IS NOT A NEIGHBOR OF UNODE ...
+                            #                               SO IT WILL INCREASE THE DEFICIENCY
+                            #                               OF WNODE.
+                            #                               ------------------------------------
+                            cntw += qsize[xnode]
+                        end
+                    else
+                        #                           ----------------------------
+                        #                           XNODE IS A MEMBER OF ENODE'S
+                        #                           ELIMINATION CLIQUE.
+                        #                           ----------------------------
+                        if umark[xnode] == utag
+                            #                               ---------------------------------
+                            #                               ... AND IT IS ADJACENT TO UNODE.
+                            #                               SO DECREMENT DEFICIENCY OF XNODE.
+                            #                               ---------------------------------
+                            defncy[xnode] -= uwfill
+                        end
+                    end
+                    #                       ---------------------------------------------
+                    #                       MARK XNODE AS VISITED AS A NEIGHBOR OF WNODE.
+                    #                       ---------------------------------------------
+                    marker[xnode] = tag0
+                end
+            end
+
+            #               --------------------------------------------
+            #               FOR EVERY CLIQUE NEIGHBOR CNODE OF WNODE ...
+            #               --------------------------------------------
+            cstart = xadj[wnode] + convert(E, nvtxs[wnode])
+            cstop = cstart + convert(E, work[wnode]) - one(E)
 
             for c in cstart:cstop
                 cnode = adjncy[c]
-                #               ----------------------------------------
-                #               FOR EVERY NODE WNODE IN CLIQUE CNODE ...
-                #               ----------------------------------------
+                #                   ----------------------------------
+                #                   FOR EVERY UNABSORBED NODE XNODE IN
+                #                   CLIQUE CNODE ...
+                #                   ----------------------------------
                 istart = xadj[cnode]
                 istop = istart + convert(E, nvtxs[cnode]) - one(E)
-
-                for i in istart:istop
-                    wnode = adjncy[i]
-                    #                   -----------------------------------
-                    #                   IF WNODE IS A FIRST-TIME UNABSORBED
-                    #                   NEIGHBOR OF UNODE ...
-                    #                   -----------------------------------
-                    if umark[wnode] < utag
-                        #                       --------------------------
-                        #                       IF WNODE IS NOT IN ENODE'S
-                        #                       ELIMINATION CLIQUE ...
-                        #                       --------------------------
-                        if ispositive(qsize[wnode])
-                            #                           ------------------------------------
-                            #                           COUNT WNODE AS AN EXTERNAL NEIGHBOR.
-                            #                           ------------------------------------
-                            ucount += qsize[wnode]
-                        end
-                        #                       --------------------
-                        #                       ... THEN MARK WNODE.
-                        #                       --------------------
-                        umark[wnode] = utag
-                    end
-                end
-            end
-        
-            #           ----------------------------------
-            #           FOR EVERY EARLIER WNODE IN ENODE'S
-            #           ELIMINATION CLIQUE ...
-            #           (NOTE THAT UNODE = ECLIQ(J))
-            #           ----------------------------------
-            dvtxs = zero(V)
-
-            for i in oneto(j - one(V))
-                wnode = ecliq[i]
-                #               ---------------------------------------
-                #               IF WNODE IS NOT A NEIGHBOR OF UNODE ...
-                #               ---------------------------------------
-                if umark[wnode] < utag
-                    #                   ---------------------------------------------
-                    #                   ... THEN THERE IS A NEW FILL EDGE JOINING
-                    #                   UNODE AND WNODE.
-                    #                   ACCUMULATE THE CONTRIBUTION OF THE FILL
-                    #                   EDGE TO UNODE'S AND WNODE'S DEGREE INCREMENT.
-                    #                   ---------------------------------------------
-                    deginc[unode] -= qsize[wnode]
-                    deginc[wnode] += qu
-                    dvtxs += one(V)
-                    dset[dvtxs] = wnode
-                end
-            end
-
-            #           ---------------------------------------------
-            #           FOR EACH NEW FILL NEIGHBOR WNODE OF UNODE ...
-            #           ---------------------------------------------
-            for w in oneto(dvtxs)
-
-                #               --------------------------------------
-                #               INITIALIZE COUNTS FOR UNODE AND WNODE.
-                #               --------------------------------------
-                wnode = dset[w]
-                cntu = ucount
-                cntw = zero(W)
-                tag0 += one(I)
-                uwfill = qsize[unode] * qsize[wnode]
-
-                #               -------------------------------------------------------
-                #               FOR EVERY UNABSORBED VERTEX NEIGHBOR XNODE OF WNODE ...
-                #               -------------------------------------------------------
-                istart = xadj[wnode]
-                istop = istart + convert(E, nvtxs[wnode]) - one(E)
 
                 for i in istart:istop
                     xnode = adjncy[i]
 
                     if marker[xnode] < tag0
-                        #                       ------------------------------------
-                        #                       FIRST TIME VISIT TO UNABSORBED XNODE
-                        #                       AS A NEIGHBOR OF WNODE.
-                        #                       ------------------------------------
+                        #                           ------------------------------------
+                        #                           FIRST TIME VISIT TO UNABSORBED XNODE
+                        #                           AS A NEIGHBOR OF WNODE.
+                        #                           ------------------------------------
                         if ispositive(qsize[xnode])
-                            #                           --------------------------------
-                            #                           XNODE IS NOT A MEMBER OF ENODE'S
-                            #                           ELIMINATION CLIQUE.
-                            #                           --------------------------------
+                            #                               --------------------------------
+                            #                               XNODE IS NOT A MEMBER OF ENODE'S
+                            #                               ELIMINATION CLIQUE.
+                            #                               --------------------------------
                             if umark[xnode] == utag
-                                #                               ----------------------------------
-                                #                               XNODE IS ALSO A NEIGHBOR OF UNODE.
-                                #                               ----------------------------------
-                            
-                                #                               ---------------------------
-                                #                               DECREMENT UNODE'S COUNT AND
-                                #                               DEFICIENCY OF XNODE.
-                                #                               ---------------------------
+                                #                                   ------------------------
+                                #                                   XNODE IS ALSO A NEIGHBOR
+                                #                                   OF UNODE.
+                                #                                   ------------------------
+                                #                                   ---------------------------
+                                #                                   DECREMENT UNODE'S COUNT AND
+                                #                                   DEFICIENCY OF XNODE.
+                                #                                   ---------------------------
                                 cntu -= qsize[xnode]
                                 defncy[xnode] -= uwfill
-                                #                               ---------------------------------
-                                #                               IF XNODE'S DEFICIENCY IS CHANGED
-                                #                               FOR THE FIRST TIME, THEN STORE IT
-                                #                               AND MARK IT AS CHANGED.
-                                #                               ---------------------------------
+                                #                                   ---------------------------------
+                                #                                   IF XNODE'S DEFICIENCY IS CHANGED
+                                #                                   FOR THE FIRST TIME, ADD IT TO THE
+                                #                                   LIST OF NODES WITH CHANGED
+                                #                                   DEFICIENCIES.
+                                #                                   ---------------------------------
                                 if !changed[xnode]
                                     k += one(V)
                                     ecliq[k] = xnode
                                     changed[xnode] = true
                                 end
                             else
-                                #                               ------------------------------------
-                                #                               XNODE IS NOT A NEIGHBOR OF UNODE ...
-                                #                               SO IT WILL INCREASE THE DEFICIENCY
-                                #                               OF WNODE.
-                                #                               ------------------------------------
+                                #                                   -----------------------
+                                #                                   XNODE IS NOT A NEIGHBOR
+                                #                                   OF UNODE ...
+                                #                                   SO IT WILL INCREASE THE
+                                #                                   DEFICIENCY OF WNODE.
+                                #                                   -----------------------
                                 cntw += qsize[xnode]
                             end
                         else
-                            #                           ----------------------------
-                            #                           XNODE IS A MEMBER OF ENODE'S
-                            #                           ELIMINATION CLIQUE.
-                            #                           ----------------------------
+                            #                               ----------------------------
+                            #                               XNODE IS A MEMBER OF ENODE'S
+                            #                               ELIMINATION CLIQUE.
+                            #                               ----------------------------
                             if umark[xnode] == utag
-                                #                               ---------------------------------
-                                #                               ... AND IT IS ADJACENT TO UNODE.
-                                #                               SO DECREMENT DEFICIENCY OF XNODE.
-                                #                               ---------------------------------
+                                #                                   ---------------------------------
+                                #                                   ... AND IT IS ADJACENT TO UNODE.
+                                #                                   SO DECREMENT DEFICIENCY OF XNODE.
+                                #                                   ---------------------------------
                                 defncy[xnode] -= uwfill
                             end
                         end
-                        #                       ---------------------------------------------
-                        #                       MARK XNODE AS VISITED AS A NEIGHBOR OF WNODE.
-                        #                       ---------------------------------------------
+                        #                           -----------------------------------
+                        #                           MARK XNODE AS VISITED AS A NEIGHBOR
+                        #                           OF WNODE.
+                        #                           -----------------------------------
                         marker[xnode] = tag0
                     end
                 end
-
-                #               --------------------------------------------
-                #               FOR EVERY CLIQUE NEIGHBOR CNODE OF WNODE ...
-                #               --------------------------------------------
-                cstart = xadj[wnode] + convert(E, nvtxs[wnode])
-                cstop = cstart + convert(E, work[wnode]) - one(E)
-
-                for c in cstart:cstop
-                    cnode = adjncy[c]
-                    #                   ----------------------------------
-                    #                   FOR EVERY UNABSORBED NODE XNODE IN
-                    #                   CLIQUE CNODE ...
-                    #                   ----------------------------------
-                    istart = xadj[cnode]
-                    istop = istart + convert(E, nvtxs[cnode]) - one(E)
-
-                    for i in istart:istop
-                        xnode = adjncy[i]
-
-                        if marker[xnode] < tag0
-                            #                           ------------------------------------
-                            #                           FIRST TIME VISIT TO UNABSORBED XNODE
-                            #                           AS A NEIGHBOR OF WNODE.
-                            #                           ------------------------------------
-                            if ispositive(qsize[xnode])
-                                #                               --------------------------------
-                                #                               XNODE IS NOT A MEMBER OF ENODE'S
-                                #                               ELIMINATION CLIQUE.
-                                #                               --------------------------------
-                                if umark[xnode] == utag
-                                    #                                   ------------------------
-                                    #                                   XNODE IS ALSO A NEIGHBOR
-                                    #                                   OF UNODE.
-                                    #                                   ------------------------
-                                    #                                   ---------------------------
-                                    #                                   DECREMENT UNODE'S COUNT AND
-                                    #                                   DEFICIENCY OF XNODE.
-                                    #                                   ---------------------------
-                                    cntu -= qsize[xnode]
-                                    defncy[xnode] -= uwfill
-                                    #                                   ---------------------------------
-                                    #                                   IF XNODE'S DEFICIENCY IS CHANGED
-                                    #                                   FOR THE FIRST TIME, ADD IT TO THE
-                                    #                                   LIST OF NODES WITH CHANGED
-                                    #                                   DEFICIENCIES.
-                                    #                                   ---------------------------------
-                                    if !changed[xnode]
-                                        k += one(V)
-                                        ecliq[k] = xnode
-                                        changed[xnode] = true
-                                    end
-                                else
-                                    #                                   -----------------------
-                                    #                                   XNODE IS NOT A NEIGHBOR
-                                    #                                   OF UNODE ...
-                                    #                                   SO IT WILL INCREASE THE
-                                    #                                   DEFICIENCY OF WNODE.
-                                    #                                   -----------------------
-                                    cntw += qsize[xnode]
-                                end
-                            else
-                                #                               ----------------------------
-                                #                               XNODE IS A MEMBER OF ENODE'S
-                                #                               ELIMINATION CLIQUE.
-                                #                               ----------------------------
-                                if umark[xnode] == utag
-                                    #                                   ---------------------------------
-                                    #                                   ... AND IT IS ADJACENT TO UNODE.
-                                    #                                   SO DECREMENT DEFICIENCY OF XNODE.
-                                    #                                   ---------------------------------
-                                    defncy[xnode] -= uwfill
-                                end
-                            end
-                            #                           -----------------------------------
-                            #                           MARK XNODE AS VISITED AS A NEIGHBOR
-                            #                           OF WNODE.
-                            #                           -----------------------------------
-                            marker[xnode] = tag0
-                        end
-                    end
-                end
-            
-                #               ---------------------------------------------
-                #               WING-HUANG UPDATES FOR UNODE AND WNODE DUE TO
-                #               FILL JOINING UNODE AND WNODE.
-                #               NOTE: QSIZE IS NEGATIVE.
-                #               ---------------------------------------------
-                defncy[unode] -= cntu * qsize[wnode]
-                defncy[wnode] -= cntw * qsize[unode]
-            
-                #               -----------
-                #               NEXT WNODE.
-                #               -----------
             end
-            #           -----------
-            #           NEXT UNODE.
-            #           -----------
+        
+            #               ---------------------------------------------
+            #               WING-HUANG UPDATES FOR UNODE AND WNODE DUE TO
+            #               FILL JOINING UNODE AND WNODE.
+            #               NOTE: QSIZE IS NEGATIVE.
+            #               ---------------------------------------------
+            defncy[unode] -= cntu * qsize[wnode]
+            defncy[wnode] -= cntw * qsize[unode]
+        
+            #               -----------
+            #               NEXT WNODE.
+            #               -----------
         end
-    
-        #       -------------------------------------------
-        #       APPLY THE DEGREE INCREMENTS TO THE DEGREES.
-        #       -------------------------------------------
-        for j in oneto(nnodes)
-            unode = ecliq[j]
-            degree[unode] += deginc[unode]
-        end
-    
-        #       --------------------------------------------
-        #       RECORD THE NUMBER OF EXTERNAL VERTICES WHOSE
-        #       DEFICIENCIES HAVE BEEN UPDATED.
-        #       --------------------------------------------
-        nnodes2 = k - nnodes
-    
-        #       ------------------------------------------------------
-        #       CHECK IF THE DEFICIENCY OF THE ELIMINATED NODE ENODE
-        #       IS ZERO.  STOP IF IT IS NOT. 
-        #       ------------------------------------------------------
-        if abs(defncy[enode]) > 1e-5
-            error("ELIMINATED NODE HAS NONZERO DEFICIENCY: $enode => $(defncy[enode])")
-        end
-    
-        return tag, utag, nnodes2
+        #           -----------
+        #           NEXT UNODE.
+        #           -----------
     end
+
+    #       -------------------------------------------
+    #       APPLY THE DEGREE INCREMENTS TO THE DEGREES.
+    #       -------------------------------------------
+    @inbounds for j in oneto(nnodes)
+        unode = ecliq[j]
+        degree[unode] += deginc[unode]
+    end
+
+    #       --------------------------------------------
+    #       RECORD THE NUMBER OF EXTERNAL VERTICES WHOSE
+    #       DEFICIENCIES HAVE BEEN UPDATED.
+    #       --------------------------------------------
+    nnodes2 = k - nnodes
+
+    #       ------------------------------------------------------
+    #       CHECK IF THE DEFICIENCY OF THE ELIMINATED NODE ENODE
+    #       IS ZERO.  STOP IF IT IS NOT. 
+    #       ------------------------------------------------------
+    @inbounds if abs(defncy[enode]) > 1e-5
+        error("ELIMINATED NODE HAS NONZERO DEFICIENCY: $enode => $(defncy[enode])")
+    end
+
+    return tag, utag, nnodes2
 end

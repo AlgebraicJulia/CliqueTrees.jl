@@ -4,12 +4,13 @@ using Base: oneto
 using FillArrays
 using ..Utilities
 
-export mlf!
+export mlf!, MLFScore, MinFill, MinAvgFill
 
 function maxint(::Type{I}) where {I}
     return typemax(I) - convert(I, 100000)
 end
 
+include("mlfscore.jl")
 include("mlfwh.jl")
 include("genmf_wh.jl")
 include("compress.jl")

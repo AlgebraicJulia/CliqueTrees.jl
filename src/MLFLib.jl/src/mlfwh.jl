@@ -20,6 +20,8 @@
 #       UPDATES.
 #
 #     INPUT PARAMETERS:
+#       SCORE       - NODE-SELECTION SCORE (AN MLFSCORE). DEFAULTS
+#                     TO MINFILL, THE MINIMUM LOCAL FILL SCORE.
 #       N           - NUMBER OF EQUATIONS.
 #       NNZ         - NUMBER OF NONZERO ENTRIES (NOT COUNTING THE
 #                     DIAGONAL ELEMENTS) IN THE MATRIX.
@@ -63,73 +65,75 @@
 #**********************************************************************
 #
 function mlf!(n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E, W}
-    @inbounds begin
-        nnz = xadj[n + one(V)] - one(E)
-        adjlen = convert(E, length(adjncy))
+    return mlf!(MinFill, n, vwght, xadj, adjncy)
+end
 
-        #       -------------------
-        #       LOCAL VARIABLES ...
-        #       -------------------
-        perm = FVector{V}(undef, n)
-        invp = FVector{V}(undef, n)
+function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E, W}
+    nnz = xadj[n + one(V)] - one(E)
+    adjlen = convert(E, length(adjncy))
 
-        for i in oneto(n)
-            perm[i] = i
-            invp[i] = i
-        end
+    #       -------------------
+    #       LOCAL VARIABLES ...
+    #       -------------------
+    perm = FVector{V}(undef, n)
+    invp = FVector{V}(undef, n)
 
-        #       -----------------------------
-        #       SET POINTERS FOR WORK ARRAYS.
-        #       -----------------------------
-        adjlen2 = nnz
-
-        #       --------------------
-        #       ALLOCATE WORK SPACE.
-        #       --------------------
-        changed = FVector{Bool}(undef, n)
-        degree  = FVector{W}(undef, n)
-        ecforw  = FVector{V}(undef, n)
-        ecliq   = FVector{V}(undef, n)
-        heapinv = FVector{V}(undef, n)
-        len2    = FVector{V}(undef, n)
-        marker  = FVector{Int}(undef, n)
-        nvtxs   = FVector{V}(undef, n)
-        qsize   = FVector{W}(undef, n)
-        qnmbr   = FVector{V}(undef, n)
-        umark   = FVector{Int}(undef, n)
-        work    = FVector{V}(undef, n)
-        work1   = FVector{Int}(undef, n)
-        work2   = FVector{W}(undef, n)
-        xadj2   = FVector{E}(undef, n)
-        adj2    = FVector{V}(undef, adjlen2)
-
-        defncy  = FVector{W}(undef, n)
-        heap    = FVector{W}(undef, twice(n))
-    
-        #       ------------------------------------------------------------
-        #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
-        #       A ZERO VALUE MEANS THAT THE INITIAL DEFICIENCIES WILL BE
-        #       COMPUTING USING A STRAIGHTFORWARD WAY.
-        #       A NONZERO VALUE MEANS THAT THE INITIAL DEFICIENCIES WILL BE
-        #       COMPUTED BY ADDING THE EDGES OF THE GRAPH ONE AT A TIME TO
-        #       AN INITIALLY EMPTY GRAPH AND PERFORMING WING-HUANG UPDATING
-        #       FOR EACH NEW EDGE.
-        #       ------------------------------------------------------------
-        defflag = true
-    
-        #       ----------------------------------------------
-        #       GENMF_WH COMPUTES A MINMUM LOCAL FILL ORDERING
-        #       USING WING-HUANG UPDATES.
-        #       ----------------------------------------------
-        nofnz, gbgcnt, iflag = genmf_wh(
-            n, adjlen, adjlen2, vwght, xadj,
-            adjncy, defflag, perm, invp,
-            marker, nvtxs, work,
-            qsize, qnmbr, ecforw, defncy, adj2, changed,
-            degree, umark, heap, heapinv, ecliq,
-            xadj2, len2, work1, work2,
-        )
-    
-        return perm, invp
+    @inbounds for i in oneto(n)
+        perm[i] = i
+        invp[i] = i
     end
+
+    #       -----------------------------
+    #       SET POINTERS FOR WORK ARRAYS.
+    #       -----------------------------
+    adjlen2 = nnz
+
+    #       --------------------
+    #       ALLOCATE WORK SPACE.
+    #       --------------------
+    changed = FVector{Bool}(undef, n)
+    degree  = FVector{W}(undef, n)
+    ecforw  = FVector{V}(undef, n)
+    ecliq   = FVector{V}(undef, n)
+    heapinv = FVector{V}(undef, n)
+    len2    = FVector{V}(undef, n)
+    marker  = FVector{Int}(undef, n)
+    nvtxs   = FVector{V}(undef, n)
+    qsize   = FVector{W}(undef, n)
+    qnmbr   = FVector{V}(undef, n)
+    umark   = FVector{Int}(undef, n)
+    work    = FVector{V}(undef, n)
+    work1   = FVector{Int}(undef, n)
+    work2   = FVector{W}(undef, n)
+    xadj2   = FVector{E}(undef, n)
+    adj2    = FVector{V}(undef, adjlen2)
+
+    defncy  = FVector{W}(undef, n)
+    heap    = FVector{SCORE}(undef, twice(n))
+
+    #       ------------------------------------------------------------
+    #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
+    #       A ZERO VALUE MEANS THAT THE INITIAL DEFICIENCIES WILL BE
+    #       COMPUTING USING A STRAIGHTFORWARD WAY.
+    #       A NONZERO VALUE MEANS THAT THE INITIAL DEFICIENCIES WILL BE
+    #       COMPUTED BY ADDING THE EDGES OF THE GRAPH ONE AT A TIME TO
+    #       AN INITIALLY EMPTY GRAPH AND PERFORMING WING-HUANG UPDATING
+    #       FOR EACH NEW EDGE.
+    #       ------------------------------------------------------------
+    defflag = true
+
+    #       ----------------------------------------------
+    #       GENMF_WH COMPUTES A MINMUM LOCAL FILL ORDERING
+    #       USING WING-HUANG UPDATES.
+    #       ----------------------------------------------
+    nofnz, gbgcnt, iflag = genmf_wh(
+        score, n, adjlen, adjlen2, vwght, xadj,
+        adjncy, defflag, perm, invp,
+        marker, nvtxs, work,
+        qsize, qnmbr, ecforw, defncy, adj2, changed,
+        degree, umark, heap, heapinv, ecliq,
+        xadj2, len2, work1, work2,
+    )
+
+    return perm, invp
 end

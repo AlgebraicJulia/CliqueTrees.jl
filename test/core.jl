@@ -441,7 +441,9 @@ end
             AMD(),
             SymAMD(),
             AMF(),
+            AMF(; exact = true),
             MF(),
+            MF(1),
             MMD(),
             METIS(),
             ND{1}(MMD(), METISND(); width = 5),
@@ -526,7 +528,9 @@ end
             AMD(),
             SymAMD(),
             AMF(),
+            AMF(; exact = true),
             MF(),
+            MF(1),
             MMD(),
             # METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
@@ -540,12 +544,12 @@ end
             HBT(; time = 0.1),
             MinimalChordal(),
             CompositeRotations([]),
-            Compression(; tao=1.0),
-            Compression(; tao=0.9),
-            SafeRules(; tao=1.0),
-            SafeRules(; tao=0.9),
-            SimplicialRule(; tao=1.0),
-            SimplicialRule(; tao=0.9),
+            Compression(; tau=1.0),
+            Compression(; tau=0.9),
+            SafeRules(),
+            SafeRules(),
+            SimplicialRule(),
+            SimplicialRule(),
             SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
@@ -596,7 +600,9 @@ end
             AMD(),
             SymAMD(),
             AMF(),
+            AMF(; exact = true),
             MF(),
+            MF(1),
             MMD(),
             METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
@@ -609,12 +615,12 @@ end
             PIDBT(),
             HBT(; time = 0.1),
             CompositeRotations([1]),
-            Compression(; tao=1.0),
-            Compression(; tao=0.9),
-            SafeRules(; tao=1.0),
-            SafeRules(; tao=0.9),
-            SimplicialRule(; tao=1.0),
-            SimplicialRule(; tao=0.9),
+            Compression(; tau=1.0),
+            Compression(; tau=0.9),
+            SafeRules(),
+            SafeRules(),
+            SimplicialRule(),
+            SimplicialRule(),
             SafeSeparators(),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
@@ -642,6 +648,48 @@ end
         @test isempty(separator(tree, 1))
         @test isone(only(residual(tree, 1)))
         @test isone(only(tree[1]))
+    end
+end
+
+@testset "fill-in" begin
+    # the fill-in of a vertex is the weight of the missing edges in its neighborhood
+    function bruteforce(graph, weights)
+        return map(vertices(graph)) do v
+            fill = zero(eltype(weights)); N = neighbors(graph, v)
+
+            for i in eachindex(N), j in (i + 1):lastindex(N)
+                if !has_edge(graph, N[i], N[j])
+                    fill += weights[N[i]] * weights[N[j]]
+                end
+            end
+
+            fill
+        end
+    end
+
+    rng = MersenneTwister(3)
+
+    for n in (1, 2, 10, 30, 60), p in (0.05, 0.2, 0.5, 0.9)
+        graph = erdos_renyi(n, p; rng)
+        simple = simplegraph(graph)
+        ptr = pointers(simple); tgt = targets(simple); m = length(tgt)
+        V = eltype(tgt); E = eltype(ptr)
+        number = V[ptr[v + 1] - ptr[v] for v in 1:n]
+        begptr = view(ptr, 1:n); endptr = view(ptr, 2:(n + 1))
+        marker = Vector{V}(undef, n); order = Vector{V}(undef, n)
+        tail = Vector{E}(undef, n); adjtgt = Vector{V}(undef, m)
+
+        fill = Vector{Int}(undef, n)
+        fillin!(fill, marker, order, tail, adjtgt, number, tgt, begptr, endptr, V(n))
+        @test fill == bruteforce(graph, ones(Int, n))
+
+        weights = rand(rng, 1:5, n); wdegree = Vector{Int}(undef, n)
+        fillin!(fill, weights, wdegree, marker, order, tail, adjtgt, number, tgt, begptr, endptr, V(n))
+        @test fill == bruteforce(graph, weights)
+
+        weights = rand(rng, n) .+ 0.5; ffill = Vector{Float64}(undef, n); fdegree = Vector{Float64}(undef, n)
+        fillin!(ffill, weights, fdegree, marker, order, tail, adjtgt, number, tgt, begptr, endptr, V(n))
+        @test ffill ≈ bruteforce(graph, weights)
     end
 end
 
@@ -725,7 +773,9 @@ end
                 @inferred CliqueTrees.mcsm(graph)
                 @inferred CliqueTrees.mcsm(graph, V[1, 3])
                 @inferred CliqueTrees.amf(weights, graph)
+                @inferred CliqueTrees.amf(weights, graph; exact = true)
                 @inferred CliqueTrees.mlf(weights, graph)
+                @inferred CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @inferred CliqueTrees.mmd(weights, graph)
                 @inferred CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -762,7 +812,9 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph, V[1, 3])
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph; exact = true)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
@@ -898,7 +950,9 @@ end
                         AMD(),
                         SymAMD(),
                         AMF(),
+                        AMF(; exact = true),
                         MF(),
+                        MF(1),
                         MMD(),
                         METIS(),
                         NDS{1}(MMD(), METISND(); width = 5),
@@ -911,12 +965,12 @@ end
                         PIDBT(),
                         MinimalChordal(),
                         CompositeRotations([1, 3]),
-                        Compression(; tao=1.0),
-                        Compression(; tao=0.9),
-                        SafeRules(; tao=1.0),
-                        SafeRules(; tao=0.9),
-                        SimplicialRule(; tao=1.0),
-                        SimplicialRule(; tao=0.9),
+                        Compression(; tau=1.0),
+                        Compression(; tau=0.9),
+                        SafeRules(),
+                        SafeRules(),
+                        SimplicialRule(),
+                        SimplicialRule(),
                         SafeSeparators(),
                         ConnectedComponents(),
                         BestWidth(MCS(), MF()),
@@ -1235,8 +1289,8 @@ end
         Compression(AMF()),
         SimplicialRule(AMF()),
         SafeRules(AMF()),
-        SimplicialRule(ND{2}(MMD(), METISND()); tao=1.0),
-        SimplicialRule(ND{2}(MMD(), METIS_OR_KAHYPAR()); tao=0.9),
+        SimplicialRule(ND{2}(MMD(), METISND())),
+        SimplicialRule(ND{2}(MMD(), METIS_OR_KAHYPAR())),
         MF(),
     )
 

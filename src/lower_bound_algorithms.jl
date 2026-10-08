@@ -99,54 +99,84 @@ end
 function mmw(weights::AbstractVector{W}, graph::AbstractGraph{V}, strategy::Val) where {W, V}
     @assert nv(graph) <= length(weights)
 
-    n = nv(graph)
-    intweights = FVector{V}(undef, n)
-
-    @inbounds for v in vertices(graph)
-        intweights[v] = trunc(V, weights[v])
-    end
-
-    width = mmw(intweights, graph, strategy)
-    return convert(W, width)
-end
-
-function mmw(weights::AbstractVector{V}, graph::AbstractGraph{V}, strategy::Val) where {V}
-    @assert nv(graph) <= length(weights)
-
-    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    n = nv(graph); m = de(graph)
 
     # `totdeg` is the total weight of the
     # vertices in the graph
-    totdeg = zero(V)
+    totdeg = 0
 
     @inbounds for v in oneto(n)
-        totdeg += weights[v]
+        totdeg += trunc(Int, weights[v])
     end
-    
+
+    # the working arrays use 32-bit integers
+    # when they suffice
+    if n < typemax(Int32) ÷ 4 && mmwcapacity(n, m) + 4n < typemax(Int32) && totdeg < typemax(Int32)
+        width = mmw(Int32, Int32, totdeg, weights, graph, strategy)
+    else
+        width = mmw(promote_type(V, Int), promote_type(etype(graph), Int), totdeg, weights, graph, strategy)
+    end
+
+    return convert(W, width)
+end
+
+function mmw(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, graph::AbstractGraph, strategy::Val) where {V, E}
+    n = convert(V, nv(graph)); m = convert(E, de(graph)); nn = n + one(V)
+    cap = convert(E, mmwcapacity(n, m)); totdeg = convert(V, totdeg)
+    weight = mmwweights(V, weights, n)
+
     marker = FVector{V}(undef, n)
-    vstack = FVector{V}(undef, n)
-    tmpptr = FVector{E}(undef, n)
+    hubmark = FVector{V}(undef, n)
+    stash = FVector{V}(undef, n)
 
     degree = FVector{V}(undef, n)
-    source = FVector{V}(undef, m)
-    target = FVector{V}(undef, m)
+    target = FVector{V}(undef, cap)
+    invptr = FVector{E}(undef, cap)
     begptr = FVector{E}(undef, nn)
     endptr = FVector{E}(undef, n)
-    invptr = FVector{E}(undef, m)
+    limptr = FVector{E}(undef, n)
 
-    head = FVector{V}(undef, totdeg)
+    head = FVector{V}(undef, totdeg + one(V))
     prev = FVector{V}(undef, n)
     next = FVector{V}(undef, n)
-    
-    width = mmw_impl!(marker, vstack, tmpptr, degree, source, target, begptr,
-        endptr, invptr, head, prev, next, totdeg, weights, graph, strategy)
-    
+
+    width = mmw_impl!(marker, hubmark, stash, degree, target, invptr,
+        begptr, endptr, limptr, head, prev, next, cap, totdeg, weight,
+        graph, strategy)
+
     return width
 end
 
+# the size of the arc storage: the arcs of the graph, the
+# room left at the end of every list, and room for lists to
+# move to between compactions
+function mmwcapacity(n::Integer, m::Integer)
+    return m + mmwslack(m) + max(m ÷ 2, 4n) + 1
+end
+
+# the room left at the end of a list of length `len`
+function mmwslack(len::I) where {I <: Integer}
+    return len ÷ two(I)
+end
+
+function mmwweights(::Type{V}, weights::Ones, n::V) where {V}
+    return Ones{V}(n)
+end
+
+function mmwweights(::Type{V}, weights::AbstractVector, n::V) where {V}
+    weight = FVector{V}(undef, n)
+
+    @inbounds for v in oneto(n)
+        weight[v] = trunc(V, weights[v])
+    end
+
+    return weight
+end
+
 """
-  mmw_impl!(marker, vstack, tmpptr, degree, source, target, begptr,
-    endptr, invptr, head, prev, next, totdeg, weight, graph, strategy)  
+  mmw_impl!(marker, hubmark, stash, degree, target, invptr,
+    begptr, endptr, limptr, head, prev, next, cap, totdeg,
+    weight, graph, strategy)
 
 Contraction and Treewidth Lower Bounds
 Bodlaender, Koster, and Wolle
@@ -162,17 +192,27 @@ of the graph is lower-bounded by the treewidth of each
 minor, and the treewidth of each minor is lower-bounded by
 its minimum degree.
 
-The algorithm employs a data structure called a *quotient graph.*
-It is a directed graph with two types of vertices: elements and
-supernodes. The arcs in the graph obey the following invariant
-  - every supernode w has at most one predecessor v, which must
-    be an element
-We say that an element w is *reachable* by another element v if
-there exists a path (v, x₁, ..., xₙ, w) from v to w through
-supernodes {x₁, ..., xₙ}. Reachability is a symmetric, irreflexive
-relation on the set of elements.
+The graph is stored as a set of adjacency lists. The
+neighbors of a vertex `v` are stored in the list
+
+    target[begptr[v]:endptr[v] - 1],
+
+which can grow until `endptr[v] = limptr[v]`. Every arc
+`p` = (`v`, `w`) has a reverse arc `invptr[p]` = (`w`, `v`).
+When an edge {`v`, `w`} is contracted, the new neighbors
+of `w` are appended to its list. If the list is full, it
+is moved to the end of the storage and its capacity is
+doubled. If the storage is full, it is compacted.
+
+The algorithm stops as soon as the total weight of the
+remaining graph is no greater than `maxmindeg`. The
+weighted degree of a vertex never exceeds the total weight
+of its graph, and the total weight of a minor never exceeds
+the total weight of the graph, so no later minor can
+increase `maxmindeg`.
 
 input parameters:
+  - `cap`: size of the arc storage
   - `totdeg`: total vertex weight
   - `weight`: vertex weight
   - `graph`: input graph
@@ -187,120 +227,130 @@ output parameters:
 working arrays:
   - miscellaneous:
     - `marker`: marker array
-    - `vstack`: vertex stack
-    - `tmpptr`: temporary pointer array 
-  - quotient graph:
-    - `source`: the source vertex of an edge
-    - `target`: the target vertex of an edge
-      - positive vertices are elements
-      - negative vertices are supernodes
-    - `begptr`: the first edge incident to a vertex
-    - `endptr`: the final edge incident to a vertex
-    - `invptr`: the reverse of an edge
+    - `hubmark`: marks the neighbors of a vertex `hub`
+    - `stash`: temporary vertex array
+  - adjacency lists:
+    - `target`: the target vertex of an arc
+    - `invptr`: the reverse of an arc
+    - `begptr`: the first arc incident to a vertex
+    - `endptr`: one past the last arc incident to a vertex
+    - `limptr`: one past the last arc that can be incident
+      to a vertex
  - vertex-degree bucket queue:
-    - `head`: the first vertex in a bucket
+    - `head`: the first vertex in a bucket; the bucket for
+      weighted degree `i` is headed by `head[i + 1]`, since
+      vertex weights may be zero
     - `prev`: the predecessor of a vertex
     - `next`: the successor of a vertex
 """
 function mmw_impl!(
         marker::AbstractVector{V},
-        vstack::AbstractVector{V},
-        tmpptr::AbstractVector{E},
+        hubmark::AbstractVector{V},
+        stash::AbstractVector{V},
         degree::AbstractVector{V},
-        source::AbstractVector{V},
         target::AbstractVector{V},
+        invptr::AbstractVector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
+        limptr::AbstractVector{E},
         head::AbstractVector{V},
         prev::AbstractVector{V},
         next::AbstractVector{V},
+        cap::E,
         totdeg::V,
         weight::AbstractVector{V},
-        graph::AbstractGraph{V},
+        graph::AbstractGraph,
         strategy::Val,
     ) where {V <: Signed, E}
-    
+
     @assert nv(graph) <= length(marker)
+    @assert nv(graph) <= length(hubmark)
+    @assert nv(graph) <= length(stash)
     @assert nv(graph) <= length(degree)
-    @assert nv(graph) <= length(vstack)
-    @assert ne(graph) <= length(source)
-    @assert ne(graph) <= length(target)
-    @assert nv(graph) <= length(tmpptr)
+    @assert de(graph) <  cap
+    @assert cap       <= length(target)
+    @assert cap       <= length(invptr)
     @assert nv(graph) <  length(begptr)
     @assert nv(graph) <= length(endptr)
-    @assert ne(graph) <= length(invptr)
-    @assert totdeg    <= length(head)
+    @assert nv(graph) <= length(limptr)
+    @assert totdeg    <  length(head)
     @assert nv(graph) <= length(prev)
     @assert nv(graph) <= length(next)
 
     # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)
-        @inbounds h = view(head, i)
+        @inbounds h = view(head, i + one(V))
         return DoublyLinkedList(h, prev, next)
     end
 
-    # `n` is the number of vertices in the graph    
-    n = nv(graph)
+    # `n` is the number of vertices in the graph
+    n = convert(V, nv(graph))
 
     # `mindeg` is the minimum weighted degree
-    # `maxdeg` is the maximum weighted degree
-    mindeg, maxdeg = mmw_init!(marker, tmpptr, degree, source, target,
-        begptr, endptr, invptr, head, prev, next, totdeg, weight, graph)
+    # `pfree` is the first free arc in the storage
+    mindeg, pfree = mmw_init!(marker, hubmark, degree, target, invptr,
+        begptr, endptr, limptr, head, prev, next, totdeg, weight, graph)
+
+    # the neighbors `x` of `hub` satisfy
+    #    hubmark[x] = `epoch`
+    hub = epoch = zero(V)
 
     # `maxmindeg` is the largest value of `mindeg`
     # encountered during the algorithm
     maxmindeg = zero(V)
 
+    # `remdeg` is the total weight of the remaining graph
+    remdeg = totdeg
+
     @inbounds for tag in oneto(n)
-        # find the new minimum degree        
+        # find the new minimum degree
         while isempty(set(mindeg))
             mindeg += one(V)
-        end
-
-        # find the new maximum degree
-        while isempty(set(maxdeg))
-            maxdeg -= one(V)
         end
 
         # update `maxmindeg`
         maxmindeg = max(maxmindeg, mindeg)
 
+        # if the remaining graph is too light to
+        # increase `maxmindeg`, stop
+        if remdeg <= maxmindeg
+            break
+        end
+
         # select a vertex of minimum degree
         v = popfirst!(set(mindeg))
+        remdeg -= weight[v]
 
         # find a neighbor according to strategy `S`
-        w = mmw_search!(marker, vstack, degree, target,
-            begptr, endptr, invptr, weight, tag, v, n, strategy)
+        w = mmw_search!(marker, hubmark, degree, target, begptr,
+            endptr, weight, hub, epoch, tag, v, strategy)
 
         # if a neighbor was found, contract the edge
-        # {`v`, `w`}, turning `v` into a supernode
+        # {`v`, `w`}
         if ispositive(w)
-            mmw_contract!(marker, vstack, degree, source, target,
-                begptr, endptr, invptr, head, prev, next, weight, tag, v, w)
-
-            # the weighted degree of `w` may have increased
-            maxdeg = max(maxdeg, degree[w])
+            pfree, hub, epoch = mmw_contract!(hubmark, stash, degree,
+                target, invptr, begptr, endptr, limptr, head, prev,
+                next, weight, pfree, cap, hub, epoch, n, v, w)
 
         # otherwise, remove `v` from the graph
         else
-            mmw_remove!(vstack, degree, source, target,
-                begptr, endptr, invptr, head, prev, next, weight, v)
+            mmw_remove!(degree, target, invptr, begptr,
+                endptr, head, prev, next, weight, v)
         end
 
-        # the weighted degree of every element reachable by
-        # `v` has decreased by the weight of `v`
-        mindeg = max(mindeg - weight[v], one(V))
+        # the weighted degree of every neighbor of `v`
+        # has decreased by at most the weight of `v`
+        mindeg = max(mindeg - weight[v], zero(V))
     end
 
     return maxmindeg
 end
 
 """
-    mmw_init!(marker, tmpptr, degree, source, target, begptr,
-        endptr, invptr, head, prev, next, totdeg, weight, graph)
+    mmw_init!(marker, hubmark, degree, target, invptr, begptr,
+        endptr, limptr, head, prev, next, totdeg, weight, graph)
 
-Initialize quotient graph and degree bucket queue.
+Initialize adjacency lists and degree bucket queue.
 
 input parameters:
   - `weight`: vertex weight
@@ -309,241 +359,250 @@ input parameters:
 
 output parameters:
  - `mindeg`: minimum weighted degree
- - `maxdeg`: maximum weighted degree
+ - `pfree`: first free arc
 """
 function mmw_init!(
         marker::AbstractVector{V},
-        tmpptr::AbstractVector{E},
+        hubmark::AbstractVector{V},
         degree::AbstractVector{V},
-        source::AbstractVector{V},
         target::AbstractVector{V},
+        invptr::AbstractVector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
+        limptr::AbstractVector{E},
         head::AbstractVector{V},
         prev::AbstractVector{V},
         next::AbstractVector{V},
         totdeg::V,
         weight::AbstractVector{V},
-        graph::AbstractGraph{V},
+        graph::AbstractGraph,
     ) where {V, E}
- 
-    n = nv(graph); nn = n + one(V)
 
-    # `set(i)` constructs the bucket for weighted degree `i`    
+    n = convert(V, nv(graph)); nn = n + one(V)
+
+    # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)
-        @inbounds h = view(head, i)
+        @inbounds h = view(head, i + one(V))
         return DoublyLinkedList(h, prev, next)
     end
-   
+
     # empty the bucket queue
-    @inbounds for v in oneto(totdeg)
-        head[v] = zero(V)
+    @inbounds for i in oneto(totdeg + one(V))
+        head[i] = zero(V)
     end
- 
+
     # `mindeg` is the minimum weighted degree
-    # `maxdeg` is the maximum weighted degree
-    mindeg = totdeg; maxdeg = zero(V)
+    mindeg = totdeg
 
     # `p` is the current arc
     p = one(E)
 
-    @inbounds for v in vertices(graph)
-        tmpptr[v] = begptr[v] = endptr[v] = p
-        marker[v] = zero(V)
+    # `limptr` is used as a temporary pointer array
+    @inbounds for v in oneto(n)
+        limptr[v] = begptr[v] = endptr[v] = p
+        marker[v] = hubmark[v] = zero(V)
 
         # `deg` is the weighted degree of `v`
         deg = weight[v]
-        
+
         for w in neighbors(graph, v)
             if v != w
-                # `p` is the arc (`v`, `w`)
-                source[p] = v; p += one(E)
+                p += one(E)
                 deg += weight[w]
             end
         end
-        
+
         mindeg = min(mindeg, deg)
-        maxdeg = max(maxdeg, deg)
         degree[v] = deg; pushfirst!(set(deg), v)
+
+        # leave room for the list to grow
+        p += mmwslack(p - begptr[v])
     end
-    
-    @inbounds for v in vertices(graph), w in neighbors(graph, v)
+
+    @inbounds begptr[nn] = p
+
+    @inbounds for v in oneto(n), w in neighbors(graph, v)
         if v != w
             # `q` is the arc (`w`, `v`)
             q = endptr[w]; target[q] = v; endptr[w] = q + one(E)
         end
     end
-    
-    @inbounds for v in vertices(graph)
-        # the arcs {`p`, ..., `pend` - 1} are incident
-        # to `v`
-        p = begptr[v]; pend = endptr[v]
-        
-        while p < pend
+
+    @inbounds for v in oneto(n)
+        for p in begptr[v]:endptr[v] - one(E)
             # `p` is the arc (`v`, `w`)
             w = target[p]
 
             # `q` is the arc (`w`, `v`)
-            q = tmpptr[w]; invptr[p] = q; tmpptr[w] = q + one(E)
-            p += one(E)
+            q = limptr[w]; invptr[p] = q; limptr[w] = q + one(E)
         end
     end
 
-    if ispositive(n)
-        @inbounds begptr[nn] = endptr[n]
+    # clear the room at the end of each list, so that
+    # it is never mistaken for a list head during a
+    # compaction
+    @inbounds for v in oneto(n)
+        limptr[v] = begptr[v + one(V)]
+
+        for p in endptr[v]:limptr[v] - one(E)
+            target[p] = zero(V)
+        end
     end
-    
-    return mindeg, maxdeg
+
+    # on output, `p` is the first free arc
+    return mindeg, p
 end
 
 """
-    mmw_search!(marker, vstack, degree, target,
-        begptr, endptr, invptr, weight, tag, v, n, strategy)
+    mmw_search!(marker, hubmark, degree, target, begptr,
+        endptr, weight, hub, epoch, tag, v, strategy)
 
-Find an element reachable by `v` using the min-d or
-max-d heuristics. The min-d heuristic selects an element
+Find a neighbor of `v` using the min-d or max-d
+heuristics. The min-d heuristic selects a neighbor
 with the least weighted degree. The max-d heuristic
-selects an element with the greatest weighted degree.
+selects a neighbor with the greatest weighted degree.
+Only neighbors no heavier than `v` are considered.
 
 input parameters:
  - `tag`: tag for marking vertices
  - `v`: minimum degree vertex
- - `n`: number of vertices
  - `S`: strategy
    - `1`: min-d
    - `2`: max-d
 
 output parameters:
- - `w`: chosen element
+ - `w`: chosen neighbor, or zero if there is none
 """
 function mmw_search!(
         marker::AbstractVector{V},
-        vstack::AbstractVector{V},
+        hubmark::AbstractVector{V},
         degree::AbstractVector{V},
         target::AbstractVector{V},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
         weight::AbstractVector{V},
+        hub::V,
+        epoch::V,
         tag::V,
         v::V,
-        n::V,
         strategy::Val{S},
     ) where {V, E, S}
-   
-    # `wgt` is the weight of `v` 
+
+    # `wgt` is the weight of `v`
     @inbounds wgt = weight[v]
 
-    # `w` is the chosen element
+    # `w` is the chosen neighbor
     w = deg = zero(V)
 
-    w, deg = mmw_reach!((w, deg), vstack,
-            target, begptr, endptr, invptr, v) do (w, deg), pp, ww
-        # `ww` is reachable by `v`; `wwgt` is its weight
-        @inbounds wwgt = weight[ww]
+    @inbounds for p in begptr[v]:endptr[v] - one(E)
+        # `ww` is a neighbor of `v`; `wwgt` is its weight
+        ww = target[p]; wwgt = weight[ww]
 
         if wwgt <= wgt
             # `ddeg` is the weighted degree of `ww`
-            @inbounds ddeg = degree[ww]
+            ddeg = degree[ww]
 
             if iszero(w) || (isone(S) && ddeg < deg) || (istwo(S) && ddeg > deg)
                 w, deg = ww, ddeg
             end
         end
-
-        return (w, deg)
     end
 
     return w
 end
 
 """
-    mmw_search!(marker, vstack, degree, target,
-        begptr, endptr, invptr, weight, tag, v, n, strategy)
+    mmw_search!(marker, hubmark, degree, target, begptr,
+        endptr, weight, hub, epoch, tag, v, strategy)
 
-Find an element reachable by `v` using the least-c
-heuristic. The least-c heuristic selects a neighbor
-`w` that minimizes the sum
+Find a neighbor of `v` using the least-c heuristic.
+The least-c heuristic selects a neighbor `w` that
+minimizes the score
+
    Σ weight(x)
  x ∈ N(v) ∩ N(w)
 
+Only neighbors no heavier than `v` are considered.
+Ties are broken in favor of the first neighbor
+examined.
+
+The score of a candidate is computed by scanning its
+neighborhood. The scan is abandoned as soon as the
+partial score reaches the score of the best candidate
+so far, since the candidate can no longer be chosen.
+If the candidate is `hub`, whose neighbors are marked
+in `hubmark`, and its neighborhood is larger than the
+neighborhood of `v`, then the score is computed by
+scanning the neighborhood of `v` instead.
+
 input parameters:
+ - `hub`: the neighbors `x` of `hub` satisfy
+     hubmark[x] = `epoch`
+ - `epoch`: tag for marking vertices
  - `tag`: tag for marking vertices
  - `v`: minimum degree vertex
- - `n`: number of vertices
 
 output parameters:
- - `w`: chosen element
+ - `w`: chosen neighbor, or zero if there is none
 """
 function mmw_search!(
         marker::AbstractVector{V},
-        vstack::AbstractVector{V},
+        hubmark::AbstractVector{V},
         degree::AbstractVector{V},
         target::AbstractVector{V},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
         weight::AbstractVector{V},
+        hub::V,
+        epoch::V,
         tag::V,
         v::V,
-        n::V,
         strategy::Val{3},
     ) where {V, E}
 
-    # mark the elements reachable by `v` and write them
-    # to `vstack`
-    numend = n + one(V)
+    # the arcs {`pbeg`, ..., `pend` - 1} are
+    # incident to `v`
+    @inbounds pbeg = begptr[v]; pend = endptr[v]
 
-    numend = mmw_reach!(numend, vstack, 
-            target, begptr, endptr, invptr, v) do numend, p, w
-        # `w` is reachable by `v`; mark `w` and push it
-        # to the stack
-        @inbounds numend -= one(V); vstack[numend] = w
-        @inbounds marker[w] = -tag
-        return numend
+    # mark the neighbors of `v`
+    @inbounds for p in pbeg:pend - one(E)
+        marker[target[p]] = tag
     end
-   
+
     # `w` is the chosen neighbor of `v`
     w = zero(V)
 
     # `scr` is the score of `w`
-    scr = zero(V)
+    scr = typemax(V)
 
     # `wgt` is the weight of `v`
     @inbounds wgt = weight[v]
 
-    # elements reachable by `v` are located at the
-    # indices (`numend`, ..., `n`) in `vstack`
-    @inbounds while numend <= n
-        # `ww` is reachable by `v`
-        ww = vstack[numend]; numend += one(V)
+    # `p` is the current arc
+    p = pbeg
 
-        # if the weight of `ww` is no greater than
-        # the weight of `v`, compute its score
+    # if `scr` is zero, then no candidate can
+    # improve on `w`
+    @inbounds while p < pend && ispositive(scr)
+        # `ww` is a neighbor of `v`
+        ww = target[p]; p += one(E)
+
+        # if the weight of `ww` is no greater than the
+        # weight of `v`, compute its score
         if weight[ww] <= wgt
-            # `sscr` is the score of `ww`
-            sscr = zero(V)
-
-            sscr = mmw_reach!(sscr, vstack,
-                    target, begptr, endptr, invptr, ww) do scr, p, w
-                # `ttag` indicates whether `w` is reachable by `v`
-                #  - `ttag` = `-tag`: reachable
-                #  - `ttag` ≠ `-tag`: not reachable
-                @inbounds ttag = marker[w]
-
-                # if `w` is reachable by `v`, increase
-                # the score of `ww` by the weight of `w`
-                if ttag == -tag
-                    @inbounds scr += weight[w]
-                end
-
-                return scr
+            # `sscr` is the score of `ww`, unless it
+            # is no less than `scr`
+            if ww == hub && pend - pbeg < endptr[ww] - begptr[ww]
+                sscr = mmw_score(hubmark, target, pbeg,
+                    pend, weight, epoch, scr)
+            else
+                sscr = mmw_score(marker, target, begptr[ww],
+                    endptr[ww], weight, tag, scr)
             end
 
-            # store the element `w` with the smallest
-            # score
-            if iszero(w) || sscr < scr
+            # if the scan was completed, `ww` is the best
+            # candidate so far
+            if sscr < scr
                 w, scr = ww, sscr
             end
         end
@@ -553,50 +612,163 @@ function mmw_search!(
 end
 
 """
-    mmw_contract!(marker, vstack, degree, source, begptr,
-        endptr, invptr, head, prev, next, weight, tag, v, w)
+    mmw_score(marker, target, pbeg, pend,
+        weight, tag, maxscr)
 
-Contract the edge {`v`, `w`}, turning the
-element `v` into a supernode.
+Compute the sum
+
+       Σ weight(x)
+ x ∈ target[pbeg:pend - 1]
+   marker[x] = tag
+
+which is the score of a candidate `w` if the arcs
+{`pbeg`, ..., `pend` - 1} are incident to `w` and
+the neighbors of `v` are marked with `tag`. The
+computation is abandoned as soon as the sum reaches
+`maxscr`.
 
 input parameters:
+ - `pbeg`, `pend`: the arcs {`pbeg`, ..., `pend` - 1}
  - `tag`: tag for marking vertices
+ - `maxscr`: maximum score
+
+output parameters:
+ - `scr`: the sum, or a number no less than `maxscr`
+"""
+function mmw_score(
+        marker::AbstractVector{V},
+        target::AbstractVector{V},
+        pbeg::E,
+        pend::E,
+        weight::AbstractVector{V},
+        tag::V,
+        maxscr::V,
+    ) where {V, E}
+    scr = zero(V)
+
+    # the indices are converted to `Int`, so that
+    # consecutive arcs have consecutive addresses
+    p = Int(pbeg); pend = Int(pend)
+
+    # scan the arcs in blocks of `MMW_BLOCK`; within
+    # a block, the loop has no exits, so that it can
+    # be vectorized
+    @inbounds while p + MMW_BLOCK <= pend
+        for k in 0:MMW_BLOCK - 1
+            # `x` is the target of an arc
+            x = target[p + k]
+            scr += ifelse(marker[x] == tag, weight[x], zero(V))
+        end
+
+        # if the sum has reached `maxscr`, stop
+        if scr >= maxscr
+            return scr
+        end
+
+        p += MMW_BLOCK
+    end
+
+    @inbounds while p < pend
+        # `x` is the target of an arc
+        x = target[p]
+        scr += ifelse(marker[x] == tag, weight[x], zero(V))
+
+        # if the sum has reached `maxscr`, stop
+        if scr >= maxscr
+            return scr
+        end
+
+        p += 1
+    end
+
+    return scr
+end
+
+# the block size in `mmw_score`
+const MMW_BLOCK = 16
+
+"""
+    mmw_contract!(hubmark, stash, degree, target, invptr,
+        begptr, endptr, limptr, head, prev, next, weight,
+        pfree, cap, hub, epoch, n, v, w)
+
+Contract the edge {`v`, `w`}, merging the vertex `v`
+into the vertex `w`. The neighbors of `v` that are not
+neighbors of `w` are appended to the list of `w`.
+
+The neighbors of `w` are found by marking them in
+`hubmark`. The vertex `w` becomes `hub`, and its
+neighbors remain marked until another vertex becomes
+`hub`. Since an edge incident to `hub` disappears only
+when one of its endpoints is eliminated, the marks need
+only be updated when `hub` gains a neighbor. Hence, if
+several edges incident to the same vertex are contracted
+in a row, which is typical of the heuristic max-d, then
+its neighbors are marked only once.
+
+input parameters:
+ - `cap`: size of the arc storage
+ - `n`: number of vertices
  - `v`: minimum degree vertex
  - `w`: neighbor of `v`
+
+updated parameters:
+ - `pfree`: first free arc
+ - `hub`: the neighbors `x` of `hub` satisfy
+     hubmark[x] = `epoch`
+ - `epoch`: tag for marking vertices
 """
 function mmw_contract!(
-        marker::AbstractVector{V},
-        vstack::AbstractVector{V},
+        hubmark::AbstractVector{V},
+        stash::AbstractVector{V},
         degree::AbstractVector{V},
-        source::AbstractVector{V},
         target::AbstractVector{V},
+        invptr::AbstractVector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
+        limptr::AbstractVector{E},
         head::AbstractVector{V},
         prev::AbstractVector{V},
         next::AbstractVector{V},
         weight::AbstractVector{V},
-        tag::V,
+        pfree::E,
+        cap::E,
+        hub::V,
+        epoch::V,
+        n::V,
         v::V,
         w::V,
     ) where {V, E}
-    
+
     # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)
-        @inbounds h = view(head, i)
+        @inbounds h = view(head, i + one(V))
         return DoublyLinkedList(h, prev, next)
     end
 
-    # mark `w`
-    @inbounds marker[w] = tag
+    # if `w` is not `hub`, make it `hub` and
+    # mark its neighbors
+    if w != hub
+        hub = w; epoch += one(V)
 
-    # mark the elements reachable by `w`
-    mmw_reach!(nothing, vstack,
-            target, begptr, endptr, invptr, w) do _, pp, ww
-        # `ww` is reachable by `w`; mark it
-        @inbounds marker[ww] = tag
-        return
+        @inbounds for p in begptr[w]:endptr[w] - one(E)
+            hubmark[target[p]] = epoch
+        end
+    end
+
+    # the arcs {`pbeg`, ..., `pend` - 1} are
+    # incident to `v`
+    @inbounds pbeg = begptr[v]; pend = endptr[v]
+
+    # make room for the new neighbors of `w`; there
+    # are fewer of them than there are neighbors
+    # of `v`, since `w` is one
+    @inbounds if limptr[w] < endptr[w] + (pend - pbeg) - one(E)
+        pfree = mmw_relocate!(stash, target, invptr, begptr, endptr,
+            limptr, pfree, cap, n, w, (pend - pbeg) - one(E))
+
+        # the list of `v` may have moved
+        pbeg = begptr[v]; pend = endptr[v]
     end
 
     # `wgt` is the weight of `v`
@@ -609,116 +781,65 @@ function mmw_contract!(
     # `deg` is the weighted degree of `w`
     @inbounds deg = degree[w]
 
-    # push `v` to the stack
-    @inbounds num = one(V); vstack[num] = v
+    @inbounds for p in pbeg:pend - one(E)
+        # `p` is the arc (`v`, `x`) and `q` is the
+        # arc (`x`, `v`)
+        x = target[p]; q = invptr[p]
 
-    @inbounds while ispositive(num)
-        # `vv` is a supernode adjacent to `v`
-        vv = vstack[num]; num -= one(V)
+        # if `x` is equal to `w`, remove the arc
+        # (`w`, `v`)
+        if x == w
+            mmw_delete!(target, invptr, endptr, w, q)
 
-        # the arcs {`pp`, ..., `ppend` - 1} are incident
-        # to `vv`
-        pp = begptr[vv]; ppend = endptr[vv]
+            # decrease the weighted degree of `w` by the
+            # weight of `v`
+            deg -= wgt
 
-        while pp < ppend
-            # `ww` is adjacent to `vv` and reachable by `v`
-            ww = target[pp]
+        # if `x` is not adjacent to `w`, replace the
+        # arc (`x`, `v`) with the arc (`x`, `w`) and
+        # append the arc (`w`, `x`) to the list of `w`
+        elseif hubmark[x] != epoch
+            qq = endptr[w]; endptr[w] = qq + one(E)
+            target[q] = w
+            target[qq] = x; invptr[qq] = q; invptr[q] = qq
+            hubmark[x] = epoch
 
-            # if `ww` is an element, update the graph
-            if ispositive(ww)
-                # `qq` is the reverse of `pp`
-                qq = invptr[pp]
+            # increase the weighted degree of `w` by the
+            # weight of `x`
+            deg += weight[x]
 
-                # if `ww` is not equal to or reachable by `w`, add
-                # it to the neighborhood of `ww`
-                if marker[ww] < tag
-                    target[qq] = w; pp += one(E)
-
-                    # increase the weighted degree of `w` by the
-                    # weight of `ww`
-                    deg += weight[ww]
-
-                    # increase the weighted degree of `ww` by the
-                    # weight of `w` and decrease it by the weight
-                    # of `v`
-                    if ispositive(del)
-                        delete!(set(degree[ww]), ww)
-                        degree[ww] -= del; pushfirst!(set(degree[ww]), ww)
-                    end
-
-                # otherwise, `ww` is either equal to or reachable by `w`
-                else
-                    # replace `ww` with a vertex `xx` in the neighborhood
-                    # of `vv`
-                    ppend -= one(E)
-
-                    if pp < ppend
-                        # `xx` is adjacent to `vv` and reachable by `v`
-                        xx = target[pp] = target[ppend]
-
-                        if ispositive(xx)
-                            # `xx` is an element; `ppinv` is the arc
-                            # (`xx`, `v`)
-                            ppinv = invptr[pp] = invptr[ppend]
-                            invptr[ppinv] = pp
-                        end
-                    end
-
-                    # if `ww` is equal to `w`, replace `v` with `-v` in
-                    # the neighborhood of `ww`
-                    if w == ww
-                        target[qq] = -v
-
-                        # decrease the weighted degree of `w` by the
-                        # weight of `v`
-                        deg -= wgt
-
-                    # otherwise, replace `v` with a vertex `xx` in the
-                    # neighborhood of `ww`
-                    else
-                        qqend = endptr[source[qq]] -= one(E)
-
-                        if qq < qqend
-                            # `xx` is adjacent to `ww` and reachable by `v`
-                            xx = target[qq] = target[qqend]
-
-                            if ispositive(xx)
-                                # `xx` is an element; `qqinv` is the arc
-                                # (`xx`, `v`)
-                                qqinv = invptr[qq] = invptr[qqend]
-                                invptr[qqinv] = qq
-                            end
-                        end
-
-                        # increase the weighted degree of `ww` by
-                        # the weight of `v`
-                        delete!(set(degree[ww]), ww)
-                        degree[ww] -= wgt; pushfirst!(set(degree[ww]), ww)
-                    end
-
-                end
-
-            # otherwise, `ww` is a supernode
-            else
-                # push `ww` to the stack
-                ww = -ww
-                num += one(V); vstack[num] = ww                           
-                pp += one(E)
+            # increase the weighted degree of `x` by the
+            # weight of `w` and decrease it by the weight
+            # of `v`
+            if ispositive(del)
+                delete!(set(degree[x]), x)
+                degree[x] -= del; pushfirst!(set(degree[x]), x)
             end
-        end
 
-        endptr[vv] = ppend
+        # otherwise, `x` is adjacent to `w`; remove
+        # the arc (`x`, `v`)
+        else
+            mmw_delete!(target, invptr, endptr, x, q)
+
+            # decrease the weighted degree of `x` by
+            # the weight of `v`
+            delete!(set(degree[x]), x)
+            degree[x] -= wgt; pushfirst!(set(degree[x]), x)
+        end
     end
+
+    # empty the list of `v`
+    @inbounds endptr[v] = pbeg
 
     # update the weighted degree of `w`
     @inbounds delete!(set(degree[w]), w)
     @inbounds degree[w] = deg; pushfirst!(set(deg), w)
-    return
+    return pfree, hub, epoch
 end
 
 """
-    mmw_remove!(vstack, degree, source, target,
-        begptr, endptr, invptr, head, prev, next, weight, v)
+    mmw_remove!(degree, target, invptr, begptr,
+        endptr, head, prev, next, weight, v)
 
 Remove the vertex `v` from the graph.
 
@@ -726,183 +847,223 @@ input parameters:
  - `v`: minimum degree vertex
 """
 function mmw_remove!(
-        vstack::AbstractVector{V},
         degree::AbstractVector{V},
-        source::AbstractVector{V},
         target::AbstractVector{V},
+        invptr::AbstractVector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
         head::AbstractVector{V},
         prev::AbstractVector{V},
         next::AbstractVector{V},
         weight::AbstractVector{V},
         v::V,
     ) where {V, E}
-   
-    # `wgt` is the weight of `v` 
-    @inbounds wgt = weight[v]
 
     # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)
-        @inbounds h = view(head, i)
+        @inbounds h = view(head, i + one(V))
         return DoublyLinkedList(h, prev, next)
     end
 
-    # remove `v` from the graph
-    mmw_reach!(nothing, vstack,
-            target, begptr, endptr, invptr, v) do _, p, w
-        # `w` is reachable by `v` through a path
-        #    (`v`, ..., `vv`, `w`),
-        # and `p` is the arc (`vv`, `w`)
-        #
-        # `v` is reachable by `w` through a path
-        #    (`w`, ..., `ww`, `v`),
-        # and `q` is the arc (`ww`, `v`)
-        @inbounds q = invptr[p]; ww = source[q]
+    # `wgt` is the weight of `v`
+    @inbounds wgt = weight[v]
 
-        # `qend` = (`ww`, `x`) is the last arc incident
-        # to `ww`
-        #
-        # if `w` is not equal to `x`, replace `w` with `x`
-        # in the neighborhood of `ww`
-        @inbounds qend = endptr[ww] -= one(E)
-        if q < qend
-            @inbounds x = target[q] = target[qend]
+    # the arcs {`pbeg`, ..., `pend` - 1} are
+    # incident to `v`
+    @inbounds pbeg = begptr[v]; pend = endptr[v]
 
-            if ispositive(x)
-                # `x` is an element; `qinv` is the arc
-                # (`x`, `w`)
-                @inbounds qinv = invptr[q] = invptr[qend]
-                @inbounds invptr[qinv] = q
-            end
-        end
+    @inbounds for p in pbeg:pend - one(E)
+        # `p` is the arc (`v`, `x`) and `q` is the
+        # arc (`x`, `v`); remove `q`
+        x = target[p]; q = invptr[p]
+        mmw_delete!(target, invptr, endptr, x, q)
 
-        # decrease the weighted degree of `w` by the
+        # decrease the weighted degree of `x` by the
         # weight of `v`
-        @inbounds delete!(set(degree[w]), w)
-        @inbounds degree[w] -= wgt; pushfirst!(set(degree[w]), w)
-        return
+        delete!(set(degree[x]), x)
+        degree[x] -= wgt; pushfirst!(set(degree[x]), x)
     end
-     
+
+    # empty the list of `v`
+    @inbounds endptr[v] = pbeg
     return
 end
 
 """
-    mmw_reach!(combine, result, vstack,
-        target, begptr, endptr, invptr, v)
+    mmw_delete!(target, invptr, endptr, v, p)
 
-Compute the linear fold
-  combine(combine(combine(combine(result, w), x), y), ...)
-where {w, x, y, ...} are the elements reachable by `v`.
+Remove the arc `p` from the list of `v`, replacing
+it with the last arc in the list.
 
 input parameters:
- - `v`: an element
-
-output parameters:
- - `result`: folded value
+ - `v`: a vertex
+ - `p`: an arc incident to `v`
 """
-function mmw_reach!(
-        combine::Function,
-        result,
-        vstack::AbstractVector{V},
+@inline function mmw_delete!(
         target::AbstractVector{V},
+        invptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        v::V,
+        p::E,
+    ) where {V, E}
+    # `pend` is the last arc incident to `v`
+    @inbounds pend = endptr[v] -= one(E)
+
+    if p < pend
+        # `pp` is the reverse of `pend`
+        @inbounds target[p] = target[pend]
+        @inbounds pp = invptr[p] = invptr[pend]
+        @inbounds invptr[pp] = p
+    end
+
+    return
+end
+
+"""
+    mmw_relocate!(stash, target, invptr, begptr, endptr,
+        limptr, pfree, cap, n, w, need)
+
+Move the list of `w` to the end of the storage, making
+room for at least `need` more arcs. If the storage is
+full, compact it first.
+
+input parameters:
+ - `cap`: size of the arc storage
+ - `n`: number of vertices
+ - `w`: a vertex
+ - `need`: number of arcs
+
+updated parameters:
+ - `pfree`: first free arc
+"""
+function mmw_relocate!(
+        stash::AbstractVector{V},
+        target::AbstractVector{V},
+        invptr::AbstractVector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        invptr::AbstractVector{E},
-        v::V,
+        limptr::AbstractVector{E},
+        pfree::E,
+        cap::E,
+        n::V,
+        w::V,
+        need::E,
     ) where {V, E}
-    # push `v` to the stack
-    @inbounds num = one(V); vstack[num] = v
+    # `len` is the length of the list of `w`
+    @inbounds len = endptr[w] - begptr[w]
 
-    @inbounds while ispositive(num)
-        # `vv` is a supernode adjacent to `v`
-        vv = vstack[num]; num -= one(V)
+    # `newlen` is the capacity of the new list
+    newlen = max(twice(len), len + need)
 
-        # the arcs {`pp`, ..., `ppend` - 1} are incident
-        # to `vv`
-        pp = begptr[vv]; ppend = endptr[vv]
+    # if the storage is full, compact it
+    if cap < pfree + newlen
+        pfree = mmw_compact!(stash, target, invptr,
+            begptr, endptr, limptr, pfree, n)
+    end
 
-        # `ppnxt` is the largest possible value of `ppend`
-        ppnxt = begptr[vv + one(V)]
+    # move the arcs (`w`, `x`) to the end of the
+    # storage
+    pnew = pfree
 
-        while pp < ppend
-            # `ww` is adjacent to `vv` and reachable by `v`
-            ww = target[pp]
+    @inbounds for p in begptr[w]:endptr[w] - one(E)
+        target[pnew] = target[p]
+        pp = invptr[pnew] = invptr[p]
+        invptr[pp] = pnew
+        pnew += one(E)
+    end
 
-            # if `ww` is an element, fold it into `result`
-            if ispositive(ww)
-                result = combine(result, pp, ww)
-                pp += one(E)
+    # clear the room at the end of the new list, so
+    # that it is never mistaken for a list head during
+    # a compaction
+    @inbounds for p in pnew:pfree + newlen - one(E)
+        target[p] = zero(V)
+    end
 
-            # otherwise, `ww` is a supernode
+    @inbounds begptr[w] = pfree
+    @inbounds endptr[w] = pfree + len
+    @inbounds limptr[w] = pfree + newlen
+    return pfree + newlen
+end
+
+"""
+    mmw_compact!(stash, target, invptr, begptr,
+        endptr, limptr, pfree, n)
+
+Compact the arc storage by moving every nonempty list
+to the front. The list heads are found by replacing the
+first arc (`v`, `x`) of every nonempty list with -`v`,
+and then scanning the storage. The vertices in the lists
+are positive, and the unused parts of the storage are
+nonnegative.
+
+input parameters:
+ - `n`: number of vertices
+
+updated parameters:
+ - `pfree`: first free arc
+
+working arrays:
+ - `stash`: the first neighbor of every vertex
+"""
+function mmw_compact!(
+        stash::AbstractVector{V},
+        target::AbstractVector{V},
+        invptr::AbstractVector{E},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        limptr::AbstractVector{E},
+        pfree::E,
+        n::V,
+    ) where {V, E}
+    # replace the first arc (`v`, `x`) of every
+    # nonempty list with -`v`; store `x` in `stash`
+    @inbounds for v in oneto(n)
+        pbeg = begptr[v]
+
+        if pbeg < endptr[v]
+            stash[v] = target[pbeg]; target[pbeg] = -v
+        end
+    end
+
+    # `psrc` is the current arc
+    # `pdst` is the first free arc
+    psrc = pdst = one(E)
+
+    @inbounds while psrc < pfree
+        v = target[psrc]
+
+        # if `psrc` is the first arc of a list,
+        # move the list to `pdst`
+        if isnegative(v)
+            v = -v; len = endptr[v] - begptr[v]
+
+            target[psrc] = stash[v]
+            begptr[v] = pdst; endptr[v] = limptr[v] = pdst + len
+
+            # if the list does not move, skip it
+            if psrc == pdst
+                pdst += len; psrc += len
             else
-                # the arcs {`qq`, ..., `qqend` - 1} are incident
-                # to `ww`
-                ww = -ww; qq = begptr[ww]; qqend = endptr[ww]
-
-                # while there is space, move neighbors of `ww` 
-                # into the neighborhood of `vv`
-                while ppend < ppnxt && qq < qqend
-                    qqend -= one(E)
-
-                    # `xx` is adjacent to `ww` and reachable by `v`
-                    xx = target[ppend] = target[qqend]
-
-                    if ispositive(xx)
-                        # `xx` is an element; `ppinv` is the arc
-                        # (`xx`, `v`)
-                        ppinv = invptr[ppend] = invptr[qqend]
-                        invptr[ppinv] = ppend
-                    end
-
-                    ppend += one(E)
-                end
-
-                endptr[ww] = qqend
-
-                # if `ww` has more than two neighbors, push
-                # it to the stack
-                if qq < qqend - one(E)
-                    num += one(V); vstack[num] = ww                           
-                    pp += one(E)
-
-                # if `ww` has only one neighbor `xx`, replace
-                # `ww` with `xx` in the neighborhood of `vv` 
-                elseif qq == qqend - one(E)
-                    xx = target[pp] = target[qq]
-
-                    if ispositive(xx)
-                        # `xx` is an element; `ppinv` is the arc
-                        # (`xx`, `v`)
-                        ppinv = invptr[pp] = invptr[qq]
-                        invptr[ppinv] = pp
-                    end
-
-                # if `ww` has no neighbors, replace it with a vertex
-                # `xx` in the neighborhood of `vv`
-                else
-                    ppend -= one(E)
-
-                    if pp < ppend
-                        # `xx` is adjacent to `vv` and reachable by `v`
-                        xx = target[pp] = target[ppend]
-
-                        if ispositive(xx)
-                            # `xx` is an element; `ppinv` is the arc
-                            # (`xx`, `v`)
-                            ppinv = invptr[pp] = invptr[ppend]
-                            invptr[ppinv] = pp
-                        end
-                    end
+                for _ in oneto(len)
+                    target[pdst] = target[psrc]
+                    pp = invptr[pdst] = invptr[psrc]
+                    invptr[pp] = pdst
+                    pdst += one(E); psrc += one(E)
                 end
             end
+        else
+            psrc += one(E)
         end
-
-        endptr[vv] = ppend
     end
-    
-    return result
+
+    # empty lists get no room
+    @inbounds for v in oneto(n)
+        if endptr[v] <= begptr[v]
+            begptr[v] = endptr[v] = limptr[v] = pdst
+        end
+    end
+
+    return pdst
 end
 
 function Base.convert(::Type{MMW{S}}, alg::MMW) where {S}

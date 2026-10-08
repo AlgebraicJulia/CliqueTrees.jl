@@ -84,101 +84,99 @@ function garbg2(
         adjncy::AbstractVector{V},
         nxtloc::E
     ) where {V, E}
-    @inbounds begin
-    
-        #       -------------------
-        #       LOCAL VARIABLES ...
-        #       -------------------
-    
-        #       ---------------
-        #       INITIALIZATION.
-        #       ---------------
-        #       PRINT *,' '
-        #       PRINT *,'ENTER GARBAGE COLLECTION'
-        fstloc = one(E)
-        nxtlc2 = fstloc
 
-        #       -----------------------------------------
-        #       FOR THE NEXT VERTEX NXTNOD (IN ORDER) ...
-        #       -----------------------------------------
-        for nxtnod in oneto(neqns)
-            #           -------------------------------------
-            #           ... IF NXTNOD IS AN ACTIVE VERTEX ...
-            #               I.E. UNMERGED AND UNABSORBED
-            #           -------------------------------------
-            if !isnegative(nvtxs[nxtnod])
-                #               ---------------------------------
-                #               ... IF NXTNOD IS UNELIMINATED ...
-                #               ---------------------------------
-                if !isnegative(invp[nxtnod])
-                    #                   --------------------------------
-                    #                   ... THEN COPY NXTNOD'S LIST INTO
-                    #                       ITS NEW LOCATION.
-                    #                   --------------------------------
-                    #                   PRINT *,'NXTNOD,NVTXS,WORK:',NXTNOD,NVTXS(NXTNOD),
-                    #    &                      WORK(NXTNOD)
-                    jstart = xadj[nxtnod]
-                    jstop = jstart + convert(E, nvtxs[nxtnod] + work[nxtnod]) - one(E)
-                    nxtlc2 = fstloc
+    #       -------------------
+    #       LOCAL VARIABLES ...
+    #       -------------------
 
-                    for j in jstart:jstop
-                        #                       PRINT *,'JNODE, NXTLC2, J:',ADJNCY(NXTLC2),
-                        #    &                          NXTLC2, J
-                        adjncy[nxtlc2] = adjncy[j]
-                        nxtlc2 += one(E)
-                    end
-                    #                   ----------------------------
-                    #                   ... AND RECORD NEW LOCATION.
-                    #                   ----------------------------
-                    xadj[nxtnod] = fstloc
-                    fstloc = nxtlc2
-                end
-            end
-        end
-    
-        #       --------------------------------------------------------
-        #       FOR THE NEXT VERTEX (NXTNOD) ELIMINATED NOT IN PLACE ...
-        #       (IN ORDER BY ELIMINATION)
-        #       --------------------------------------------------------
-        nxtnod = echead
+    #       ---------------
+    #       INITIALIZATION.
+    #       ---------------
+    #       PRINT *,' '
+    #       PRINT *,'ENTER GARBAGE COLLECTION'
+    fstloc = one(E)
+    nxtlc2 = fstloc
 
-        while !iszero(nxtnod)
-            #           PRINT *,'ELIMINATION CLIQUES'
-            #           PRINT *,'NXTNOD,NVTXS     :',NXTNOD,NVTXS(NXTNOD)
-            #           --------------------------------------
-            #           IF NXTNOD REMAINS AN ACTIVE (UNMERGED)
-            #           ELIMINATION CLIQUE ...
-            #           --------------------------------------
-            if !isnegative(nvtxs[nxtnod])
-                #               --------------------------------------------------
-                #               ... THEN COPY NXTNOD'S LIST INTO ITS NEW LOCATION.
-                #               --------------------------------------------------
+    #       -----------------------------------------
+    #       FOR THE NEXT VERTEX NXTNOD (IN ORDER) ...
+    #       -----------------------------------------
+    @inbounds for nxtnod in oneto(neqns)
+        #           -------------------------------------
+        #           ... IF NXTNOD IS AN ACTIVE VERTEX ...
+        #               I.E. UNMERGED AND UNABSORBED
+        #           -------------------------------------
+        if !isnegative(nvtxs[nxtnod])
+            #               ---------------------------------
+            #               ... IF NXTNOD IS UNELIMINATED ...
+            #               ---------------------------------
+            if !isnegative(invp[nxtnod])
+                #                   --------------------------------
+                #                   ... THEN COPY NXTNOD'S LIST INTO
+                #                       ITS NEW LOCATION.
+                #                   --------------------------------
+                #                   PRINT *,'NXTNOD,NVTXS,WORK:',NXTNOD,NVTXS(NXTNOD),
+                #    &                      WORK(NXTNOD)
                 jstart = xadj[nxtnod]
-                jstop = jstart + convert(E, nvtxs[nxtnod]) - one(E)
+                jstop = jstart + convert(E, nvtxs[nxtnod] + work[nxtnod]) - one(E)
                 nxtlc2 = fstloc
 
                 for j in jstart:jstop
-                    #                   PRINT *,'JNODE, NXTLC2, J:',ADJNCY(NXTLC2),NXTLC2, J
+                    #                       PRINT *,'JNODE, NXTLC2, J:',ADJNCY(NXTLC2),
+                    #    &                          NXTLC2, J
                     adjncy[nxtlc2] = adjncy[j]
                     nxtlc2 += one(E)
                 end
-                #               ----------------------------
-                #               ... AND RECORD NEW LOCATION.
-                #               ----------------------------
+                #                   ----------------------------
+                #                   ... AND RECORD NEW LOCATION.
+                #                   ----------------------------
                 xadj[nxtnod] = fstloc
                 fstloc = nxtlc2
             end
-            #           ----------------
-            #           GET NEXT CLIQUE.
-            #           ----------------
-            nxtnod = ecforw[nxtnod]
         end
-    
-        #       ---------------------------------------
-        #       ... AND RECORD NEXT AVAILABLE POSITION.
-        #       ---------------------------------------
-        nxtloc = nxtlc2
-    
-        return nxtloc
     end
+
+    #       --------------------------------------------------------
+    #       FOR THE NEXT VERTEX (NXTNOD) ELIMINATED NOT IN PLACE ...
+    #       (IN ORDER BY ELIMINATION)
+    #       --------------------------------------------------------
+    nxtnod = echead
+
+    @inbounds while !iszero(nxtnod)
+        #           PRINT *,'ELIMINATION CLIQUES'
+        #           PRINT *,'NXTNOD,NVTXS     :',NXTNOD,NVTXS(NXTNOD)
+        #           --------------------------------------
+        #           IF NXTNOD REMAINS AN ACTIVE (UNMERGED)
+        #           ELIMINATION CLIQUE ...
+        #           --------------------------------------
+        if !isnegative(nvtxs[nxtnod])
+            #               --------------------------------------------------
+            #               ... THEN COPY NXTNOD'S LIST INTO ITS NEW LOCATION.
+            #               --------------------------------------------------
+            jstart = xadj[nxtnod]
+            jstop = jstart + convert(E, nvtxs[nxtnod]) - one(E)
+            nxtlc2 = fstloc
+
+            for j in jstart:jstop
+                #                   PRINT *,'JNODE, NXTLC2, J:',ADJNCY(NXTLC2),NXTLC2, J
+                adjncy[nxtlc2] = adjncy[j]
+                nxtlc2 += one(E)
+            end
+            #               ----------------------------
+            #               ... AND RECORD NEW LOCATION.
+            #               ----------------------------
+            xadj[nxtnod] = fstloc
+            fstloc = nxtlc2
+        end
+        #           ----------------
+        #           GET NEXT CLIQUE.
+        #           ----------------
+        nxtnod = ecforw[nxtnod]
+    end
+
+    #       ---------------------------------------
+    #       ... AND RECORD NEXT AVAILABLE POSITION.
+    #       ---------------------------------------
+    nxtloc = nxtlc2
+
+    return nxtloc
 end

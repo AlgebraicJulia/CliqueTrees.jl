@@ -9,6 +9,31 @@ const ASR_DELETE = 0x04 # the vertex has been eliminated
 const ASR_CONNECTOR_BASE = 1 << 16
 const ASR_CONNECTOR_DEGREE = 1 << 12
 
+function pr5(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
+    weights0 = weights; graph0 = graph; width0 = width
+    n0 = nv(graph0); weights1 = Vector{W}(undef, n0)
+
+    graph1, stack1, inject1, width1 = pr3(weights0, graph0, width0)
+    n1 = nv(graph1); m1 = n0 - n1
+
+    @inbounds for i in oneto(n1)
+        weights1[i] = weights0[inject1[i]]
+    end
+
+    graph2, stack2, inject2, width2 = asr(weights1, graph1, width1)
+    n2 = nv(graph2); m2 = n1 - n2
+
+    @inbounds for i in oneto(m2)
+        stack1[i + m1] = inject1[stack2[i]]
+    end
+
+    @inbounds for i in oneto(n2)
+        inject2[i] = inject1[inject2[i]]
+    end
+
+    return (graph2, stack1, inject2, width2)
+end
+
 function asr(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W <: Number}
     return asr(weights, graph, convert(W, width))
 end
@@ -75,12 +100,12 @@ for the treewidth: `width` is raised to it, and v is contracted
 into u (see `asr_connector!`).
 
 Each vertex v stores its fill-in: the number of missing edges in
-N(v), computed by [`sr_fillin!`](@ref). A vertex is simplicial if
+N(v), computed by [`fillin!`](@ref). A vertex is simplicial if
 its fill-in is zero, and it is almost simplicial only if its
 fill-in is less than its degree, since every missing edge has u as
 an endpoint. When a vertex is contracted, the fill-in of the
 remaining vertices is updated using the method of Wing and Huang,
-as in `sr_fillin!`: every new edge {u, x} decreases the fill-in of
+as in `fillin!`: every new edge {u, x} decreases the fill-in of
 each common neighbor of u and x.
 
 The algorithm is driven by a work queue: a vertex is tested
@@ -313,7 +338,7 @@ function asr_init!(
 
     # compute the fill-in of each vertex, using `stack5`, `stack4`,
     # `tmpptr`, and `tgt` as working storage
-    sr_fillin!(fillin, stack5, stack4, tmpptr, tgt,
+    fillin!(fillin, stack5, stack4, tmpptr, tgt,
         number, target, begptr, endptr, n)
 
     # the weighted treewidth of the input graph is no less

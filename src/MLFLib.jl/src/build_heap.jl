@@ -41,18 +41,16 @@
 #**********************************************************************
 #
 function build_heap(heap::AbstractVector{W}, v2heap::AbstractVector{V}, n::V) where {V, W}
-    @inbounds begin
 
-        #       -------------------
-        #       LOCAL VARIABLES ...
-        #       -------------------
+    #       -------------------
+    #       LOCAL VARIABLES ...
+    #       -------------------
 
-        heapsize = n
+    heapsize = n
 
-        for node in reverse(oneto(half(n)))
-            move_down(heap, heapsize, node, v2heap)
-        end
-
-        return heapsize
+    for node in reverse(oneto(half(n)))
+        move_down(heap, heapsize, node, v2heap)
     end
+
+    return heapsize
 end
