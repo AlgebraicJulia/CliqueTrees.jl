@@ -37,16 +37,14 @@ function asr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) wher
     stack5 = FVector{V}(undef, n)
     stack7 = FVector{V}(undef, n)
     stack8 = FVector{V}(undef, n)
-    arcs = FVector{E}(undef, n)
     stack2 = FVector{V}(undef, n)
-    stack0 = FVector{V}(undef, n)
     tmpptr = FVector{E}(undef, nn)
     tgt = FVector{V}(undef, m)
 
     return asr_impl!(
         weight, degree, number, fillin, status, marker, marker2, source,
         target, begptr, endptr, invptr, stack1, stack4, stack5, stack7,
-        stack8, arcs, stack2, stack0, tmpptr, tgt, totdeg, width, graph)
+        stack8, stack2, tmpptr, tgt, totdeg, width, graph)
 end
 
 """
@@ -142,9 +140,7 @@ function asr_impl!(
         stack5::AbstractVector{V},
         stack7::AbstractVector{V},
         stack8::AbstractVector{V},
-        arcs::AbstractVector{E},
         stack2::AbstractVector{V},
-        stack0::AbstractVector{V},
         tmpptr::AbstractVector{E},
         tgt::AbstractVector{V},
         totdeg::W,
@@ -170,30 +166,28 @@ function asr_impl!(
     @assert n <= length(stack5)
     @assert n <= length(stack7)
     @assert n <= length(stack8)
-    @assert n <= length(arcs)
     @assert n <= length(stack2)
-    @assert n <= length(stack0)
     @assert n < length(tmpptr)
     @assert de(graph) <= length(tgt)
 
     # initialize the quotient graph, the fill-in, and the work queue
     width, parked, hi1 = asr_init!(weight, degree, number, fillin, status,
         marker, marker2, source, target, begptr, endptr, invptr, stack1,
-        stack4, stack5, arcs, tmpptr, tgt, totdeg, width, graph)
+        stack4, stack5, tmpptr, tgt, totdeg, width, graph)
 
     # apply reduction rules until no more apply
     width, hi4 = asr_loop!(weight, degree, number, fillin, status, marker,
         marker2, source, target, begptr, endptr, invptr, stack1, stack4,
-        stack5, stack7, stack8, arcs, stack2, width, parked, 0, hi1,
+        stack5, stack7, stack8, tmpptr, stack2, width, parked, 0, hi1,
         zero(V), zero(V))
 
     # construct the reduced graph
-    m, n = pr3_make!(stack4, stack5, target, begptr, endptr, invptr, stack0,
+    m, n = pr3_make!(stack4, stack5, target, begptr, endptr, invptr, stack1,
         number, tmpptr, tgt, hi4, n)
 
     # `kernel` is the reduced graph
     kernel = BipartiteGraph(n, n, m, tmpptr, tgt)
-    return kernel, stack4, stack0, width
+    return kernel, stack4, stack1, width
 end
 
 function asr_init!(
@@ -212,7 +206,6 @@ function asr_init!(
         stack1::AbstractVector{V},
         stack4::AbstractVector{V},
         stack5::AbstractVector{V},
-        arcs::AbstractVector{E},
         tmpptr::AbstractVector{E},
         tgt::AbstractVector{V},
         totdeg::W,
@@ -303,8 +296,8 @@ function asr_init!(
     end
 
     # compute the fill-in of each vertex, using `stack5`, `stack4`,
-    # `arcs`, and `tgt` as working storage
-    sr_fillin!(fillin, stack5, stack4, arcs, tgt,
+    # `tmpptr`, and `tgt` as working storage
+    sr_fillin!(fillin, stack5, stack4, tmpptr, tgt,
         number, target, begptr, endptr, n)
 
     # the weighted treewidth of the input graph is no less
