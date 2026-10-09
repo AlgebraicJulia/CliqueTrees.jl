@@ -12,7 +12,7 @@ function mcs_etree!(order::AbstractVector{V}, index::AbstractVector{V}, graph::A
     tree = Parent{V}(n)
     sets = UnionFind{V}(n)
     fdesc = FVector{V}(undef, n)
-    fancs = FVector{V}(undef, n)
+    stale = FVector{V}(undef, n)
     stops = FVector{V}(undef, n)
     count = FVector{V}(undef, n)
     
@@ -24,7 +24,7 @@ function mcs_etree!(order::AbstractVector{V}, index::AbstractVector{V}, graph::A
     marks = FVector{V}(undef, n)
 
     mcs_etree_impl!(work1, work2, work3, work4, marks,
-        begptr, endptr, target, tree, sets, fdesc, fancs, stops, count,
+        begptr, endptr, target, tree, sets, fdesc, stale, stops, count,
         graph, order, index)
 
     return order, index
@@ -52,7 +52,7 @@ function mcs_etree_impl!(
         tree::Parent{V},
         sets::UnionFind{V},
         fdesc::AbstractVector{V},
-        fancs::AbstractVector{V},
+        stale::AbstractVector{V},
         stops::AbstractVector{V},
         count::AbstractVector{V},
         graph::AbstractGraph{V},
@@ -70,16 +70,20 @@ function mcs_etree_impl!(
     @assert nv(graph) == length(tree)
     @assert nv(graph) == length(sets)
     @assert nv(graph) <= length(fdesc)
-    @assert nv(graph) <= length(fancs)
+    @assert nv(graph) <= length(stale)
     @assert nv(graph) <= length(stops)
     @assert nv(graph) <= length(count)
     @assert nv(graph) <= length(order)
     @assert nv(graph) <= length(index)
 
-    # `fancs`, `stops`, and `num` form a stack
-    #  - `stops[num]` is the root of the current elimination tree
-    #  - `fancs[num]` ... `stops[num] - 1` were ancestors of
-    #    `stops[num]` before the previous rotation
+    # `stops` and `num` form a stack of the roots of the
+    # unnumbered elimination subtrees
+    #
+    # `stale[v]` is positive if the subtree rooted at vertex `v`
+    # has changed since its skeleton adjacency set was computed.
+    # This is tracked per vertex rather than as a range of
+    # positions, because `mcs_etree_postorder!` can interleave
+    # the former ancestors of `root` with the unchanged subtrees.
     num = zero(V)
 
     # initialize elimination forest (`tree`) and first
@@ -91,31 +95,32 @@ function mcs_etree_impl!(
     # - permute `order` and `index`
     # - initialize empty skeleton graph
     # - push roots to `stops`
+    # - mark all skeletons as up to date (they are empty)
     begptr[one(V)] = p = one(E)
     endptr[one(V)] = p - one(E)
 
     @inbounds for v in vertices(graph)
         marks[v] = zero(V)
+        stale[v] = zero(V)
         i = index[v] = work3[index[v]]
         order[i] = v
         begptr[v + one(V)] = p += convert(E, eltypedegree(graph, v))
         endptr[v + one(V)] = p - one(E)
 
         if isnothing(parentindex(tree, v))
-            num += one(V); fancs[num] = v + one(V); stops[num] = v
+            num += one(V); stops[num] = v
         end
     end
 
     @inbounds while ispositive(num)
         # get an unnumbered elimination subtree T
-        fanc = fancs[num]
         stop = stops[num]
         strt = fdesc[stop]
         num -= one(V)
 
         # compute higher degrees and adjust skeleton graph 
         mcs_etree_supcnt!(count, begptr, endptr, target, work1, work2, fdesc,
-            work3, marks, sets, order, index, graph, tree, strt, stop, fanc)
+            work3, marks, sets, order, index, graph, tree, strt, stop, stale)
 
         # find a special vertex `root` in T of maximum cardinality
         root = stop; maxcnt = count[stop]
@@ -148,7 +153,7 @@ function mcs_etree_impl!(
             order, index, graph, fdesc, tree, strt, stop, root)
 
         # reorder the subtree and change the root to `root`
-        fanc = mcs_etree_changeroot!(work1, work2, work3, order, index, graph, fdesc, tree, strt, stop, blck)
+        fanc = mcs_etree_changeroot!(work1, work2, work3, stale, order, index, graph, fdesc, tree, strt, stop, blck)
         mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
         mcs_etree_invpermute!(work1, tree, work3, strt, stop)    
 
@@ -177,12 +182,6 @@ function mcs_etree_impl!(
 
             if j >= blck
                 num += one(V); stops[num] = i
-
-                if fdesc[i] <= fanc <= i
-                    fancs[num] = fanc
-                else
-                    fancs[num] = i + one(V)
-                end
             end
         end
     end
@@ -357,6 +356,7 @@ function mcs_etree_changeroot!(
         head::AbstractVector{V},
         next::AbstractVector{V},
         alpha::AbstractVector{V},
+        stale::AbstractVector{V},
         order::AbstractVector{V},
         index::AbstractVector{V},
         graph::AbstractGraph{V},
@@ -369,6 +369,7 @@ function mcs_etree_changeroot!(
     @assert nv(graph) <= length(head)
     @assert nv(graph) <= length(next)
     @assert nv(graph) <= length(alpha)
+    @assert nv(graph) <= length(stale)
     @assert nv(graph) <= length(order)
     @assert nv(graph) <= length(index)
     @assert nv(graph) <= length(fdesc)
@@ -404,7 +405,9 @@ function mcs_etree_changeroot!(
         i = parentindex(tree, i)::V
 
         if iszero(alpha[i])
-            v = order[i]; n = stop
+            # `i` is an ancestor of `node` that is not in the
+            # block: its subtree is about to change
+            v = order[i]; n = stop; stale[v] = one(V)
 
             for w in neighbors(graph, v)
                 if v != w
@@ -628,7 +631,7 @@ function mcs_etree_supcnt!(
         tree::Parent{V},
         strt::V,
         stop::V,
-        fanc::V,
+        stale::AbstractVector{V},
     ) where {V, E}
     @assert nv(graph) <= length(wt)
     @assert nv(graph) < length(begptr)
@@ -642,13 +645,8 @@ function mcs_etree_supcnt!(
     @assert nv(graph) <= length(order)
     @assert nv(graph) <= length(index)
     @assert nv(graph) <= length(tree)
+    @assert nv(graph) <= length(stale)
     @assert nv(graph) >= stop >= strt >= one(V)
-    @assert stop + one(V) >= fanc >= strt
-
-    @inbounds for p in fanc:stop
-        v = order[p]
-        endptr[v] = begptr[v] - one(E)
-    end
 
     @inbounds for p in strt:stop
         wt[p] = zero(V)
@@ -674,74 +672,55 @@ function mcs_etree_supcnt!(
         return
     end
 
-    @inbounds for p in strt:fanc - one(V)
-        v = order[p]
+    # visit a numbered neighbor `u` of the vertex at position `p`;
+    # returns `true` if `p` is a leaf of the row subtree of `u`
+    function visit(p::V, u::V)
+        @inbounds pnbr = prev_nbr[u]
+        isleaf = iszero(pnbr) || pnbr < fdesc[p]
 
-        for t in begptr[v]:endptr[v]
-            u = target[t]
-            pnbr = prev_nbr[u]
+        @inbounds if isleaf
+            wt[p] += one(V)
 
-            if iszero(pnbr) || pnbr < fdesc[p]
-                wt[p] += one(V)
-
-                if iszero(pnbr)
-                    pp = zero(V)
-                else
-                    pp = prev_p[u]
-                end
-
-                if !iszero(pp)
-                    q = find(pp)
-                    wt[q] -= one(V)
-                end
-
-                prev_p[u] = p
+            if !iszero(pnbr)
+                q = find(prev_p[u])
+                wt[q] -= one(V)
             end
 
-            prev_nbr[u] = p
+            prev_p[u] = p
         end
 
-        if p < stop
-            r = parentindex(tree, p)::V
-            union(p, r)
-        end
+        @inbounds prev_nbr[u] = p
+        return isleaf
     end
 
-    @inbounds for p in fanc:stop
+    @inbounds for p in strt:stop
         v = order[p]
 
-        for w in neighbors(graph, v)
-            u = index[w]
+        if ispositive(stale[v])
+            # the subtree rooted at `v` has changed: rebuild
+            # its skeleton adjacency set from its full adjacency set
+            stale[v] = zero(V)
+            endptr[v] = begptr[v] - one(E)
 
-            if u > stop
-                pnbr = prev_nbr[u]
+            for w in neighbors(graph, v)
+                u = index[w]
 
-                if iszero(pnbr) || pnbr < fdesc[p]
-                    wt[p] += one(V)
-
-                    if iszero(pnbr)
-                        pp = zero(V)
-                    else
-                        pp = prev_p[u]
-                    end
-
-                    if !iszero(pp)
-                        q = find(pp)
-                        wt[q] -= one(V)
-                    end
-    
-                    prev_p[u] = p
+                if u > stop && visit(p, u)
                     target[endptr[v] += one(E)] = u
                 end
-    
-                prev_nbr[u] = p
+            end
+        else
+            # the subtree rooted at `v` is unchanged: its
+            # skeleton adjacency set is still valid
+            for t in begptr[v]:endptr[v]
+                visit(p, target[t])
             end
         end
 
         if p < stop
             r = parentindex(tree, p)::V
             union(p, r)
-        end 
+        end
     end
 
     @inbounds for p in strt:stop - one(V)

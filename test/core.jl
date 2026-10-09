@@ -1279,6 +1279,74 @@ end
 
     order = axes(matrix, 2)
     @test treefill(matrix; alg=MinimalChordal(order)) == 12
+
+    # the filled graph of `order`
+    function filledgraph(graph, order)
+        index = invperm(order); F = copy(graph)
+
+        for v in order
+            higher = [u for u in neighbors(F, v) if index[u] > index[v]]
+
+            for a in higher, b in higher
+                a < b && add_edge!(F, a, b)
+            end
+        end
+
+        return F
+    end
+
+    # `order` is a minimal elimination ordering of `graph`,
+    # and its fill is a subset of the fill of `initial`
+    function isminimalsandwich(graph, order, initial)
+        F = filledgraph(graph, order)
+        G = filledgraph(graph, initial)
+
+        for e in Graphs.edges(F)
+            has_edge(G, e) || return false
+
+            if !has_edge(graph, e)
+                H = copy(F); rem_edge!(H, e)
+                ischordal(H) && return false
+            end
+        end
+
+        return true
+    end
+
+    # regression: after a root change, `mcs_etree_postorder!` can place a
+    # former ancestor of the new root among the unchanged subtrees, so its
+    # stale skeleton adjacency set was used to compute its cardinality
+    edgelist = [(1, 2), (1, 3), (1, 4), (1, 5), (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12), (1, 13), (1, 14),
+        (2, 3), (2, 4), (2, 5), (2, 7), (2, 8), (2, 9), (2, 10), (2, 11), (2, 13), (2, 14), (2, 15), (3, 4), (3, 7),
+        (3, 8), (3, 10), (3, 11), (3, 13), (3, 14), (4, 7), (4, 8), (4, 11), (4, 13), (4, 14), (4, 15), (5, 6), (5, 7),
+        (5, 8), (5, 9), (5, 10), (5, 11), (5, 14), (7, 8), (7, 9), (7, 10), (7, 11), (7, 12), (7, 13), (7, 14), (7, 15),
+        (8, 9), (8, 10), (8, 11), (8, 14), (9, 10), (9, 11), (9, 12), (9, 14), (9, 15), (10, 11), (10, 13), (10, 14),
+        (11, 14), (11, 15), (13, 14), (14, 15)]
+
+    graph = SimpleGraph(15)
+
+    for (u, v) in edgelist
+        add_edge!(graph, u, v)
+    end
+
+    initial = [6, 12, 15, 13, 14, 2, 7, 10, 3, 1, 5, 11, 4, 9, 8]
+    order, _ = permutation(graph, MinimalChordal(initial))
+    @test isminimalsandwich(graph, order, initial)
+
+    rng = MersenneTwister(1)
+
+    for _ in 1:2000
+        n = rand(rng, 2:20); p = rand(rng)
+        graph = SimpleGraph(n)
+
+        for u in 1:n, v in (u + 1):n
+            rand(rng) < p && add_edge!(graph, u, v)
+        end
+
+        initial = randperm(rng, n)
+        order, _ = permutation(graph, MinimalChordal(initial))
+        @test isminimalsandwich(graph, order, initial)
+    end
 end
 
 @testset "fill" begin
