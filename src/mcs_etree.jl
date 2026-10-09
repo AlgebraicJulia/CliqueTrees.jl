@@ -142,28 +142,51 @@ function mcs_etree_impl!(
             end
         end
 
-        # ensure that the vertices in anc[`root`] are numbered before their siblings
-        root = mcs_etree_prescribed!(work3, fdesc, tree, strt, stop, root)
-        mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
-        mcs_etree_invpermute!(work1, tree, work3, strt, stop)
-        mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
-
-        # find a block of vertices to number consecutively
-        blck = mcs_etree_findblock!(marks, work2, begptr, endptr, target,
+        # find a block of vertices to number consecutively:
+        # `block[blck]`, ..., `block[stop]`, where `block[stop] = root`
+        # and the others are ancestors of `root`
+        blck, nanc = mcs_etree_findblock!(marks, work2, begptr, endptr, target,
             order, index, graph, fdesc, tree, strt, stop, root)
 
-        # reorder the subtree and change the root to `root`
-        fanc = mcs_etree_changeroot!(work1, work2, work3, stale, order, index, graph, fdesc, tree, strt, stop, blck)
-        mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
-        mcs_etree_invpermute!(work1, tree, work3, strt, stop)    
+        if blck + nanc == stop
+            # the block contains every ancestor of `root`, so Change_Root
+            # leaves the remaining subtrees untouched: move the block to
+            # the end and store the remaining subtrees for future processing
+            num = mcs_etree_fastnumber!(work1, work3, work4, count, work2,
+                order, index, tree, fdesc, stops, num, stop, root, blck)
+        else
+            # ensure that the vertices in anc[`root`] are numbered before their siblings
+            mcs_etree_prescribed!(work3, fdesc, tree, strt, stop, root)
+            mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
+            mcs_etree_invpermute!(work1, tree, work3, strt, stop)
+            mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
 
-        # compute the elimination subtree for the new reordering
-        mcs_etree_etree!(tree, order, index, work1, graph, strt, stop, fanc)
-        mcs_etree_postorder!(work1, work2, work3, work4, tree, strt, stop)
-        mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
-        mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
+            for k in blck:stop
+                work2[k] = work3[work2[k]]
+            end
 
-        # add `root` to the skeleton graph
+            # reorder the subtree and change the root to `root`
+            fanc = mcs_etree_changeroot!(work1, work2, work3, stale, order, index, graph, fdesc, tree, strt, stop, blck)
+            mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
+            mcs_etree_invpermute!(work1, tree, work3, strt, stop)
+
+            # compute the elimination subtree for the new reordering
+            mcs_etree_etree!(tree, order, index, work1, graph, strt, stop, fanc)
+            mcs_etree_postorder!(work1, work2, work3, work4, tree, strt, stop)
+            mcs_etree_firstdescendants!(fdesc, tree, strt, stop)
+            mcs_etree_invpermute!(work1, order, index, work3, strt, stop)
+
+            # store the unnumbered subtrees for future processing
+            for i in strt:blck - one(V)
+                j = parentindex(tree, i)::V
+
+                if j >= blck
+                    num += one(V); stops[num] = i
+                end
+            end
+        end
+
+        # number the block and add it to the skeleton graph
         for i in blck:stop
             v = order[i]
 
@@ -171,17 +194,8 @@ function mcs_etree_impl!(
                 j = index[w]
 
                 if j < stop
-                    p = endptr[w] += one(V); target[p] = i
+                    p = endptr[w] += one(E); target[p] = i
                 end
-            end
-        end
-
-        # number `root` and store the unnumbered subtrees for future processing 
-        for i in strt:blck - one(V)
-            j = parentindex(tree, i)::V
-
-            if j >= blck
-                num += one(V); stops[num] = i
             end
         end
     end
@@ -226,6 +240,14 @@ function mcs_etree_prescribed!(
     return root
 end
 
+# Find a block of vertices that can be numbered together with `node`
+# (Heggernes and Peyton, Lemmas 5.2 and 5.3). The subtree T[`node`]
+# occupies the positions fdesc[`node`]:`node`, which need not start at `strt`.
+#
+# On return, `block[blck]`, ..., `block[stop]` are the positions of the
+# block, where `block[stop] = node` and the others are ancestors of `node`
+# in ascending order. The second return value is the number of ancestors
+# of `node`.
 function mcs_etree_findblock!(
         marks::AbstractVector{V},
         block::AbstractVector{V},
@@ -253,17 +275,26 @@ function mcs_etree_findblock!(
     @assert nv(graph) >= stop >= node >= strt
 
     # `marks` is all-zero on entry; it is restored before returning
-    ndeg = zero(V); blck = stop
+    ndeg = nanc = zero(V); blck = stop
 
+    @inbounds lo = fdesc[node]
     @inbounds block[blck] = node
 
-    if fdesc[node] < node
-        nchd = zero(V)
+    if lo < node
+        # store the children of `node` in increasing order in
+        # `block[strt]`, ..., `block[strt + nchd - 1]`, using the
+        # sibling walk c -> fdesc[c] - 1. These entries do not overlap
+        # the block, since strt + nchd <= node <= stop - nanc <= blck.
+        nchd = zero(V); c = node - one(V)
 
-        @inbounds for i in fdesc[node]:node - one(V)
-            if parentindex(tree, i) == node
-                nchd += one(V); block[strt + nchd - one(V)] = i
-            end
+        @inbounds while c >= lo
+            nchd += one(V); c = fdesc[c] - one(V)
+        end
+
+        k = strt + nchd; c = node - one(V)
+
+        @inbounds while c >= lo
+            k -= one(V); block[k] = c; c = fdesc[c] - one(V)
         end
 
         @inbounds for p in begptr[order[node]]:endptr[order[node]]
@@ -275,7 +306,7 @@ function mcs_etree_findblock!(
 
         @inbounds while i < stop
             i = parentindex(tree, i)::V
-            ideg = ichd = zero(V)
+            ideg = ichd = zero(V); nanc += one(V)
 
             for v in neighbors(graph, order[i])
                 j = index[v]
@@ -284,17 +315,25 @@ function mcs_etree_findblock!(
                     if zero(V) < marks[j] < i
                         marks[j] = i; ideg += one(V)
                     end
-                elseif j < node
-                    for k in view(block, strt:strt + nchd - one(V))
-                        if j <= k
-                            @assert fdesc[k] <= j
+                elseif lo <= j < node
+                    # binary search for the child `k` whose subtree contains `j`
+                    l = strt; h = strt + nchd - one(V)
 
-                            if marks[k] < i
-                                marks[k] = i; ichd += one(V)
-                            end
+                    while l < h
+                        m = l + (h - l) ÷ convert(V, 2)
 
-                            break
+                        if block[m] < j
+                            l = m + one(V)
+                        else
+                            h = m
                         end
+                    end
+
+                    k = block[l]
+                    @assert fdesc[k] <= j <= k
+
+                    if marks[k] < i
+                        marks[k] = i; ichd += one(V)
                     end
                 end
             end
@@ -302,6 +341,16 @@ function mcs_etree_findblock!(
             if ideg == ndeg && ichd == nchd
                 blck -= one(V); block[blck] = i
             end
+        end
+
+        # restore `marks`: the only entries written are the
+        # children of `node` and its skeleton neighbors
+        @inbounds for k in strt:strt + nchd - one(V)
+            marks[block[k]] = zero(V)
+        end
+
+        @inbounds for p in begptr[order[node]]:endptr[order[node]]
+            marks[target[p]] = zero(V)
         end
     else
         @inbounds for v in neighbors(graph, order[node])
@@ -313,6 +362,7 @@ function mcs_etree_findblock!(
 
         @inbounds while i < stop
             i = parentindex(tree, i)::V
+            nanc += one(V)
 
             if ispositive(marks[i])
                 ideg = one(V)
@@ -330,25 +380,114 @@ function mcs_etree_findblock!(
                 end
             end
         end
-    end
 
-    # restore `marks`: the only entries outside of T that
-    # were written are adjacent to `node`
-    @inbounds for i in strt:stop
-        marks[i] = zero(V)
-    end
-
-    @inbounds if fdesc[node] < node
-        for p in begptr[order[node]]:endptr[order[node]]
-            marks[target[p]] = zero(V)
-        end
-    else
-        for v in neighbors(graph, order[node])
+        # restore `marks`: the only entries written
+        # are the neighbors of `node`
+        @inbounds for v in neighbors(graph, order[node])
             marks[index[v]] = zero(V)
         end
     end
 
-    return blck
+    return blck, nanc
+end
+
+# The block consists of `root` and all of its ancestors, so Change_Root
+# is the identity on the remaining vertices, and their subtrees are
+# unchanged. Stable-partition the positions `root:stop` so that the
+# remaining vertices keep their relative order (each of their subtrees
+# shifts as a unit) and `block[k]` moves to position `k`. Then push the
+# roots of the remaining subtrees: the children of the block. The cost
+# is O(stop - root + c), where c is the number of children of the block.
+function mcs_etree_fastnumber!(
+        newpos::AbstractVector{V},
+        neworder::AbstractVector{V},
+        newprnt::AbstractVector{V},
+        newfdesc::AbstractVector{V},
+        block::AbstractVector{V},
+        order::AbstractVector{V},
+        index::AbstractVector{V},
+        tree::Parent{V},
+        fdesc::AbstractVector{V},
+        stops::AbstractVector{V},
+        num::V,
+        stop::V,
+        root::V,
+        blck::V,
+    ) where {V}
+    @assert length(tree) <= length(newpos)
+    @assert length(tree) <= length(neworder)
+    @assert length(tree) <= length(newprnt)
+    @assert length(tree) <= length(newfdesc)
+    @assert length(tree) <= length(block)
+    @assert length(tree) <= length(order)
+    @assert length(tree) <= length(index)
+    @assert length(tree) <= length(fdesc)
+    @assert length(tree) <= length(stops)
+    @assert length(tree) >= stop >= blck >= root >= one(V)
+    parent = tree.prnt
+
+    # `newpos[i]` is the new position of position `i`,
+    # negated if `i` is in the block
+    @inbounds for i in root:stop
+        newpos[i] = zero(V)
+    end
+
+    @inbounds for k in blck:stop
+        newpos[block[k]] = -k
+    end
+
+    shift = zero(V)
+
+    @inbounds for i in root:stop
+        if isnegative(newpos[i])
+            shift += one(V)
+        else
+            newpos[i] = i - shift
+        end
+    end
+
+    # push the children of the block that are not in the block
+    @inbounds for k in blck:stop
+        b = block[k]; c = b - one(V)
+
+        while c >= fdesc[b]
+            if c < root
+                num += one(V); stops[num] = c
+            elseif ispositive(newpos[c])
+                num += one(V); stops[num] = newpos[c]
+            end
+
+            c = fdesc[c] - one(V)
+        end
+    end
+
+    # permute `order`, `index`, `tree`, and `fdesc` on `root:stop`;
+    # the positions `strt:root - 1` do not move
+    @inbounds for i in root:stop
+        p = newpos[i]
+
+        if isnegative(p)
+            p = -p
+            neworder[p] = order[i]
+            newprnt[p] = zero(V)
+            newfdesc[p] = p
+        else
+            # `i` is not `stop`, which is in the block
+            j = parent[i]
+            neworder[p] = order[i]
+            newprnt[p] = max(newpos[j], zero(V))
+            newfdesc[p] = fdesc[i] - (i - p)
+        end
+    end
+
+    @inbounds for p in root:stop
+        v = order[p] = neworder[p]
+        index[v] = p
+        parent[p] = newprnt[p]
+        fdesc[p] = newfdesc[p]
+    end
+
+    return num
 end
 
 # Change_Root2
