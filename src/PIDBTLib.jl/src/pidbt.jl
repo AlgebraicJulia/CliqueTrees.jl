@@ -1,12 +1,15 @@
 # Returns an elimination order, or `nothing` if the deadline (in the sense of
-# `time()`) passes first.
-function pidbt(weights::AbstractVector{Int}, g::Graphs.AbstractGraph, min_k::Int=0; deadline::Float64=Inf)
+# `time()`) passes first. The search starts at bag weight `min_k`: the order is
+# optimal if `min_k` is a lower bound, and has bags of weight at most `min_k`
+# otherwise. If `max_k` is given and the graph has no tree decomposition whose
+# bags weigh at most `max_k`, returns `missing` without trying heavier bags.
+function pidbt(weights::AbstractVector{Int}, g::Graphs.AbstractGraph, min_k::Int=0; deadline::Float64=Inf, max_k::Int=typemax(Int))
     n = convert(Int, Graphs.nv(g))
     S = settype(n)
-    return _pidbt(S, weights, g, min_k, deadline)
+    return _pidbt(S, weights, g, min_k, deadline, max_k)
 end
 
-function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGraph{V}, min_k::Int, deadline::Float64=Inf) where {V, PSet <: AbstractPackedSet}
+function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGraph{V}, min_k::Int, deadline::Float64=Inf, max_k::Int=typemax(Int)) where {V, PSet <: AbstractPackedSet}
     n = convert(Int, Graphs.nv(g))
     @assert all(ispositive, view(weights, 1:n))
 
@@ -40,7 +43,8 @@ function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGr
         mg.neighbors[new_v] = s
     end
 
-    result = treewidth(Weights{PSet}(new_weights), mg; min_k = max(0, min_k - 1), deadline)
+    result = treewidth(Weights{PSet}(new_weights), mg; min_k = max(0, min_k - 1), max_k = max_k == typemax(Int) ? max_k : max_k - 1, deadline)
+    ismissing(result) && return missing
     isnothing(result) && return nothing
     (tw, (pool, root)) = result
 

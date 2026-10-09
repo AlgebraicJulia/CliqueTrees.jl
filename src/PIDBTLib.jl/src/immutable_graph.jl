@@ -8,11 +8,13 @@
 
 struct CachedGraph{PSet <: AbstractPackedSet}
     graph::Graph{PSet}                      # the underlying graph
+    closed::Vector{PSet}                    # closed neighborhoods N[v]
 end
 
 vertices(g::CachedGraph) = vertices(g.graph)
 nv(g::CachedGraph) = nv(g.graph)
 neighbors(g::CachedGraph, v::Int) = neighbors(g.graph, v)
+@propagate_inbounds closed_neighbors(g::CachedGraph, v::Int) = g.closed[v]
 
 # ==================== Constructor from Graph ====================
 
@@ -24,7 +26,13 @@ the source Graph may be mutated afterward.
 """
 function CachedGraph(g::Graph{PSet}) where {PSet}
     graph_copy = Graph{PSet}(copy(g.neighbors), vertices(g))
-    return CachedGraph{PSet}(graph_copy)
+    closed = Vector{PSet}(undef, length(g.neighbors))
+
+    for v in vertices(g)
+        closed[v] = neighbors(g, v) ∪ v
+    end
+
+    return CachedGraph{PSet}(graph_copy, closed)
 end
 
 # ==================== Components and Neighbors ====================
@@ -108,22 +116,33 @@ end
 # If K has a full component C, then any two vertices of K are joined by a path
 # through C, so K is cliquish but not a PMC. We return as soon as one is found.
 # (The components are enumerated starting from the smallest vertex outside K,
-# which usually lies in the full component, if there is one.)
+# which usually lies in the full component, if there is one.) So the
+# neighborhoods of the components are collected first, in the second half of
+# `work`, before anything is computed for the vertices of K. Then K is
+# cliquish iff every v ∈ K sees all of K, through an edge or through the
+# neighborhood of a component containing v. Most vertices see most of K
+# directly, so we track only the vertices v misses, K - N[v], and stop
+# as soon as there are none.
 function septype!(work::Vector{PSet}, graph::CachedGraph{PSet}, K::PSet) where {PSet <: AbstractPackedSet}
-    @inbounds for v in K
-        work[v] = neighbors(graph, v) ∪ v
-    end
+    D = domain(PSet); m = 0
+    length(work) < 2D && resize!(work, 2D)
 
     for (_, N) in components(graph, K)
         N == K && return Cliquish
-
-        @inbounds for v in N
-            work[v] = work[v] ∪ N
-        end
+        m += 1
+        @inbounds work[D + m] = N
     end
 
     @inbounds for v in K
-        K ⊆ work[v] || return Neither
+        miss = setdiff(K, closed_neighbors(graph, v))
+
+        for i in 1:m
+            isempty(miss) && break
+            N = work[D + i]
+            v in N && (miss = setdiff(miss, N))
+        end
+
+        isempty(miss) || return Neither
     end
 
     return PotentialMaximalClique
@@ -140,6 +159,20 @@ Equivalent to: let external = N(bag) \\ vertices; return N(external) ∩ bag.
 Returns an empty bitset if external is empty.
 """
 function outlet(g::CachedGraph{PSet}, B::PSet, V::PSet) where {PSet}
+    X = setdiff(vertices(g), V)
+
+    # either test the vertices of B, or collect the neighbors of the vertices
+    # outside V (on dense graphs, V soon covers most of the graph)
+    if length(X) < length(B)
+        N = PSet()
+
+        for x in X
+            N = N ∪ neighbors(g, x)
+        end
+
+        return N ∩ B
+    end
+
     S = PSet()
 
     for v in B

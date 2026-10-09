@@ -33,7 +33,8 @@
 #     also re-triangulates around bags slightly smaller than the largest
 #     (see `near`), which helps on instances where it otherwise stalls.
 #   - Exact local triangulations ask PIDBT for the target width directly
-#     rather than for the optimum, and give up after `xtime` seconds. They
+#     rather than for the optimum, and give up after a time limit that adapts
+#     to the progress of the search (see `hbt_cutoff!`). They
 #     are used for local graphs of up to max(`base`, |X₀| + `margin`)
 #     vertices, and a fraction `pexact` of the diversified regions are drawn
 #     from just above the size of X₀. With a fixed limit of 60 (the
@@ -41,13 +42,17 @@
 #     exactly; yet such a region, slightly larger than one bag, has a nearly
 #     complete local graph that PIDBT usually solves in milliseconds, often
 #     below the current width. This was the largest single improvement on
-#     wide instances.
+#     wide instances. A region that has no decomposition below the current
+#     width k has treewidth k, and that bounds the treewidth of each of its
+#     diversified variants below, so PIDBT starts at k for them. Merges cap
+#     PIDBT at k, since a wider triangulation is of no use there.
 #   - The component structure of a PMC (its components, their separators, and
 #     the superblocks it caps) is computed once, when the PMC is created, and
 #     shared by every solution that contains it; the reference recomputes it
 #     on every evaluation. Blocks are identified by (smallest vertex,
 #     separator), so no vertex set of size Θ(n) is ever stored. PMCs from a
-#     local graph get their structure from the local graph in linear time.
+#     local graph get their structure from the local graph in linear time
+#     (with word operations on a bit matrix when the local graph is dense).
 #   - The focus for Y is the component of G - Y containing the smallest vertex
 #     outside the scope, rather than the first component that leaves the scope.
 #   - Greedy triangulations use `alg` (default MF(strategy = 1), minimum
@@ -159,6 +164,8 @@ mutable struct HBTContext{A, R <: AbstractRNG}
     const nsep::Int
     const patience::Int
     const xtime::Float64
+    const xmin::Float64
+    const xstep::Int
     const near::Int
     const margin::Int
     const pexact::Float64
@@ -168,6 +175,9 @@ mutable struct HBTContext{A, R <: AbstractRNG}
     const seps::Vector{Vector{Int}}
     const sepwgt::Vector{Int}
 
+    # time limit of the exact triangulations in the current step
+    cutoff::Float64
+
     # markers: `mark*[v] == s` for the current stamp s
     stamp::Int
     const mark1::Vector{Int}
@@ -176,6 +186,7 @@ mutable struct HBTContext{A, R <: AbstractRNG}
     const loc::Vector{Int}
     const queue::Vector{Int}
     const buf::Vector{Int}
+    const bitbuf::Vector{UInt64}
 
     # blocks, keyed by (smallest vertex, separator)
     const blockindex::Dict{Tuple{Int, Int}, Int}
@@ -198,29 +209,60 @@ mutable struct HBTContext{A, R <: AbstractRNG}
     const capp2::Vector{Int}
     const capj2::Vector{Int}
     const rootval::Vector{Int}
+    const cnt::Vector{Int}
+    const sorted::Vector{Int}
 
     # statistics
     nstep::Int
     nlocal::Int
     nexact::Int
     ntimeout::Int
+
+    # contexts for parallel diversification (see `hbt_workers!`)
+    const workers::Vector{HBTContext{A, Xoshiro}}
 end
 
 function HBTContext(graph::BipartiteGraph{Int, Int, Vector{Int}, Vector{Int}}, wgt::Vector{Int}, alg::A, rng::R, base::Int, ntry::Int, ninit::Int, deadline::Float64;
         t0::Float64=time(), verbose::Bool=false, refined::Bool=true, merge::Bool=true, diversify::Bool=true,
-        dsize::Int=typemax(Int), nsep::Int=4, patience::Int=100, xtime::Float64=0.5,
+        dsize::Int=typemax(Int), nsep::Int=4, patience::Int=100, xtime::Float64=1.0, xmin::Float64=0.05, xstep::Int=8,
         near::Int=3, margin::Int=40, pexact::Float64=0.5) where {A, R}
     n = nv(graph)
 
     return HBTContext{A, R}(
         graph, wgt, alg, rng, base, ntry, ninit, deadline, t0, verbose,
-        refined, merge, diversify, dsize, nsep, patience, xtime, near, margin, pexact,
+        refined, merge, diversify, dsize, nsep, patience, xtime, xmin, xstep, near, margin, pexact,
         Dict{Vector{Int}, Int}(), Vector{Int}[], Int[],
-        0, zeros(Int, n), zeros(Int, n), zeros(Int, n), zeros(Int, n), Int[], Int[],
+        xtime, 0, zeros(Int, n), zeros(Int, n), zeros(Int, n), zeros(Int, n), Int[], Int[], UInt64[],
         Dict{Tuple{Int, Int}, Int}(), Int[], Int[], Int[], Int[],
         Int[], Int[], Int[], Int[], Int[], Int[],
-        Int[], Int[], Int[], Int[], Int[], Int[], Int[],
-        0, 0, 0, 0)
+        Int[], Int[], Int[], Int[], Int[], Int[], Int[], Int[], Int[],
+        0, 0, 0, 0, HBTContext{A, Xoshiro}[])
+end
+
+# Give the context `nworkers` workers: contexts that share its graph and
+# parameters, but have their own scratch space and random number generator
+# (seeded from the context's), so that they can diversify a solution in
+# parallel (see `hbt_parallel!`).
+function hbt_workers!(ctx::HBTContext{A}, nworkers::Int) where {A}
+    for _ in 1:nworkers
+        push!(ctx.workers, HBTContext(ctx.graph, ctx.wgt, ctx.alg, Xoshiro(rand(ctx.rng, UInt64)), ctx.base, ctx.ntry, ctx.ninit, ctx.deadline;
+            t0 = ctx.t0, refined = ctx.refined, merge = ctx.merge, diversify = ctx.diversify, dsize = ctx.dsize, nsep = ctx.nsep,
+            patience = ctx.patience, xtime = ctx.xtime, xmin = ctx.xmin, xstep = ctx.xstep, near = ctx.near, margin = ctx.margin,
+            pexact = ctx.pexact))
+    end
+
+    return ctx
+end
+
+# statistics summed over the context and its workers
+function hbt_stats(ctx::HBTContext)
+    nstep = ctx.nstep; nlocal = ctx.nlocal; nexact = ctx.nexact; ntimeout = ctx.ntimeout
+
+    for w in ctx.workers
+        nstep += w.nstep; nlocal += w.nlocal; nexact += w.nexact; ntimeout += w.ntimeout
+    end
+
+    return nstep, nlocal, nexact, ntimeout
 end
 
 @inline function hbt_stamp!(ctx::HBTContext)
@@ -228,6 +270,18 @@ end
 end
 
 @inline hbt_expired(ctx::HBTContext) = time() > ctx.deadline
+
+# The time limit of the exact triangulations made while improving a solution
+# whose largest bag has not shrunk for `stall` steps: `xmin`, doubled every
+# `xstep` steps, up to `xtime`. Most exact triangulations that succeed take a
+# few milliseconds, but some take much longer; these are worth the wait only
+# once the cheap improvements have run out. (Steps that only reduce the number
+# of largest bags do not reset the count: there can be many of them.)
+function hbt_cutoff!(ctx::HBTContext, stall::Int)
+    e = stall ÷ ctx.xstep
+    ctx.cutoff = e >= 30 ? ctx.xtime : min(ctx.xtime, ctx.xmin * 2.0^e)
+    return
+end
 
 function hbt_intern_sep!(ctx::HBTContext, sep::AbstractVector{Int})
     id = get(ctx.sepindex, sep, 0)
@@ -393,7 +447,20 @@ mutable struct HBTState
     side::Union{Nothing, HBTState}
     const depth::Int
     stall::Int                      # steps since the last improvement
+    kstall::Int                     # steps since the last improvement of the largest bag
 end
+
+# What a diversification reads from a solution: its best decomposition and
+# how long it has been stuck. Workers diversify a snapshot while the solution
+# changes (see `hbt_parallel!`).
+struct HBTSnapshot
+    bags::Vector{Vector{Int}}
+    parent::Vector{Int}
+    width::Int
+    kstall::Int
+end
+
+HBTSnapshot(st::HBTState) = HBTSnapshot(st.bags, st.parent, st.width, st.kstall)
 
 function hbt_add!(st::HBTState, X::HBTPMC)
     if !haskey(st.index, X.verts)
@@ -464,10 +531,26 @@ function hbt_dp!(ctx::HBTContext, st::HBTState)
         end
     end
 
-    # evaluate the blocks in order of increasing size
-    bsize = ctx.bsize
-    sort!(active; by = b -> bsize[b])
-    na = length(active)
+    # evaluate the blocks in order of increasing size (a stable counting sort:
+    # sizes are at most n)
+    bsize = ctx.bsize; na = length(active); n = nv(ctx.graph)
+    cnt = ctx.cnt; resize!(cnt, n + 1); fill!(cnt, 0)
+    sorted = ctx.sorted; resize!(sorted, na)
+
+    @inbounds for b in active
+        cnt[bsize[b] + 1] += 1
+    end
+
+    @inbounds for i in 2:n + 1
+        cnt[i] += cnt[i - 1]
+    end
+
+    # now cnt[s] is the number of blocks smaller than s
+    @inbounds for b in active
+        sz = bsize[b]; cnt[sz] += 1; sorted[cnt[sz]] = b
+    end
+
+    copyto!(active, sorted)
 
     @inbounds for (i, b) in enumerate(active)
         bloc[b] = i
@@ -644,7 +727,7 @@ function hbt_update!(ctx::HBTContext, st::HBTState)
         hbt_filter!(ctx, st, ctx.refined ? width : (hbt_k(width) << 32) | 0xffffffff)
 
         if report
-            println("hbt: width $(hbt_k(width) - 1) at $(round(time() - ctx.t0; digits = 2)) s (steps = $(ctx.nstep), pmcs = $(length(st.pmcs)))")
+            println("hbt: width $(hbt_k(width) - 1) at $(round(time() - ctx.t0; digits = 2)) s (steps = $(hbt_stats(ctx)[1]), pmcs = $(length(st.pmcs)))")
         end
 
         return true
@@ -738,7 +821,7 @@ function hbt_state(ctx::HBTContext, depth::Int)
         end
     end
 
-    st = HBTState(HBTPMC[], Dict{Vector{Int}, Int}(), typemax(Int), Vector{Int}[], Int[], Int[], 0, nothing, depth, 0)
+    st = HBTState(HBTPMC[], Dict{Vector{Int}, Int}(), typemax(Int), Vector{Int}[], Int[], Int[], 0, nothing, depth, 0, 0)
 
     for X in hbt_pmcs(ctx, bestlabel, besttree)
         hbt_add!(st, X)
@@ -750,23 +833,30 @@ function hbt_state(ctx::HBTContext, depth::Int)
     return st
 end
 
-# Triangulate a (connected) local graph with PIDBT, giving up after `xtime`
-# seconds. Returns a minimal ordering, or `nothing`.
+# Triangulate a (connected) local graph with PIDBT, giving up after the time
+# limit of the current step (see `hbt_cutoff!`). Returns a minimal ordering,
+# or `nothing` if the time runs out.
 #
 # PIDBT tries the widths k = k₀, k₀ + 1, ... in turn, and every width below the
 # treewidth costs an exhaustive search. A triangulation is useful only if its
 # bags weigh at most `target`, so k₀ is chosen to match: the result is optimal
-# if no triangulation meets the target, and meets the target otherwise.
-function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int)
-    deadline = min(ctx.deadline, time() + ctx.xtime)
+# if no triangulation meets the target, and meets the target otherwise. `lb`
+# is a known lower bound on the bag weight. If the caller has no use for bags
+# heavier than `cap`, then no width above `cap` is tried, and the result is
+# `missing` if the graph has no triangulation whose bags weigh at most `cap`.
+function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int; lb::Int=0, cap::Int=typemax(Int))
+    start = max(target, lb, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM))
+    start > cap && return missing
+    deadline = min(ctx.deadline, time() + ctx.cutoff)
     order = nothing
-    start = max(target, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM))
 
     try
-        order = pidbt(weights, H, start; deadline)
+        order = pidbt(weights, H, start; deadline, max_k = cap)
     catch err
         err isa ArgumentError || rethrow()    # disconnected
     end
+
+    ismissing(order) && return missing
 
     if isnothing(order)
         ctx.ntimeout += 1
@@ -779,9 +869,11 @@ function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, tar
 end
 
 # Exact if the local graph has at most `limit` vertices and PIDBT finishes
-# in time, greedy otherwise.
-function hbt_triangulate(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int, limit::Int=ctx.base)
-    order = nv(H) <= limit ? hbt_exact(ctx, weights, H, target) : nothing
+# in time, greedy otherwise. `missing` if the exact triangulation exceeds
+# `cap` (see `hbt_exact`).
+function hbt_triangulate(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int, limit::Int=ctx.base; lb::Int=0, cap::Int=typemax(Int))
+    order = nv(H) <= limit ? hbt_exact(ctx, weights, H, target; lb, cap) : nothing
+    ismissing(order) && return missing
     return isnothing(order) ? hbt_greedy(ctx, weights, H) : order
 end
 
@@ -798,6 +890,12 @@ end
 # for every component B of G - U. Its vertices are numbered by their position
 # in U. For each component B we keep its smallest vertex, size, weight, and
 # neighborhood (in local numbering).
+#
+# Local graphs are usually dense (the neighborhoods N(B) are separators of
+# the size of a bag), so the graph is also kept as a bit matrix when that is
+# no larger than its adjacency lists: row i, in words (i - 1)W + 1 : iW,
+# is the neighborhood of vertex i. The components of H - K are then found
+# with word operations (see `hbt_pmc`). Otherwise `W` is zero.
 struct HBTLocal
     U::Vector{Int}
     graph::BipartiteGraph{Int, Int, Vector{Int}, Vector{Int}}
@@ -807,7 +905,15 @@ struct HBTLocal
     bwgt::Vector{Int}
     bnbr::Vector{Vector{Int}}
     nbrs::Set{Vector{Int}}
+    W::Int
+    bits::Vector{UInt64}
 end
+
+# Local graphs with more vertices than this are built from adjacency lists.
+const HBT_MAX_BITS = 1024
+
+@inline hbt_setbit!(bits::Vector{UInt64}, offset::Int, i::Int) =
+    @inbounds bits[offset + ((i - 1) >> 6) + 1] |= one(UInt64) << ((i - 1) & 63)
 
 function hbt_local(ctx::HBTContext, U::Vector{Int})
     g = ctx.graph; n = nv(g); nu = length(U)
@@ -819,19 +925,29 @@ function hbt_local(ctx::HBTContext, U::Vector{Int})
         mark1[u] = su; loc[u] = i
     end
 
-    adj = [Int[] for _ in 1:nu]
+    usebits = nu <= HBT_MAX_BITS
+    W = usebits ? cld(nu, 64) : 0
+    bits = usebits ? zeros(UInt64, W * nu) : UInt64[]
+    adj = usebits ? Vector{Int}[] : [Int[] for _ in 1:nu]
 
-    for (i, u) in enumerate(U)
+    @inbounds for (i, u) in enumerate(U)
         for v in neighbors(g, u)
-            mark1[v] == su && push!(adj[i], loc[v])
+            if mark1[v] == su
+                if usebits
+                    hbt_setbit!(bits, (i - 1) * W, loc[v])
+                else
+                    push!(adj[i], loc[v])
+                end
+            end
         end
     end
 
     bmin = Int[]; bsize = Int[]; bwgt = Int[]; bnbr = Vector{Int}[]
     nbrs = Set{Vector{Int}}()
+    row = zeros(UInt64, W)
     sc = hbt_stamp!(ctx)
 
-    for v0 in 1:n
+    @inbounds for v0 in 1:n
         (mark1[v0] == su || mark2[v0] == sc) && continue
         sn = hbt_stamp!(ctx)
         empty!(buf); empty!(queue)
@@ -860,22 +976,68 @@ function hbt_local(ctx::HBTContext, U::Vector{Int})
         if nb ∉ nbrs
             push!(nbrs, nb)
 
-            for a in nb, b in nb
-                a == b || push!(adj[a], b)
+            if usebits
+                # make nb a clique: OR its bit set into the rows of its vertices
+                fill!(row, zero(UInt64))
+
+                for a in nb
+                    hbt_setbit!(row, 0, a)
+                end
+
+                for a in nb
+                    offset = (a - 1) * W
+
+                    for j in 1:W
+                        bits[offset + j] |= row[j]
+                    end
+                end
+            else
+                for a in nb, b in nb
+                    a == b || push!(adj[a], b)
+                end
             end
         end
     end
 
     ptr = Vector{Int}(undef, nu + 1); tgt = Int[]; ptr[1] = 1
 
-    for i in 1:nu
-        list = adj[i]; sort!(list); unique!(list)
-        append!(tgt, list)
-        ptr[i + 1] = length(tgt) + 1
+    if usebits
+        @inbounds for i in 1:nu
+            offset = (i - 1) * W
+
+            for j in 1:W
+                word = bits[offset + j]
+
+                while !iszero(word)
+                    v = ((j - 1) << 6) + trailing_zeros(word) + 1
+                    v == i || push!(tgt, v)
+                    word &= word - one(UInt64)
+                end
+            end
+
+            ptr[i + 1] = length(tgt) + 1
+        end
+
+        # (the diagonal may have been set by the cliques)
+        @inbounds for i in 1:nu
+            bits[(i - 1) * W + ((i - 1) >> 6) + 1] &= ~(one(UInt64) << ((i - 1) & 63))
+        end
+
+        # keep the bit matrix only if the BFS over it is no slower than over
+        # the adjacency lists: W words per vertex against its degree
+        if W * nu > length(tgt)
+            W = 0; bits = UInt64[]
+        end
+    else
+        for i in 1:nu
+            list = adj[i]; sort!(list); unique!(list)
+            append!(tgt, list)
+            ptr[i + 1] = length(tgt) + 1
+        end
     end
 
     H = BipartiteGraph{Int, Int}(nu, nu, length(tgt), ptr, tgt)
-    return HBTLocal(U, H, ctx.wgt[U], bmin, bsize, bwgt, bnbr, nbrs)
+    return HBTLocal(U, H, ctx.wgt[U], bmin, bsize, bwgt, bnbr, nbrs, W, bits)
 end
 
 # Construct the PMC U[K] of G from a PMC K of the local graph. The components
@@ -884,8 +1046,7 @@ end
 # with N(B) ⊆ K. The separator of the former is N_H(Q) ∩ K. Linear in the
 # size of the local graph.
 function hbt_pmc(ctx::HBTContext, L::HBTLocal, K::Vector{Int}, lmark::Vector{Int}, lcomp::Vector{Int})
-    U = L.U; H = L.graph; nu = length(U); wgt = L.wgt
-    queue = ctx.queue; buf = ctx.buf
+    U = L.U; buf = ctx.buf
     sk = hbt_stamp!(ctx)
 
     for k in K
@@ -894,30 +1055,11 @@ function hbt_pmc(ctx::HBTContext, L::HBTLocal, K::Vector{Int}, lmark::Vector{Int
 
     cmin = Int[]; csize = Int[]; cwgt = Int[]; csep = Int[]
     seps = Vector{Int}[]
-    sc = hbt_stamp!(ctx)
 
-    # components of H - K; lcomp[v] = component index (valid when lmark[v] == sc)
-    for v0 in 1:nu
-        (lmark[v0] == sk || lmark[v0] == sc) && continue
-        q = length(cmin) + 1
-        empty!(queue); push!(queue, v0); lmark[v0] = sc; lcomp[v0] = q; head = 1
-        sep = Int[]; m = U[v0]; sz = 0; w = 0
-
-        while head <= length(queue)
-            u = queue[head]; head += 1
-            sz += 1; w += wgt[u]
-
-            for x in neighbors(H, u)
-                if lmark[x] == sk
-                    push!(sep, x)
-                elseif lmark[x] != sc
-                    lmark[x] = sc; lcomp[x] = q; push!(queue, x)
-                end
-            end
-        end
-
-        sort!(sep); unique!(sep)
-        push!(cmin, m); push!(csize, sz); push!(cwgt, w); push!(seps, sep)
+    if L.W > 0
+        hbt_components_bits!(ctx, L, K, lcomp, cmin, csize, cwgt, seps)
+    else
+        hbt_components_lists!(ctx, L, sk, lmark, lcomp, cmin, csize, cwgt, seps)
     end
 
     # attach the components of G - U
@@ -953,6 +1095,151 @@ function hbt_pmc(ctx::HBTContext, L::HBTLocal, K::Vector{Int}, lmark::Vector{Int
     return hbt_pmc(ctx, U[K], cmin, csize, cwgt, csep)
 end
 
+# Add the PMC U[K] of G, for a PMC K of the local graph, to a solution,
+# unless it is there already. It is taken from the solution `side` if it is
+# there; otherwise it is built.
+function hbt_addpmc!(ctx::HBTContext, st::HBTState, L::HBTLocal, K::Vector{Int}, lmark::Vector{Int}, lcomp::Vector{Int}, side::Union{Nothing, HBTState}=nothing)
+    X = L.U[K]
+    haskey(st.index, X) && return
+    j = isnothing(side) ? 0 : get(side.index, X, 0)
+    hbt_add!(st, iszero(j) ? hbt_pmc(ctx, L, K, lmark, lcomp) : side.pmcs[j])
+    return
+end
+
+# The components Q of H - K, by search over the adjacency lists: their
+# smallest vertices (in G), sizes, weights, and separators N_H(Q) ∩ K (in local
+# numbering). Sets lcomp[v] to the component of every v ∉ K. The vertices of K
+# are marked with `sk` in `lmark`.
+function hbt_components_lists!(ctx::HBTContext, L::HBTLocal, sk::Int, lmark::Vector{Int}, lcomp::Vector{Int}, cmin::Vector{Int}, csize::Vector{Int}, cwgt::Vector{Int}, seps::Vector{Vector{Int}})
+    U = L.U; H = L.graph; nu = length(U); wgt = L.wgt
+    queue = ctx.queue; mark3 = ctx.mark3
+    sc = hbt_stamp!(ctx)
+
+    # components of H - K; lcomp[v] = component index (valid when lmark[v] == sc)
+    for v0 in 1:nu
+        (lmark[v0] == sk || lmark[v0] == sc) && continue
+        q = length(cmin) + 1
+        empty!(queue); push!(queue, v0); lmark[v0] = sc; lcomp[v0] = q; head = 1
+        sep = Int[]; m = U[v0]; sz = 0; w = 0
+        ss = hbt_stamp!(ctx)    # marks the separator, in mark3 (indexed in G)
+
+        while head <= length(queue)
+            u = queue[head]; head += 1
+            sz += 1; w += wgt[u]
+
+            for x in neighbors(H, u)
+                if lmark[x] == sk
+                    if mark3[U[x]] != ss
+                        mark3[U[x]] = ss; push!(sep, x)
+                    end
+                elseif lmark[x] != sc
+                    lmark[x] = sc; lcomp[x] = q; push!(queue, x)
+                end
+            end
+        end
+
+        sort!(sep)
+        push!(cmin, m); push!(csize, sz); push!(cwgt, w); push!(seps, sep)
+    end
+
+    return
+end
+
+# The same, by search over the bit matrix of the local graph: a component is
+# grown a layer at a time, the next layer being the neighbors of the current
+# one (the OR of their rows) that are neither in K nor seen. Its separator is
+# the OR of the rows of all its vertices, restricted to K.
+function hbt_components_bits!(ctx::HBTContext, L::HBTLocal, K::Vector{Int}, lcomp::Vector{Int}, cmin::Vector{Int}, csize::Vector{Int}, cwgt::Vector{Int}, seps::Vector{Vector{Int}})
+    U = L.U; nu = length(U); wgt = L.wgt; W = L.W; bits = L.bits
+    scratch = ctx.bitbuf
+    length(scratch) < 4W && resize!(scratch, 4W)
+
+    # scratch[0W + j]: K; [1W + j]: vertices not yet in a component;
+    # [2W + j]: the current layer; [3W + j]: the OR of the rows of the component
+    @inbounds begin
+        for j in 1:W
+            scratch[j] = zero(UInt64)
+            scratch[W + j] = typemax(UInt64)
+        end
+
+        r = nu & 63
+        iszero(r) || (scratch[2W] = (one(UInt64) << r) - one(UInt64))
+
+        for k in K
+            hbt_setbit!(scratch, 0, k)
+        end
+
+        for j in 1:W
+            scratch[W + j] &= ~scratch[j]
+        end
+
+        j0 = 1
+
+        while true
+            # the smallest vertex not yet in a component
+            while j0 <= W && iszero(scratch[W + j0])
+                j0 += 1
+            end
+
+            j0 > W && break
+            v0 = ((j0 - 1) << 6) + trailing_zeros(scratch[W + j0]) + 1
+            q = length(cmin) + 1; sz = 0; w = 0
+
+            for j in 1:W
+                scratch[2W + j] = zero(UInt64); scratch[3W + j] = zero(UInt64)
+            end
+
+            hbt_setbit!(scratch, 2W, v0)
+            scratch[W + j0] &= ~(one(UInt64) << ((v0 - 1) & 63))
+            grow = true
+
+            while grow
+                # visit the layer
+                for j in 1:W
+                    word = scratch[2W + j]
+
+                    while !iszero(word)
+                        v = ((j - 1) << 6) + trailing_zeros(word) + 1
+                        word &= word - one(UInt64)
+                        lcomp[v] = q; sz += 1; w += wgt[v]
+                        offset = (v - 1) * W
+
+                        for i in 1:W
+                            scratch[3W + i] |= bits[offset + i]
+                        end
+                    end
+                end
+
+                # the next layer: unseen neighbors outside K
+                grow = false
+
+                for j in 1:W
+                    word = scratch[3W + j] & scratch[W + j]
+                    scratch[2W + j] = word
+                    scratch[W + j] &= ~word
+                    grow |= !iszero(word)
+                end
+            end
+
+            sep = Int[]
+
+            for j in 1:W
+                word = scratch[3W + j] & scratch[j]
+
+                while !iszero(word)
+                    push!(sep, ((j - 1) << 6) + trailing_zeros(word) + 1)
+                    word &= word - one(UInt64)
+                end
+            end
+
+            # U is sorted, so the smallest local vertex is the smallest in G
+            push!(cmin, U[v0]); push!(csize, sz); push!(cwgt, w); push!(seps, sep)
+        end
+    end
+
+    return
+end
+
 # Triangulate the local graph on U and add the resulting PMCs of G to `st` if
 # the triangulation is no wider than the current solution.
 function hbt_local!(ctx::HBTContext, st::HBTState, side::HBTState, U::Vector{Int})
@@ -960,7 +1247,10 @@ function hbt_local!(ctx::HBTContext, st::HBTState, side::HBTState, U::Vector{Int
     H = L.graph; weights = L.wgt; nu = length(U)
     ctx.nlocal += 1
 
-    order = hbt_triangulate(ctx, weights, H, hbt_k(st.width), hbt_limit(ctx, st.maxbag))
+    # a triangulation is used only if no bag is heavier than the current width
+    k = hbt_k(st.width)
+    order = hbt_triangulate(ctx, weights, H, k, hbt_limit(ctx, st.maxbag); cap = k)
+    ismissing(order) && return
 
     label, tree = cliquetree(weights, H, order)
     hbt_treewidth(weights, label, tree) <= hbt_k(st.width) || return
@@ -973,15 +1263,7 @@ function hbt_local!(ctx::HBTContext, st::HBTState, side::HBTState, U::Vector{Int
         K = Int[label[v] for v in clique]
         sort!(K)
         K in L.nbrs && continue
-        X = U[K]
-        haskey(st.index, X) && continue
-        j = get(side.index, X, 0)
-
-        if iszero(j)
-            hbt_add!(st, hbt_pmc(ctx, L, K, lmark, lcomp))
-        else
-            hbt_add!(st, side.pmcs[j])
-        end
+        hbt_addpmc!(ctx, st, L, K, lmark, lcomp, side)
     end
 
     return
@@ -992,6 +1274,7 @@ end
 # ---------------------------------------------------------------------------
 
 function hbt_merge!(ctx::HBTContext, st::HBTState, side::HBTState)
+    hbt_cutoff!(ctx, st.kstall)
     g = ctx.graph; n = nv(g)
     mark1 = ctx.mark1; mark2 = ctx.mark2; mark3 = ctx.mark3; queue = ctx.queue
     ctx.nstep += 1
@@ -1104,19 +1387,78 @@ end
 # by diversification, and merged with an independent solution only once it
 # has gone `patience` steps without progress.
 function hbt_improve!(ctx::HBTContext, st::HBTState)
-    improved = false
+    k = hbt_k(st.width)
 
     if ctx.diversify
         hbt_diversify!(ctx, st)
         improved = hbt_update!(ctx, st)
+    else
+        improved = false
     end
 
+    return hbt_endstep!(ctx, st, k, improved)
+end
+
+# Merge if the solution has stalled, and count the steps without progress.
+function hbt_endstep!(ctx::HBTContext, st::HBTState, k::Int, improved::Bool)
     if ctx.merge && !hbt_expired(ctx) && (!ctx.diversify || st.stall >= ctx.patience)
         improved |= hbt_improve_merge!(ctx, st)
     end
 
     st.stall = improved ? 0 : st.stall + 1
+    st.kstall = hbt_k(st.width) < k ? 0 : st.kstall + 1
     return improved
+end
+
+mutable struct HBTShared
+    @atomic snapshot::HBTSnapshot
+    @atomic stop::Bool
+end
+
+# The main loop with workers on other threads. Each worker diversifies the
+# latest snapshot of the solution, again and again, and passes the results
+# to this thread, which adds them to the solution, evaluates it, and merges
+# when it stalls, as `hbt_improve!` does. When no result is waiting, this
+# thread diversifies the solution itself. (The time of a diversification
+# varies a great deal, so workers that waited for each other would mostly
+# wait.)
+function hbt_parallel!(ctx::HBTContext, st::HBTState, lb::Int)
+    shared = HBTShared(HBTSnapshot(st), false)
+    results = Channel{Tuple{HBTLocal, Vector{Vector{Int}}}}(typemax(Int))
+
+    tasks = map(ctx.workers) do w
+        Threads.@spawn hbt_work(w, shared, results)
+    end
+
+    try
+        while !hbt_expired(ctx) && hbt_k(st.width) > lb
+            k = hbt_k(st.width)
+
+            if isready(results)
+                L, cliques = take!(results)
+            else
+                L, cliques = hbt_diversify(ctx, HBTSnapshot(st))
+            end
+
+            hbt_addcliques!(ctx, st, L, cliques)
+            improved = hbt_update!(ctx, st)
+            hbt_endstep!(ctx, st, k, improved)
+            @atomic shared.snapshot = HBTSnapshot(st)
+        end
+    finally
+        @atomic shared.stop = true
+        foreach(wait, tasks)
+    end
+
+    return
+end
+
+function hbt_work(w::HBTContext, shared::HBTShared, results::Channel)
+    while !(@atomic shared.stop) && !hbt_expired(w)
+        put!(results, hbt_diversify(w, @atomic shared.snapshot))
+    end
+
+    return
 end
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1475,12 @@ end
 # repeated for several separators.
 # ---------------------------------------------------------------------------
 
-function hbt_diversify!(ctx::HBTContext, st::HBTState)
+# One diversification of a solution, by the context `ctx`, which may be a
+# worker (see `hbt_workers!`). Reads a snapshot of the solution: returns the
+# local graph and the PMCs of it to be added to the solution (see
+# `hbt_addcliques!`).
+function hbt_diversify(ctx::HBTContext, st::HBTSnapshot)
+    hbt_cutoff!(ctx, st.kstall)
     g = ctx.graph; rng = ctx.rng; bags = st.bags; parent = st.parent; nt = length(bags)
     mark1 = ctx.mark1; mark2 = ctx.mark2; loc = ctx.loc
     ctx.nstep += 1
@@ -1234,15 +1581,27 @@ function hbt_diversify!(ctx::HBTContext, st::HBTState)
     L = hbt_local(ctx, U)
     H = L.graph; nu = length(U); weights = L.wgt
     x0 = Int[loc[v] for v in X0]     # X₀ in local numbering (set by hbt_local)
-    lmark = zeros(Int, nu); lcomp = zeros(Int, nu)
+    lmark = zeros(Int, nu)
     limit = hbt_limit(ctx, length(X0))
+    cliques = Vector{Int}[]
 
     # a region small enough to be solved exactly is also triangulated as it
     # is: PIDBT finds a decomposition of H below the current width if there
-    # is one
+    # is one. If there is none, it finds the treewidth of H, which bounds
+    # that of H + S below: then PIDBT need not try the widths below it again
+    # for H + S (where they cost an exhaustive search each, and fail).
+    lbS = 0
+
     if nu <= limit
-        order = hbt_triangulate(ctx, weights, H, k - 1, limit)
-        hbt_addcliques!(ctx, st, L, H, order, k, lmark, lcomp)
+        order = hbt_exact(ctx, weights, H, k - 1)
+
+        if isnothing(order)
+            order = hbt_greedy(ctx, weights, H)
+            hbt_cliques!(cliques, ctx, L, H, order, k)
+        else
+            w = hbt_cliques!(cliques, ctx, L, H, order, k)
+            w >= k && (lbS = w)
+        end
     end
 
     # minimal separators crossing X₀: for nonadjacent a, b ∈ X₀, the
@@ -1300,20 +1659,28 @@ function hbt_diversify!(ctx::HBTContext, st::HBTState)
 
         HS = BipartiteGraph{Int, Int}(nu, nu, length(tgt), ptr, tgt)
 
-        order = hbt_triangulate(ctx, weights, HS, k - 1, limit)
-        hbt_addcliques!(ctx, st, L, HS, order, k, lmark, lcomp)
+        order = hbt_triangulate(ctx, weights, HS, k - 1, limit; lb = lbS)
+        hbt_cliques!(cliques, ctx, L, HS, order, k)
     end
 
+    return L, cliques
+end
+
+# Diversify the solution once (in this thread).
+function hbt_diversify!(ctx::HBTContext, st::HBTState)
+    hbt_addcliques!(ctx, st, hbt_diversify(ctx, HBTSnapshot(st))...)
     return
 end
 
-# Add the maximal cliques of the triangulation of HS (a minimal triangulation
-# of the local graph L) given by `order` to the solution, skipping cliques
+# Collect the maximal cliques of the triangulation of HS (a minimal
+# triangulation of the local graph L) given by `order`, skipping cliques
 # heavier than k: they cannot be bags of a decomposition of width at most k.
-function hbt_addcliques!(ctx::HBTContext, st::HBTState, L::HBTLocal, HS::BipartiteGraph, order::Vector{Int}, k::Int, lmark::Vector{Int}, lcomp::Vector{Int})
-    U = L.U; weights = L.wgt
+# Returns the weight of the heaviest clique.
+function hbt_cliques!(cliques::Vector{Vector{Int}}, ctx::HBTContext, L::HBTLocal, HS::BipartiteGraph, order::Vector{Int}, k::Int)
+    weights = L.wgt
     ctx.nlocal += 1
     label, tree = cliquetree(weights, HS, order)
+    width = 0
 
     for clique in tree
         w = 0
@@ -1322,13 +1689,22 @@ function hbt_addcliques!(ctx::HBTContext, st::HBTState, L::HBTLocal, HS::Biparti
             w += weights[label[v]]
         end
 
+        width = max(width, w)
         w > k && continue
         K = Int[label[v] for v in clique]
         sort!(K)
-        K in L.nbrs && continue
-        X = U[K]
-        haskey(st.index, X) && continue
-        hbt_add!(st, hbt_pmc(ctx, L, K, lmark, lcomp))
+        K in L.nbrs || push!(cliques, K)
+    end
+
+    return width
+end
+
+# Add the PMCs U[K] of G, for the PMCs K of the local graph, to the solution.
+function hbt_addcliques!(ctx::HBTContext, st::HBTState, L::HBTLocal, cliques::Vector{Vector{Int}})
+    nu = length(L.U); lmark = zeros(Int, nu); lcomp = zeros(Int, nu)
+
+    for K in cliques
+        hbt_addpmc!(ctx, st, L, K, lmark, lcomp)
     end
 
     return
@@ -1394,16 +1770,22 @@ function hbt(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT) where {
         end
     end
 
-    ctx = HBTContext(bgraph, wgt, alg.alg, rng, alg.base, alg.ntry, alg.ninit, deadline; t0, verbose = alg.verbose, refined = alg.refined, merge = alg.merge, diversify = alg.diversify, dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, near = alg.near, margin = alg.margin, pexact = alg.pexact)
+    ctx = HBTContext(bgraph, wgt, alg.alg, rng, alg.base, alg.ntry, alg.ninit, deadline; t0, verbose = alg.verbose, refined = alg.refined, merge = alg.merge, diversify = alg.diversify, dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, xmin = alg.xmin, xstep = alg.xstep, near = alg.near, margin = alg.margin, pexact = alg.pexact)
     st = hbt_state(ctx, 0)
     alg.verbose && println("hbt: n = $n, initial width $(hbt_string(st.width)) at $(round(time() - t0; digits = 2)) s")
 
-    while !hbt_expired(ctx) && hbt_k(st.width) > lb
-        hbt_improve!(ctx, st)
+    if alg.threads > 1 && ctx.diversify
+        hbt_workers!(ctx, alg.threads - 1)
+        hbt_parallel!(ctx, st, lb)
+    else
+        while !hbt_expired(ctx) && hbt_k(st.width) > lb
+            hbt_improve!(ctx, st)
+        end
     end
 
     if alg.verbose
-        println("hbt: n = $n, width = $(hbt_string(st.width)), steps = $(ctx.nstep), local = $(ctx.nlocal), exact = $(ctx.nexact), timeouts = $(ctx.ntimeout), pmcs = $(length(st.pmcs)), time = $(round(time() - t0; digits = 1))")
+        nstep, nlocal, nexact, ntimeout = hbt_stats(ctx)
+        println("hbt: n = $n, width = $(hbt_string(st.width)), steps = $nstep, local = $nlocal, exact = $nexact, timeouts = $ntimeout, pmcs = $(length(st.pmcs)), time = $(round(time() - t0; digits = 1))")
     end
 
     order = convert(Vector{V}, st.order)

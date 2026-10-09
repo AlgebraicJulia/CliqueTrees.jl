@@ -1887,6 +1887,7 @@ end
                 HBT(; time = 0.2, base = 20, dsize = 25, seed = 7, xtime = 0.01),
                 HBT(; time = 0.2, base = 8, margin = 0, pexact = 0.0),
                 HBT(; time = 0.2, base = 8, margin = 10, pexact = 1.0, near = 0),
+                HBT(; time = 0.2, base = 8, threads = 3),
             )
             order, index = permutation(graph; alg = ConnectedComponents(alg))
             @test sort(order) == 1:n
@@ -1914,6 +1915,15 @@ end
                 @test validate(ctx, st, graph)
                 @test sort(st.order) == 1:n
                 @test treewidth(weights, graph; alg = st.order) <= CliqueTrees.HBTLib.hbt_k(st.width)
+
+                # the parallel driver
+                ctx = CliqueTrees.HBTLib.HBTContext(g, wgt, AMF(), Xoshiro(3), 8, 10, 3, time() + 0.2; merge, margin)
+                st = CliqueTrees.HBTLib.hbt_state(ctx, 0)
+                CliqueTrees.HBTLib.hbt_workers!(ctx, 2)
+                CliqueTrees.HBTLib.hbt_parallel!(ctx, st, 0)
+                @test validate(ctx, st, graph)
+                @test sort(st.order) == 1:n
+                @test treewidth(weights, graph; alg = st.order) <= CliqueTrees.HBTLib.hbt_k(st.width)
             end
         end
     end
@@ -1928,6 +1938,23 @@ end
     # complete graph: the lower bound is reached immediately
     graph = complete_graph(80)
     @test treewidth(graph; alg = HBT(; time = 10.0)) == 79
+
+    # PIDBT with a cap on the bag weight, as used by HBT
+    for (n, p) in ((20, 0.2), (30, 0.1), (40, 0.05))
+        Random.seed!(n)
+        graph = erdos_renyi(n, p)
+
+        for v in 1:n - 1
+            add_edge!(graph, v, v + 1)
+        end
+
+        weights = rand(1:3, n)
+        w = treewidth(weights, graph; alg = PIDBT())
+        order = CliqueTrees.PIDBTLib.pidbt(weights, graph, 0; max_k = w)
+        @test order isa Vector && treewidth(weights, graph; alg = order) == w
+        @test ismissing(CliqueTrees.PIDBTLib.pidbt(weights, graph, 0; max_k = w - 1))
+        @test ismissing(CliqueTrees.PIDBTLib.pidbt(weights, graph, w; max_k = w - 1))
+    end
 end
 
 @testset "lowrank" begin

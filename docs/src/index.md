@@ -134,7 +134,8 @@ For large graphs, the algorithms `AMD` and `METIS` are the state-of-the practice
 SuiteSparse and METIS. The current default algorithm is `MF`: a slower but more reliable alternative to `AMD`.
 
 When a small width matters more than speed, the anytime heuristic `HBT` (heuristic Bouchitte-Todinca) improves a
-tree decomposition for as long as it is allowed to run.
+tree decomposition for as long as it is allowed to run. It uses all of Julia's threads (start Julia with, e.g.,
+`julia -t auto`).
 
 ```julia-repl
 julia> alg = HBT(; time=60.0);

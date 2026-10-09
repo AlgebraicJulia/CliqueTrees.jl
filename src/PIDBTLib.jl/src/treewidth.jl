@@ -61,7 +61,7 @@ would be incoming, so no tree decomposition of the whole graph would ever be
 found.) Safe separators found during the search split a connected graph into
 connected pieces, so this needs to be checked only here.
 """
-function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0, deadline::Float64=Inf) where {PSet}
+function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0, max_k::Int=typemax(Int), deadline::Float64=Inf) where {PSet}
     if count(_ -> true, components(graph, PSet())) > 1
         throw(ArgumentError("PIDBT requires a connected graph. Wrap it with `ConnectedComponents`."))
     end
@@ -76,10 +76,11 @@ function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=
         v = first(vertices(graph))
         only_bag = packedset(PSet, v)
         root = add_vertex!(pool, PTD{PSet}(only_bag, only_bag, PSet()))
+        weights[v] - 1 > max_k && return missing
         return (weights[v] - 1, (pool, root))
     end
 
-    return treewidth_computation(weights, graph, min_k, deadline)
+    return treewidth_computation(weights, graph, min_k, deadline, max_k)
 end
 
 # ---------------------------------------------------------------------------
@@ -114,8 +115,9 @@ end
 # Orchestrator  (C# TreeWidth_Computation)
 # ---------------------------------------------------------------------------
 
-# Returns `nothing` if the deadline passes.
-function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int, deadline::Float64=Inf) where {PSet}
+# Returns `nothing` if the deadline passes, and `missing` if the treewidth is
+# greater than `max_k`. In the latter case, no width above `max_k` is tried.
+function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int, deadline::Float64=Inf, max_k::Int=typemax(Int)) where {PSet}
     outlets_already_checked = Set{PSet}()
 
     min_k = lower_bound
@@ -170,11 +172,16 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
         effort = 0               # effort of the last failed round
         growth = Inf
 
+        # the widths above `max_k` are not tried
+        imax = searchsortedlast(sums, max_k)
+
         while ilo + 1 < ihi
+            ilo + 1 > imax && return missing
+
             if !gallop || ilo + 1 >= ihi - 1 || growth > GALLOP_GROWTH
                 p = ilo + 1
             elseif iszero(root)
-                p = min(ilo + step, ihi - 1)
+                p = min(ilo + step, ihi - 1, imax)
             else
                 p = (ilo + ihi) ÷ 2
             end
@@ -224,6 +231,7 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
         end
 
         if !divided
+            sums[ihi] > max_k && return missing
             min_k = max(min_k, sums[ihi])
             # If no round succeeded, all vertices form a single bag.
             push!(ptd_roots, iszero(root) ? make_ptd(pool, vertices(graph_i)) : root)
@@ -297,7 +305,7 @@ function Search(weights::Weights{PSet}, graph::CachedGraph{PSet}, k::Int, mutabl
                 outlets_checked::Set{PSet}, budget::Int=typemax(Int), deadline::Float64=Inf) where {PSet}
     return Search{PSet}(
         PTDPool{PSet}(), weights, graph, mutable_graph, k,
-        Vector{PSet}(undef, domain(PSet)), Vector{Bool}(undef, domain(PSet)),
+        Vector{PSet}(undef, 2domain(PSet)), Vector{Bool}(undef, domain(PSet)),
         Int[], Set{PSet}(),
         Dict{PSet, Vector{Int}}(), Dict{Int, Int}(),
         LayeredSieve{PSet}(k, weights), Set{Tuple{PSet, PSet}}(), Int[], PSet[], PSet[],
@@ -337,7 +345,7 @@ function _search!(s::Search{PSet}) where {PSet}
 
     # --------- lines 1-4: leaves N[v] ----------
     for v in vertices(graph)
-        N = neighbors(graph, v) ∪ v
+        N = closed_neighbors(graph, v)
         s.is_small_pmc[v] = flag = wt(weights, N) <= k + 1 && is_pmc!(s.work, graph, N)
 
         if flag
@@ -428,7 +436,7 @@ function _extend!(s::Search{PSet}, rho::Int, tau::Int, ispmc::Bool) where {PSet}
         end
 
         for v in setdiff(candidates, V)
-            N = neighbors(graph, v) ∪ v
+            N = closed_neighbors(graph, v)
 
             if s.is_small_pmc[v] && N ⊇ B
                 state, root = _offer_ptd!(s, extend_to_pmc_rule2(pool, rho, N, graph))

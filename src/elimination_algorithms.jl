@@ -613,7 +613,11 @@ or the width reaches the lower bound computed by `lb`. Vertex weights are trunca
   - `near`: diversification works around a bag of the largest weight k with probability 1/2,
     of weight k - 1 with probability 1/4, and so on down to k - `near`
   - `patience`: number of steps without progress before merging
-  - `xtime`: time limit in seconds for each exact triangulation of a local graph (the greedy algorithm is used if it runs out)
+  - `xtime`, `xmin`, `xstep`: time limit in seconds for each exact triangulation of a local graph (the greedy algorithm
+    is used if it runs out). The limit starts at `xmin`, and doubles every `xstep` steps without a decrease of the
+    width, up to `xtime`: most exact triangulations take milliseconds, and the slow ones are worth waiting for only
+    once the fast ones have stopped making progress
+  - `threads`: number of diversifications made in parallel (on Julia threads) in each step
   - `verbose`: print progress
 
 ### Example
@@ -655,7 +659,10 @@ julia> treewidth(graph; alg=HBT(; time=1.0))
     dsize::Int = typemax(Int)
     nsep::Int = 4
     patience::Int = 100
-    xtime::Float64 = 0.5
+    xtime::Float64 = 1.0
+    xmin::Float64 = 0.05
+    xstep::Int = 8
+    threads::Int = Threads.nthreads()
     near::Int = 3
     margin::Int = 40
     pexact::Float64 = 0.5
@@ -2508,7 +2515,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L}) where {A, L}
     indent = get(io, :indent, 0)
     println(io, " "^indent * "HBT{$A, $L}:")
 
-    for name in (:time, :seed, :ninit, :base, :ntry, :refined, :merge, :diversify, :dsize, :nsep, :near, :patience, :xtime, :margin, :pexact)
+    for name in (:time, :seed, :ninit, :base, :ntry, :refined, :merge, :diversify, :dsize, :nsep, :near, :patience, :xtime, :xmin, :xstep, :margin, :pexact, :threads)
         println(io, " "^indent * "    $name: $(getfield(alg, name))")
     end
 
