@@ -3,7 +3,7 @@ module KaHyParExt
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, connect!, hcompresspart, hseparator!, implicitarcs, implicitsplit!, popelements!, prepare!, quotientsplit!, sympermute!_impl!, twinfreelabel, nov, simplegraph, qcc, compresstwins
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, bestfill_impl!, bestwidth_impl!, compositerotations_impl!, connect!, hseparator!, hrealize!, hrecord!, implicitarcs, implicitsegmentsplit!, segmentsplit!, popelements!, prepare!, classify!, applymerges!, rollback!, mergesorted!, writeresidual!, sympermute!_impl!, nov, simplegraph, qcc, compresstwins
 using CliqueTrees.Utilities
 using Graphs
 
@@ -95,17 +95,21 @@ function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) wher
     return order
 end
 
-# Nested dissection on one global quotient graph (see dissection_algorithms.jl). A node
-# of the separator tree stores its clique cover (the hypergraph that KaHyPar
-# partitions, in which the separator S of each ancestor is a single clique),
-# its vertex set and its twin classes. A node is split without realizing its
-# graph G'[W] (see `implicitsplit!`); the graph is realized, compressed, only at
-# leaves and at postorders, and at most one realized graph is alive at a time.
-function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VINT2, EINT}, graph::BipartiteGraph{PINT, PINT}, label::BipartiteGraph{PINT, PINT}, alg::ND{S}) where {S}
-    h = nov(hgraph); n = nv(graph); m = ne(graph); nn = n + one(PINT)
+# Nested dissection on one global quotient graph, without a node stack, with
+# a global clique cover (see dissection_algorithms.jl). The state is the
+# twin-free graph and a cover of its edges by cliques, the separators of the
+# ancestors of the current node, one array of working orderings, a
+# union-find holding the twin classes of the path, a record of the last
+# split of each clique, and a few scalars per level. The hypergraph that
+# KaHyPar partitions is built from the cover when a node is split, and the
+# node is split without realizing its graph G'[W]; the graph is realized,
+# compressed, only at leaves and when the children of a node have returned.
+function dissectsimple(weights::AbstractVector{WINT2}, cover::BipartiteGraph{VINT2, EINT}, graph::BipartiteGraph{PINT, PINT}, label::BipartiteGraph{PINT, PINT}, alg::ND{S}) where {S}
+    h = nov(cover); n = nv(graph); m = ne(graph); nn = n + one(PINT); ng = n
     maxlevel = convert(PINT, alg.level)
     minwidth = convert(WINT2, alg.width)
     imbalance = convert(PINT, alg.imbalance)
+    nl = maxlevel + one(PINT); hmax = h + maxlevel + one(PINT)
 
     # the separators of the ancestors of the current node (a stack)
     nelm = FScalar{PINT}(undef); nelm[] = zero(PINT)
@@ -134,17 +138,65 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     gmark = FVector{Int}(undef, n)
     gbuf = FVector{PINT}(undef, n)
 
+    # the working orderings and the classes of the path (see `segmentsplit!`)
+    segment = FVector{PINT}(undef, n)
+    vertexset = FVector{PINT}(undef, n)
+    cls = FVector{PINT}(undef, n)
+    ufp = FVector{PINT}(undef, n)
+    rmark = FVector{Int}(undef, n)
+    rid = FVector{PINT}(undef, n)
+    mrg = Vector{PINT}(undef, n)
+    mlog = Vector{PINT}(undef, n)
+    base = FVector{PINT}(undef, nl)
+    na = FVector{PINT}(undef, nl)
+    nb = FVector{PINT}(undef, nl)
+    side = FVector{PINT}(undef, nl)
+    logstart = FVector{PINT}(undef, nl)
+    mrgbase = FVector{PINT}(undef, nl)
+    mrgstart = FVector{PINT}(undef, nl)
+    mrgstop = FVector{PINT}(undef, nl)
+
+    # the clique cover (see `hrealize!`)
+    nodeepoch = FVector{Int}(undef, nl)
+    clev = FVector{PINT}(undef, h)
+    cside = FVector{PINT}(undef, h)
+    cepoch = FVector{Int}(undef, h)
+    slev = FVector{PINT}(undef, nl)
+    sside = FVector{PINT}(undef, nl)
+    sepoch = FVector{Int}(undef, nl)
+    cmark = FVector{Int}(undef, h); ctag = FScalar{Int}(undef); ctag[] = 0
+    hmark = FVector{Int}(undef, hmax); htag = FScalar{Int}(undef); htag[] = 0
+    hid = FVector{VINT2}(undef, h)
+    sid = FVector{VINT2}(undef, nl)
+    helm = FVector{PINT}(undef, hmax)
+    hpart = FVector{PINT}(undef, hmax)
+    hproject0 = FVector{PINT}(undef, hmax)
+    hproject1 = FVector{PINT}(undef, hmax)
+    hwght = FVector{WINT1}(undef, hmax)
+    hptr = FVector{EINT}(undef, nn)
+    htgt = Vector{VINT2}(undef, max(ne(cover), one(EINT)) + n)
+
     @inbounds for v in oneto(n)
-        pinhead[v] = zero(PINT); stamp[v] = 0; gmark[v] = 0
+        pinhead[v] = zero(PINT); stamp[v] = 0; gmark[v] = 0; rmark[v] = 0
+        ufp[v] = vertexset[v] = v
+    end
+
+    # every clique of the cover is active at the root
+    @inbounds for e in oneto(h)
+        clev[e] = zero(PINT); cside[e] = two(PINT); cepoch[e] = 0; cmark[e] = 0
+    end
+
+    @inbounds for i in oneto(hmax)
+        hmark[i] = 0; hwght[i] = one(WINT1)
     end
 
     work00 = FScalar{WINT2}(undef)
     work01 = Vector{PINT}(undef, half(m))
     work02 = Vector{PINT}(undef, half(m))
-    work03 = FVector{PINT}(undef, max(h, n))
+    work03 = FVector{PINT}(undef, n)
     work04 = FVector{PINT}(undef, n)
-    work05 = FVector{PINT}(undef, max(h, n))
-    work06 = FVector{PINT}(undef, max(h, n))
+    work05 = FVector{PINT}(undef, n)
+    work06 = FVector{PINT}(undef, n)
     work07 = FVector{WINT2}(undef, n)
     work08 = FVector{WINT2}(undef, n)
     work09 = FVector{PINT}(undef, nn)
@@ -155,48 +207,67 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
     work14 = FVector{PINT}(undef, n)
     work15 = FVector{PINT}(undef, n)
     work16 = FVector{PINT}(undef, n)
-    hwght = FVector{WINT1}(undef, h)
 
-    @inbounds for v in oneto(h)
-        hwght[v] = one(WINT1)
-    end
+    level = zero(PINT); nw = n; t = 0; nmrg = zero(PINT); nlog = zero(PINT); epoch = 0
+    @inbounds base[begin] = one(PINT)
+    descend = true
 
-    parts = FVector{PINT}[]
-    orders = FVector{PINT}[]
+    @inbounds while true
+        l = level + one(PINT)
 
-    HGraph = BipartiteGraph{VINT2, EINT, FVector{EINT}, FVector{VINT2}}
+        if descend
+            # the node at `level`, with vertex set vertexset[1:nw]
+            t += 1; nc = classify!(cls, rmark, rid, ufp, vertexset, nw, t)
+            set = view(vertexset, oneto(nw)); setcls = view(cls, oneto(nw))
+            epoch += 1; nodeepoch[l] = epoch
+        else
+            # the node at `level` has returned; its residual starts at base[l]
+            iszero(level) && break
+            level -= one(PINT); l = level + one(PINT)
+            p = base[l]; sstart = elmptr[l]; sstop = elmptr[l + one(PINT)] - one(PINT)
 
-    nodes = Tuple{
-        HGraph,        # clique cover (empty at postorder)
-        FVector{PINT}, # vertex set
-        FVector{PINT}, # classes
-        PINT,          # number of classes
-        PINT,          # level (negative: postorder)
-    }[]
+            if isone(side[l]) # child 1 has returned: start child 0 (A ∪ S)
+                nlog = rollback!(ufp, mlog, nlog, logstart[l])
+                nlog = applymerges!(ufp, mlog, nlog, mrg, mrgstart[l], mrgstop[l])
+                nw = mergesorted!(vertexset, segment, p, p + na[l] - one(PINT), pinvtx, sstart, sstop)
 
-    nohgraph = BipartiteGraph{VINT2, EINT}(zero(VINT2), zero(VINT2), zero(EINT))
-    vertexset = FVector{PINT}(undef, n)
-    cls = FVector{PINT}(undef, n)
+                # move the residual of child 1 down, to base[l]
+                copyto!(segment, p, segment, p + na[l], nb[l])
 
-    @inbounds for v in oneto(n)
-        vertexset[v] = cls[v] = v
-    end
+                # the separator goes to both children: child 1 has
+                # overwritten its record
+                slev[l] = l; sside[l] = two(PINT); sepoch[l] = nodeepoch[l]
 
-    push!(nodes, (hgraph, vertexset, cls, n, zero(PINT)))
+                side[l] = zero(PINT); level += one(PINT)
+                base[level + one(PINT)] = p + nb[l]
+                descend = true
+                continue
+            end
 
-    @inbounds while !isempty(nodes)
-        hgraph, vertexset, cls, nc, level = pop!(nodes)
-        unprocessed = !isnegative(level)
-        curlevel = unprocessed ? level : -level - one(PINT)
+            # child 0 has returned: join the node at `level`
+            nlog = rollback!(ufp, mlog, nlog, logstart[l]); nmrg = mrgbase[l]
+            nw = zero(PINT)
 
-        popelements!(nelm, elmptr, pinvtx, pinnext, pinhead, curlevel)
+            for q in p:(p + na[l] + nb[l] - one(PINT))
+                nw += one(PINT); vertexset[nw] = segment[q]
+            end
+
+            for q in sstart:sstop
+                nw += one(PINT); vertexset[nw] = pinvtx[q]
+            end
+
+            sort!(view(vertexset, oneto(nw)))
+            popelements!(nelm, elmptr, pinvtx, pinnext, pinhead, level)
+            t += 1; nc = classify!(cls, rmark, rid, ufp, vertexset, nw, t)
+            set = view(vertexset, oneto(nw)); setcls = view(cls, oneto(nw))
+        end
 
         cmpweights, cmplabel = prepare!(tag, stamp, vclass, marker, mask, clsptr,
             clstgt, lblptr, lbltgt, nelm, elmptr, pinlvl, pinnext, pinhead,
-            weights, vertexset, cls, nc, curlevel, graph)
+            weights, set, setcls, nc, level, graph)
 
         # a node is split without realizing its graph
-        if implicit && unprocessed
+        if implicit && descend
             n = nc
 
             m = implicitarcs(gtag, gmark, gbuf, tag, stamp, vclass, mask, lblptr,
@@ -204,7 +275,7 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
         else
             cmpgraph, clique = connect!(tag, stamp, vclass, marker, clsptr, clstgt,
                 lblptr, lbltgt, pointer, target, elmptr, pinvtx, pinlvl, pinnext,
-                pinhead, nc, curlevel, graph)
+                pinhead, nc, level, graph)
 
             n = nv(cmpgraph); m = ne(cmpgraph)
         end
@@ -212,47 +283,60 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
         iscomplete = m == n * (n - one(PINT))
 
         # a leaf is processed as soon as it is reached
-        isleaf = unprocessed
+        isleaf = descend
 
-        if unprocessed && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
-            part = FVector{PINT}(undef, n)
-            separator!(work00, work03, hwght, cmpweights, hgraph, imbalance, alg.dis)
-            h0, h1 = hseparator!(work05, work06, work03, part, hgraph)
+        if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
+            # the hypergraph of the node, from the cover
+            pepoch = iszero(level) ? 0 : nodeepoch[level]
+            pside = iszero(level) ? two(PINT) : side[level]
+
+            hn, np = hrealize!(hptr, htgt, helm, hid, sid, hmark, htag, cmark,
+                ctag, clev, cside, cepoch, slev, sside, sepoch, lblptr, lbltgt,
+                nelm, pinlvl, pinnext, pinhead, cover, nc, level, pepoch, pside)
+
+            hgraph = BipartiteGraph(convert(VINT2, hn), convert(VINT2, nc), convert(EINT, np), hptr, htgt)
+            separator!(work00, hpart, hwght, cmpweights, hgraph, imbalance, alg.dis)
+
+            part = FVector{PINT}(undef, nc)
+            hseparator!(hproject0, hproject1, hpart, part, hgraph)
+            hrecord!(clev, cside, cepoch, slev, sside, sepoch, helm, hpart, hn, level, nodeepoch[l])
+
+            p = base[l]; mrgbase[l] = nmrg
 
             if implicit
-                child0, child1, order2 = implicitsplit!(work04, work09, work10, work11,
-                    work12, work13, work14, work15, work16, gtag, gmark, gbuf, tag, stamp,
-                    vclass, mask, clsptr, clstgt, lblptr, lbltgt, nelm, elmptr, pinvtx,
-                    pinlvl, pinnext, pinhead, vertexset, cls, part, nc, level, graph)
+                nap, nbp, stop1, stop0 = implicitsegmentsplit!(work03, work04, work05,
+                    work06, work09, work11, work12, work13, work14, marker, segment, p,
+                    mrg, nmrg, ufp, gtag, gmark, gbuf, tag, stamp, vclass, mask, clsptr,
+                    clstgt, lblptr, lbltgt, nelm, elmptr, pinvtx, pinlvl, pinnext,
+                    pinhead, set, setcls, part, nc, level, graph)
             else
-                child0, child1, order2 = quotientsplit!(work04, work09, work10, work11,
-                    work12, work13, work14, work15, work16, nelm, elmptr, pinvtx, pinlvl,
-                    pinnext, pinhead, vertexset, cls, part, level, cmpgraph)
+                nap, nbp, stop1, stop0 = segmentsplit!(work03, work04, work05, work06,
+                    work09, work11, work12, work13, work14, marker, segment, p, mrg,
+                    nmrg, ufp, lblptr, lbltgt, nelm, elmptr, pinvtx, pinlvl, pinnext,
+                    pinhead, set, setcls, part, nc, level, cmpgraph)
             end
 
-            label0, clique0 = twinfreelabel(work15, part, zero(PINT), child0[3], n)
-            label1, clique1 = twinfreelabel(work16, part, one(PINT), child1[3], n)
+            # the separator goes to both children
+            slev[l] = l; sside[l] = two(PINT); sepoch[l] = nodeepoch[l]
 
-            htag = one(PINT)
-            hgraph0, htag = hcompresspart(h0, htag, hgraph, work05, work03, label0, clique0)
-            hgraph1, htag = hcompresspart(h1, htag, hgraph, work06, work03, label1, clique1)
+            na[l] = nap; nb[l] = nbp; side[l] = one(PINT)
+            mrgstart[l] = stop1 + one(PINT); mrgstop[l] = nmrg = stop0
 
-            push!(
-                nodes,
-                (nohgraph, vertexset, cls, nc, -level - one(PINT)),
-                (hgraph0, child0..., level + one(PINT)),
-                (hgraph1, child1..., level + one(PINT)),
-            )
+            # start child 1 (B ∪ S)
+            logstart[l] = nlog + one(PINT)
+            nlog = applymerges!(ufp, mlog, nlog, mrg, mrgbase[l] + one(PINT), stop1)
+            sstart = elmptr[l]; sstop = elmptr[l + one(PINT)] - one(PINT)
+            nw = mergesorted!(vertexset, segment, p + nap, p + nap + nbp - one(PINT), pinvtx, sstart, sstop)
 
-            push!(parts, part)
-            push!(orders, order2)
+            level += one(PINT)
+            base[level + one(PINT)] = p + nap
             continue
         end
 
-        if implicit && unprocessed # a leaf needs its graph after all
+        if implicit && descend # a leaf needs its graph after all
             cmpgraph, clique = connect!(tag, stamp, vclass, marker, clsptr, clstgt,
                 lblptr, lbltgt, pointer, target, elmptr, pinvtx, pinlvl, pinnext,
-                pinhead, nc, curlevel, graph)
+                pinhead, nc, level, graph)
         end
 
         k = convert(PINT, length(clique))
@@ -273,35 +357,38 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
 
             if isleaf # leaf
                 order, index = permutation(cmpweights, cmpgraph, alg.alg)
-            else      # branch
-                part = pop!(parts)
+            else      # branch: child 0, then child 1, then the separator
+                p = base[l]
                 ndsorder = Vector{PINT}(undef, n)
                 ndsindex = Vector{PINT}(undef, n)
                 i = zero(PINT)
 
-                # the children's orders list vertices of the
-                # quotient graph: read each class at its first vertex
+                # the residuals list vertices of the quotient
+                # graph: read each class at its first vertex
                 seen = marker
 
                 for c in oneto(n)
                     seen[c] = zero(PINT)
                 end
 
-                for pass in oneto(two(PINT))
-                    for v in pop!(orders)
-                        c = vclass[v]
+                for (qstart, qstop) in ((p + nb[l], p + nb[l] + na[l] - one(PINT)), (p, p + nb[l] - one(PINT)))
+                    for q in qstart:qstop
+                        c = vclass[segment[q]]
 
-                        if !istwo(part[c]) && seen[c] != pass
-                            seen[c] = pass
+                        if iszero(seen[c])
+                            seen[c] = one(PINT)
                             ndsindex[c] = i += one(PINT)
                             ndsorder[i] = c
                         end
                     end
                 end
 
-                for c in pop!(orders)
-                    ndsindex[c] = i += one(PINT)
-                    ndsorder[i] = c
+                # the classes of the separator, in increasing order
+                for c in oneto(n)
+                    if iszero(seen[c])
+                        ndsindex[c] = i += one(PINT)
+                        ndsorder[i] = c
+                    end
                 end
 
                 if isone(S) || istwo(S)
@@ -339,21 +426,23 @@ function dissectsimple(weights::AbstractVector{WINT2}, hgraph::BipartiteGraph{VI
             end
         end
 
-        j = zero(PINT); outorder = FVector{PINT}(undef, ne(cmplabel))
+        # the residual: the ordering, minus the separator of the parent
+        t += 1
 
-        for i in oneto(n)
-            for v in neighbors(cmplabel, work03[i])
-                j += one(PINT); outorder[j] = v
+        if ispositive(level)
+            for q in elmptr[level]:(elmptr[l] - one(PINT))
+                rmark[pinvtx[q]] = t
             end
         end
 
-        push!(orders, outorder)
+        writeresidual!(segment, base[l], work03, n, cmplabel, rmark, t)
+        descend = false
     end
 
     # expand the vertices of the twin-free graph
     j = zero(PINT); result = FVector{PINT}(undef, ne(label))
 
-    @inbounds for v in only(orders), w in neighbors(label, v)
+    @inbounds for i in oneto(ng), w in neighbors(label, segment[i])
         j += one(PINT); result[j] = w
     end
 

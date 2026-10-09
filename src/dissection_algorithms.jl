@@ -431,60 +431,6 @@ function twinfreeclasses!(
     return ncmp, nsub
 end
 
-function hcompresspart(
-        hh::V,
-        tag::V,
-        hgraph::AbstractGraph{HV},
-        hproject::AbstractVector{V},
-        mark::AbstractVector{V},
-        label::AbstractGraph{V},
-        clique::AbstractVector{V},
-    ) where {HV, V}
-    @assert nov(hgraph) <= length(mark)
-    @assert nv(hgraph) == nov(label)
-
-    HE = etype(hgraph); hn = convert(HV, nv(label)); hm = convert(HE, length(clique))
-
-    for v in vertices(label)
-        tag += one(V)
-
-        for w in neighbors(label, v), hw in neighbors(hgraph, w)
-            hx = hproject[hw]
-
-            if ispositive(hx) && mark[hw] < tag
-                mark[hw] = tag
-                hm += one(HE)
-            end
-        end
-    end
-
-    hchild = BipartiteGraph{HV, HE}(hh, hn, hm)
-    pointers(hchild)[begin] = p = one(HE)
-
-    for v in vertices(label)
-        tag += one(V); flag = false
-
-        for w in neighbors(label, v), hw in neighbors(hgraph, w)
-            hx = hproject[hw]
-
-            if ispositive(hx) && mark[hw] < tag
-                mark[hw] = tag
-                targets(hchild)[p] = hx; p += one(HE)
-            end
-
-            flag = flag || iszero(hx)
-        end
-
-        if flag
-            targets(hchild)[p] = one(HV); p += one(HE)
-        end
-
-        pointers(hchild)[v + one(V)] = p
-    end
-
-    return hchild, tag
-end
-
 function qcc(::Type{V}, ::Type{E}, graph, beta::Number, order::Ordering) where {V, E}
     simple = simplegraph(V, E, graph)
     return qcc!(simple, beta, order)
@@ -1044,179 +990,6 @@ function realize!(
     return cmpgraph, cmpweights, label, clique
 end
 
-# Split the subproblem (W, cls) along a vertex separator of its realized graph,
-# with part[c] ∈ {0, 1, 2} for each class c. The separator is pushed onto the
-# stack, and the children are returned as (W₀, cls₀, nc₀), (W₁, cls₁, nc₁),
-# along with the separator classes in increasing order.
-function quotientsplit!(
-        work0::AbstractVector{V},
-        work1::AbstractVector{V},
-        work2::AbstractVector{V},
-        work3::AbstractVector{V},
-        work4::AbstractVector{V},
-        work5::AbstractVector{V},
-        work6::AbstractVector{V},
-        work7::AbstractVector{V},
-        work8::AbstractVector{V},
-        nelm::AbstractScalar{V},
-        elmptr::AbstractVector{V},
-        pinvtx::Vector{V},
-        pinlvl::Vector{V},
-        pinnext::Vector{V},
-        pinhead::AbstractVector{V},
-        vertexset::AbstractVector{V},
-        cls::AbstractVector{V},
-        part::AbstractVector{V},
-        level::V,
-        graph::AbstractGraph{V},
-    ) where {V}
-    count = work0; degree0 = work1; degree1 = work2
-    mark = work3; class = work4; size = work5; xrep = work6
-    project0 = work7; project1 = work8
-
-    label2, checksum0, checksum1 = twinfreekeys!(count, degree0, degree1, part, graph)
-
-    nc0, _ = twinfreeclasses!(mark, class, size, xrep, project0,
-        degree0, checksum0, count, label2, zero(V), part, graph)
-
-    nc1, _ = twinfreeclasses!(mark, class, size, xrep, project1,
-        degree1, checksum1, count, label2, one(V), part, graph)
-
-    child0, child1 = splitchildren!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead,
-        vertexset, cls, part, project0, project1, nc0, nc1, level)
-
-    return child0, child1, label2
-end
-
-# The vertex sets and classes of the children of (W, cls), given the class maps
-# `project0` and `project1` of `twinfreeclasses!`. The separator is pushed onto
-# the stack.
-function splitchildren!(
-        nelm::AbstractScalar{V},
-        elmptr::AbstractVector{V},
-        pinvtx::Vector{V},
-        pinlvl::Vector{V},
-        pinnext::Vector{V},
-        pinhead::AbstractVector{V},
-        vertexset::AbstractVector{V},
-        cls::AbstractVector{V},
-        part::AbstractVector{V},
-        project0::AbstractVector{V},
-        project1::AbstractVector{V},
-        nc0::V,
-        nc1::V,
-        level::V,
-    ) where {V}
-    n0 = zero(V); n1 = zero(V); n2 = zero(V)
-
-    @inbounds for i in eachindex(vertexset)
-        pc = part[cls[i]]
-
-        if !isone(pc)
-            n0 += one(V)
-        end
-
-        if !iszero(pc)
-            n1 += one(V)
-        end
-
-        if istwo(pc)
-            n2 += one(V)
-        end
-    end
-
-    set0 = FVector{V}(undef, n0); cls0 = FVector{V}(undef, n0); i0 = zero(V)
-    set1 = FVector{V}(undef, n1); cls1 = FVector{V}(undef, n1); i1 = zero(V)
-    set2 = FVector{V}(undef, n2); i2 = zero(V)
-
-    @inbounds for i in eachindex(vertexset)
-        v = vertexset[i]; c = cls[i]; pc = part[c]
-
-        if !isone(pc)
-            i0 += one(V); set0[i0] = v; cls0[i0] = project0[c]
-        end
-
-        if !iszero(pc)
-            i1 += one(V); set1[i1] = v; cls1[i1] = project1[c]
-        end
-
-        if istwo(pc)
-            i2 += one(V); set2[i2] = v
-        end
-    end
-
-    pushelement!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead, set2, level)
-    return (set0, cls0, nc0), (set1, cls1, nc1)
-end
-
-# The `label` and `clique` of a child, from the map `project` computed by
-# `twinfreeclasses!`: the vertices of the parent in each class of the child,
-# in increasing order, and the classes of the child that meet the separator,
-# in increasing order.
-function twinfreelabel(project::AbstractVector{V}, part::AbstractVector{V}, side::V, nc::V, n::V) where {V}
-    nnc = nc + one(V)
-    pointer = FVector{V}(undef, nnc)
-    flag = FVector{V}(undef, nc)
-
-    @inbounds for u in oneto(nnc)
-        pointer[u] = zero(V)
-    end
-
-    @inbounds for u in oneto(nc)
-        flag[u] = zero(V)
-    end
-
-    nsub = zero(V)
-
-    @inbounds for v in oneto(n)
-        pv = part[v]
-
-        if pv == side || istwo(pv)
-            u = project[v]; nsub += one(V)
-            pointer[u + one(V)] += one(V)
-
-            if istwo(pv)
-                flag[u] = one(V)
-            end
-        end
-    end
-
-    @inbounds pointer[begin] = one(V)
-    k = zero(V)
-
-    @inbounds for u in oneto(nc)
-        pointer[u + one(V)] += pointer[u]
-        k += flag[u]
-    end
-
-    target = FVector{V}(undef, nsub)
-    clique = FVector{V}(undef, k); k = zero(V)
-
-    @inbounds for u in oneto(nc)
-        if isone(flag[u])
-            k += one(V); clique[k] = u
-        end
-    end
-
-    cursor = flag
-
-    @inbounds for u in oneto(nc)
-        cursor[u] = pointer[u]
-    end
-
-    @inbounds for v in oneto(n)
-        pv = part[v]
-
-        if pv == side || istwo(pv)
-            u = project[v]
-            target[cursor[u]] = v; cursor[u] += one(V)
-        end
-    end
-
-    label = BipartiteGraph(n, nc, nsub, pointer, target)
-    return label, clique
-end
-
 ###############################################
 # Splitting a node without realizing its graph #
 ###############################################
@@ -1646,8 +1419,149 @@ function implicitclasses!(
     return ncmp, nsub
 end
 
-# `quotientsplit!`, after `prepare!`: the graph of (W, cls) is never realized.
-function implicitsplit!(
+###########################################
+# Nested dissection without a node stack #
+###########################################
+#
+# The children of a node P, with vertex sets A ∪ S and B ∪ S, return orderings
+# that overlap in S. Dropping S from each, which is what P does when it
+# stitches them together, leaves the residuals: orderings of A and of B. Along
+# the path from the root to the current node, every ancestor holds at most one
+# such piece (the vertex set of a child not yet started, or the residual of a
+# child that has finished), and these pieces are disjoint from each other and
+# from the vertex set of the current node. So they fit in one array of length
+# n, used as a stack of segments.
+#
+# A node at level L owns the segment that starts at base[L]. When it is split,
+# it writes A and then B there, and its child 1 (B ∪ S) starts at base + |A|.
+# When child 1 returns, its residual (an ordering of B) occupies B's slots;
+# A is read out, the residual of child 1 moves down to base, and child 0
+# (A ∪ S) starts at base + |B|. When child 0 returns, its residual follows,
+# and P writes its own residual (its ordering, minus its parent's separator)
+# at base.
+#
+# The twin classes of the nodes on the path are kept in a union-find with
+# rollback over the vertices: the classes of a child are unions of the
+# classes of its parent, so the classes of a node are the singletons of the
+# twin-free graph, merged by the merges of its ancestors. When a node is
+# split, the merges of child 1 are applied, and those of child 0 are kept
+# until child 1 returns.
+#
+#   - working orderings:
+#     - `segment`: the stack of segments, length n
+#     - `base`, `na`, `nb`, `side`: per level, the start of the node's
+#       segment, the sizes of A and B, and the child being processed
+#   - classes:
+#     - `ufp`: union-find parent of each vertex; a root is its own parent
+#     - `mrg`: pairs (r, t) of roots: the merges of the children not applied
+#     - `mlog`: the roots relinked so far, in order (to roll back)
+#     - `rmark`, `rid`: marker array and class number of each root
+
+# The root of the class of v.
+@inline function ufind(ufp::AbstractVector{V}, v::V) where {V}
+    @inbounds while ufp[v] != v
+        v = ufp[v]
+    end
+
+    return v
+end
+
+# The classes of the sorted vertex set W = vertexset[1:nw]: cls[i] is the
+# class of vertexset[i], numbered by their first vertex. Returns the number
+# of classes.
+function classify!(
+        cls::AbstractVector{V},
+        rmark::AbstractVector{Int},
+        rid::AbstractVector{V},
+        ufp::AbstractVector{V},
+        vertexset::AbstractVector{V},
+        nw::V,
+        t::Int,
+    ) where {V}
+    nc = zero(V)
+
+    @inbounds for i in oneto(nw)
+        r = ufind(ufp, vertexset[i])
+
+        if rmark[r] != t
+            rmark[r] = t; nc += one(V); rid[r] = nc
+        end
+
+        cls[i] = rid[r]
+    end
+
+    return nc
+end
+
+# Apply the merges mrg[mstart:mstop] (pairs), logging the relinked roots.
+# Returns the new length of the log.
+function applymerges!(
+        ufp::AbstractVector{V},
+        mlog::Vector{V},
+        nlog::V,
+        mrg::AbstractVector{V},
+        mstart::V,
+        mstop::V,
+    ) where {V}
+    nnew = nlog + half(mstop - mstart + one(V))
+
+    if nnew > length(mlog)
+        resize!(mlog, max(nnew, twice(length(mlog))))
+    end
+
+    @inbounds for p in mstart:two(V):mstop
+        r = mrg[p]; ufp[r] = mrg[p + one(V)]
+        nlog += one(V); mlog[nlog] = r
+    end
+
+    return nlog
+end
+
+# Undo the merges logged after position `nstart - 1`. Returns the new length
+# of the log.
+function rollback!(ufp::AbstractVector{V}, mlog::AbstractVector{V}, nlog::V, nstart::V) where {V}
+    @inbounds for p in nlog:-one(V):nstart
+        r = mlog[p]; ufp[r] = r
+    end
+
+    return nstart - one(V)
+end
+
+# Merge the sorted lists a[astart:astop] and b[bstart:bstop] into out.
+# Returns the length of the result.
+function mergesorted!(
+        out::AbstractVector{V},
+        a::AbstractVector{V},
+        astart::V,
+        astop::V,
+        b::AbstractVector{V},
+        bstart::V,
+        bstop::V,
+    ) where {V}
+    i = astart; j = bstart; k = zero(V)
+
+    @inbounds while i <= astop && j <= bstop
+        if a[i] < b[j]
+            k += one(V); out[k] = a[i]; i += one(V)
+        else
+            k += one(V); out[k] = b[j]; j += one(V)
+        end
+    end
+
+    @inbounds while i <= astop
+        k += one(V); out[k] = a[i]; i += one(V)
+    end
+
+    @inbounds while j <= bstop
+        k += one(V); out[k] = b[j]; j += one(V)
+    end
+
+    return k
+end
+
+# Split the subproblem (W, cls) along a vertex separator of its realized graph,
+# with part[c] ∈ {0, 1, 2} for each class c: see `segmentchildren!`.
+function segmentsplit!(
         work0::AbstractVector{V},
         work1::AbstractVector{V},
         work2::AbstractVector{V},
@@ -1657,6 +1571,61 @@ function implicitsplit!(
         work6::AbstractVector{V},
         work7::AbstractVector{V},
         work8::AbstractVector{V},
+        marker::AbstractVector{V},
+        segment::AbstractVector{V},
+        base::V,
+        mrg::Vector{V},
+        nmrg::V,
+        ufp::AbstractVector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::Vector{V},
+        pinlvl::Vector{V},
+        pinnext::Vector{V},
+        pinhead::AbstractVector{V},
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        part::AbstractVector{V},
+        nc::V,
+        level::V,
+        graph::AbstractGraph{V},
+    ) where {V}
+    count = work0; degree0 = work1; degree1 = work2
+    mark = work3; class = work4; size = work5; xrep = work6
+    project0 = work7; project1 = work8
+
+    label2, checksum0, checksum1 = twinfreekeys!(count, degree0, degree1, part, graph)
+
+    nc0, _ = twinfreeclasses!(mark, class, size, xrep, project0,
+        degree0, checksum0, count, label2, zero(V), part, graph)
+
+    nc1, _ = twinfreeclasses!(mark, class, size, xrep, project1,
+        degree1, checksum1, count, label2, one(V), part, graph)
+
+    return segmentchildren!(marker, segment, base, mrg, nmrg, ufp, lblptr, lbltgt,
+        nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead, vertexset, cls, part,
+        project0, project1, nc0, nc1, nc, level)
+end
+
+# `segmentsplit!`, after `prepare!`: the graph of (W, cls) is never realized.
+function implicitsegmentsplit!(
+        work0::AbstractVector{V},
+        work1::AbstractVector{V},
+        work2::AbstractVector{V},
+        work3::AbstractVector{V},
+        work4::AbstractVector{V},
+        work5::AbstractVector{V},
+        work6::AbstractVector{V},
+        work7::AbstractVector{V},
+        work8::AbstractVector{V},
+        marker::AbstractVector{V},
+        segment::AbstractVector{V},
+        base::V,
+        mrg::Vector{V},
+        nmrg::V,
+        ufp::AbstractVector{V},
         gtag::AbstractScalar{Int},
         gmark::AbstractVector{Int},
         gbuf::AbstractVector{V},
@@ -1701,8 +1670,337 @@ function implicitsplit!(
         vclass, mask, clsptr, clstgt, lblptr, lbltgt, column, ucount, uchecksum,
         graph, nc)
 
-    child0, child1 = splitchildren!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead,
-        vertexset, cls, part, project0, project1, nc0, nc1, level)
+    return segmentchildren!(marker, segment, base, mrg, nmrg, ufp, lblptr, lbltgt,
+        nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead, vertexset, cls, part,
+        project0, project1, nc0, nc1, nc, level)
+end
 
-    return child0, child1, label2
+# Given the class maps `project0` and `project1` of the children (from
+# `twinfreeclasses!` or `implicitclasses!`):
+#
+#   - A and B are written, sorted, to segment[base:base + na + nb - 1]
+#   - S is pushed onto the separator stack
+#   - the merges that turn the classes of W into those of child 1 (B ∪ S) and
+#     of child 0 (A ∪ S) are appended to `mrg`, in that order
+#
+# Returns na, nb, and the ends of the two lists of merges.
+function segmentchildren!(
+        marker::AbstractVector{V},
+        segment::AbstractVector{V},
+        base::V,
+        mrg::Vector{V},
+        nmrg::V,
+        ufp::AbstractVector{V},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        nelm::AbstractScalar{V},
+        elmptr::AbstractVector{V},
+        pinvtx::Vector{V},
+        pinlvl::Vector{V},
+        pinnext::Vector{V},
+        pinhead::AbstractVector{V},
+        vertexset::AbstractVector{V},
+        cls::AbstractVector{V},
+        part::AbstractVector{V},
+        project0::AbstractVector{V},
+        project1::AbstractVector{V},
+        nc0::V,
+        nc1::V,
+        nc::V,
+        level::V,
+    ) where {V}
+    ###################################
+    # 1. A and B to the segment, and S #
+    ###################################
+
+    na = zero(V); nb = zero(V); ns = zero(V)
+
+    @inbounds for i in eachindex(vertexset)
+        pc = part[cls[i]]
+
+        if iszero(pc)
+            na += one(V)
+        elseif isone(pc)
+            nb += one(V)
+        else
+            ns += one(V)
+        end
+    end
+
+    members = FVector{V}(undef, ns)
+    ia = base - one(V); ib = base + na - one(V); is = zero(V)
+
+    @inbounds for i in eachindex(vertexset)
+        v = vertexset[i]; pc = part[cls[i]]
+
+        if iszero(pc)
+            ia += one(V); segment[ia] = v
+        elseif isone(pc)
+            ib += one(V); segment[ib] = v
+        else
+            is += one(V); members[is] = v
+        end
+    end
+
+    pushelement!(nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead, members, level)
+
+    #####################################
+    # 2. the merges of child 1 and child 0 #
+    #####################################
+
+    # at most one merge per class of W, for each child
+    if nmrg + four(V) * nc > length(mrg)
+        resize!(mrg, max(nmrg + four(V) * nc, twice(length(mrg))))
+    end
+
+    stop1 = zero(V); stop0 = zero(V)
+
+    for (side, project, ncs) in ((one(V), project1, nc1), (zero(V), project0, nc0))
+        # marker[u] = the first class of W in class u of the child
+        @inbounds for u in oneto(ncs)
+            marker[u] = zero(V)
+        end
+
+        @inbounds for c in oneto(nc)
+            pc = part[c]
+
+            if pc == side || istwo(pc)
+                u = project[c]
+
+                if iszero(marker[u])
+                    marker[u] = c
+                else
+                    r = ufind(ufp, lbltgt[lblptr[c]])
+                    t = ufind(ufp, lbltgt[lblptr[marker[u]]])
+                    nmrg += one(V); mrg[nmrg] = r
+                    nmrg += one(V); mrg[nmrg] = t
+                end
+            end
+        end
+
+        if isone(side)
+            stop1 = nmrg
+        else
+            stop0 = nmrg
+        end
+    end
+
+    return na, nb, stop1, stop0
+end
+
+# Write the class ordering order[1:nc], expanded to vertices, to `segment`
+# from `base`, leaving out the vertices v with rmark[v] = t. Returns the
+# number of vertices written.
+function writeresidual!(
+        segment::AbstractVector{V},
+        base::V,
+        order::AbstractVector{V},
+        nc::V,
+        label::AbstractGraph{V},
+        rmark::AbstractVector{Int},
+        t::Int,
+    ) where {V}
+    p = base - one(V)
+
+    @inbounds for i in oneto(nc)
+        for v in neighbors(label, order[i])
+            if rmark[v] != t
+                p += one(V); segment[p] = v
+            end
+        end
+    end
+
+    return p - base + one(V)
+end
+
+################################################
+# A global clique cover for KaHyPar (elements) #
+################################################
+#
+# KaHyPar partitions the cliques of a cover of G'[W]: its hypernodes are the
+# cliques, its nets are the classes of W, and the net of a class is the set of
+# cliques containing one of its vertices. A vertex lies in the separator if
+# its cliques lie on both sides.
+#
+# The cliques are elements: the cliques of a cover of the twin-free graph G
+# (computed once), and the separators on the stack. When a node at level L is
+# split, each of its elements goes to one side, and the separator of the node
+# goes to both. An element is active at a node if it went to the node's side
+# at every split along the path. Each element records the last split:
+#
+#   - `clev`, `cside`, `cepoch`: for the cliques of the cover
+#   - `slev`, `sside`, `sepoch`: for the separators, by position on the stack
+#
+# meaning "active in the child at level `lev` on side `side` (2: both) of the
+# node with epoch `epoch`". The nodes are numbered (their epochs) as they are
+# reached, so an element is active at a node at level L, with parent epoch E
+# and side s, if and only if
+#
+#     lev = L, epoch = E, and side ∈ {s, 2}.
+#
+# Records written below a node concern elements active there. Apart from the
+# separator of its parent, which goes to both children, these are not active
+# at its sibling, so the only record to restore when the second child starts
+# is that of the parent's separator.
+#
+# The hypernodes of a node are numbered as in a recursive construction: the
+# separators on the stack, newest first, then the cliques of the cover, in
+# increasing order. The pins of each net are in increasing order.
+
+@inline function isactive(lev::V, side::V, epoch::Int, level::V, pepoch::Int, pside::V) where {V}
+    return lev == level && epoch == pepoch && (istwo(side) || side == pside)
+end
+
+# The hypergraph of the current node, after `prepare!`: the pins of net c are
+# htgt[hptr[c]:hptr[c + 1] - 1], and hypernode i is the element helm[i]
+# (positive: a clique of the cover; negative: minus a position on the stack).
+# Returns the number of hypernodes and of pins.
+function hrealize!(
+        hptr::AbstractVector{E},
+        htgt::Vector{HV},
+        helm::AbstractVector{V},
+        hid::AbstractVector{HV},
+        sid::AbstractVector{HV},
+        hmark::AbstractVector{Int},
+        htag::AbstractScalar{Int},
+        cmark::AbstractVector{Int},
+        ctag::AbstractScalar{Int},
+        clev::AbstractVector{V},
+        cside::AbstractVector{V},
+        cepoch::AbstractVector{Int},
+        slev::AbstractVector{V},
+        sside::AbstractVector{V},
+        sepoch::AbstractVector{Int},
+        lblptr::AbstractVector{V},
+        lbltgt::AbstractVector{V},
+        nelm::AbstractScalar{V},
+        pinlvl::AbstractVector{V},
+        pinnext::AbstractVector{V},
+        pinhead::AbstractVector{V},
+        cover::AbstractGraph,
+        nc::V,
+        level::V,
+        pepoch::Int,
+        pside::V,
+    ) where {E, HV, V}
+    ######################################
+    # 1. the separators, newest first    #
+    ######################################
+
+    hn = zero(V)
+
+    @inbounds for k in nelm[]:-one(V):one(V)
+        if isactive(slev[k], sside[k], sepoch[k], level, pepoch, pside)
+            hn += one(V); sid[k] = convert(HV, hn); helm[hn] = -k
+        else
+            sid[k] = zero(HV)
+        end
+    end
+
+    ns = hn
+
+    ##########################################
+    # 2. the cliques of the cover, in order  #
+    ##########################################
+
+    t = ctag[] += 1
+
+    @inbounds for c in oneto(nc), q in lblptr[c]:(lblptr[c + one(V)] - one(V))
+        for e in neighbors(cover, lbltgt[q])
+            if cmark[e] != t
+                cmark[e] = t
+
+                if isactive(clev[e], cside[e], cepoch[e], level, pepoch, pside)
+                    hn += one(V); helm[hn] = convert(V, e)
+                else
+                    hid[e] = zero(HV)
+                end
+            end
+        end
+    end
+
+    sort!(view(helm, (ns + one(V)):hn))
+
+    @inbounds for i in (ns + one(V)):hn
+        hid[helm[i]] = convert(HV, i)
+    end
+
+    #######################################
+    # 3. the nets: the pins of each class #
+    #######################################
+
+    @inbounds hptr[begin] = p = one(E)
+
+    @inbounds for c in oneto(nc)
+        t = htag[] += 1; pstart = p
+
+        for q in lblptr[c]:(lblptr[c + one(V)] - one(V))
+            v = lbltgt[q]
+
+            for e in neighbors(cover, v)
+                i = hid[e]
+
+                if ispositive(i) && hmark[i] != t
+                    hmark[i] = t
+
+                    if p > length(htgt)
+                        resize!(htgt, twice(length(htgt)))
+                    end
+
+                    htgt[p] = i; p += one(E)
+                end
+            end
+
+            r = pinhead[v]
+
+            while ispositive(r)
+                i = sid[pinlvl[r] + one(V)]
+
+                if ispositive(i) && hmark[i] != t
+                    hmark[i] = t
+
+                    if p > length(htgt)
+                        resize!(htgt, twice(length(htgt)))
+                    end
+
+                    htgt[p] = i; p += one(E)
+                end
+
+                r = pinnext[r]
+            end
+        end
+
+        sort!(view(htgt, pstart:(p - one(E))))
+        hptr[c + one(V)] = p
+    end
+
+    return hn, p - one(E)
+end
+
+# After KaHyPar has put hypernode i on side hpart[i], record the split of the
+# node at `level` with epoch `epoch`.
+function hrecord!(
+        clev::AbstractVector{V},
+        cside::AbstractVector{V},
+        cepoch::AbstractVector{Int},
+        slev::AbstractVector{V},
+        sside::AbstractVector{V},
+        sepoch::AbstractVector{Int},
+        helm::AbstractVector{V},
+        hpart::AbstractVector,
+        hn::V,
+        level::V,
+        epoch::Int,
+    ) where {V}
+    @inbounds for i in oneto(hn)
+        e = helm[i]; s = convert(V, hpart[i])
+
+        if ispositive(e)
+            clev[e] = level + one(V); cside[e] = s; cepoch[e] = epoch
+        else
+            slev[-e] = level + one(V); sside[-e] = s; sepoch[-e] = epoch
+        end
+    end
+
+    return
 end
