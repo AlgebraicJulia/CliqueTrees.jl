@@ -104,10 +104,15 @@ struct MinorWork{PSet <: AbstractPackedSet}
     nodes::Vector{Tuple{PSet, PSet, Int, Int}}   # (D, N(D), label, minweight(D))
     layers::Vector{PSet}
     count::Vector{Int}
+    rem::Vector{PSet}       # rem[v]: the x with {v, x} a remaining missing edge
+    val::Vector{Int}        # (phase 3) cover counts of the edges without a node
+    order::Vector{Int}      # (phase 3) the edges, sorted by `val`
+    bucket::Vector{Int}
 end
 
 function MinorWork{PSet}() where {PSet <: AbstractPackedSet}
-    return MinorWork{PSet}(Tuple{Int, Int, Bool}[], Tuple{PSet, PSet, Int, Int}[], PSet[], Int[])
+    return MinorWork{PSet}(Tuple{Int, Int, Bool}[], Tuple{PSet, PSet, Int, Int}[], PSet[], Int[],
+        Vector{PSet}(undef, domain(PSet)), Int[], Int[], Int[])
 end
 
 function is_safe_separator_heuristic(weights::AbstractVector{Int}, graph::Graph{PSet}, S::PSet, work::MinorWork{PSet}=MinorWork{PSet}()) where {PSet}
@@ -278,7 +283,20 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
     end
 
     # -- PHASE 3 ------------------------------------------------------
-    count = work.count
+    #
+    # Assign labels greedily. Each round assigns the label v ∈ S to the
+    # unassigned node (D, N) that maximizes (n, c), where c is the number of
+    # missing edges that the assignment covers ({v, x} with x ∈ N), and n is
+    # the least number of unassigned nodes that potentially cover a remaining
+    # edge that it does not cover (typemax if there is none), not counting
+    # (D, N) itself. Ties go to the smallest v, then to the first node.
+    #
+    # For a node, n depends on v only through the edges the assignment covers,
+    # all of which are incident to v. So the edges are sorted once per node by
+    # their cover count without the node, and n is the count of the first edge
+    # in that order that the assignment does not cover. This takes O(c + 1)
+    # steps per label, rather than one step per edge.
+    count = work.count; rem = work.rem; val = work.val; order = work.order; bucket = work.bucket
 
     while !isempty(edges)
         vmax = 0
@@ -288,24 +306,73 @@ function find_clique_minor(work::MinorWork{PSet}, weights::AbstractVector{Int}, 
 
         # No remaining edge is covered by an assigned node (covered edges are
         # removed below), so assigning one more node changes the cover counts
-        # of `min_cover` only through that node. Count once, then update.
+        # only through that node. Count once, then update.
         potential_cover_counts!(count, edges, nodes, weights)
 
-        for v in S
-            for (i, (D, N, w, mw)) in enumerate(nodes)
-                # Can only assign if: unassigned, adjacent, and weight constraint satisfied
-                if iszero(w) && v ∈ N && mw >= weights[v]
-                    steps += 1
-                    steps < MAX_STEPS || return false
+        @inbounds for v in S
+            rem[v] = PSet()
+        end
 
-                    n, c = min_cover_after_assigning(count, edges, N, mw, v, weights)
+        @inbounds for (w₁, w₂, _) in edges
+            rem[w₁] = rem[w₁] ∪ w₂
+            rem[w₂] = rem[w₂] ∪ w₁
+        end
 
-                    if (n, c) > (nmax, cmax)
-                        vmax = v
-                        imax = i
-                        nmax = n
-                        cmax = c
+        m = length(edges); resize!(val, m); resize!(order, m)
+
+        @inbounds for (i, (_, N, w, mw)) in enumerate(nodes)
+            iszero(w) || continue
+            L = S ∩ N
+            isempty(L) && continue
+
+            # the cover counts of the edges without this node, and the
+            # edges sorted by them (counting sort; the counts are at most
+            # the number of nodes)
+            top = 0
+
+            for (e, (w₁, w₂, _)) in enumerate(edges)
+                x = val[e] = count[e] - ((w₁ ∈ N) & (w₂ ∈ N) & (mw >= min(weights[w₁], weights[w₂])))
+                top = max(top, x)
+            end
+
+            resize!(bucket, top + 2); fill!(bucket, 0); bucket[1] = 1
+
+            for e in 1:m
+                bucket[val[e] + 2] += 1
+            end
+
+            for x in 2:top + 2
+                bucket[x] += bucket[x - 1]
+            end
+
+            for e in 1:m
+                x = val[e] + 1; order[bucket[x]] = e; bucket[x] += 1
+            end
+
+            for v in L
+                mw >= weights[v] || continue
+                steps += 1
+                steps < MAX_STEPS || return false
+
+                c = length(rem[v] ∩ N)
+                n = typemax(Int)
+
+                for k in 1:m
+                    e = order[k]; w₁, w₂, _ = edges[e]
+
+                    if !(((v == w₁) & (w₂ ∈ N)) | ((v == w₂) & (w₁ ∈ N)))
+                        n = val[e]
+                        break
                     end
+                end
+
+                # (the nodes are visited in order, so on a tie, (v, i)
+                # comes first iff v < vmax)
+                if (n, c) > (nmax, cmax) || ((n, c) == (nmax, cmax) && v < vmax)
+                    vmax = v
+                    imax = i
+                    nmax = n
+                    cmax = c
                 end
             end
         end
@@ -504,29 +571,4 @@ function potential_cover_counts!(count::Vector{Int}, edges::Vector{Tuple{Int,Int
     end
 
     return count
-end
-
-# The value of `min_cover` (the number of unassigned nodes potentially covering
-# the least covered edge, and the number of finally covered edges) after the
-# unassigned node (D, N) with minweight(D) = mw is assigned the label v.
-#
-# This relies on no edge being finally covered before the assignment. The
-# assigned node finally covers {v, x} for x ∈ N, and stops counting as a
-# potential cover of the other edges.
-function min_cover_after_assigning(count::Vector{Int}, edges::Vector{Tuple{Int,Int,Bool}}, N::PSet, mw::Int, v::Int, weights::AbstractVector{Int}) where {PSet}
-    nmin = typemax(Int); c = 0
-
-    @inbounds for (e, (w₁, w₂, _)) in enumerate(edges)
-        b₁ = w₁ ∈ N
-        b₂ = w₂ ∈ N
-
-        if ((v == w₁) & b₂) | ((v == w₂) & b₁)
-            c += 1
-        else
-            n = count[e] - (b₁ & b₂ & (mw >= min(weights[w₁], weights[w₂])))
-            nmin = min(nmin, n)
-        end
-    end
-
-    return (nmin, c)
 end
