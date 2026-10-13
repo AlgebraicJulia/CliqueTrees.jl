@@ -38,34 +38,12 @@ end
 # Heggernes and Peyton
 # MCS-ETree (blocked implementation)
 #
-# The algorithm repeatedly takes an unnumbered elimination subtree T,
-# finds a vertex `root` of T that maximizes
+# The time complexity is
 #
-#     count[x] = |adj(T[x]) ∩ L|,
+#     O(mn α(m, n))
 #
-# where L is the set of numbered vertices, numbers it (together with a
-# block of its ancestors) and rotates T so that `root` becomes its root.
-#
-# Departures from the paper:
-#
-#   - The counts are maintained incrementally. Numbering a block X changes
-#     the count of an unnumbered vertex x by |adj(T[x]) ∩ X| as long as
-#     T[x] is unchanged, so we walk up the tree from the neighbors of X.
-#     Only the former ancestors of `root` (which are marked `stale`) need
-#     to be recounted, and that is done on a contracted tree in which every
-#     unchanged subtree is a single leaf.
-#
-#   - Counts are monotone up the tree, so `root` is found by descending
-#     from the root of T into the leftmost child of maximum count.
-#
-#   - If the block contains every ancestor of `root` (the common case),
-#     no rotation is needed: the block is moved to the end of T.
-#
-#   - Otherwise, the rotation is performed on "items": the former
-#     ancestors of `root` that are not in the block, and the unchanged
-#     subtrees that hang from them. Unchanged subtrees move as units.
-#
-# Every position i in T satisfies T[i] = fdesc[i]:i (postorder).
+# m = |E|, n = |V|, and α is the extremely-slow-growing
+# inverse of the Ackermann function.
 function mcs_etree_impl!(
         work1::AbstractVector{V},
         work2::AbstractVector{V},
@@ -162,7 +140,7 @@ function mcs_etree_impl!(
 
         # recount the vertices of T whose subtrees have changed
         if ispositive(stale[order[stop]])
-            mcs_etree_recount!(work1, work2, work3, work4, work5, marks,
+            mcs_etree_recount!(work1, work2, work3, work4, work5, work6, work7, marks,
                 begptr, endptr, target, order, index, graph, tree, fdesc,
                 count, stale, strt, stop)
         end
@@ -171,7 +149,7 @@ function mcs_etree_impl!(
         root = mcs_etree_findroot(count, fdesc, stop)
 
         # find a block of vertices to number consecutively
-        blck, nanc = mcs_etree_findblock!(marks, block, begptr, endptr, target,
+        blck, nanc = mcs_etree_findblock!(marks, block, work1, begptr, endptr, target,
             order, index, graph, fdesc, tree, strt, stop, root)
 
         if blck + nanc == stop
@@ -288,6 +266,8 @@ end
 function mcs_etree_recount!(
         wt::AbstractVector{V},
         ufp::AbstractVector{V},
+        rank::AbstractVector{V},
+        rep::AbstractVector{V},
         items::AbstractVector{V},
         touched::AbstractVector{V},
         prev_p::AbstractVector{V},
@@ -307,6 +287,8 @@ function mcs_etree_recount!(
     ) where {V, E}
     @assert nv(graph) <= length(wt)
     @assert nv(graph) <= length(ufp)
+    @assert nv(graph) <= length(rank)
+    @assert nv(graph) <= length(rep)
     @assert nv(graph) <= length(items)
     @assert nv(graph) <= length(touched)
     @assert nv(graph) <= length(prev_p)
@@ -329,7 +311,7 @@ function mcs_etree_recount!(
 
     # enumerate the items in decreasing order
     @inbounds while x >= strt
-        nitm += one(V); wt[x] = ufp[x] = zero(V)
+        nitm += one(V); wt[x] = rank[x] = zero(V); ufp[x] = rep[x] = x
 
         if ispositive(stale[order[x]])
             items[nitm] = x; x -= one(V)
@@ -351,7 +333,7 @@ function mcs_etree_recount!(
                 v = order[i]
 
                 for p in begptr[v]:endptr[v]
-                    _, ntch = mcs_etree_visit!(wt, ufp, prev_p, prev_nbr,
+                    _, ntch = mcs_etree_visit!(wt, ufp, rep, prev_p, prev_nbr,
                         touched, fdesc, ntch, t, target[p])
                 end
             end
@@ -364,7 +346,7 @@ function mcs_etree_recount!(
                 u = index[w]
 
                 if u > stop
-                    isleaf, ntch = mcs_etree_visit!(wt, ufp, prev_p, prev_nbr,
+                    isleaf, ntch = mcs_etree_visit!(wt, ufp, rep, prev_p, prev_nbr,
                         touched, fdesc, ntch, t, u)
 
                     if isleaf
@@ -375,7 +357,7 @@ function mcs_etree_recount!(
         end
 
         if t < stop
-            ufp[t] = parent[t]
+            mcs_etree_link!(ufp, rank, rep, t, parent[t])
         end
     end
 
@@ -405,6 +387,7 @@ end
 @inline function mcs_etree_visit!(
         wt::AbstractVector{V},
         ufp::AbstractVector{V},
+        rep::AbstractVector{V},
         prev_p::AbstractVector{V},
         prev_nbr::AbstractVector{V},
         touched::AbstractVector{V},
@@ -422,7 +405,7 @@ end
         if iszero(pnbr)
             ntch += one(V); touched[ntch] = u
         else
-            q = mcs_etree_ufind!(ufp, prev_p[u])
+            q = rep[mcs_etree_root!(ufp, prev_p[u])]
             wt[q] -= one(V)
         end
 
@@ -433,19 +416,47 @@ end
     return isleaf, ntch
 end
 
-# union-find with path compression; the roots `r` satisfy `ufp[r] == 0`
-@inline function mcs_etree_ufind!(ufp::AbstractVector{V}, u::V) where {V}
-    r = u
+# Disjoint sets with union by rank and path compression. The roots `r`
+# satisfy `prnt[r] == r`, and the set rooted at `r` is named `rep[r]`.
+@inline function mcs_etree_root!(prnt::AbstractVector{V}, x::V) where {V}
+    r = x
 
-    @inbounds while ispositive(ufp[r])
-        r = ufp[r]
+    @inbounds while prnt[r] != r
+        r = prnt[r]
     end
 
-    @inbounds while u != r
-        w = ufp[u]; ufp[u] = r; u = w
+    @inbounds while prnt[x] != r
+        y = prnt[x]; prnt[x] = r; x = y
     end
 
     return r
+end
+
+# merge the sets containing `x` and `y`, and name the result
+# after the set containing `y`
+@inline function mcs_etree_link!(
+        prnt::AbstractVector{V},
+        rank::AbstractVector{V},
+        rep::AbstractVector{V},
+        x::V,
+        y::V,
+    ) where {V}
+    rx = mcs_etree_root!(prnt, x)
+    ry = mcs_etree_root!(prnt, y)
+
+    @inbounds if rx != ry
+        name = rep[ry]
+
+        if rank[rx] > rank[ry]
+            rx, ry = ry, rx
+        elseif rank[rx] == rank[ry]
+            rank[ry] += one(V)
+        end
+
+        prnt[rx] = ry; rep[ry] = name
+    end
+
+    return
 end
 
 # Find a block of vertices that can be numbered together with `node`
@@ -459,6 +470,7 @@ end
 function mcs_etree_findblock!(
         marks::AbstractVector{V},
         block::AbstractVector{V},
+        owner::AbstractVector{V},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
         target::AbstractVector{V},
@@ -473,6 +485,7 @@ function mcs_etree_findblock!(
     ) where {V, E}
     @assert nv(graph) <= length(marks)
     @assert nv(graph) <= length(block)
+    @assert nv(graph) <= length(owner)
     @assert nv(graph) < length(begptr)
     @assert nv(graph) < length(endptr)
     @assert de(graph) <= length(target)
@@ -505,6 +518,15 @@ function mcs_etree_findblock!(
             k -= one(V); block[k] = c; c = fdesc[c] - one(V)
         end
 
+        # `owner[j]` is the child of `node` whose subtree contains `j`
+        @inbounds for k in strt:strt + nchd - one(V)
+            c = block[k]
+
+            for j in fdesc[c]:c
+                owner[j] = c
+            end
+        end
+
         @inbounds for p in begptr[order[node]]:endptr[order[node]]
             i = target[p]
             marks[i] = node; ndeg += one(V)
@@ -524,21 +546,7 @@ function mcs_etree_findblock!(
                         marks[j] = i; ideg += one(V)
                     end
                 elseif lo <= j < node
-                    # binary search for the child `k` whose subtree contains `j`
-                    l = strt; h = strt + nchd - one(V)
-
-                    while l < h
-                        m = l + (h - l) ÷ convert(V, 2)
-
-                        if block[m] < j
-                            l = m + one(V)
-                        else
-                            h = m
-                        end
-                    end
-
-                    k = block[l]
-                    @assert fdesc[k] <= j <= k
+                    k = owner[j]
 
                     if marks[k] < i
                         marks[k] = i; ichd += one(V)
@@ -772,19 +780,21 @@ function mcs_etree_rotate!(
 
     # the work arrays are reused in phases:
     #
-    #            phases 1-5   phase 6-7    phase 8
-    #     s1     lzanc        child        bo (order)
-    #     s2     level        brother      bp (parent)
-    #     s4     ianc         stack        bf (fdesc)
-    #     s5     head/iprnt   iprnt        iprnt
-    #     s6     next         newpos       newpos
-    #     s7     rord         sublo        sublo
+    #            phases 1-5     phases 6-7   phase 8
+    #     s1     lzanc          child        bo (order)
+    #     s2     level          brother      bp (parent)
+    #     s4     ianc           stack        bf (fdesc)
+    #     s5     head/iprnt     iprnt        iprnt
+    #     s6     next/irep      newpos       newpos
+    #     s7     rord           sublo        sublo
+    #     bc     irank          -            bc (count)
     #
     # A position x is "stamped" if stamp[x] == mark. A stamped position
     # with lzanc[x] < 0 is the chain vertex c(-lzanc[x]). A stamped
     # position with lzanc[x] > 0 lies in the unchanged subtree whose
     # root is at position lzanc[x].
     lzanc = s1; level = s2; ianc = s4; iprnt = s5; head = s5; next = s6; rord = s7
+    irep = s6; irank = bc
 
     # 1. stamp the chain; level[c] = 0 for the block and -1 for R
     i = root; h = one(V)
@@ -814,7 +824,7 @@ function mcs_etree_rotate!(
         else
             # the root of an unchanged subtree
             nitm += one(V); items[nitm] = x
-            stamp[x] = mark; lzanc[x] = x; ianc[x] = x
+            stamp[x] = mark; lzanc[x] = x
             level[x] = -lzanc[parent[x]]
             x = fdesc[x] - one(V)
         end
@@ -877,12 +887,12 @@ function mcs_etree_rotate!(
         if isnegative(t)
             iprnt[-t] = -one(V)
         else
-            iprnt[t] = zero(V)
+            iprnt[t] = zero(V); ianc[t] = irep[t] = t; irank[t] = zero(V)
         end
     end
 
     @inbounds for j in oneto(nrem)
-        r = rord[j]; iprnt[r] = zero(V); ianc[r] = r
+        r = rord[j]; iprnt[r] = zero(V); ianc[r] = irep[r] = r; irank[r] = zero(V)
 
         for w in neighbors(graph, order[r])
             y = index[w]
@@ -896,10 +906,10 @@ function mcs_etree_rotate!(
                     s = mcs_etree_findtop!(stamp, lzanc, parent, mark, y)
                 end
 
-                s = mcs_etree_ianc!(ianc, s)
+                t = irep[mcs_etree_root!(ianc, s)]
 
-                if s != r
-                    ianc[s] = r; iprnt[s] = r
+                if t != r
+                    mcs_etree_link!(ianc, irank, irep, s, r); iprnt[t] = r
                 end
             end
         end
@@ -1044,19 +1054,4 @@ end
     end
 
     return top
-end
-
-# union-find with path compression; the roots `r` satisfy `ianc[r] == r`
-@inline function mcs_etree_ianc!(ianc::AbstractVector{V}, x::V) where {V}
-    r = x
-
-    @inbounds while ianc[r] != r
-        r = ianc[r]
-    end
-
-    @inbounds while ianc[x] != r
-        z = ianc[x]; ianc[x] = r; x = z
-    end
-
-    return r
 end

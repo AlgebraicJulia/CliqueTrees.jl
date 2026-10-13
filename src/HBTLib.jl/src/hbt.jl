@@ -833,6 +833,9 @@ function hbt_state(ctx::HBTContext, depth::Int)
     return st
 end
 
+# the reduction rules applied to local graphs before PIDBT (see `hbt_exact`)
+const HBT_RULES = 5
+
 # Triangulate a (connected) local graph with PIDBT, giving up after the time
 # limit of the current step (see `hbt_cutoff!`). Returns a minimal ordering,
 # or `nothing` if the time runs out.
@@ -844,26 +847,51 @@ end
 # is a known lower bound on the bag weight. If the caller has no use for bags
 # heavier than `cap`, then no width above `cap` is tried, and the result is
 # `missing` if the graph has no triangulation whose bags weigh at most `cap`.
+#
+# PIDBT runs on a kernel of the local graph, computed by `compressreduce`:
+# true twins (vertices with the same closed neighborhood) are merged into
+# weighted vertices, and the safe reduction rules (simplicial, almost
+# simplicial) eliminate vertices. The rules get the lower bound only, not
+# the target, so they preserve the treewidth: they return a bound lb' ≤ tw
+# such that an elimination of the kernel with bags of weight at most t
+# extends to one of the local graph with bags of weight at most max(lb', t).
+# So the contract above still holds. Local graphs are full of twins and
+# almost simplicial vertices (every component B of G - U turns N(B) into a
+# clique). On the PACE 2017 instances, PIDBT takes 3 to 30 times less time
+# on the kernels.
 function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int; lb::Int=0, cap::Int=typemax(Int))
-    start = max(target, lb, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM))
+    lb = max(lb, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM))
+    start = max(target, lb)
     start > cap && return missing
     deadline = min(ctx.deadline, time() + ctx.cutoff)
-    order = nothing
+    kerweights, kergraph, inject, project, kerlb = compressreduce(HBT_RULES, weights, H, lb)
+    kerstart = max(start, kerlb)
+    kerorder = nothing
 
     try
-        order = pidbt(weights, H, start; deadline, max_k = cap)
+        kerorder = pidbt(kerweights, kergraph, kerstart; deadline, max_k = cap)
     catch err
         err isa ArgumentError || rethrow()    # disconnected
     end
 
-    ismissing(order) && return missing
+    ismissing(kerorder) && return missing
 
-    if isnothing(order)
+    if isnothing(kerorder)
         ctx.ntimeout += 1
         return nothing
     end
 
     ctx.nexact += 1
+    order = Vector{Int}(undef, nv(H)); i = 0
+
+    for v in inject
+        i += 1; order[i] = v
+    end
+
+    for x in kerorder, v in neighbors(project, x)
+        i += 1; order[i] = v
+    end
+
     order, _ = permutation(weights, H, MinimalChordal(order))
     return order
 end

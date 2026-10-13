@@ -24,7 +24,9 @@ function _pidbt(::Type{PSet}, weights::AbstractVector{Int}, g::Graphs.AbstractGr
     # order. Reverse Cuthill-McKee was as fast on average, but it puts
     # high-degree vertices first on dense graphs, and was over 20x slower on
     # one instance.
-    perm = cuthill_mckee(g, n)
+    #
+    # On weighted graphs, the degrees are weighted (see `cuthill_mckee`).
+    perm = cuthill_mckee(g, n, weights)
     old_to_new = invperm(perm)
 
     # Build graph and permuted weights
@@ -76,9 +78,21 @@ end
 # Return a permutation of 1:n (perm[new] = old). Each connected component is
 # searched breadth-first from a pseudo-peripheral vertex, visiting neighbors in
 # order of increasing degree.
-function cuthill_mckee(g::Graphs.AbstractGraph, n::Int)
+#
+# The degree of a vertex v of weight w(v) is
+#
+#     w(N(v)) + w(v) - 1,
+#
+# its degree in the graph where every vertex is replaced by a clique of
+# w(v) true twins. Breadth-first search treats twins alike, so this order
+# is the one that Cuthill-McKee finds for that graph, with the twins
+# merged again. It matters: graphs with true twins are often solved by
+# merging the twins into weighted vertices, and with unweighted degrees,
+# PIDBT took twice as long on them as on the original graphs. With unit
+# weights, nothing changes.
+function cuthill_mckee(g::Graphs.AbstractGraph, n::Int, weights::AbstractVector{Int}=ones(Int, n))
     adj = Vector{Int}[sort!(Int[u for u in Graphs.neighbors(g, v) if u != v]) for v in 1:n]
-    deg = length.(adj)
+    deg = Int[weights[v] - 1 + sum(u -> weights[u], adj[v]; init = 0) for v in 1:n]
 
     for list in adj
         sort!(list; by = u -> (deg[u], u))

@@ -896,28 +896,38 @@ function copy_scatter!(A::ChordalTriangular{DIAG, :L, T, I}, B::SparseMatrixCSC)
 end
 
 function copy_scatter!(A::ChordalTriangular{DIAG, :U, T, I}, B::SparseMatrixCSC) where {DIAG, T, I}
+    res = A.S.res
+    sep = A.S.sep
+    cur = FVector{I}(undef, nfr(A))
+
     @inbounds for i in fronts(A)
-        D, res = diagblock(A, i)
-        L, sep = offdblock(A, i)
+        cur[i] = pointers(sep)[i]
+    end
 
-        rlo = first(res)
-        rhi = last(res)
+    @inbounds for j in axes(B, 2)
+        for p in nzrange(B, j)
+            row = rowvals(B)[p]
+            i = A.S.idx[row]
 
-        for j in eachindex(res)
-            for p in nzrange(B, res[j])
-                row = rowvals(B)[p]
-                row < rlo && continue
-                row > rhi && break
-                parent(D)[row - rlo + one(I), j] = nonzeros(B)[p]
-            end
-        end
+            rlo = pointers(res)[i]
+            rhi = pointers(res)[i + one(I)] - one(I)
+            nn = rhi - rlo + one(I)
 
-        for j in eachindex(sep)
-            for p in nzrange(B, sep[j])
-                row = rowvals(B)[p]
-                row < rlo && continue
-                row > rhi && break
-                L[row - rlo + one(I), j] = nonzeros(B)[p]
+            if j <= rhi
+                j < rlo && break
+                A.Dval[A.S.Dptr[i] + (row - rlo) + (j - rlo) * nn] = nonzeros(B)[p]
+            else
+                k = cur[i]
+
+                while k < pointers(sep)[i + one(I)] && targets(sep)[k] < j
+                    k += one(I)
+                end
+
+                cur[i] = k
+
+                if k < pointers(sep)[i + one(I)] && targets(sep)[k] == j
+                    A.Lval[A.S.Lptr[i] + (row - rlo) + (k - pointers(sep)[i]) * nn] = nonzeros(B)[p]
+                end
             end
         end
     end
