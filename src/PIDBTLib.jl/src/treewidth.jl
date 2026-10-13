@@ -54,6 +54,8 @@ Compute the exact treewidth of `graph` and return `(treewidth, ptd)` where
 
 `min_k` is a lower bound on the treewidth. The DP search begins at this value,
 so supplying a tight lower bound (e.g. from MMD+) avoids wasted iterations.
+The search stops at the first tree decomposition of width at most `target`
+(which then need not be optimal).
 
 The graph must be connected. (The search builds only PTDs that are not
 incoming. If the smallest vertex were isolated, the only PTD containing it
@@ -61,7 +63,7 @@ would be incoming, so no tree decomposition of the whole graph would ever be
 found.) Safe separators found during the search split a connected graph into
 connected pieces, so this needs to be checked only here.
 """
-function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0, max_k::Int=typemax(Int), deadline::Float64=Inf) where {PSet}
+function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=0, target::Int=-1, max_k::Int=typemax(Int), deadline::Float64=Inf) where {PSet}
     if count(_ -> true, components(graph, PSet())) > 1
         throw(ArgumentError("PIDBT requires a connected graph. Wrap it with `ConnectedComponents`."))
     end
@@ -80,7 +82,7 @@ function treewidth(weights::AbstractVector{Int}, graph::Graph{PSet}; min_k::Int=
         return (weights[v] - 1, (pool, root))
     end
 
-    return treewidth_computation(weights, graph, min_k, deadline, max_k)
+    return treewidth_computation(weights, graph, min_k, deadline, max_k, target)
 end
 
 # ---------------------------------------------------------------------------
@@ -117,7 +119,8 @@ end
 
 # Returns `nothing` if the deadline passes, and `missing` if the treewidth is
 # greater than `max_k`. In the latter case, no width above `max_k` is tried.
-function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int, deadline::Float64=Inf, max_k::Int=typemax(Int)) where {PSet}
+# A tree decomposition of width at most `target` is accepted as it is.
+function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet}, lower_bound::Int, deadline::Float64=Inf, max_k::Int=typemax(Int), target::Int=-1) where {PSet}
     outlets_already_checked = Set{PSet}()
 
     min_k = lower_bound
@@ -151,10 +154,15 @@ function treewidth_computation(weights::AbstractVector{Int}, graph::Graph{PSet},
         empty!(outlets_already_checked)
 
         # Find the least width k = sums[ihi] ≥ min_k at which graph_i has a
-        # tree decomposition. Invariants: graph_i has no decomposition of width
-        # sums[ilo] (or sums[ilo] < min_k), and has one of width sums[ihi]:
-        # `root` (or a single bag, if root == 0).
-        ilo = searchsortedfirst(sums, min_k) - 1
+        # tree decomposition, or any k ≤ target. Invariants: graph_i has no
+        # decomposition of width sums[ilo] (or sums[ilo] < min_k, or
+        # sums[ilo + 1] ≤ target), and has one of width sums[ihi]: `root` (or
+        # a single bag, if root == 0).
+        #
+        # Not every width is a sum of weights. A lower bound is rounded up to
+        # the next sum, and the target down to the previous one: on a graph
+        # whose bags can weigh 38 or 40 but not 39, a target of 39 means 38.
+        ilo = max(searchsortedfirst(sums, min_k), searchsortedlast(sums, min(target, max_k))) - 1
         ihi = searchsortedfirst(sums, wt(weights, vertices(graph_i)) - 1)
         root = 0
         divided = false

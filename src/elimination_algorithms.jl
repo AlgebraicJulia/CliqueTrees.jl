@@ -545,15 +545,20 @@ struct BT <: EliminationAlgorithm end
 """
     PIDBT{A} <: EliminationAlgorithm
 
-    PIDBT(alg::WidthOrAlgorithm)
+    PIDBT(lb::WidthOrAlgorithm; target=0)
 
-    PIDBT()
+    PIDBT(; lb=MMW(), target=0)
 
 The positive-instance drivien Bouchitte-Toudina algorithm.
 
 ### Parameters
 
-  - `alg`: lower bound algorithm or lower bound
+  - `lb`: lower bound algorithm or lower bound
+  - `target`: the algorithm stops at the first tree decomposition of width at most `target`; if
+    there is none, the tree decomposition is optimal
+
+Widths are those of [`treewidth`](@ref) with vertex weights: the largest weight of a bag. With
+unit weights, that is the treewidth plus one.
 
 ### References
 
@@ -561,11 +566,16 @@ The positive-instance drivien Bouchitte-Toudina algorithm.
   - Althaus, Ernst, Daniela Schnurbusch, Julian Wüschner, and Sarah Ziegler. "On Tamaki's Algorithm to Compute Treewidths." *19th International Symposium on Experimental Algorithms (SEA 2021)*. 2021.
 """
 struct PIDBT{A <: WidthOrAlgorithm} <: EliminationAlgorithm
-    alg::A
+    lb::A
+    target::Int
 end
 
-function PIDBT()
-    return PIDBT(DEFAULT_LOWER_BOUND_ALGORITHM)
+function PIDBT(lb::WidthOrAlgorithm; target::Integer = 0)
+    return PIDBT(lb, convert(Int, target))
+end
+
+function PIDBT(; lb::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM, target::Integer = 0)
+    return PIDBT(lb, convert(Int, target))
 end
 
 """
@@ -1029,7 +1039,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::PIDBT)
 end
 
 function permutation(weights::AbstractVector{Int}, graph::AbstractGraph, alg::PIDBT)
-    order = pidbt(weights, graph, lowerbound(weights, graph, alg.alg))
+    order = pidbt(weights, graph, lowerbound(weights, graph, alg.lb); target = alg.target)
     return order, invperm(order)
 end
 
@@ -2507,7 +2517,8 @@ end
 function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: PIDBT}
     indent = get(io, :indent, 0)
     println(io, " "^indent * string(A))
-    show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    println(io, " "^indent * "    target: $(alg.target)")
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     return
 end
 

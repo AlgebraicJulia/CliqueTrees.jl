@@ -1954,6 +1954,31 @@ end
         @test order isa Vector && treewidth(weights, graph; alg = order) == w
         @test ismissing(CliqueTrees.PIDBTLib.pidbt(weights, graph, 0; max_k = w - 1))
         @test ismissing(CliqueTrees.PIDBTLib.pidbt(weights, graph, w; max_k = w - 1))
+
+        # a target at or above the treewidth is met
+        for target in w:w + 3
+            @test treewidth(weights, graph; alg = PIDBT(; target)) <= target
+            @test treewidth(weights, graph; alg = PIDBT(w; target)) <= target
+        end
+    end
+
+    # PIDBT with a target that is not a bag weight: the bags of this graph
+    # can weigh 38 or 40 but not 39, and its treewidth is 37 (found by HBT
+    # in a local graph of PACE 2017 instance he016)
+    weights = [1, 20, 3, 6, 3, 4, 4]
+    graph = Graph(7)
+
+    for (v, list) in enumerate(([3, 4, 5, 6, 7], [3, 4, 5, 6, 7], [1, 2, 4, 6, 7], [1, 2, 3, 5, 7], [1, 2, 4, 6, 7], [1, 2, 3, 5, 7], [1, 2, 3, 4, 5, 6]))
+        for w in list
+            add_edge!(graph, v, w)
+        end
+    end
+
+    @test treewidth(weights, graph; alg = PIDBT()) == 37
+
+    for lb in (0, 37), target in (38, 39)
+        @test treewidth(weights, graph; alg = PIDBT(lb; target)) <= 38
+        @test treewidth(weights, graph; alg = CliqueTrees.PIDBTLib.pidbt(weights, graph, lb; target)) <= 38
     end
 end
 

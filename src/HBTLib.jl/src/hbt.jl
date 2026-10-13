@@ -842,11 +842,12 @@ const HBT_RULES = 5
 #
 # PIDBT tries the widths k = k₀, k₀ + 1, ... in turn, and every width below the
 # treewidth costs an exhaustive search. A triangulation is useful only if its
-# bags weigh at most `target`, so k₀ is chosen to match: the result is optimal
-# if no triangulation meets the target, and meets the target otherwise. `lb`
-# is a known lower bound on the bag weight. If the caller has no use for bags
-# heavier than `cap`, then no width above `cap` is tried, and the result is
-# `missing` if the graph has no triangulation whose bags weigh at most `cap`.
+# bags weigh at most `target`, so PIDBT stops at the first one that does: the
+# result is optimal if no triangulation meets the target, and meets the target
+# otherwise. `lb` is a known lower bound on the bag weight. If the caller has
+# no use for bags heavier than `cap`, then no width above `cap` is tried, and
+# the result is `missing` if the graph has no triangulation whose bags weigh
+# at most `cap`.
 #
 # PIDBT runs on a kernel of the local graph, computed by `compressreduce`:
 # true twins (vertices with the same closed neighborhood) are merged into
@@ -861,15 +862,13 @@ const HBT_RULES = 5
 # on the kernels.
 function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int; lb::Int=0, cap::Int=typemax(Int))
     lb = max(lb, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM))
-    start = max(target, lb)
-    start > cap && return missing
+    lb > cap && return missing
     deadline = min(ctx.deadline, time() + ctx.cutoff)
     kerweights, kergraph, inject, project, kerlb = compressreduce(HBT_RULES, weights, H, lb)
-    kerstart = max(start, kerlb)
     kerorder = nothing
 
     try
-        kerorder = pidbt(kerweights, kergraph, kerstart; deadline, max_k = cap)
+        kerorder = pidbt(kerweights, kergraph, max(lb, kerlb); target, deadline, max_k = cap)
     catch err
         err isa ArgumentError || rethrow()    # disconnected
     end
