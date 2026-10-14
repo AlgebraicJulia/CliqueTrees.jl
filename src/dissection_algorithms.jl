@@ -121,7 +121,7 @@ end
 # itself with the identity map, so that its vertex order is kept.
 function compresstwins(weights::AbstractVector{W}, graph::BipartiteGraph{V, E}) where {W, V, E}
     n = nv(graph)
-    cmpgraph, project = compress(graph, Val(true))
+    cmpgraph, project = compress(graph, Val(:T))
 
     if nv(cmpgraph) < n
         cmpweights = compressweights(weights, project)

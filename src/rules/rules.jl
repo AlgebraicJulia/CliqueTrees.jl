@@ -112,13 +112,10 @@ function compressreduce(reduce::F, weights::AbstractVector{W}, graph00::Abstract
     work02 = FVector{V}(undef, n00)
     work03 = FVector{V}(undef, n00)
     work04 = FVector{V}(undef, n00)
-    work05 = FVector{V}(undef, n00)
-    work06 = FVector{V}(undef, n00)
-    work07 = FVector{V}(undef, n00)
-    work08 = FVector{E}(undef, nn00)
-    work09 = FVector{V}(undef, m00)
+    work05 = FVector{E}(undef, nn00)
+    work06 = FVector{V}(undef, m00)
 
-    graph10 = simplegraph!(work08, work09, graph00)
+    graph10 = simplegraph!(work05, work06, graph00)
 
     ptr11 = FVector{V}(undef, nn00)
     tgt11 = FVector{V}(undef, n00)
@@ -168,7 +165,7 @@ function compressreduce(reduce::F, weights::AbstractVector{W}, graph00::Abstract
         #  ↓ project20
         # V20
         graph12, inject11, inject12, width20 = reduce(weights10, graph10, width10)
-        graph20, project20 = compress_impl!(work00, work01, work02, work03, work04, work05, work06, work07, work08, work09, graph12, Val(true))
+        graph20, project20 = compress_impl!(work00, work01, work02, work03, work04, work05, work06, graph12, Val(:T))
         n12 = nv(graph12); n20 = nv(graph20)
 
         for v11 in oneto(n10 - n12)

@@ -181,8 +181,9 @@ updated parameters:
 
   - `(pe, len, elen, iw)`: quotient graph. On input, `(pe, len, iw)` holds
     the adjacency structure. For an uneliminated node, the list
-    `iw[pe[node]:pe[node] + len[node] - 1]` holds `elen[node]` elements
-    followed by its uneliminated neighbors; for an eliminated node
+    `iw[pe[node]:pe[node] + len[node] - 1]` holds `elen[node]` elements,
+    sorted by elimination order, followed by its uneliminated neighbors;
+    for an eliminated node
     (element), it holds the nodes in the element. An element is absorbed,
     and the list of a merged node released, by setting its length to 0.
     Destroyed on output.
@@ -285,8 +286,11 @@ function md!_impl!(
     mindeg = total + one(V); num = one(V); tag = zero(I)
     maxtag = typemax(I) - five(I) * convert(I, neqns) - eight(I)
 
+    # - `maxlen` bounds the length of every list (a purged list never grows)
+    maxlen = zero(V)
+
     @inbounds for node in oneto(neqns)
-        deg = zero(V)
+        deg = zero(V); maxlen = max(maxlen, len[node])
         pstart = pe[node]
         pstop = pstart + convert(E, len[node]) - one(E)
 
@@ -345,7 +349,7 @@ function md!_impl!(
 
         rchsze, pfree, tag = mdelim!(mdnode, pe, len, elen, iw, iwlen,
             pfree, neqns, supersize, superwght, degree, deghead, degnext,
-            degprev, hashhead, marker, tag, rchset, xset, yset, mass)
+            degprev, hashhead, marker, tag, rchset, xset, yset, mass, maxlen)
 
         # update the degrees of the nodes in the reachable set, merge the
         # indistinguishable ones, and return them to the degree structure
@@ -367,7 +371,7 @@ end
 """
     mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, supersize,
         superwght, degree, deghead, degnext, degprev, hashhead, marker, tag,
-        rchset, xset, yset, mass)
+        rchset, xset, yset, mass, maxlen)
 
 This routine eliminates the node `mdnode` of minimum degree from the
 adjacency structure, which is stored in the quotient graph format. The
@@ -385,6 +389,7 @@ input parameters:
   - `tag`: tag value
   - `mass`: merge the nodes of the reachable set with no other neighbors
     with `mdnode` (mass elimination)
+  - `maxlen`: bound on the length of every list
 
 updated parameters:
 
@@ -432,6 +437,7 @@ function mdelim!(
         xset::AbstractVector{V},
         yset::AbstractVector{V},
         mass::Bool,
+        maxlen::V,
     ) where {I, V, E}
     # - `rchsze` is the number of supernodes in the reachable set
     # - `rchcnt` is the number of nodes in the reachable set
@@ -444,12 +450,13 @@ function mdelim!(
     @inbounds nstop = estart + convert(E, len[mdnode]) - one(E)
 
     # merge the elements adjacent to `mdnode` into the reachable set,
-    # one at a time. If `elmnt` is the next element, the only new fill
+    # one at a time, most recent first. If `elmnt` is the next element, the
+    # only new fill
     # edges are between `yset`, the nodes of `elmnt` not yet in the
     # reachable set, and `xset`, the nodes of the reachable set not in
     # `elmnt`.
-    @inbounds for i in estart:estop
-        elmnt = iw[i]
+    @inbounds for k in oneto(elen[mdnode])
+        elmnt = iw[nstart - convert(E, k)]
         tag += one(I); ysze = zero(V)
         jstart = pe[elmnt]
         jstop = jstart + convert(E, len[elmnt]) - one(E)
@@ -483,7 +490,7 @@ function mdelim!(
 
             if ispositive(xsze)
                 tag = mdfill!(xset, xsze, yset, ysze, pe, len, elen, iw,
-                    superwght, degree, marker, tag)
+                    superwght, degree, degnext, marker, tag, maxlen)
             end
         end
 
@@ -506,7 +513,7 @@ function mdelim!(
             if ispositive(rchsze)
                 yset[one(V)] = node
                 tag = mdfill!(rchset, rchsze, yset, one(V), pe, len, elen,
-                    iw, superwght, degree, marker, tag)
+                    iw, superwght, degree, degnext, marker, tag, maxlen)
             end
 
             supersize[node] = -supersize[node]
@@ -626,11 +633,10 @@ function mdelim!(
             degnext[rnode] = -mdnode
             len[rnode] = zero(V); elen[rnode] = zero(V)
         else
-            # else place the new element `mdnode` at the front of the list:
-            # move the first neighbor to the end, and the first element to
-            # the end of the element list (`rnode` lost at least one entry,
-            # so there is room)
-            iw[pn] = iw[pv]; iw[pv] = iw[p1]; iw[p1] = mdnode
+            # else append the new element `mdnode` to the element list, which
+            # stays sorted by elimination order: move the first neighbor to
+            # the end (`rnode` lost at least one entry, so there is room)
+            iw[pn] = iw[pv]; iw[pv] = mdnode
             elen[rnode] = convert(V, pv - p1) + one(V)
             len[rnode] = convert(V, pn - p1) + one(V)
 
@@ -666,21 +672,33 @@ end
 
 """
     mdfill!(xset, xsze, yset, ysze, pe, len, elen, iw, superwght, degree,
-        marker, tag)
+        degnext, marker, tag, maxlen)
 
 This routine adds the fill edges between the nodes of `xset` and the nodes
 of `yset` to the degrees of their endpoints. Two nodes are joined by a fill
 edge if they are not adjacent in the quotient graph: neither is a neighbor
-of the other, and they belong to no common element. For each node in the
-smaller set, its quotient neighbors are marked, and the element lists of
-the nodes in the other set are scanned.
+of the other, and they belong to no common element. For each node `snode`
+of one set, its quotient neighbors are marked, and for each node `tnode` of
+the other set, its elements are checked against the marks.
+
+The marked set is the smaller one, unless its lists are longer in total than
+those of the other set (and than four entries per pair). The marking then
+costs O(Σ min(len(s), len(t))) over the pairs. Element lists are sorted by
+elimination order, so if the elements of `tnode` are many more than those of
+`snode`, the latter are found by binary search instead. A pair therefore
+costs O(1 + min(len(s), len(t)) log Δ), and by Lemma 3.5 of Cummings,
+Fahrbach, and Fatehpuria (each pair u, v is tested at most min(d(u), d(v))
+times, where d is the original degree), the routine costs
+O(Σ min(d(u), d(v))² log Δ) = O(m² log Δ) in total.
 
 input parameters:
 
   - `(xset, xsze)`, `(yset, ysze)`: the two sets of nodes
   - `(pe, len, elen, iw)`: quotient graph
   - `superwght`: the weight of the supernodes
+  - `degnext`: `-degnext[elmnt]` is the elimination order of an element
   - `tag`: tag value
+  - `maxlen`: bound on the length of every list
 
 updated parameters:
 
@@ -698,8 +716,10 @@ function mdfill!(
         iw::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
+        degnext::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
+        maxlen::V,
     ) where {I, V, E}
     if xsze <= ysze
         sset = xset; ssze = xsze; tset = yset; tsze = ysze
@@ -707,13 +727,36 @@ function mdfill!(
         sset = yset; ssze = ysze; tset = xset; tsze = xsze
     end
 
-    # for each node `snode` in the smaller set, do the following...
+    # mark the other set instead if its lists are shorter in total (unless
+    # every list has at most `4tsze` entries, which the pairs pay for anyway)
+    if four(V) * tsze < maxlen
+        slen = 0
+
+        @inbounds for k in oneto(ssze)
+            slen += convert(Int, len[sset[k]])
+        end
+
+        if slen > 4 * convert(Int, ssze) * convert(Int, tsze)
+            tlen = 0
+
+            @inbounds for l in oneto(tsze)
+                tlen += convert(Int, len[tset[l]])
+            end
+
+            if tlen < slen
+                sset, tset = tset, sset
+                ssze, tsze = tsze, ssze
+            end
+        end
+    end
+
+    # for each node `snode` in the marked set, do the following...
     @inbounds for k in oneto(ssze)
         snode = sset[k]
         tag += one(I)
 
         # mark the quotient neighbors (elements and nodes) of `snode`
-        pstart = pe[snode]
+        pstart = pe[snode]; selen = elen[snode]
         pstop = pstart + convert(E, len[snode]) - one(E)
 
         for p in pstart:pstop
@@ -729,16 +772,24 @@ function mdfill!(
             # if `tnode` is a neighbor of `snode`, they are adjacent
             marker[tnode] == tag && continue
 
-            # if `tnode` belongs to an element of `snode`, they are adjacent
-            adjacent = false
-            qstart = pe[tnode]
-            qstop = qstart + convert(E, elen[tnode]) - one(E)
+            # if `tnode` belongs to an element of `snode`, they are adjacent.
+            # Shared elements tend to be recent, so the elements of `tnode`
+            # are checked from the most recent, unless they are many more
+            # than those of `snode`
+            qstart = pe[tnode]; telen = elen[tnode]
 
-            for q in qstart:qstop
-                if marker[iw[q]] == tag
-                    adjacent = true
-                    break
+            if telen <= eight(V) * selen + convert(V, 64)
+                adjacent = false
+                qstop = qstart + convert(E, telen)
+
+                for j in oneto(telen)
+                    if marker[iw[qstop - convert(E, j)]] == tag
+                        adjacent = true
+                        break
+                    end
                 end
+            else
+                adjacent = mdsearch(iw, degnext, pstart, selen, qstart, telen)
             end
 
             # otherwise, `snode` and `tnode` are joined by a fill edge
@@ -752,6 +803,44 @@ function mdfill!(
     end
 
     return tag
+end
+
+"""
+    mdsearch(iw, degnext, astart, alen, bstart, blen)
+
+This routine tests whether the element lists `iw[astart:astart + alen - 1]`
+and `iw[bstart:bstart + blen - 1]` share an element, by searching for each
+element of the first list (most recent first) in the second. The lists are
+sorted by elimination order: `elmnt` was eliminated before `other` if
+`degnext[elmnt] > degnext[other]`.
+"""
+function mdsearch(
+        iw::AbstractVector{V},
+        degnext::AbstractVector{V},
+        astart::E,
+        alen::V,
+        bstart::E,
+        blen::V,
+    ) where {V, E}
+    @inbounds for k in oneto(alen)
+        key = degnext[iw[astart + convert(E, alen - k)]]
+        lo = bstart; hi = bstart + convert(E, blen) - one(E)
+
+        while lo <= hi
+            mid = lo + ((hi - lo) >>> 1)
+            midkey = degnext[iw[mid]]
+
+            if midkey == key
+                return true
+            elseif midkey > key
+                lo = mid + one(E)
+            else
+                hi = mid - one(E)
+            end
+        end
+    end
+
+    return false
 end
 
 """

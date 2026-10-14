@@ -9,7 +9,7 @@ import ..CliqueTrees: BipartiteGraph
 
 using ..CliqueTrees: AbstractGraph, CliqueTree, cliquetree, separator,
     lowerbound, permutation, MinimalChordal, AMF, PIDBT, HBT, de,
-    compressreduce, DEFAULT_LOWER_BOUND_ALGORITHM
+    compressreduce, nov, twins, DEFAULT_LOWER_BOUND_ALGORITHM
 using ..CliqueTrees.PIDBTLib: pidbt
 
 export hbt

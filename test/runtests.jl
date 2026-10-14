@@ -16,6 +16,10 @@ end
     include("core.jl")
 end
 
+@testset "BT dynamic program" begin
+    include("btdp.jl")
+end
+
 @testset "Multifrontal" begin
     include("multifrontal.jl")
 end

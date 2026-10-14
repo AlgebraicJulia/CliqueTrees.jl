@@ -382,6 +382,51 @@ end
     end
 end
 
+@testset "twins" begin
+    function relation(nitem, cols)
+        ptr = cumsum([1; length.(cols)]); tgt = reduce(vcat, cols; init = Int[])
+        return BipartiteGraph{Int, Int}(nitem, length(cols), length(tgt), ptr, tgt)
+    end
+
+    # rows[i] is the set of columns that contain item i
+    function check(svar, partition, rows)
+        n = length(rows)
+        ok = CliqueTrees.nov(partition) == n && nv(partition) == length(unique(rows)) && ne(partition) == n
+        ok &= all((svar[i] == svar[k]) == (rows[i] == rows[k]) for i in 1:n, k in 1:n)
+        ok &= all(svar[i] == s for s in vertices(partition) for i in neighbors(partition, s))
+        ok &= all(issorted(neighbors(partition, s)) for s in vertices(partition))
+        return ok
+    end
+
+    rng = Xoshiro(1)
+
+    # relations (:N), with repeated columns so that twins are likely
+    for (nitem, ncol, q) in ((0, 3, 0.5), (1, 1, 0.5), (5, 30, 0.2), (30, 5, 0.3), (40, 40, 0.1), (200, 12, 0.4), (12, 200, 0.05))
+        cols = [sort!(randsubseq(rng, 1:nitem, q)) for _ in 1:ncol]
+        cols = [cols; cols[1:ncol ÷ 3]]
+        rows = [[j for j in eachindex(cols) if i in cols[j]] for i in 1:nitem]
+        @test check(CliqueTrees.twins(relation(nitem, cols), Val(:N))..., rows)
+    end
+
+    # graphs (:F and :T): blow up each vertex of a random graph into a few
+    # copies that form a clique (true twins) or an independent set (false
+    # twins), and add some self loops
+    for (k, p) in ((1, 0.0), (8, 0.3), (20, 0.15), (30, 0.5))
+        H = erdos_renyi(k, p; seed = k)
+        copies = [rand(rng, 1:3) for _ in 1:k]; clique = rand(rng, Bool, k)
+        owner = reduce(vcat, [fill(v, copies[v]) for v in 1:k])
+        n = length(owner)
+
+        lists = map(1:n) do u
+            [w for w in 1:n if (w != u && (has_edge(H, owner[u], owner[w]) || (owner[u] == owner[w] && clique[owner[u]]))) || (w == u && rand(rng) < 0.3)]
+        end
+
+        graph = relation(n, lists)
+        @test check(CliqueTrees.twins(graph, Val(:F))..., [setdiff(lists[u], u) for u in 1:n])
+        @test check(CliqueTrees.twins(graph, Val(:T))..., [sort!(union(lists[u], u)) for u in 1:n])
+    end
+end
+
 @testset "clique tree" begin
     matrix = [
         0 1 1 0 0 0 0 0
@@ -445,6 +490,7 @@ end
             MF(),
             MF(1),
             MMD(),
+            MD(),
             METIS(),
             ND{1}(MMD(), METISND(); width = 5),
             ND{2}(MMD(), KaHyParND(); width = 5),
@@ -781,8 +827,8 @@ end
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.connectedcomponents(graph)
-                @inferred CliqueTrees.twins(graph, Val(true), 1.0)
-                @inferred CliqueTrees.twins(graph, Val(true), 0.9)
+                @inferred CliqueTrees.twins(graph, Val(:T), 1.0)
+                @inferred CliqueTrees.twins(graph, Val(:T), 0.9)
                 @inferred CliqueTrees.sr(weights, graph, zero(V))
                 @inferred CliqueTrees.asr(weights, graph, zero(V))
                 @inferred CliqueTrees.qcc(V, E, graph, 1.0, Forward)
@@ -820,8 +866,8 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 1.0)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 0.9)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(:T), 1.0)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(:T), 0.9)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.sr(weights, graph, zero(V))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.asr(weights, graph, zero(V))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
@@ -869,8 +915,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.connectedcomponents(graph)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 1.0)
-                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(true), 0.9)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(:T), 1.0)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.twins(graph, Val(:T), 0.9)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.sr(weights, graph, zero(V))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.asr(weights, graph, zero(V))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.qcc(V, E, graph, 1.0, Forward)
@@ -954,6 +1000,8 @@ end
                         MF(),
                         MF(1),
                         MMD(),
+                        MD(),
+                        MD(; mass = true),
                         METIS(),
                         NDS{1}(MMD(), METISND(); width = 5),
                         SimplicialRule(NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
@@ -1397,6 +1445,61 @@ end
     name = "mycielskian14"; fill = 14000000
     matrix = readmatrix(name)
     @test treefill(matrix; alg=AMF()) <= fill
+end
+
+@testset "exact minimum degree" begin
+    # test whether `order` eliminates, at every step, a vertex of minimum
+    # weighted closed degree in the elimination graph
+    function isminimumdegree(graph, weights, order)
+        n = nv(graph); eliminated = falses(n)
+        nbrs = [Set(neighbors(graph, v)) for v in vertices(graph)]
+        key(v) = weights[v] + sum((weights[w] for w in nbrs[v]); init = 0)
+
+        for v in order
+            k = key(v)
+
+            for w in vertices(graph)
+                !eliminated[w] && key(w) < k && return false
+            end
+
+            for w in nbrs[v]
+                delete!(nbrs[w], v)
+
+                for x in nbrs[v]
+                    w != x && push!(nbrs[w], x)
+                end
+            end
+
+            eliminated[v] = true
+        end
+
+        return true
+    end
+
+    rng = MersenneTwister(0)
+
+    for n in (10, 30, 60), trial in 1:5
+        # sparse graphs, power-law graphs, and sparse graphs with a hub
+        hub = erdos_renyi(n, 2 / n; rng)
+
+        for v in 2:n
+            add_edge!(hub, 1, v)
+        end
+
+        for graph in (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub)
+            for mass in (false, true), external in (false, true)
+                # `debug` recomputes every degree after every elimination
+                for weights in (ones(Int, n), rand(rng, 1:3, n))
+                    index = CliqueTrees.MDLib.md(weights, graph; mass, external, debug = true)
+                    @test sort(index) == 1:n
+
+                    if !mass && !external
+                        @test isminimumdegree(graph, weights, invperm(index))
+                    end
+                end
+            end
+        end
+    end
 end
 
 @testset "exact treewidth" begin

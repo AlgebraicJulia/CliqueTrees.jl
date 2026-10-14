@@ -1820,16 +1820,13 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
 end
 
 function twins(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
-    n = nv(graph); nn = n + one(V)
+    n = nov(graph); nn = n + one(V)
     new = FScalar{V}(undef)
     var = FVector{V}(undef, nn)
     svar = FVector{V}(undef, n)
     flag = FVector{V}(undef, n)
     size = FVector{V}(undef, n)
-    head = FVector{V}(undef, n)
-    prev = FVector{V}(undef, n)
-    next = FVector{V}(undef, n)
-    partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
+    partition = twins_impl!(new, var, svar, flag, size, graph, Val(S))
     return svar, partition
 end
 
@@ -1843,120 +1840,110 @@ function twins_impl!(
         svar::AbstractVector{V},
         flag::AbstractVector{V},
         size::AbstractVector{V},
-        head::AbstractVector{V},
-        prev::AbstractVector{V},
-        next::AbstractVector{V},
         graph::AbstractGraph{V},
         ::Val{S},
     ) where {V, S}
-    @assert nv(graph) < length(var)
-    @assert nv(graph) <= length(svar)
-    @assert nv(graph) <= length(flag)
-    @assert nv(graph) <= length(size)
-    @assert nv(graph) <= length(head)
-    @assert nv(graph) <= length(prev)
-    @assert nv(graph) <= length(next)
+    @assert S === :T || S === :F || S === :N
+    @assert S === :N || nov(graph) == nv(graph)
+    @assert nov(graph) < length(var)
+    @assert nov(graph) <= length(svar)
+    @assert nov(graph) <= length(flag)
+    @assert nov(graph) <= length(size)
 
-    n = nv(graph); m = zero(V)
+    n = nov(graph); m = zero(V)
 
     @inbounds for i in oneto(n)
         flag[i] = zero(V)
         size[i] = zero(V)
-        head[i] = zero(V)
     end
 
     new[] = zero(V); free = SinglyLinkedList(new, var)
     @inbounds prepend!(free, oneto(n))
 
-    function set(i::V)
-        @inbounds h = @view head[i]
-        return DoublyLinkedList(h, prev, next)
-    end
-
     if ispositive(n)
-        s = popfirst!(free); m += one(V)
-        @inbounds prepend!(set(s), oneto(n)); size[s] = n
+        s = popfirst!(free); m += one(V); size[s] = n
 
         @inbounds for i in oneto(n)
             svar[i] = s
         end
     end
 
-    @inbounds for j in oneto(n)
+    @inbounds for j in vertices(graph)
         for i in neighbors(graph, j)
-            if i != j
-                # `s` is the old supervariable of `i`
-                s = svar[i]
-
-                # first occurance of `s` for column `j`
-                if flag[s] < j
-                    flag[s] = j
-
-                    if size[s] > one(V)
-                        delete!(set(s), i); size[s] -= one(V)
-                        var[s] = i
-                        ns = svar[i] = popfirst!(free); m += one(V)
-                        pushfirst!(set(ns), i); size[ns] += one(V)
-                    end
-                    # second of later occurrence of `s` for column `j`
-                else
-                    # `k` is the first variable of `s` encountered in column `j`.
-                    delete!(set(s), i); size[s] -= one(V)
-                    k = var[s]
-                    ns = svar[i] = svar[k]
-                    pushfirst!(set(ns), i); size[ns] += one(V)
-
-                    if isempty(set(s))
-                        pushfirst!(free, s); m -= one(V)
-                    end
-                end
+            if S === :N || i != j
+                m = twins_refine!(free, var, svar, flag, size, m, i, j)
             end
         end
 
-        if S
-            # `s` is the old supervariable of `j`
-            s = svar[j]
-
-            # first occurance of `s` for column `j`
-            if flag[s] < j
-                flag[s] = j
-
-                if size[s] > one(V)
-                    delete!(set(s), j); size[s] -= one(V)
-                    var[s] = j
-                    ns = svar[j] = popfirst!(free); m += one(V)
-                    pushfirst!(set(ns), j); size[ns] += one(V)
-                end
-                # second or later occurrence of `s` for column `j`
-            else
-                # `k` is the first variable of `s` encountered in column `j`.
-                delete!(set(s), j); size[s] -= one(V)
-                k = var[s]
-                ns = svar[j] = svar[k]
-                pushfirst!(set(ns), j); size[ns] += one(V)
-
-                if isempty(set(s))
-                    pushfirst!(free, s); m -= one(V)
-                end
-            end
+        if S === :T
+            m = twins_refine!(free, var, svar, flag, size, m, j, j)
         end
     end
 
+    # number the classes in order of their labels, and list the items of
+    # each class in increasing order (a counting sort)
     partition = BipartiteGraph(n, m, n, var, flag)
-    t = one(V); pointers(partition)[t] = p = one(V)
+    @inbounds var[begin] = p = one(V); t = zero(V)
 
     @inbounds for s in oneto(n)
-        isempty(set(s)) && continue
-
-        for i in set(s)
-            svar[i] = t
-            targets(partition)[p] = i; p += one(V)
+        if ispositive(size[s])
+            t += one(V); var[t + one(V)] = p; p += size[s]
+            size[s] = t
         end
-
-        t += one(V); pointers(partition)[t] = p
     end
 
+    # now var[t + 1] is the first position of class t, and size[s]
+    # is the class of label s
+    @inbounds for i in oneto(n)
+        t = svar[i] = size[svar[i]]
+        flag[var[t + one(V)]] = i
+        var[t + one(V)] += one(V)
+    end
+
+    # now var[t] is the first position of class t
     return partition
+end
+
+# Item `i` lies in column `j`: move it out of its class, `s`, into the class
+# of the first item of `s` that lies in column `j`. Returns the number of
+# classes.
+@propagate_inbounds function twins_refine!(
+        free::SinglyLinkedList{V},
+        var::AbstractVector{V},
+        svar::AbstractVector{V},
+        flag::AbstractVector{V},
+        size::AbstractVector{V},
+        m::V,
+        i::V,
+        j::V,
+    ) where {V}
+    # `s` is the old supervariable of `i`
+    s = svar[i]
+
+    # first occurrence of `s` for column `j`
+    if flag[s] < j
+        flag[s] = j
+
+        if size[s] > one(V)
+            size[s] -= one(V)
+            var[s] = i
+            ns = svar[i] = popfirst!(free); m += one(V)
+            size[ns] += one(V)
+        end
+    # second or later occurrence of `s` for column `j`
+    else
+        # `k` is the first variable of `s` encountered in column `j`.
+        size[s] -= one(V)
+        k = var[s]
+        ns = svar[i] = svar[k]
+        size[ns] += one(V)
+
+        if iszero(size[s])
+            pushfirst!(free, s); m -= one(V)
+        end
+    end
+
+    return m
 end
 
 # Algorithms for Sparse Linear Systems
@@ -1970,6 +1957,8 @@ end
 #
 # Algorithm 2.2: Cosine-based compression
 function twins(graph::AbstractGraph{V}, ::Val{S}, tau::Number) where {V, S}
+    @assert S === :T || S === :F
+
     if isone(tau)
         return twins(graph, Val(S))
     else
@@ -2001,6 +1990,7 @@ function twins_impl!(
     @assert nv(graph) <= length(adjmap)
     @assert nv(graph) <= length(cosine)
     @assert nv(graph) <= length(degree)
+    @assert S === :T || S === :F
     @assert zero(T) < tau <= one(T)
     n = nv(graph); nb = zero(V)
     list = DoublyLinkedList(head, prev, next)
@@ -2009,7 +1999,7 @@ function twins_impl!(
         adjmap[i] = zero(V)
         cosine[i] = zero(V)
 
-        if S
+        if S === :T
             degree[i] = one(V)
         else
             degree[i] = zero(V)
@@ -2047,7 +2037,7 @@ function twins_impl!(
                     end
                 end
 
-                if S && i < j
+                if S === :T && i < j
                     # k has not yet been added to a part
                     if iszero(adjmap[j])
                         # increase partial dot product
@@ -2057,7 +2047,7 @@ function twins_impl!(
                 end
             end
 
-            if S
+            if S === :T
                 for k in neighbors(graph, i)
                     # both rows i and k have an entry
                     # in column j
@@ -2132,12 +2122,9 @@ function compress(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     svar = FVector{V}(undef, n)
     flag = FVector{V}(undef, n)
     size = FVector{V}(undef, n)
-    head = FVector{V}(undef, n)
-    prev = FVector{V}(undef, n)
-    next = FVector{V}(undef, n)
     outptr = FVector{E}(undef, nn)
     outtgt = FVector{V}(undef, m)
-    return compress_impl!(new, var, svar, flag, size, head, prev, next, outptr, outtgt, graph, Val(S))
+    return compress_impl!(new, var, svar, flag, size, outptr, outtgt, graph, Val(S))
 end
 
 function compress_impl!(
@@ -2146,18 +2133,16 @@ function compress_impl!(
         svar::AbstractVector{V},
         flag::AbstractVector{V},
         size::AbstractVector{V},
-        head::AbstractVector{V},
-        prev::AbstractVector{V},
-        next::AbstractVector{V},
         outptr::AbstractVector{E},
         outtgt::AbstractVector{V},
         graph::AbstractGraph{V},
         ::Val{S},
     ) where {V, E, S}
+    @assert S === :T || S === :F
     @assert nv(graph) < length(outptr)
     @assert ne(graph) <= length(outtgt)
 
-    partition = twins_impl!(new, var, svar, flag, size, head, prev, next, graph, Val(S))
+    partition = twins_impl!(new, var, svar, flag, size, graph, Val(S))
     project = svar; marker = size; tag = zero(V)
 
     @inbounds for v in vertices(graph)
@@ -2249,7 +2234,7 @@ end
 
 function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tau::Number) where {W, V}
     order = Vector{V}(undef, nv(graph))
-    cmpgraph, project = compress(graph, Val(true), tau)
+    cmpgraph, project = compress(graph, Val(:T), tau)
     cmpweights = compressweights(weights, project)
     cmporder, cmpindex = permutation(cmpweights, cmpgraph, alg)
     i = zero(V)
