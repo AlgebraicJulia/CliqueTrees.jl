@@ -43,24 +43,42 @@
 # The search from each start reads only the starts before it, so
 # the starts can be searched in parallel: with nt > 1, nt tasks
 # share them (sepenum_mt), and the list is the same as with one
-# (sepenum_st).
+# (sepenum_st). The result is (sep, status): the list and
+# BT_FOUND, or, if the search runs for more than mt seconds, an
+# empty list and BT_TIMEOUT. The positional method takes the
+# deadline dl, in the sense of time(), instead.
 #
 #   - Tamaki, Hisao. "Computing treewidth via exact and heuristic
 #     lists of minimal separators." SEA 2019.
 #
-function sepenum(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk; nt::Integer = 1) where {W, V}
-    if nt <= 1
-        return sepenum_st(weights, graph, maxk)
+function sepenum(weights::AbstractVector, graph::AbstractGraph, maxk; mt::Real = Inf, nt::Integer = Threads.nthreads())
+    return sepenum(weights, graph, maxk, time() + mt, nt)
+end
+
+function sepenum(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, dl::Real, nt::Integer) where {W, V}
+    nvtx = nv(graph)
+
+    if nt <= 1 || nvtx < SEPENUM_MT
+        sep = sepenum_st(weights, graph, maxk, dl)
     else
-        return sepenum_mt(weights, graph, maxk, nt)
+        sep = sepenum_mt(weights, graph, maxk, nt, dl)
+    end
+
+    if isnothing(sep)
+        return bt_out(UInt64[], nvtx, convert(V, cld(nvtx, 64))), BT_TIMEOUT
+    else
+        return sep, BT_FOUND
     end
 end
 
-# One thread: the starts in order.
-function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk) where {W, V}
-    nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk)
+# With fewer vertices than this, the search uses one task.
+const SEPENUM_MT = 20
 
-    adj  = FMatrix{UInt64}(undef, nwrd, nvtx)
+# One thread: the starts in order.
+function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, deadline::Real = Inf) where {W, V}
+    nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk); clk = bt_clk(deadline)
+
+    adj  = bt_mat(nwrd, nvtx)
     excl = FVector{UInt64}(undef, nwrd)
     pool = UInt64[]
     out  = UInt64[]
@@ -74,7 +92,8 @@ function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk) w
     fill!(excl, zero(UInt64))
 
     @inbounds for a in order
-        sepenum_one!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a)
+        sepenum_one!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, clk)
+        clk.out[] && return nothing
         excl[bt_wrd(a)] |= bt_bit(a)
     end
 
@@ -85,10 +104,10 @@ end
 # set of the starts before it. The separators of the start i are
 # lsts[task[i]][lo[i] + 1:hi[i]], and they are put back in the order
 # of the starts, so the result is that of sepenum_st.
-function sepenum_mt(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, nt::Integer) where {W, V}
-    nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk)
+function sepenum_mt(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, nt::Integer, deadline::Real = Inf) where {W, V}
+    nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk); clk = bt_clk(deadline)
 
-    adj = FMatrix{UInt64}(undef, nwrd, nvtx)
+    adj = bt_mat(nwrd, nvtx)
     out = UInt64[]
 
     order = FVector{V}(undef, nvtx)
@@ -104,8 +123,9 @@ function sepenum_mt(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, n
     next = Threads.Atomic{Int}(1)
 
     # each task makes its own list, apart from the others in memory
-    tasks = [Threads.@spawn sepenum_run!(task, lo, hi, next, t, adj, order, weights, maxk, smax, nvtx, nwrd) for t in oneto(nt)]
+    tasks = [Threads.@spawn sepenum_run!(task, lo, hi, next, t, adj, order, weights, maxk, smax, nvtx, nwrd, bt_clk(clk)) for t in oneto(nt)]
     lsts = Vector{UInt64}[fetch(t) for t in tasks]
+    clk.out[] && return nothing
 
     @inbounds for i in oneto(nvtx)
         lst = lsts[task[i]]
@@ -125,20 +145,21 @@ function sepenum_run!(
         hi::AbstractVector{Int},
         next::Threads.Atomic{Int},
         t::Int,
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         order::AbstractVector{V},
         weights::AbstractVector{W},
         maxk::W,
         smax::Int,
         nvtx::Integer,
         nwrd::V,
+        clk::NamedTuple,
     ) where {W, V}
     excl = FVector{UInt64}(undef, nwrd); pool = UInt64[]; lst = UInt64[]; j = 1
     fill!(excl, zero(UInt64))
 
     @inbounds while true
         i = Threads.atomic_add!(next, 1)
-        i > nvtx && break
+        (i > nvtx || clk.out[]) && break
 
         # the starts before i
         while j < i
@@ -146,7 +167,7 @@ function sepenum_run!(
         end
 
         task[i] = t; lo[i] = length(lst)
-        sepenum_one!(pool, lst, adj, excl, weights, maxk, smax, nvtx, nwrd, order[i])
+        sepenum_one!(pool, lst, adj, excl, weights, maxk, smax, nvtx, nwrd, order[i], clk)
         hi[i] = length(lst)
     end
 
@@ -154,7 +175,7 @@ function sepenum_run!(
 end
 
 # ∅, if the graph is disconnected.
-function sepenum_emp!(out::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, maxk::W, nvtx::Integer, nwrd::V) where {W, V}
+function sepenum_emp!(out::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractVecOrMat{UInt64}, maxk::W, nvtx::Integer, nwrd::V) where {W, V}
     if !iszero(nvtx) && zero(W) < maxk
         pv = bt_new!(pool, nwrd)
         pc = bt_new!(pool, nwrd)
@@ -183,7 +204,7 @@ end
 function sepenum_one!(
         pool::Vector{UInt64},
         out::Vector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         excl::AbstractVector{UInt64},
         weights::AbstractVector{W},
         maxk::W,
@@ -191,6 +212,7 @@ function sepenum_one!(
         nvtx::Integer,
         nwrd::V,
         a::Integer,
+        clk::NamedTuple,
     ) where {W, V}
     pa = bt_new!(pool, nwrd)
     ps = bt_new!(pool, nwrd)
@@ -200,15 +222,16 @@ function sepenum_one!(
     @inbounds pool[pa + bt_wrd(a)] = bt_bit(a)
 
     @inbounds for i in oneto(nwrd)
-        pool[ps + i] = adj[i, a]
-        pool[pf + i] = adj[i, a] & excl[i]
-        pool[pr + i] = ~(adj[i, a] | pool[pa + i])
+        na = bt_get(adj, i, a)
+        pool[ps + i] = na
+        pool[pf + i] = na & excl[i]
+        pool[pr + i] = ~(na | pool[pa + i])
     end
 
     bt_cap!(pool, nvtx, pr, nwrd)
 
     if bt_wgt(pool, pf, weights, nwrd) < maxk && sepenum_sml(1, bt_len(pool, ps, nwrd), smax, nvtx)
-        sepenum_from!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pa, pr, ps, pf, bt_wgt(pool, ps, weights, nwrd))
+        sepenum_from!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pa, pr, ps, pf, bt_wgt(pool, ps, weights, nwrd), clk)
     end
 
     empty!(pool)
@@ -219,7 +242,7 @@ end
 # of decreasing degree, and the largest number of vertices that
 # weigh less than maxk.
 function sepenum_adj!(
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         order::AbstractVector{V},
         key::AbstractVector{V},
         cnt::AbstractVector{V},
@@ -229,7 +252,7 @@ function sepenum_adj!(
     ) where {W, V}
     nvtx = nv(graph)
 
-    @assert nvtx <= size(adj, 2)
+    @assert nvtx <= bt_nst(adj)
     @assert nvtx <= length(order)
     @assert nvtx <= length(key)
     @assert nvtx <= length(cnt)
@@ -240,8 +263,8 @@ function sepenum_adj!(
     @inbounds for v in vertices(graph)
         d = zero(V)
 
-        for i in axes(adj, 1)
-            d += convert(V, count_ones(adj[i, v]))
+        for i in oneto(bt_nwd(adj))
+            d += convert(V, count_ones(bt_get(adj, i, v)))
         end
 
         key[v] = nvtx - d
@@ -275,7 +298,7 @@ end
 function sepenum_from!(
         pool::Vector{UInt64},
         out::Vector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         excl::AbstractVector{UInt64},
         weights::AbstractVector{W},
         maxk::W,
@@ -288,6 +311,7 @@ function sepenum_from!(
         ps::V,
         pf::V,
         ws::W,
+        clk::NamedTuple,
     ) where {W, V}
     top = convert(V, length(pool))
     pR = bt_new!(pool, nwrd)
@@ -300,7 +324,7 @@ function sepenum_from!(
     f = bt_min(pool, pf, nwrd)
 
     @inbounds for i in oneto(nwrd)
-        pool[pR + i] = iszero(f) ? pool[pr + i] : adj[i, f] & pool[pr + i]
+        pool[pR + i] = iszero(f) ? pool[pr + i] : bt_get(adj, i, f) & pool[pr + i]
     end
 
     # the components B of R next to f, each followed by N = N(B) ⊆ S
@@ -326,12 +350,13 @@ function sepenum_from!(
     nS = bt_len(pool, ps, nwrd)
     lst = !iszero(nS) && twice(bt_len(pool, pa, nwrd)) <= nvtx - nS && ws < maxk
 
-    @inbounds for pB in lo:2nwrd:hi
+    @inbounds for pB in lo:twice(nwrd):hi
+        clk.out[] && break
         pN = pB + nwrd
 
         if bt_eq(pool, pN, ps, nwrd)
             put = lst && sepenum_put(pool, excl, lo, hi, pB, nS, nvtx, nwrd)
-            sepenum_branch!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pa, pB, ps, pf, ws, put)
+            sepenum_branch!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pa, pB, ps, pf, ws, put, clk)
         elseif bt_sub(pool, pf, pN, nwrd)
             # C: the component of a in G - B - N
             for i in oneto(nwrd)
@@ -346,7 +371,7 @@ function sepenum_from!(
                 nN = bt_len(pool, pN, nwrd); wN = bt_wgt(pool, pN, weights, nwrd)
                 put = !iszero(nN) && twice(bt_len(pool, pC, nwrd)) <= nvtx - nN && wN < maxk &&
                     sepenum_put(pool, excl, lo, hi, pB, nN, nvtx, nwrd)
-                sepenum_branch!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pC, pB, pN, pf, wN, put)
+                sepenum_branch!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pC, pB, pN, pf, wN, put, clk)
             end
         end
     end
@@ -365,7 +390,7 @@ end
 function sepenum_put(pool::Vector{UInt64}, excl::AbstractVector{UInt64}, lo::V, hi::V, pb::V, nn::Int, nvtx::Integer, nwrd::V) where {V}
     pn = pb + nwrd
 
-    for q in lo:2nwrd:hi
+    for q in lo:twice(nwrd):hi
         if bt_eq(pool, q + nwrd, pn, nwrd)
             q < pb && return false
 
@@ -397,7 +422,9 @@ function sepenum_branch!(
         pf::V,
         ws::W,
         put::Bool,
+        clk::NamedTuple,
     ) where {W, V}
+    bt_tck!(clk) && return
     nA = bt_len(pool, pa, nwrd); nS = bt_len(pool, ps, nwrd)
 
     sepenum_sml(nA, nS, smax, nvtx) || return
@@ -486,10 +513,11 @@ function sepenum_branch!(
         end
 
         if wF < maxk && sepenum_sml(nA + 1, nS1, smax, nvtx)
-            sepenum_from!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pA, pR, pS, pF, wS)
+            sepenum_from!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pA, pR, pS, pF, wS, clk)
         end
 
         resize!(pool, mid)
+        clk.out[] && break
 
         # v fixed in S
         wg + weights[v] < maxk || break
@@ -498,6 +526,92 @@ function sepenum_branch!(
 
     resize!(pool, top)
     return
+end
+
+# sepenum_branch! with one word: the sets are words, and those that
+# sepenum_from! reads are pushed onto the pool.
+function sepenum_branch!(
+        pool::Vector{UInt64},
+        out::Vector{UInt64},
+        adj::AbstractVector{UInt64},
+        excl::AbstractVector{UInt64},
+        weights::AbstractVector{W},
+        maxk::W,
+        smax::Int,
+        nvtx::Integer,
+        nwrd::V,
+        a::Integer,
+        pa::V,
+        pb::V,
+        ps::V,
+        pf::V,
+        ws::W,
+        put::Bool,
+        clk::NamedTuple,
+    ) where {W, V}
+    bt_tck!(clk) && return
+    @inbounds A = pool[pa + one(V)]; B = pool[pb + one(V)]; S = pool[ps + one(V)]; F = pool[pf + one(V)]; X = excl[1]
+    nA = count_ones(A); nS = count_ones(S)
+
+    sepenum_sml(nA, nS, smax, nvtx) || return
+    iszero(nS) && return
+
+    # S is too heavy to be listed: can it lighten below?
+    if ws >= maxk
+        sepenum_ste(pool, adj, weights, pb, ps, pf, nA, maxk, nvtx, nwrd) && return
+    end
+
+    put && push!(out, S)
+
+    # the fixed vertices, which grow as each branch is closed, and
+    # their weight
+    G = F; wg = sepenum_wgt(zero(W), F, weights)
+
+    # the unfixed vertices of S, in the order in which they are
+    # taken: the most neighbors in B first, then the smallest
+    top = lo = convert(V, length(pool)); word = S & ~F
+
+    @inbounds while !iszero(word)
+        u = trailing_zeros(word) + 1; word &= word - one(UInt64)
+        push!(pool, sepenum_key(count_ones(adj[u] & B), u))
+    end
+
+    hi = convert(V, length(pool))
+    sepenum_srt!(pool, lo, hi)
+
+    @inbounds for t in lo + 1:hi
+        v = sepenum_vtx(pool[t]); bv = bt_bit(v); nbv = adj[v]
+        mid = convert(V, length(pool))
+
+        # v into A: S becomes N(A + v), the rest becomes B - N(v)
+        nb = nbv & ~S & ~A; fx = nb & X; S1 = (S | nb) & ~bv
+        wS = sepenum_wgt(ws - weights[v], nb, weights); wF = sepenum_wgt(wg, fx, weights)
+        push!(pool, A | bv, S1, G | fx, B & ~nbv)
+
+        if wF < maxk && sepenum_sml(nA + 1, count_ones(S1), smax, nvtx)
+            pA = mid; pS = mid + one(V); pF = pS + one(V); pR = pF + one(V)
+            sepenum_from!(pool, out, adj, excl, weights, maxk, smax, nvtx, nwrd, a, pA, pR, pS, pF, wS, clk)
+        end
+
+        resize!(pool, mid)
+        clk.out[] && break
+
+        # v fixed in S
+        wg + weights[v] < maxk || break
+        wg += weights[v]; G |= bv
+    end
+
+    resize!(pool, top)
+    return
+end
+
+# w + the weight of the word, added from the smallest vertex.
+function sepenum_wgt(w::W, word::UInt64, weights::AbstractVector{W}) where {W}
+    @inbounds while !iszero(word)
+        w += weights[trailing_zeros(word) + 1]; word &= word - one(UInt64)
+    end
+
+    return w
 end
 
 # Can A stay small? If S ends as S' with s' vertices, then the
@@ -646,6 +760,86 @@ function sepenum_ste(
                 end
 
                 t += one(V)
+            end
+        end
+
+        # the trees that stopped in this round have r + 1 vertices
+        sfrz += (r + 1) * min(stop, max(0, m - nfrz))
+        nfrz += stop; r += 1
+    end
+
+    resize!(pool, top)
+    return ste
+end
+
+# sepenum_ste with one word: the sets are words, and the frontiers of
+# the trees are words on the pool.
+function sepenum_ste(
+        pool::Vector{UInt64},
+        adj::AbstractVector{UInt64},
+        weights::AbstractVector{W},
+        pb::V,
+        ps::V,
+        pf::V,
+        nA::Int,
+        maxk::W,
+        nvtx::Integer,
+        nwrd::V,
+    ) where {W, V}
+    @inbounds B = pool[pb + one(V)]; S = pool[ps + one(V)]; F = pool[pf + one(V)]
+    nF = count_ones(F); nU = count_ones(S) - nF; nB = count_ones(B)
+
+    # each tree that S' meets costs at least wmin, the weight of
+    # the lightest vertex of (S - F) ∪ B
+    wmin = typemax(W); word = (S & ~F) | B
+
+    @inbounds while !iszero(word)
+        wmin = min(wmin, weights[trailing_zeros(word) + 1]); word &= word - one(UInt64)
+    end
+
+    jmax = 0; w = sepenum_wgt(zero(W), F, weights)
+
+    while jmax < nU && w + wmin < maxk
+        jmax += 1; w += wmin
+    end
+
+    # S' misses m trees; not even all of B in them is enough?
+    m = nU - jmax
+    (m <= 0 || twice(nA + m + nB) <= nvtx - nF - jmax) && return false
+
+    # the vertices of B in no tree, and the frontiers of the trees
+    R = B; top = lo = length(pool); word = S & ~F
+
+    @inbounds while !iszero(word)
+        push!(pool, adj[trailing_zeros(word) + 1] & R); word &= word - one(UInt64)
+    end
+
+    # after r rounds, the nlive trees that still grow come first
+    # and have r + 1 vertices; the nfrz others have stopped and are
+    # smaller, and the first min(m, nfrz) of them to stop have sfrz
+    # vertices
+    r = 0; nlive = nU; nfrz = 0; sfrz = 0; nrst = nB; ste = false
+
+    @inbounds while true
+        sum = sfrz + max(0, m - nfrz) * (r + 1)
+
+        if twice(nA + sum) > nvtx - nF - jmax
+            ste = true; break
+        end
+
+        # not even if every vertex left joins them
+        (iszero(nlive) || twice(nA + sum + nrst) <= nvtx - nF - jmax) && break
+        t = 0; stop = 0
+
+        while t < nlive
+            f = pool[lo + t + 1] & R
+
+            if iszero(f)
+                # the last tree that grows takes its place
+                stop += 1; nlive -= 1; pool[lo + t + 1] = pool[lo + nlive + 1]
+            else
+                x = trailing_zeros(f) + 1; nrst -= 1; R &= ~bt_bit(x)
+                pool[lo + t + 1] = (f | adj[x]) & R; t += 1
             end
         end
 

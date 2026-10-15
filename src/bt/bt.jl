@@ -10,6 +10,53 @@ function bt_vtx(::Type{V}, i::Integer, word::UInt64) where {V}
     return convert(V, 64(i - 1) + trailing_zeros(word) + 1)
 end
 
+# The outcome of a search: it found what it looked for (a list,
+# or a decomposition with bags of weight at most the bound), it
+# showed that every decomposition has a heavier bag, or it ran out
+# of time.
+@enum BTStatus BT_FOUND BT_ABOVE BT_TIMEOUT
+
+# A list of n packed sets: a matrix with a column of nwrd words for
+# each set or, with one word, a vector of words, so that the methods
+# for one word are chosen by its type. bt_mat(x, n) makes a list of
+# the same kind as the list x.
+function bt_mat(nwrd::Integer, n::Integer)
+    if isone(nwrd)
+        return FVector{UInt64}(undef, n)
+    else
+        return FMatrix{UInt64}(undef, nwrd, n)
+    end
+end
+
+bt_mat(x::AbstractVector{UInt64}, n::Integer) = FVector{UInt64}(undef, n)
+bt_mat(x::AbstractMatrix{UInt64}, n::Integer) = FMatrix{UInt64}(undef, size(x, 1), n)
+
+# The word i of the set v, and setting it to w.
+Base.@propagate_inbounds bt_get(x::AbstractMatrix{UInt64}, i::Integer, v::Integer) = x[i, v]
+Base.@propagate_inbounds bt_get(x::AbstractVector{UInt64}, i::Integer, v::Integer) = x[v]
+Base.@propagate_inbounds bt_put!(x::AbstractMatrix{UInt64}, w::UInt64, i::Integer, v::Integer) = (x[i, v] = w)
+Base.@propagate_inbounds bt_put!(x::AbstractVector{UInt64}, w::UInt64, i::Integer, v::Integer) = (x[v] = w)
+
+# The number of words of a set, and the number of sets.
+bt_nwd(x::AbstractMatrix{UInt64}) = size(x, 1)
+bt_nwd(x::AbstractVector{UInt64}) = 1
+bt_nst(x::AbstractMatrix{UInt64}) = size(x, 2)
+bt_nst(x::AbstractVector{UInt64}) = length(x)
+
+function bt_adj!(adj::AbstractVector{UInt64}, graph::AbstractGraph)
+    fill!(adj, zero(UInt64))
+
+    @inbounds for v in vertices(graph)
+        for x in neighbors(graph, v)
+            if x != v
+                adj[v] |= bt_bit(x)
+            end
+        end
+    end
+
+    return adj
+end
+
 function bt_adj!(adj::AbstractMatrix{UInt64}, graph::AbstractGraph)
     fill!(adj, zero(UInt64))
 
@@ -73,6 +120,31 @@ function bt_unq!(lst::Vector{UInt64}, nwrd::V) where {V}
 
     empty!(lst); append!(lst, new)
     return lst
+end
+
+# A clock for a deadline, in the sense of time(). A search ticks it,
+# and it reads the time on the first tick and every BT_TICK ticks
+# after; once the deadline has passed, out is set, and the search
+# unwinds. The tasks of a search
+# each have their own ticks and share out.
+const BT_TICK = 1024
+
+function bt_clk(deadline::Real)
+    return (; deadline = convert(Float64, deadline), tick = Ref(0), out = Threads.Atomic{Bool}(false))
+end
+
+function bt_clk(clk::NamedTuple)
+    return (; deadline = clk.deadline, tick = Ref(0), out = clk.out)
+end
+
+function bt_tck!(clk::NamedTuple)
+    t = clk.tick[] += 1
+
+    if isone(t & (BT_TICK - 1)) && time() > clk.deadline
+        clk.out[] = true
+    end
+
+    return clk.out[]
 end
 
 # Sets in a pool: the set at offset p is the words pool[p + 1:p + nwrd].
@@ -202,6 +274,40 @@ function bt_cmp!(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, p::V, q::V, 
     return
 end
 
+# bt_cmp! with one word: the sets are words.
+function bt_cmp!(pool::Vector{UInt64}, adj::AbstractVector{UInt64}, p::V, q::V, v::Integer, nwrd::V) where {V}
+    @inbounds m = pool[q + one(V)]
+    c = t = bt_bit(v)
+
+    @inbounds while true
+        u = zero(UInt64)
+
+        while !iszero(t)
+            u |= adj[trailing_zeros(t) + 1]; t &= t - one(UInt64)
+        end
+
+        t = u & m & ~c
+        iszero(t) && break
+        c |= t
+    end
+
+    @inbounds pool[p + one(V)] = c
+    return
+end
+
+# bt_nbr! with one word.
+function bt_nbr!(pool::Vector{UInt64}, adj::AbstractVector{UInt64}, p::V, b::V, nwrd::V) where {V}
+    @inbounds word = b0 = pool[b + one(V)]
+    @inbounds u = pool[p + one(V)]
+
+    @inbounds while !iszero(word)
+        u |= adj[trailing_zeros(word) + 1]; word &= word - one(UInt64)
+    end
+
+    @inbounds pool[p + one(V)] = u & ~b0
+    return
+end
+
 function bt_nbr!(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, p::V, b::V, nwrd::V) where {V}
     @inbounds for i in oneto(nwrd)
         word = pool[b + i]
@@ -226,3 +332,4 @@ include("pmcdp.jl")
 include("sepdp.jl")
 include("sepenum.jl")
 include("pmcenum.jl")
+include("septw.jl")

@@ -2046,7 +2046,7 @@ end
     graph = complete_graph(80)
     @test treewidth(graph; alg = HBT(; time = 10.0)) == 79
 
-    # PIDBT with a cap on the bag weight, as used by HBT
+    # septw with a cap on the bag weight, as used by HBT
     for (n, p) in ((20, 0.2), (30, 0.1), (40, 0.05))
         Random.seed!(n)
         graph = erdos_renyi(n, p)
@@ -2057,10 +2057,10 @@ end
 
         weights = rand(1:3, n)
         w = treewidth(weights, graph; alg = PIDBT())
-        order = CliqueTrees.PIDBTLib.pidbt(weights, graph, 0; max_k = w)
-        @test order isa Vector && treewidth(weights, graph; alg = order) == w
-        @test ismissing(CliqueTrees.PIDBTLib.pidbt(weights, graph, 0; max_k = w - 1))
-        @test ismissing(CliqueTrees.PIDBTLib.pidbt(weights, graph, w; max_k = w - 1))
+        order, _, k, status = CliqueTrees.septw(weights, graph, 0, w)
+        @test status == CliqueTrees.BT_FOUND && k == w && treewidth(weights, graph; alg = order) == w
+        @test CliqueTrees.septw(weights, graph, 0, w - 1)[4] == CliqueTrees.BT_ABOVE
+        @test CliqueTrees.septw(weights, graph, w, w - 1)[4] == CliqueTrees.BT_ABOVE
 
         # a target at or above the treewidth is met
         for target in w:w + 3
@@ -2085,7 +2085,7 @@ end
 
     for lb in (0, 37), target in (38, 39)
         @test treewidth(weights, graph; alg = PIDBT(lb; target)) <= 38
-        @test treewidth(weights, graph; alg = CliqueTrees.PIDBTLib.pidbt(weights, graph, lb; target)) <= 38
+        @test treewidth(weights, graph; alg = CliqueTrees.septw(weights, graph, max(lb, target), typemax(Int))[1]) <= 38
     end
 end
 

@@ -41,8 +41,9 @@ using Test
     # run the generator; check that the result is a relation from
     # separators to vertices, with sorted lists and no repeats
     function check(weights, graph, maxk)
-        rel = CliqueTrees.sepenum(weights, graph, maxk)
+        rel, status = CliqueTrees.sepenum(weights, graph, maxk)
         lists = [collect(neighbors(rel, s)) for s in 1:nv(rel)]
+        @test status == CliqueTrees.BT_FOUND
         @test nov(rel) == nv(graph)
         @test all(issorted, lists)
         @test allunique(lists)
@@ -78,8 +79,8 @@ using Test
                 maxk = 0
 
                 while true
-                    sep = CliqueTrees.sepenum(weights, graph, maxk)
-                    order, invp, k = CliqueTrees.sepdp(weights, graph, sep, maxk)
+                    sep, _ = CliqueTrees.sepenum(weights, graph, maxk)
+                    order, invp, k, _ = CliqueTrees.sepdp(weights, graph, sep, maxk)
 
                     if k <= maxk
                         @test sort(order) == 1:n
@@ -129,12 +130,30 @@ using Test
             graph = erdos_renyi(n, rand(rng, (0.1, 0.2, 0.35, 0.5)); seed)
 
             for weights in (ones(Int, n), rand(rng, 1:4, n)), maxk in (typemax(Int), 3, 6, 9)
-                one = lists(CliqueTrees.sepenum(weights, graph, maxk))
+                one = lists(first(CliqueTrees.sepenum(weights, graph, maxk; nt = 1)))
 
                 for nt in (2, 3, 7)
-                    @test lists(CliqueTrees.sepenum(weights, graph, maxk; nt)) == one
+                    @test lists(first(CliqueTrees.sepenum(weights, graph, maxk, Inf, nt))) == one
                 end
             end
+        end
+    end
+
+    @testset "deadline" begin
+        # a search that runs out of time gives an empty list and
+        # BT_TIMEOUT; with no time limit, the list is the same
+        lists(rel) = [collect(neighbors(rel, s)) for s in 1:nv(rel)]
+        graph = erdos_renyi(40, 0.3; seed = 1); weights = ones(Int, 40)
+        all, status = CliqueTrees.sepenum(weights, graph, typemax(Int))
+        @test status == CliqueTrees.BT_FOUND && nv(all) > 1000
+
+        for nt in (1, 2)
+            sep, status = CliqueTrees.sepenum(weights, graph, typemax(Int); nt, mt = -1)
+            @test status == CliqueTrees.BT_TIMEOUT && iszero(nv(sep))
+            sep, status = CliqueTrees.sepenum(weights, graph, typemax(Int), time() - 1, nt)
+            @test status == CliqueTrees.BT_TIMEOUT && iszero(nv(sep))
+            sep, status = CliqueTrees.sepenum(weights, graph, typemax(Int); nt, mt = Inf)
+            @test status == CliqueTrees.BT_FOUND && lists(sep) == lists(all)
         end
     end
 end

@@ -68,7 +68,8 @@ using Test
     # order is a permutation whose width is at most the reported one
     function check(weights, graph, seps, maxk)
         n = nv(graph)
-        order, invp, k = CliqueTrees.sepdp(weights, graph, relation(n, seps), maxk)
+        order, invp, k, status = CliqueTrees.sepdp(weights, graph, relation(n, seps), maxk)
+        @test status == (k <= maxk ? CliqueTrees.BT_FOUND : CliqueTrees.BT_ABOVE)
         @test sort(order) == 1:n
         @test invp[order] == 1:n
 
@@ -97,7 +98,7 @@ using Test
         W = eltype(weights)
         n = nv(graph); S = relation(n, seps); ns = nv(S)
         work1 = Vector{Int}(undef, n)
-        adj = CliqueTrees.bt_adj!(Matrix{UInt64}(undef, cld(n, 64), n), graph)
+        adj = CliqueTrees.bt_adj!(CliqueTrees.bt_mat(cld(n, 64), n), graph)
 
         # phase 1: the blocks, in the order of the separators
         sepwgt = Vector{W}(undef, ns)
@@ -113,8 +114,8 @@ using Test
         ok &= all(neighbors(fst, v) == [b for b in 1:nb if blkmin[b] == v] for v in 1:n)
 
         # phase 3: the components and separators as packed sets
-        blkset, sepset = CliqueTrees.sepdp_set!(S, blksep, order, lstset, n)
-        unpack(set, b) = [v for v in 1:n if isodd(set[(v - 1) >> 6 + 1, b] >> ((v - 1) & 63))]
+        blkset, sepset = CliqueTrees.sepdp_set!(adj, S, blksep, order, lstset, n)
+        unpack(set, b) = [v for v in 1:n if isodd(CliqueTrees.bt_get(set, (v - 1) >> 6 + 1, b) >> ((v - 1) & 63))]
         blocks = [(unpack(sepset, b), unpack(blkset, b)) for b in 1:nb]
 
         for b in 1:nb
@@ -207,8 +208,24 @@ using Test
         @test CliqueTrees.sepdp(weights, graph, relation(n, reverse.(seps)), width)[3] == width
 
         # weights of another type
-        order, invp, k = CliqueTrees.sepdp(weights, graph, relation(n, seps), width)
-        @test CliqueTrees.sepdp(weights ./ 2, graph, relation(n, seps), width / 2) == (order, invp, k / 2)
+        order, invp, k, status = CliqueTrees.sepdp(weights, graph, relation(n, seps), width)
+        @test CliqueTrees.sepdp(weights ./ 2, graph, relation(n, seps), width / 2) == (order, invp, k / 2, status)
+    end
+
+    @testset "deadline" begin
+        # a search that runs out of time gives BT_TIMEOUT and the
+        # identity; with no time limit, the result is the same
+        graph = erdos_renyi(40, 0.3; seed = 1); weights = ones(Int, 40)
+        sep, _ = CliqueTrees.sepenum(weights, graph, typemax(Int))
+        @test nv(sep) > 2000
+        result = CliqueTrees.sepdp(weights, graph, sep, 1000)
+        @test result[4] == CliqueTrees.BT_FOUND
+
+        for nt in (1, 2)
+            @test CliqueTrees.sepdp(weights, graph, sep, 1000; nt, mt = -1) == (1:40, 1:40, 0, CliqueTrees.BT_TIMEOUT)
+            @test CliqueTrees.sepdp(weights, graph, sep, 1000, time() - 1, nt) == (1:40, 1:40, 0, CliqueTrees.BT_TIMEOUT)
+            @test CliqueTrees.sepdp(weights, graph, sep, 1000; nt, mt = Inf) == result
+        end
     end
 
     @testset "threads" begin
@@ -219,8 +236,8 @@ using Test
             graph = erdos_renyi(n, rand(rng, (0.1, 0.2, 0.35, 0.5)); seed)
 
             for weights in (ones(Int, n), rand(rng, 1:4, n)), maxk in (3, 6, 9, 30)
-                sep = CliqueTrees.sepenum(weights, graph, maxk)
-                one = CliqueTrees.sepdp(weights, graph, sep, maxk)
+                sep, _ = CliqueTrees.sepenum(weights, graph, maxk)
+                one = CliqueTrees.sepdp(weights, graph, sep, maxk; nt = 1)
 
                 for nt in (2, 3, 7)
                     @test CliqueTrees.sepdp(weights, graph, sep, maxk; nt) == one
@@ -233,9 +250,9 @@ using Test
             n = nv(graph); rng = Xoshiro(seed)
 
             for weights in (ones(Int, n), rand(rng, 1:3, n)), maxk in (typemax(Int), 9, 12)
-                sep = CliqueTrees.sepenum(weights, graph, maxk)
+                sep, _ = CliqueTrees.sepenum(weights, graph, maxk)
                 k = min(maxk, sum(weights))
-                one = CliqueTrees.sepdp(weights, graph, sep, k)
+                one = CliqueTrees.sepdp(weights, graph, sep, k; nt = 1)
                 @test nv(sep) >= CliqueTrees.SEPDP_MT || maxk < typemax(Int)
 
                 for nt in (2, 3)

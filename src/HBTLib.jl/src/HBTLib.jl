@@ -5,12 +5,13 @@ using Random
 using Random: AbstractRNG, Xoshiro, randperm
 using Graphs: nv, ne, neighbors
 
-import ..CliqueTrees: BipartiteGraph
+import ..CliqueTrees: BipartiteGraph, permutation
 
 using ..CliqueTrees: AbstractGraph, CliqueTree, cliquetree, separator,
-    lowerbound, permutation, MinimalChordal, AMF, PIDBT, HBT, de,
-    compressreduce, nov, twins, DEFAULT_LOWER_BOUND_ALGORITHM
-using ..CliqueTrees.PIDBTLib: pidbt
+    lowerbound, MinimalChordal, AMF, PIDBT, HBT, de,
+    compressreduce, nov, twins, DEFAULT_LOWER_BOUND_ALGORITHM,
+    septw, BTStatus, BT_FOUND, BT_ABOVE, BT_TIMEOUT,
+    EliminationAlgorithm, SafeRules, SafeSeparators
 
 export hbt
 

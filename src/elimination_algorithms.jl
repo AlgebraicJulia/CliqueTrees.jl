@@ -549,7 +549,9 @@ struct BT <: EliminationAlgorithm end
 
     PIDBT(; lb=MMW(), target=0)
 
-The positive-instance drivien Bouchitte-Toudina algorithm.
+An exact algorithm for treewidth, by dynamic programming over minimal separators. It tries
+the widths k from a lower bound up, each with the minimal separators of weight less than k
+(Tamaki's separator-based algorithm).
 
 ### Parameters
 
@@ -562,8 +564,7 @@ unit weights, that is the treewidth plus one.
 
 ### References
 
-  - Tamaki, Hisao. "Positive-instance driven dynamic programming for treewidth." *Journal of Combinatorial Optimization* 37.4 (2019): 1283-1311.
-  - Althaus, Ernst, Daniela Schnurbusch, Julian Wüschner, and Sarah Ziegler. "On Tamaki's Algorithm to Compute Treewidths." *19th International Symposium on Experimental Algorithms (SEA 2021)*. 2021.
+  - Tamaki, Hisao. "Computing treewidth via exact and heuristic lists of minimal separators." *17th International Symposium on Experimental Algorithms (SEA 2019)*. 2019.
 """
 struct PIDBT{A <: WidthOrAlgorithm} <: EliminationAlgorithm
     lb::A
@@ -1065,13 +1066,10 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S})
     return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::PIDBT)
-    return permutation(trunc.(Int, view(weights, oneto(nv(graph)))), graph, alg)
-end
-
-function permutation(weights::AbstractVector{Int}, graph::AbstractGraph, alg::PIDBT)
-    order = pidbt(weights, graph, lowerbound(weights, graph, alg.lb); target = alg.target)
-    return order, invperm(order)
+function permutation(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PIDBT) where {W, V}
+    lo = max(convert(W, lowerbound(weights, graph, alg.lb)), convert(W, alg.target))
+    perm, invp, _, _ = septw(weights, graph, lo, typemax(W))
+    return convert(Vector{V}, perm), convert(Vector{V}, invp)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::HBT)

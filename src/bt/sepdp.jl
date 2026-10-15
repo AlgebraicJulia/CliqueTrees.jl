@@ -33,10 +33,14 @@
 # (sepdp_val_mt!) by nt tasks, and the result is the same as with
 # one.
 #
-# If mink <= maxk, then (perm, invp) is an elimination ordering
-# of width at most mink. Otherwise, mink is a lower bound on the
-# width of every decomposition that the search can build, and
-# (perm, invp) is the identity. If the weights are positive and
+# The result is (perm, invp, mink, status). If mink <= maxk
+# (status BT_FOUND), then (perm, invp) is an elimination ordering
+# of width at most mink. Otherwise (status BT_ABOVE), mink is a
+# lower bound on the width of every decomposition that the search
+# can build, and (perm, invp) is the identity. If the search runs
+# for more than mt seconds, the status is BT_TIMEOUT, mink is zero,
+# and (perm, invp) is the identity. The positional method takes the
+# deadline dl, in the sense of time(), instead. If the weights are positive and
 # S contains every minimal separator of weight less than maxk,
 # then mink <= maxk if and only if the graph has a tree
 # decomposition of width at most maxk. In that case, a failed
@@ -50,8 +54,12 @@
 # With fewer separators or blocks than this, a phase uses one task.
 const SEPDP_MT = 256
 
-function sepdp(weights::AbstractVector{W}, graph::AbstractGraph{V}, sep::BipartiteGraph{V}, maxk; nt::Integer = 1) where {W, V}
-    nvtx = nv(graph); nsep = nv(sep); maxk = convert(W, maxk)
+function sepdp(weights::AbstractVector, graph::AbstractGraph, sep::BipartiteGraph, maxk; mt::Real = Inf, nt::Integer = Threads.nthreads())
+    return sepdp(weights, graph, sep, maxk, time() + mt, nt)
+end
+
+function sepdp(weights::AbstractVector{W}, graph::AbstractGraph{V}, sep::BipartiteGraph{V}, maxk, dl::Real, nt::Integer) where {W, V}
+    nvtx = nv(graph); nsep = nv(sep); maxk = convert(W, maxk); clk = bt_clk(dl)
 
     perm = FVector{V}(undef, nvtx)
     invp = FVector{V}(undef, nvtx)
@@ -59,100 +67,131 @@ function sepdp(weights::AbstractVector{W}, graph::AbstractGraph{V}, sep::Biparti
     if iszero(nvtx)
         mink = zero(W)
     else
-        nwrd   = convert(V, cld(nvtx, 64))
-        adj    = bt_adj!(FMatrix{UInt64}(undef, nwrd, nvtx), graph)
-        work1  = FVector{V}(undef, nvtx)
-        sepwgt = FVector{W}(undef, nsep)
+        nwrd = convert(V, cld(nvtx, 64))
+        adj  = bt_adj!(bt_mat(nwrd, nvtx), graph)
+        mink = sepdp_run!(perm, invp, adj, weights, graph, sep, maxk, nt, clk)
+    end
 
-        if nt <= 1 || nsep < SEPDP_MT
-            lstmin, lstlen, lstwgt, lstsep, lstset = sepdp_blk!(
-                sepwgt, adj, weights, graph, sep)
-        else
-            lstmin, lstlen, lstwgt, lstsep, lstset = sepdp_blk_mt!(
-                sepwgt, adj, weights, graph, sep, nt)
+    if clk.out[]
+        for v in oneto(nvtx)
+            perm[v] = invp[v] = v
         end
 
-        nblk = convert(V, length(lstmin))
+        return perm, invp, zero(W), BT_TIMEOUT
+    end
 
-        # the rest is done in the work numbering, in which the old
-        # vertex of the vertex v is new2old[v]
-        new2old, old2new, moved = sepdp_lab!(lstmin, lstset, nvtx, nwrd)
+    return perm, invp, mink, mink <= maxk ? BT_FOUND : BT_ABOVE
+end
 
+# The rest of sepdp, with the neighborhoods adj.
+function sepdp_run!(
+        perm::AbstractVector{V},
+        invp::AbstractVector{V},
+        adj::AbstractVecOrMat{UInt64},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        sep::BipartiteGraph{V},
+        maxk::W,
+        nt::Integer,
+        clk::NamedTuple,
+    ) where {W, V}
+    nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, bt_nwd(adj))
+    work1  = FVector{V}(undef, nvtx)
+    sepwgt = FVector{W}(undef, nsep)
+
+    if nt <= 1 || nsep < SEPDP_MT
+        lstmin, lstlen, lstwgt, lstsep, lstset = sepdp_blk!(
+            sepwgt, adj, weights, graph, sep, clk)
+    else
+        lstmin, lstlen, lstwgt, lstsep, lstset = sepdp_blk_mt!(
+            sepwgt, adj, weights, graph, sep, nt, clk)
+    end
+
+    clk.out[] && return zero(W)
+
+    nblk = convert(V, length(lstmin))
+
+    # the rest is done in the work numbering, in which the old
+    # vertex of the vertex v is new2old[v]
+    new2old, old2new, moved = sepdp_lab!(lstmin, lstset, nvtx, nwrd)
+
+    if moved
+        weights, graph, sep, adj = sepdp_rel(weights, graph, sep, adj, new2old, old2new)
+    end
+
+    blkmin = FVector{V}(undef, nblk)
+    blklen = FVector{V}(undef, nblk)
+    blkwgt = FVector{W}(undef, nblk)
+    blksep = FVector{V}(undef, nblk)
+    order  = FVector{V}(undef, nblk)
+
+    fst = sepdp_srt!(blkmin, blklen, blkwgt, blksep, order, work1,
+        lstmin, lstlen, lstwgt, lstsep, nvtx)
+
+    blkset, sepset = sepdp_set!(adj, sep, blksep, order, lstset, nvtx)
+    trie = merge(sepdp_tri(fst, blklen, sepset, weights), (; clk))
+
+    valk   = FVector{W}(undef, nblk + 1)
+    capptr = FVector{V}(undef, nblk + 2)
+
+    if nt <= 1 || nblk < SEPDP_MT
+        cap = sepdp_val!(valk, capptr, adj, weights, sep, sepwgt,
+            blkset, sepset, fst, trie, blkmin, blklen, blkwgt, blksep, maxk)
+    else
+        cap = sepdp_val_mt!(valk, capptr, adj, weights, sep, sepwgt,
+            blkset, sepset, fst, trie, blkmin, blklen, blkwgt, blksep, maxk, nt)
+    end
+
+    clk.out[] && return zero(W)
+    mink = valk[nblk + one(V)]
+
+    if mink <= maxk
+        tag   = FScalar{V}(undef); tag[] = zero(V)
+        stack = FVector{V}(undef, nvtx + 1)
+        queue = work1
+        insep = FVector{V}(undef, nvtx)
+
+        sepdp_ord!(perm, invp, stack, queue, insep, tag,
+            graph, sep, fst, blklen, blksep, cap)
+
+        # back to the numbering of the graph
         if moved
-            weights, graph, sep, adj = sepdp_rel(weights, graph, sep, adj, new2old, old2new)
-        end
-
-        blkmin = FVector{V}(undef, nblk)
-        blklen = FVector{V}(undef, nblk)
-        blkwgt = FVector{W}(undef, nblk)
-        blksep = FVector{V}(undef, nblk)
-        order  = FVector{V}(undef, nblk)
-
-        fst = sepdp_srt!(blkmin, blklen, blkwgt, blksep, order, work1,
-            lstmin, lstlen, lstwgt, lstsep, nvtx)
-
-        blkset, sepset = sepdp_set!(sep, blksep, order, lstset, nvtx)
-        trie = sepdp_tri(fst, blklen, sepset, weights)
-
-        valk   = FVector{W}(undef, nblk + 1)
-        capptr = FVector{V}(undef, nblk + 2)
-
-        if nt <= 1 || nblk < SEPDP_MT
-            cap = sepdp_val!(valk, capptr, adj, weights, sep, sepwgt,
-                blkset, sepset, fst, trie, blkmin, blklen, blkwgt, blksep, maxk)
-        else
-            cap = sepdp_val_mt!(valk, capptr, adj, weights, sep, sepwgt,
-                blkset, sepset, fst, trie, blkmin, blklen, blkwgt, blksep, maxk, nt)
-        end
-
-        mink = valk[nblk + one(V)]
-
-        if mink <= maxk
-            tag   = FScalar{V}(undef); tag[] = zero(V)
-            stack = FVector{V}(undef, nvtx + 1)
-            queue = work1
-            insep = FVector{V}(undef, nvtx)
-
-            sepdp_ord!(perm, invp, stack, queue, insep, tag,
-                graph, sep, fst, blklen, blksep, cap)
-
-            # back to the numbering of the graph
-            if moved
-                for i in oneto(nvtx)
-                    perm[i] = new2old[perm[i]]
-                end
-
-                for i in oneto(nvtx)
-                    invp[perm[i]] = i
-                end
+            for i in oneto(nvtx)
+                perm[i] = new2old[perm[i]]
             end
-        else
-            for v in oneto(nvtx)
-                perm[v] = invp[v] = v
+
+            for i in oneto(nvtx)
+                invp[perm[i]] = i
             end
+        end
+    else
+        for v in oneto(nvtx)
+            perm[v] = invp[v] = v
         end
     end
 
-    return perm, invp, mink
+    return mink
 end
 
 # The blocks: the small full components of G - S, for each S.
 function sepdp_blk!(
         sepwgt::AbstractVector{W},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         sep::BipartiteGraph{V},
+        clk::NamedTuple = bt_clk(Inf),
     ) where {W, V}
-    nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, size(adj, 1))
+    nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, bt_nwd(adj))
 
     @assert nsep <= length(sepwgt)
-    @assert nvtx <= size(adj, 2)
+    @assert nvtx <= bt_nst(adj)
     @assert nvtx <= length(weights)
 
     lsts = (V[], V[], W[], V[], UInt64[]); pool = UInt64[]
 
     @inbounds for s in vertices(sep)
+        bt_tck!(clk) && break
         sepdp_bk1!(lsts, pool, sepwgt, adj, weights, sep, s, nvtx, nwrd)
     end
 
@@ -165,16 +204,17 @@ end
 # back in the order of the separators.
 function sepdp_blk_mt!(
         sepwgt::AbstractVector{W},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         sep::BipartiteGraph{V},
         nt::Integer,
+        clk::NamedTuple = bt_clk(Inf),
     ) where {W, V}
-    nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, size(adj, 1))
+    nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, bt_nwd(adj))
 
     @assert nsep <= length(sepwgt)
-    @assert nvtx <= size(adj, 2)
+    @assert nvtx <= bt_nst(adj)
     @assert nvtx <= length(weights)
 
     task = FVector{Int}(undef, nsep)
@@ -183,10 +223,11 @@ function sepdp_blk_mt!(
     next = Threads.Atomic{Int}(1)
 
     # each task makes its own lists, apart from the others in memory
-    tasks = [Threads.@spawn sepdp_bkt!(task, lo, hi, next, t, sepwgt, adj, weights, sep, nvtx, nwrd) for t in oneto(nt)]
+    tasks = [Threads.@spawn sepdp_bkt!(task, lo, hi, next, t, sepwgt, adj, weights, sep, nvtx, nwrd, bt_clk(clk)) for t in oneto(nt)]
     lstt = Tuple{Vector{V}, Vector{V}, Vector{W}, Vector{V}, Vector{UInt64}}[fetch(t) for t in tasks]
 
     lsts = (V[], V[], W[], V[], UInt64[])
+    clk.out[] && return lsts
 
     @inbounds for s in oneto(nsep)
         src = lstt[task[s]]
@@ -214,17 +255,18 @@ function sepdp_bkt!(
         next::Threads.Atomic{Int},
         t::Int,
         sepwgt::AbstractVector{W},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         sep::BipartiteGraph{V},
         nvtx::Integer,
         nwrd::V,
+        clk::NamedTuple,
     ) where {W, V}
     nsep = nv(sep); pool = UInt64[]; lsts = (V[], V[], W[], V[], UInt64[])
 
     @inbounds while true
         s = Threads.atomic_add!(next, 1)
-        s > nsep && break
+        (s > nsep || bt_tck!(clk)) && break
         task[s] = t; lo[s] = length(lsts[1])
         sepdp_bk1!(lsts, pool, sepwgt, adj, weights, sep, convert(V, s), nvtx, nwrd)
         hi[s] = length(lsts[1])
@@ -239,7 +281,7 @@ function sepdp_bk1!(
         lsts::Tuple,
         pool::Vector{UInt64},
         sepwgt::AbstractVector{W},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         sep::BipartiteGraph{V},
         s::V,
@@ -343,13 +385,13 @@ function sepdp_rel(
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         sep::BipartiteGraph{V},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         new2old::AbstractVector{V},
         old2new::AbstractVector{V},
     ) where {W, V}
-    nvtx = nv(graph); nwrd = convert(V, size(adj, 1))
+    nvtx = nv(graph); nwrd = convert(V, bt_nwd(adj))
     wgt = FVector{W}(undef, nvtx)
-    nbr = FMatrix{UInt64}(undef, nwrd, nvtx); fill!(nbr, zero(UInt64))
+    nbr = bt_mat(adj, nvtx); fill!(nbr, zero(UInt64))
     ptr = V[one(V)]; tgt = V[]
 
     @inbounds for v in oneto(nvtx)
@@ -362,11 +404,11 @@ function sepdp_rel(
         push!(ptr, convert(V, length(tgt)) + one(V))
 
         for i in oneto(nwrd)
-            word = adj[i, u]
+            word = bt_get(adj, i, u)
 
             while !iszero(word)
                 y = old2new[bt_vtx(Int, i, word)]; word &= word - one(UInt64)
-                nbr[bt_wrd(y), v] |= bt_bit(y)
+                bt_put!(nbr, bt_get(nbr, bt_wrd(y), v) | bt_bit(y), bt_wrd(y), v)
             end
         end
     end
@@ -427,6 +469,7 @@ function sepdp_srt!(
 end
 
 function sepdp_set!(
+        adj::AbstractVecOrMat{UInt64},
         sep::BipartiteGraph{V},
         blksep::AbstractVector{V},
         order::AbstractVector{V},
@@ -438,19 +481,19 @@ function sepdp_set!(
     @assert nblk <= length(order)
     @assert nblk * nwrd <= length(lstset)
 
-    blkset = FMatrix{UInt64}(undef, nwrd, nblk)
-    sepset = FMatrix{UInt64}(undef, nwrd, nblk)
+    blkset = bt_mat(adj, nblk)
+    sepset = bt_mat(adj, nblk)
     fill!(sepset, zero(UInt64))
 
     @inbounds for b in oneto(nblk)
         p = (order[b] - one(V)) * nwrd
 
         for i in oneto(nwrd)
-            blkset[i, b] = lstset[p + i]
+            bt_put!(blkset, lstset[p + i], i, b)
         end
 
         for x in neighbors(sep, blksep[b])
-            sepset[bt_wrd(x), b] |= bt_bit(x)
+            bt_put!(sepset, bt_get(sepset, bt_wrd(x), b) | bt_bit(x), bt_wrd(x), b)
         end
     end
 
@@ -460,12 +503,12 @@ end
 function sepdp_val!(
         valk::AbstractVector{W},
         capptr::AbstractVector{V},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         sep::BipartiteGraph{V},
         sepwgt::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blkmin::AbstractVector{V},
@@ -474,7 +517,7 @@ function sepdp_val!(
         blksep::AbstractVector{V},
         maxk::W,
     ) where {W, V}
-    nwrd = convert(V, size(adj, 1)); nvtx = size(adj, 2); nblk = convert(V, length(blkmin)); nsep = nv(sep)
+    nwrd = convert(V, bt_nwd(adj)); nvtx = bt_nst(adj); nblk = convert(V, length(blkmin)); nsep = nv(sep)
 
     @assert nblk < length(valk)
     @assert nblk + one(V) < length(capptr)
@@ -489,6 +532,7 @@ function sepdp_val!(
     bagset = FVector{UInt64}(undef, nwrd)
 
     @inbounds for b in oneto(nblk)
+        bt_tck!(trie.clk) && return nothing
         capptr[b] = convert(V, length(captgt)) + one(V)
         sepdp_bv1!(valk, captgt, pool, bagset, adj, weights, sep, sepwgt,
             blkset, sepset, fst, trie, blkmin, blklen, blkwgt, blksep, maxk, b)
@@ -508,12 +552,12 @@ end
 function sepdp_val_mt!(
         valk::AbstractVector{W},
         capptr::AbstractVector{V},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         sep::BipartiteGraph{V},
         sepwgt::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blkmin::AbstractVector{V},
@@ -523,7 +567,7 @@ function sepdp_val_mt!(
         maxk::W,
         nt::Integer,
     ) where {W, V}
-    nwrd = convert(V, size(adj, 1)); nvtx = size(adj, 2); nblk = convert(V, length(blkmin)); nsep = nv(sep)
+    nwrd = convert(V, bt_nwd(adj)); nvtx = bt_nst(adj); nblk = convert(V, length(blkmin)); nsep = nv(sep)
 
     @assert nblk < length(valk)
     @assert nblk + one(V) < length(capptr)
@@ -557,6 +601,7 @@ function sepdp_val_mt!(
     tasks = [Threads.@spawn sepdp_bvt!(valk, task, lo, hi, cls, left, next, t,
         adj, weights, sep, sepwgt, blkset, sepset, fst, trie, blkmin, blklen, blkwgt, blksep, maxk) for t in oneto(nt)]
     caps = Vector{V}[fetch(t) for t in tasks]
+    trie.clk.out[] && return nothing
 
     captgt = V[]
 
@@ -586,12 +631,12 @@ function sepdp_bvt!(
         left::Vector{Threads.Atomic{Int}},
         next::Threads.Atomic{Int},
         t::Int,
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         sep::BipartiteGraph{V},
         sepwgt::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blkmin::AbstractVector{V},
@@ -601,18 +646,21 @@ function sepdp_bvt!(
         maxk::W,
     ) where {W, V}
     nblk = length(blkmin); captgt = V[]; pool = UInt64[]
-    bagset = FVector{UInt64}(undef, size(adj, 1)); trie = merge(trie, (; stack = Int[]))
+    bagset = FVector{UInt64}(undef, bt_nwd(adj)); trie = merge(trie, (; stack = Int[], clk = bt_clk(trie.clk)))
 
     @inbounds while true
         b = Threads.atomic_add!(next, 1)
-        b > nblk && break
+        (b > nblk || bt_tck!(trie.clk)) && break
         c = cls[b]
 
+        # (a task that stops at the deadline leaves the count above 0)
         if c > 1
-            while ispositive(left[c - 1][])
+            while ispositive(left[c - 1][]) && !trie.clk.out[]
                 ccall(:jl_cpu_pause, Cvoid, ())
                 GC.safepoint()
             end
+
+            trie.clk.out[] && break
         end
 
         task[b] = t; lo[b] = length(captgt)
@@ -631,12 +679,12 @@ function sepdp_bv1!(
         captgt::AbstractVector{V},
         pool::Vector{UInt64},
         bagset::AbstractVector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
         sep::BipartiteGraph{V},
         sepwgt::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blkmin::AbstractVector{V},
@@ -650,7 +698,7 @@ function sepdp_bv1!(
     pc = bt_new!(pool, nwrd)    # the scope
 
     @inbounds for i in oneto(nwrd)
-        bagset[i] = sepset[i, b]; pool[pc + i] = blkset[i, b]
+        bagset[i] = bt_get(sepset, i, b); pool[pc + i] = bt_get(blkset, i, b)
     end
 
     @inbounds valk[b] = sepdp_cap!(captgt, pool, bagset, adj, weights, blkset, sepset,
@@ -668,16 +716,16 @@ function sepdp_rot!(
         captgt::Vector{V},
         pool::Vector{UInt64},
         bagset::AbstractVector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blklen::AbstractVector{V},
         maxk::W,
     ) where {W, V}
-    nwrd = convert(V, size(adj, 1)); nvtx = size(adj, 2); r = convert(V, size(blkset, 2)) + one(V)
+    nwrd = convert(V, bt_nwd(adj)); nvtx = bt_nst(adj); r = convert(V, bt_nst(blkset)) + one(V)
     top = convert(V, length(pool)); wall = zero(W)
     pc = bt_new!(pool, nwrd)    # the scope
 
@@ -711,10 +759,10 @@ function sepdp_cap!(
         captgt::AbstractVector{V},
         pool::Vector{UInt64},
         bagset::AbstractVector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blklen::AbstractVector{V},
@@ -779,6 +827,8 @@ function sepdp_cap!(
     end
 
     @inbounds while true
+        bt_tck!(trie.clk) && break
+
         if lin
             q > qend && break
             x = tgt[q]; q += 1
@@ -801,8 +851,8 @@ function sepdp_cap!(
                 c = 0; d = 0
 
                 for i in oneto(nwrd)
-                    c += count_ones(trie.nodall[i, p] & ~bagset[i])
-                    d += count_ones(bagset[i] & ~trie.nodany[i, p])
+                    c += count_ones(bt_get(trie.nodall, i, p) & ~bagset[i])
+                    d += count_ones(bagset[i] & ~bt_get(trie.nodany, i, p))
                 end
 
                 max(m, wbag + c * wmin, trie.nodw[p] + d * wmin) < mink || continue
@@ -821,7 +871,7 @@ function sepdp_cap!(
         out = true
 
         for i in oneto(nwrd)
-            if !iszero(blkset[i, x] & bagset[i])
+            if !iszero(bt_get(blkset, i, x) & bagset[i])
                 out = false
                 break
             end
@@ -838,7 +888,7 @@ function sepdp_cap!(
         w = wbag
 
         for i in oneto(nwrd)
-            word = sepset[i, x] & ~bagset[i]
+            word = bt_get(sepset, i, x) & ~bagset[i]
 
             while !iszero(word)
                 w += weights[bt_vtx(V, i, word)]; word &= word - one(UInt64)
@@ -853,7 +903,7 @@ function sepdp_cap!(
             n = nbag
 
             for i in oneto(nwrd)
-                n += count_ones(sepset[i, x] & ~bagset[i]); bagset[i] |= sepset[i, x]
+                n += count_ones(bt_get(sepset, i, x) & ~bagset[i]); bagset[i] |= bt_get(sepset, i, x)
             end
 
             k = sepdp_uni!(captgt, pool, bagset, adj, weights, blkset, sepset,
@@ -873,6 +923,12 @@ function sepdp_cap!(
         end
     end
 
+    # past the deadline: the result is not used
+    if trie.clk.out[]
+        resize!(stack, sp); resize!(pool, top)
+        return mink
+    end
+
     # cmin in the bag
     w = wbag + weights[cmin]; k = max(w, m)
 
@@ -889,6 +945,154 @@ function sepdp_cap!(
     return min(mink, k)
 end
 
+# sepdp_cap! with one word: the sets are words.
+function sepdp_cap!(
+        captgt::AbstractVector{V},
+        pool::Vector{UInt64},
+        bagset::AbstractVector{UInt64},
+        adj::AbstractVector{UInt64},
+        weights::AbstractVector{W},
+        blkset::AbstractVector{UInt64},
+        sepset::AbstractVector{UInt64},
+        fst::BipartiteGraph{V},
+        trie::NamedTuple,
+        blklen::AbstractVector{V},
+        valk::AbstractVector{W},
+        maxk::W,
+        nbag::Int,
+        wbag::W,
+        pc::V,
+        clen::Int,
+        cmin::Int,
+        cwgt::W,
+        m::W,
+        root::Bool,
+    ) where {W, V}
+    @inbounds bag = bagset[1]
+
+    # the bag ∪ the scope
+    k = max(wbag + cwgt, m)
+
+    if k <= maxk
+        @inbounds word = bag | pool[pc + one(V)]
+
+        while !iszero(word)
+            push!(captgt, bt_vtx(V, 1, word)); word &= word - one(UInt64)
+        end
+
+        return k
+    end
+
+    mink = k
+
+    # cmin in a child x (see above)
+    tgt = targets(fst); rng = incident(fst, cmin); lo = first(rng); hi = last(rng) + 1
+
+    while lo < hi
+        p = lo + half(hi - lo)
+
+        if blklen[tgt[p]] < clen
+            lo = p + 1
+        else
+            hi = p
+        end
+    end
+
+    q = first(rng); qend = lo - 1; lin = qend - q < SEPDP_TRIE
+    tord = trie.tord; nodl = trie.nodl; nodr = trie.nodr; nodn = trie.nodn; nodw = trie.nodw
+    nodall = trie.nodall; nodany = trie.nodany; wmin = trie.wmin
+    stack = trie.stack; sp = length(stack)
+
+    if !lin
+        push!(stack, trie.head[cmin], first(rng), last(rng))
+    end
+
+    @inbounds while true
+        bt_tck!(trie.clk) && break
+
+        if lin
+            q > qend && break
+            x = tgt[q]; q += 1
+        else
+            x = 0
+
+            while length(stack) > sp
+                hi = pop!(stack); lo = pop!(stack); p = pop!(stack)
+
+                if iszero(p)
+                    x = tord[lo]
+                    break
+                end
+
+                nodn[p] < clen || continue
+                c = count_ones(nodall[p] & ~bag); d = count_ones(bag & ~nodany[p])
+                max(m, wbag + c * wmin, nodw[p] + d * wmin) < mink || continue
+                push!(stack, nodr[p], p + 1, hi)
+                push!(stack, nodl[p], lo, p)
+            end
+
+            iszero(x) && break
+            blklen[x] < clen || continue
+        end
+
+        kx = max(m, valk[x])
+        kx <= maxk || kx < mink || continue
+        iszero(blkset[x] & bag) || continue
+
+        if kx > maxk
+            mink = kx
+            continue
+        end
+
+        # the weight of the bag ∪ the separator of x
+        sx = sepset[x] & ~bag; w = wbag; word = sx
+
+        while !iszero(word)
+            w += weights[bt_vtx(V, 1, word)]; word &= word - one(UInt64)
+        end
+
+        k = max(w, kx)
+
+        if k > maxk
+            mink = min(mink, k)
+        else
+            bagset[1] = bag | sx
+
+            k = sepdp_uni!(captgt, pool, bagset, adj, weights, blkset, sepset,
+                fst, trie, blklen, valk, maxk, nbag + count_ones(sx), w, pc, convert(Int, x), kx, root)
+
+            bagset[1] = bag
+
+            if k <= maxk
+                resize!(stack, sp)
+                return k
+            end
+
+            mink = min(mink, k)
+        end
+    end
+
+    # past the deadline: the result is not used
+    if trie.clk.out[]
+        resize!(stack, sp)
+        return mink
+    end
+
+    # cmin in the bag
+    w = wbag + weights[cmin]; k = max(w, m)
+
+    if k <= maxk
+        @inbounds bagset[1] = bag | bt_bit(cmin)
+
+        k = sepdp_uni!(captgt, pool, bagset, adj, weights, blkset, sepset,
+            fst, trie, blklen, valk, maxk, nbag + 1, w, pc, 0, m, root)
+
+        @inbounds bagset[1] = bag
+    end
+
+    return min(mink, k)
+end
+
 # The bag is bagset, with nbag vertices and weight wbag; the
 # rest is the scope pc minus the bag and minus the component of
 # the child x (if x > 0). Every component Y of the rest has
@@ -901,10 +1105,10 @@ function sepdp_uni!(
         captgt::AbstractVector{V},
         pool::Vector{UInt64},
         bagset::AbstractVector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         weights::AbstractVector{W},
-        blkset::AbstractMatrix{UInt64},
-        sepset::AbstractMatrix{UInt64},
+        blkset::AbstractVecOrMat{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         fst::BipartiteGraph{V},
         trie::NamedTuple,
         blklen::AbstractVector{V},
@@ -917,7 +1121,7 @@ function sepdp_uni!(
         m::W,
         root::Bool,
     ) where {W, V}
-    nwrd = convert(V, length(bagset)); nvtx = size(adj, 2); top = convert(V, length(pool))
+    nwrd = convert(V, length(bagset)); nvtx = bt_nst(adj); top = convert(V, length(pool))
     pr = bt_new!(pool, nwrd)    # the rest
     py = bt_new!(pool, nwrd)    # a component Y of the rest
     pn = bt_new!(pool, nwrd)    # N(Y)
@@ -929,7 +1133,7 @@ function sepdp_uni!(
 
     if ispositive(x)
         @inbounds for i in oneto(nwrd)
-            pool[pr + i] &= ~blkset[i, x]
+            pool[pr + i] &= ~bt_get(blkset, i, x)
         end
     end
 
@@ -1029,9 +1233,9 @@ const SEPDP_TRIE = 256
 # Each node p stores, over the blocks below it, the size of the
 # smallest component (nodn[p]), the weight of the lightest
 # separator (nodw[p]), and the intersection and union of the
-# separators (nodall[:, p] and nodany[:, p]).
-function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::AbstractMatrix{UInt64}, weights::AbstractVector{W}) where {W, V}
-    nvtx = nv(fst); nwrd = convert(V, size(sepset, 1)); tgt = targets(fst); nblk = length(tgt)
+# separators (the sets p of nodall and nodany).
+function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::AbstractVecOrMat{UInt64}, weights::AbstractVector{W}) where {W, V}
+    nvtx = nv(fst); nwrd = convert(V, bt_nwd(sepset)); tgt = targets(fst); nblk = length(tgt)
 
     tord   = Vector{V}(undef, nblk)
     crit   = zeros(Int, nblk)
@@ -1039,8 +1243,8 @@ function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::Ab
     nodr   = zeros(Int, nblk)
     nodn   = zeros(Int, nblk)
     nodw   = zeros(W, nblk)
-    nodall = zeros(UInt64, nwrd, nblk)
-    nodany = zeros(UInt64, nwrd, nblk)
+    nodall = bt_mat(sepset, nblk); fill!(nodall, zero(UInt64))
+    nodany = bt_mat(sepset, nblk); fill!(nodany, zero(UInt64))
     head   = zeros(Int, nvtx)
     stack  = Int[]
 
@@ -1050,8 +1254,8 @@ function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::Ab
 
     function less(x, y)
         @inbounds for i in oneto(nwrd)
-            d = sepset[i, x] ⊻ sepset[i, y]
-            iszero(d) || return iszero(sepset[i, x] & d & -d)
+            d = bt_get(sepset, i, x) ⊻ bt_get(sepset, i, y)
+            iszero(d) || return iszero(bt_get(sepset, i, x) & d & -d)
         end
 
         return false
@@ -1067,7 +1271,7 @@ function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::Ab
             x = tord[p]; y = tord[p + 1]
 
             for i in oneto(nwrd)
-                d = sepset[i, x] ⊻ sepset[i, y]
+                d = bt_get(sepset, i, x) ⊻ bt_get(sepset, i, y)
 
                 if !iszero(d)
                     crit[p] = 64(i - 1) + trailing_zeros(d) + 1
@@ -1109,11 +1313,11 @@ function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::Ab
                     nodw[p] = min(wl, wr)
 
                     for i in oneto(nwrd)
-                        al = ispositive(nodl[p]) ? nodall[i, nodl[p]] : sepset[i, tord[lo]]
-                        ar = ispositive(nodr[p]) ? nodall[i, nodr[p]] : sepset[i, tord[hi]]
-                        bl = ispositive(nodl[p]) ? nodany[i, nodl[p]] : sepset[i, tord[lo]]
-                        br = ispositive(nodr[p]) ? nodany[i, nodr[p]] : sepset[i, tord[hi]]
-                        nodall[i, p] = al & ar; nodany[i, p] = bl | br
+                        al = ispositive(nodl[p]) ? bt_get(nodall, i, nodl[p]) : bt_get(sepset, i, tord[lo])
+                        ar = ispositive(nodr[p]) ? bt_get(nodall, i, nodr[p]) : bt_get(sepset, i, tord[hi])
+                        bl = ispositive(nodl[p]) ? bt_get(nodany, i, nodl[p]) : bt_get(sepset, i, tord[lo])
+                        br = ispositive(nodr[p]) ? bt_get(nodany, i, nodr[p]) : bt_get(sepset, i, tord[hi])
+                        bt_put!(nodall, al & ar, i, p); bt_put!(nodany, bl | br, i, p)
                     end
                 end
             end
@@ -1125,11 +1329,11 @@ function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::Ab
     return (; tord, nodl, nodr, nodn, nodw, nodall, nodany, head, stack, wmin)
 end
 
-function sepdp_wgt(sepset::AbstractMatrix{UInt64}, x::Integer, weights::AbstractVector{W}) where {W}
+function sepdp_wgt(sepset::AbstractVecOrMat{UInt64}, x::Integer, weights::AbstractVector{W}) where {W}
     w = zero(W)
 
-    @inbounds for i in axes(sepset, 1)
-        word = sepset[i, x]
+    @inbounds for i in oneto(bt_nwd(sepset))
+        word = bt_get(sepset, i, x)
 
         while !iszero(word)
             w += weights[bt_vtx(Int, i, word)]; word &= word - one(UInt64)
@@ -1145,7 +1349,7 @@ end
 function sepdp_get(
         fst::BipartiteGraph{V},
         blklen::AbstractVector{V},
-        sepset::AbstractMatrix{UInt64},
+        sepset::AbstractVecOrMat{UInt64},
         pool::Vector{UInt64},
         pn::V,
         ymin::Integer,
@@ -1171,7 +1375,7 @@ function sepdp_get(
         found = true
 
         for i in oneto(nwrd)
-            if sepset[i, b] != pool[pn + i]
+            if bt_get(sepset, i, b) != pool[pn + i]
                 found = false
                 break
             end

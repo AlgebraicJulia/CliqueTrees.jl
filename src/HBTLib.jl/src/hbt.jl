@@ -32,7 +32,7 @@
 #     size is drawn log-uniformly between |X₀| and `dsize`. Diversification
 #     also re-triangulates around bags slightly smaller than the largest
 #     (see `near`), which helps on instances where it otherwise stalls.
-#   - Exact local triangulations ask PIDBT for the target width directly
+#   - Exact local triangulations ask septw for the target width directly
 #     rather than for the optimum, and give up after a time limit that adapts
 #     to the progress of the search (see `hbt_cutoff!`). They
 #     are used for local graphs of up to max(`base`, |X₀| + `margin`)
@@ -40,12 +40,12 @@
 #     from just above the size of X₀. With a fixed limit of 60 (the
 #     reference's), no region of a graph of width ~100 is ever solved
 #     exactly; yet such a region, slightly larger than one bag, has a nearly
-#     complete local graph that PIDBT usually solves in milliseconds, often
+#     complete local graph that septw usually solves in milliseconds, often
 #     below the current width. This was the largest single improvement on
 #     wide instances. A region that has no decomposition below the current
 #     width k has treewidth k, and that bounds the treewidth of each of its
-#     diversified variants below, so PIDBT starts at k for them. Merges cap
-#     PIDBT at k, since a wider triangulation is of no use there.
+#     diversified variants below, so septw starts at k for them. Merges cap
+#     septw at k, since a wider triangulation is of no use there.
 #   - The component structure of a PMC (its components, their separators, and
 #     the superblocks it caps) is computed once, when the PMC is created, and
 #     shared by every solution that contains it; the reference recomputes it
@@ -59,7 +59,7 @@
 #     average fill) on a random relabeling, followed by MinimalChordal; the
 #     reference uses MMAF, a minimal variant of minimum average fill. The
 #     choice matters a great deal: with AMF, the widths on wide PACE
-#     instances were 10-20% larger. Exact local triangulations use PIDBT.
+#     instances were 10-20% larger. Exact local triangulations use septw.
 #   - Widths are measured by bag weight, so integer vertex weights are
 #     supported.
 #
@@ -833,23 +833,59 @@ function hbt_state(ctx::HBTContext, depth::Int)
     return st
 end
 
-# the reduction rules applied to local graphs before PIDBT (see `hbt_exact`)
+# the reduction rules applied to local graphs before septw (see `hbt_exact`)
 const HBT_RULES = 5
 
-# Triangulate a (connected) local graph with PIDBT, giving up after the time
+# the largest number of missing edges of a safe separator found by the
+# minor test (see `SafeSeparators`)
+const HBT_MISSING = 50
+
+# The exact search, as an elimination algorithm, so that SafeRules and
+# SafeSeparators can apply it to the pieces of a kernel: septw solves each
+# piece from the width lo, with the cap hi and the deadline dl, and status
+# holds the worst outcome. A piece above the cap puts the whole graph above
+# it; otherwise a piece that runs out of time spoils the result.
+struct HBTExact <: EliminationAlgorithm
+    lo::Int
+    hi::Int
+    dl::Float64
+    status::Base.RefValue{BTStatus}
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBTExact) where {V}
+    perm, invp, _, status = septw(weights, graph, alg.lo, alg.hi, alg.dl, 1)
+
+    if status == BT_ABOVE || status == BT_TIMEOUT && alg.status[] == BT_FOUND
+        alg.status[] = status
+    end
+
+    return convert(Vector{V}, perm), convert(Vector{V}, invp)
+end
+
+# HBTExact behind the safe reduction rules and safe separators. The rules
+# get the lower bound lb only, so they preserve the treewidth.
+function hbt_safe(weights::AbstractVector, graph::AbstractGraph, lb::Int, lo::Int, hi::Int, dl::Float64)
+    status = Ref(BT_FOUND)
+    alg = SafeRules(SafeSeparators(HBTExact(lo, hi, dl, status); maxmissing = HBT_MISSING), lb)
+    order, _ = permutation(weights, graph, alg)
+    return order, status[]
+end
+
+# Triangulate a (connected) local graph with septw, giving up after the time
 # limit of the current step (see `hbt_cutoff!`). Returns a minimal ordering,
 # or `nothing` if the time runs out.
 #
-# PIDBT tries the widths k = k₀, k₀ + 1, ... in turn, and every width below the
+# septw tries the widths k = k₀, k₀ + 1, ... in turn, and every width below the
 # treewidth costs an exhaustive search. A triangulation is useful only if its
-# bags weigh at most `target`, so PIDBT stops at the first one that does: the
+# bags weigh at most `target`, so septw starts there, and stops at the first one that does: the
 # result is optimal if no triangulation meets the target, and meets the target
 # otherwise. `lb` is a known lower bound on the bag weight. If the caller has
 # no use for bags heavier than `cap`, then no width above `cap` is tried, and
 # the result is `missing` if the graph has no triangulation whose bags weigh
 # at most `cap`.
 #
-# PIDBT runs on a kernel of the local graph, computed by `compressreduce`:
+# septw runs on the pieces of a kernel of the local graph. The kernel is
+# computed by `compressreduce`:
 # true twins (vertices with the same closed neighborhood) are merged into
 # weighted vertices, and the safe reduction rules (simplicial, almost
 # simplicial) eliminate vertices. The rules get the lower bound only, not
@@ -858,24 +894,20 @@ const HBT_RULES = 5
 # extends to one of the local graph with bags of weight at most max(lb', t).
 # So the contract above still holds. Local graphs are full of twins and
 # almost simplicial vertices (every component B of G - U turns N(B) into a
-# clique). On the PACE 2017 instances, PIDBT takes 3 to 30 times less time
-# on the kernels.
+# clique). On the PACE 2017 instances, PIDBT (which septw replaced) took 3
+# to 30 times less time on the kernels. The kernel is then split further,
+# by the safe reduction rules and the safe separators (`hbt_safe`), which
+# took 5 times less time again on the exact calls of HBT.
 function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int; lb::Int=0, cap::Int=typemax(Int))
     lb = max(lb, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM))
     lb > cap && return missing
     deadline = min(ctx.deadline, time() + ctx.cutoff)
     kerweights, kergraph, inject, project, kerlb = compressreduce(HBT_RULES, weights, H, lb)
-    kerorder = nothing
+    # one task: the search has workers of its own
+    kerorder, status = hbt_safe(kerweights, kergraph, max(lb, kerlb), max(lb, kerlb, target), cap, deadline)
+    status == BT_ABOVE && return missing
 
-    try
-        kerorder = pidbt(kerweights, kergraph, max(lb, kerlb); target, deadline, max_k = cap)
-    catch err
-        err isa ArgumentError || rethrow()    # disconnected
-    end
-
-    ismissing(kerorder) && return missing
-
-    if isnothing(kerorder)
+    if status == BT_TIMEOUT
         ctx.ntimeout += 1
         return nothing
     end
@@ -895,7 +927,7 @@ function hbt_exact(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, tar
     return order
 end
 
-# Exact if the local graph has at most `limit` vertices and PIDBT finishes
+# Exact if the local graph has at most `limit` vertices and septw finishes
 # in time, greedy otherwise. `missing` if the exact triangulation exceeds
 # `cap` (see `hbt_exact`).
 function hbt_triangulate(ctx::HBTContext, weights::Vector{Int}, H::BipartiteGraph, target::Int, limit::Int=ctx.base; lb::Int=0, cap::Int=typemax(Int))
@@ -906,7 +938,7 @@ end
 
 # The size limit for exact triangulations of a region around bags with up to
 # `size` vertices. A local graph only slightly larger than one bag is nearly
-# complete, and PIDBT solves it quickly even when the bag is wide.
+# complete, and septw solves it quickly even when the bag is wide.
 @inline hbt_limit(ctx::HBTContext, size::Int) = max(ctx.base, size + ctx.margin)
 
 # ---------------------------------------------------------------------------
@@ -1613,9 +1645,9 @@ function hbt_diversify(ctx::HBTContext, st::HBTSnapshot)
     cliques = Vector{Int}[]
 
     # a region small enough to be solved exactly is also triangulated as it
-    # is: PIDBT finds a decomposition of H below the current width if there
+    # is: septw finds a decomposition of H below the current width if there
     # is one. If there is none, it finds the treewidth of H, which bounds
-    # that of H + S below: then PIDBT need not try the widths below it again
+    # that of H + S below: then septw need not try the widths below it again
     # for H + S (where they cost an exhaustive search each, and fail).
     lbS = 0
 
@@ -1789,9 +1821,10 @@ function hbt(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT) where {
 
     # small graphs are solved exactly if that takes at most half the time budget
     if n <= alg.base
-        suborder = pidbt(wgt, bgraph, lowerbound(wgt, bgraph, alg.lb); deadline = t0 + alg.time / 2)
+        sublb = convert(Int, lowerbound(wgt, bgraph, alg.lb))
+        suborder, status = hbt_safe(wgt, bgraph, sublb, sublb, typemax(Int), t0 + alg.time / 2)
 
-        if !isnothing(suborder)
+        if status == BT_FOUND
             order = convert(Vector{V}, suborder)
             return order, invperm(order)
         end

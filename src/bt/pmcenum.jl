@@ -41,7 +41,7 @@
 function pmcenum(graph::AbstractGraph{V}, sep::BipartiteGraph{V}) where {V}
     nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, cld(nvtx, 64))
 
-    adj    = bt_adj!(FMatrix{UInt64}(undef, nwrd, nvtx), graph)
+    adj    = bt_adj!(bt_mat(nwrd, nvtx), graph)
     label  = FVector{V}(undef, nvtx)
     order  = FVector{V}(undef, nvtx)
     cmpptr = FVector{V}(undef, nvtx + 1)
@@ -115,7 +115,7 @@ end
 # the separators sepids[i] of sep, for i in ids.
 function pmcenum_run!(
         out::Vector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         sep::BipartiteGraph{V},
         order::AbstractVector{V},
         lo::Integer,
@@ -124,7 +124,7 @@ function pmcenum_run!(
         ids::AbstractVector{V},
         nwrd::V,
     ) where {V}
-    nvtx = size(adj, 2); pool = UInt64[]
+    nvtx = bt_nst(adj); pool = UInt64[]
 
     # the vertices of G_k, for k = hi - lo + 1
     pm = bt_new!(pool, nwrd)
@@ -247,7 +247,7 @@ end
 
 # Is the set S = ps a minimal separator of the graph induced by
 # the set pm? That is, does G[pm] - S have two full components?
-function pmcenum_sep(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, ps::V, pm::V, nwrd::V) where {V}
+function pmcenum_sep(pool::Vector{UInt64}, adj::AbstractVecOrMat{UInt64}, ps::V, pm::V, nwrd::V) where {V}
     top = convert(V, length(pool)); full = 0
     pr = bt_new!(pool, nwrd)
     pc = bt_new!(pool, nwrd)
@@ -283,7 +283,7 @@ end
 # Is the set X = px a PMC of the graph induced by the set pm? That
 # is, G[pm] - X has no full component, and every two vertices of X
 # are adjacent or lie together in the neighborhood of a component.
-function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, px::V, pm::V, nwrd::V) where {V}
+function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractVecOrMat{UInt64}, px::V, pm::V, nwrd::V) where {V}
     top = convert(V, length(pool))
     pr = bt_new!(pool, nwrd)
     pc = bt_new!(pool, nwrd)
@@ -325,7 +325,7 @@ function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, px::V, p
             wx = bt_wrd(x); bx = bt_bit(x)
 
             for j in oneto(nwrd)
-                pool[pa + j] = adj[j, x] & pool[pm + j]
+                pool[pa + j] = bt_get(adj, j, x) & pool[pm + j]
             end
 
             pool[pa + wx] |= bx
@@ -351,7 +351,7 @@ end
 function pmcenum_lft!(
         out::Vector{UInt64},
         pool::Vector{UInt64},
-        adj::AbstractMatrix{UInt64},
+        adj::AbstractVecOrMat{UInt64},
         px::V,
         pm::V,
         order::AbstractVector{V},
@@ -401,7 +401,7 @@ function pmcenum_lft!(
 end
 
 # List S ∪ C, for each full component C of G[pm] - S, S = ps.
-function pmcenum_ful!(lst::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, ps::V, pm::V, nwrd::V) where {V}
+function pmcenum_ful!(lst::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractVecOrMat{UInt64}, ps::V, pm::V, nwrd::V) where {V}
     top = convert(V, length(pool))
     pr = bt_new!(pool, nwrd)
     pc = bt_new!(pool, nwrd)

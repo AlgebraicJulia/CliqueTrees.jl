@@ -24,6 +24,7 @@ end
     include("sepdp.jl")
     include("sepenum.jl")
     include("pmcenum.jl")
+    include("septw.jl")
 end
 
 @testset "Multifrontal" begin

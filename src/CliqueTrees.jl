@@ -126,10 +126,7 @@ include("bt/bt.jl")
 include("io.jl")
 
 # Submodules
-include("./PIDBTLib.jl/src/PIDBTLib.jl")
 include("./Multifrontal.jl/src/Multifrontal.jl")
-
-using .PIDBTLib
 
 include("./HBTLib.jl/src/HBTLib.jl")
 

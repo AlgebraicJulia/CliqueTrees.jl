@@ -55,7 +55,7 @@ using Test
     # is a relation from PMCs to vertices, with sorted lists and no repeats
     function check(graph)
         n = nv(graph)
-        sep = CliqueTrees.sepenum(ones(Int, n), graph, typemax(Int))
+        sep, _ = CliqueTrees.sepenum(ones(Int, n), graph, typemax(Int))
         rel = CliqueTrees.pmcenum(graph, sep)
         lists = [collect(neighbors(rel, p)) for p in 1:nv(rel)]
         @test nov(rel) == n
