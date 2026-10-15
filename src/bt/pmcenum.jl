@@ -39,7 +39,7 @@
 #     MSc thesis, University of Helsinki, 2020.
 #
 function pmcenum(graph::AbstractGraph{V}, sep::BipartiteGraph{V}) where {V}
-    nvtx = nv(graph); nsep = nv(sep); nwrd = cld(nvtx, 64)
+    nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, cld(nvtx, 64))
 
     adj    = bt_adj!(FMatrix{UInt64}(undef, nwrd, nvtx), graph)
     label  = FVector{V}(undef, nvtx)
@@ -122,7 +122,7 @@ function pmcenum_run!(
         hi::Integer,
         sepids::AbstractVector{V},
         ids::AbstractVector{V},
-        nwrd::Int,
+        nwrd::V,
     ) where {V}
     nvtx = size(adj, 2); pool = UInt64[]
 
@@ -247,8 +247,8 @@ end
 
 # Is the set S = ps a minimal separator of the graph induced by
 # the set pm? That is, does G[pm] - S have two full components?
-function pmcenum_sep(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, ps::Int, pm::Int, nwrd::Int)
-    top = length(pool); full = 0
+function pmcenum_sep(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, ps::V, pm::V, nwrd::V) where {V}
+    top = convert(V, length(pool)); full = 0
     pr = bt_new!(pool, nwrd)
     pc = bt_new!(pool, nwrd)
     pb = bt_new!(pool, nwrd)
@@ -283,11 +283,11 @@ end
 # Is the set X = px a PMC of the graph induced by the set pm? That
 # is, G[pm] - X has no full component, and every two vertices of X
 # are adjacent or lie together in the neighborhood of a component.
-function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, px::Int, pm::Int, nwrd::Int)
-    top = length(pool)
+function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, px::V, pm::V, nwrd::V) where {V}
+    top = convert(V, length(pool))
     pr = bt_new!(pool, nwrd)
     pc = bt_new!(pool, nwrd)
-    nb = length(pool)           # the neighborhoods of the components follow
+    nb = convert(V, length(pool))           # the neighborhoods of the components follow
 
     @inbounds for i in oneto(nwrd)
         pool[pr + i] = pool[pm + i] & ~pool[px + i]
@@ -315,7 +315,7 @@ function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, px::Int,
         end
     end
 
-    nn = length(pool); pa = bt_new!(pool, nwrd); clq = true
+    nn = convert(V, length(pool)); pa = bt_new!(pool, nwrd); clq = true
 
     @inbounds for i in oneto(nwrd)
         word = pool[px + i]
@@ -330,7 +330,7 @@ function pmcenum_pmc(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, px::Int,
 
             pool[pa + wx] |= bx
 
-            for pb in nb:nwrd:nn - 1
+            for pb in nb:nwrd:nn - one(V)
                 if !iszero(pool[pb + wx] & bx)
                     for j in oneto(nwrd)
                         pool[pa + j] |= pool[pb + j]
@@ -352,14 +352,14 @@ function pmcenum_lft!(
         out::Vector{UInt64},
         pool::Vector{UInt64},
         adj::AbstractMatrix{UInt64},
-        px::Int,
-        pm::Int,
+        px::V,
+        pm::V,
         order::AbstractVector{V},
         k::Integer,
         hi::Integer,
-        nwrd::Int,
+        nwrd::V,
     ) where {V}
-    top = length(pool)
+    top = convert(V, length(pool))
     pl = bt_new!(pool, nwrd)    # the vertices of G_j
     py = bt_new!(pool, nwrd)    # the lifted PMC
     pr = bt_new!(pool, nwrd)
@@ -401,8 +401,8 @@ function pmcenum_lft!(
 end
 
 # List S ∪ C, for each full component C of G[pm] - S, S = ps.
-function pmcenum_ful!(lst::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, ps::Int, pm::Int, nwrd::Int)
-    top = length(pool)
+function pmcenum_ful!(lst::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, ps::V, pm::V, nwrd::V) where {V}
+    top = convert(V, length(pool))
     pr = bt_new!(pool, nwrd)
     pc = bt_new!(pool, nwrd)
     pb = bt_new!(pool, nwrd)
@@ -440,7 +440,7 @@ end
 
 # Is T ⊄ S, and T ⊆ U for some set U in lst? Here T = lstT[r + 1:r + nwrd]
 # and S = lstR[q + 1:q + nwrd].
-function pmcenum_one(lstT::Vector{UInt64}, r::Int, lstR::Vector{UInt64}, q::Int, lst::Vector{UInt64}, nwrd::Int)
+function pmcenum_one(lstT::Vector{UInt64}, r::Int, lstR::Vector{UInt64}, q::Int, lst::Vector{UInt64}, nwrd::V) where {V}
     sub = true
 
     @inbounds for i in oneto(nwrd)
@@ -462,7 +462,7 @@ function pmcenum_one(lstT::Vector{UInt64}, r::Int, lstR::Vector{UInt64}, q::Int,
     return false
 end
 
-function pmcenum_put!(lst::Vector{UInt64}, pool::Vector{UInt64}, p::Int, nwrd::Int)
+function pmcenum_put!(lst::Vector{UInt64}, pool::Vector{UInt64}, p::V, nwrd::V) where {V}
     @inbounds for i in oneto(nwrd)
         push!(lst, pool[p + i])
     end

@@ -58,7 +58,7 @@ end
 
 # One thread: the starts in order.
 function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk) where {W, V}
-    nvtx = nv(graph); nwrd = cld(nvtx, 64); maxk = convert(W, maxk)
+    nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk)
 
     adj  = FMatrix{UInt64}(undef, nwrd, nvtx)
     excl = FVector{UInt64}(undef, nwrd)
@@ -86,7 +86,7 @@ end
 # lsts[task[i]][lo[i] + 1:hi[i]], and they are put back in the order
 # of the starts, so the result is that of sepenum_st.
 function sepenum_mt(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, nt::Integer) where {W, V}
-    nvtx = nv(graph); nwrd = cld(nvtx, 64); maxk = convert(W, maxk)
+    nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk)
 
     adj = FMatrix{UInt64}(undef, nwrd, nvtx)
     out = UInt64[]
@@ -131,7 +131,7 @@ function sepenum_run!(
         maxk::W,
         smax::Int,
         nvtx::Integer,
-        nwrd::Int,
+        nwrd::V,
     ) where {W, V}
     excl = FVector{UInt64}(undef, nwrd); pool = UInt64[]; lst = UInt64[]; j = 1
     fill!(excl, zero(UInt64))
@@ -154,7 +154,7 @@ function sepenum_run!(
 end
 
 # ∅, if the graph is disconnected.
-function sepenum_emp!(out::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, maxk::W, nvtx::Integer, nwrd::Int) where {W}
+function sepenum_emp!(out::Vector{UInt64}, pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, maxk::W, nvtx::Integer, nwrd::V) where {W, V}
     if !iszero(nvtx) && zero(W) < maxk
         pv = bt_new!(pool, nwrd)
         pc = bt_new!(pool, nwrd)
@@ -189,9 +189,9 @@ function sepenum_one!(
         maxk::W,
         smax::Int,
         nvtx::Integer,
-        nwrd::Int,
+        nwrd::V,
         a::Integer,
-    ) where {W}
+    ) where {W, V}
     pa = bt_new!(pool, nwrd)
     ps = bt_new!(pool, nwrd)
     pr = bt_new!(pool, nwrd)
@@ -281,15 +281,15 @@ function sepenum_from!(
         maxk::W,
         smax::Int,
         nvtx::Integer,
-        nwrd::Int,
+        nwrd::V,
         a::Integer,
-        pa::Int,
-        pr::Int,
-        ps::Int,
-        pf::Int,
+        pa::V,
+        pr::V,
+        ps::V,
+        pf::V,
         ws::W,
-    ) where {W}
-    top = length(pool)
+    ) where {W, V}
+    top = convert(V, length(pool))
     pR = bt_new!(pool, nwrd)
     pC = bt_new!(pool, nwrd)
     pT = bt_new!(pool, nwrd)    # the vertices outside B ∪ N
@@ -304,7 +304,7 @@ function sepenum_from!(
     end
 
     # the components B of R next to f, each followed by N = N(B) ⊆ S
-    lo = length(pool)
+    lo = convert(V, length(pool))
 
     @inbounds while true
         v = bt_min(pool, pR, nwrd)
@@ -320,7 +320,7 @@ function sepenum_from!(
         bt_nbr!(pool, adj, pN, pB, nwrd)
     end
 
-    hi = length(pool) - 1
+    hi = convert(V, length(pool)) - one(V)
 
     # can S be listed with A?
     nS = bt_len(pool, ps, nwrd)
@@ -362,7 +362,7 @@ end
 # small one of them avoid the start vertices that came before a?
 # These are the full components of N other than the one that
 # contains a.
-function sepenum_put(pool::Vector{UInt64}, excl::AbstractVector{UInt64}, lo::Int, hi::Int, pb::Int, nn::Int, nvtx::Integer, nwrd::Int)
+function sepenum_put(pool::Vector{UInt64}, excl::AbstractVector{UInt64}, lo::V, hi::V, pb::V, nn::Int, nvtx::Integer, nwrd::V) where {V}
     pn = pb + nwrd
 
     for q in lo:2nwrd:hi
@@ -389,15 +389,15 @@ function sepenum_branch!(
         maxk::W,
         smax::Int,
         nvtx::Integer,
-        nwrd::Int,
+        nwrd::V,
         a::Integer,
-        pa::Int,
-        pb::Int,
-        ps::Int,
-        pf::Int,
+        pa::V,
+        pb::V,
+        ps::V,
+        pf::V,
         ws::W,
         put::Bool,
-    ) where {W}
+    ) where {W, V}
     nA = bt_len(pool, pa, nwrd); nS = bt_len(pool, ps, nwrd)
 
     sepenum_sml(nA, nS, smax, nvtx) || return
@@ -416,7 +416,7 @@ function sepenum_branch!(
 
     # the fixed vertices, which grow as each branch is closed, and
     # their weight
-    top = length(pool)
+    top = convert(V, length(pool))
     pg = bt_new!(pool, nwrd)
 
     @inbounds for i in oneto(nwrd)
@@ -427,7 +427,7 @@ function sepenum_branch!(
 
     # the unfixed vertices of S, in the order in which they are
     # taken: the most neighbors in B first, then the smallest
-    lo = length(pool)
+    lo = convert(V, length(pool))
 
     @inbounds for i in oneto(nwrd)
         word = pool[ps + i] & ~pool[pf + i]
@@ -443,12 +443,12 @@ function sepenum_branch!(
         end
     end
 
-    hi = length(pool)
+    hi = convert(V, length(pool))
     sepenum_srt!(pool, lo, hi)
 
     @inbounds for t in lo + 1:hi
         v = sepenum_vtx(pool[t])
-        mid = length(pool)
+        mid = convert(V, length(pool))
 
         # v into A: S becomes N(A + v), the rest becomes B - N(v)
         pA = bt_new!(pool, nwrd)
@@ -519,7 +519,7 @@ end
 
 # Sort the keys pool[lo + 1:hi] in decreasing order (by insertion:
 # there are at most |S| of them).
-function sepenum_srt!(pool::Vector{UInt64}, lo::Int, hi::Int)
+function sepenum_srt!(pool::Vector{UInt64}, lo::V, hi::V) where {V}
     @inbounds for t in lo + 2:hi
         key = pool[t]; s = t
 
@@ -550,14 +550,14 @@ function sepenum_ste(
         pool::Vector{UInt64},
         adj::AbstractMatrix{UInt64},
         weights::AbstractVector{W},
-        pb::Int,
-        ps::Int,
-        pf::Int,
+        pb::V,
+        ps::V,
+        pf::V,
         nA::Int,
         maxk::W,
         nvtx::Integer,
-        nwrd::Int,
-    ) where {W}
+        nwrd::V,
+    ) where {W, V}
     nF = bt_len(pool, pf, nwrd); nU = bt_len(pool, ps, nwrd) - nF; nB = bt_len(pool, pb, nwrd)
 
     # each tree that S' meets costs at least wmin, the weight of
@@ -582,7 +582,7 @@ function sepenum_ste(
     m = nU - jmax
     (m <= 0 || twice(nA + m + nB) <= nvtx - nF - jmax) && return false
 
-    top = length(pool)
+    top = convert(V, length(pool))
     pr = bt_new!(pool, nwrd)    # the vertices of B in no tree
 
     @inbounds for i in oneto(nwrd)
@@ -590,7 +590,7 @@ function sepenum_ste(
     end
 
     # the frontiers of the trees
-    lo = length(pool)
+    lo = convert(V, length(pool))
 
     @inbounds for i in oneto(nwrd)
         word = pool[ps + i] & ~pool[pf + i]
@@ -620,7 +620,7 @@ function sepenum_ste(
 
         # not even if every vertex left joins them
         (iszero(nlive) || twice(nA + sum + nrst) <= nvtx - nF - jmax) && break
-        t = 0; stop = 0
+        t = zero(V); stop = 0
 
         while t < nlive
             p = lo + t * nwrd
@@ -645,7 +645,7 @@ function sepenum_ste(
                     pool[p + j] = (pool[p + j] | adj[j, x]) & pool[pr + j]
                 end
 
-                t += 1
+                t += one(V)
             end
         end
 
