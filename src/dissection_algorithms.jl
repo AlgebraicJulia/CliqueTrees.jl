@@ -554,7 +554,12 @@ function qcc!(graph::BipartiteGraph{V, E}, beta::W, order::Ordering) where {W, V
             #   |E(C)| + score(v)
             # 2 ----------------- < β
             #     |C| (|C| + 1)
-            left < beta * right && break
+            #
+            # Stop if no vertex outside C is adjacent to C: then `scrmax` is
+            # zero, and bucket 0 holds the members of C. (With β < 1 the
+            # density test alone can pass here, and a member of C would be
+            # added again.)
+            (iszero(scrmax) || left < beta * right) && break
             v = popfirst!(scrset(scrmax))
             score[v] = scr = zero(E); pushfirst!(scrset(scr), v)
         end

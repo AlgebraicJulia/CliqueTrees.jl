@@ -28,6 +28,24 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
 
     m = ne(graph); n = nv(graph); nn = n + one(VINT2)
 
+    # KaHyPar crashes when no net has two or more pins. Then there is nothing
+    # to cut, and any partition of the hypernodes has cut zero, so balance
+    # their weights greedily instead.
+    if all(v -> eltypedegree(graph, v) < two(VINT2), vertices(graph))
+        w0 = w1 = zero(WINT1)
+
+        @inbounds for h in oneto(nov(graph))
+            if w0 <= w1
+                part[h] = zero(PINT); w0 += vwght[h]
+            else
+                part[h] = one(PINT); w1 += vwght[h]
+            end
+        end
+
+        sepsize[] = zero(WINT2)
+        return
+    end
+
     @inbounds for v in oneto(nn)
         pointers(graph)[v] -= one(EINT)
     end
@@ -54,6 +72,8 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
         context,
         part,
     )
+
+    KaHyPar.kahypar_context_free(context)
 
     @inbounds for v in oneto(nn)
         pointers(graph)[v] += one(EINT)

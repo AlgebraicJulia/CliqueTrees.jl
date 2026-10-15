@@ -507,6 +507,7 @@ end
             SafeRules(),
             SimplicialRule(),
             SafeSeparators(),
+            SafeSeparators(; maxmissing = 100),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -597,6 +598,7 @@ end
             SimplicialRule(),
             SimplicialRule(),
             SafeSeparators(),
+            SafeSeparators(; maxmissing = 100),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
         )
@@ -668,6 +670,7 @@ end
             SimplicialRule(),
             SimplicialRule(),
             SafeSeparators(),
+            SafeSeparators(; maxmissing = 100),
             ConnectedComponents(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
@@ -1020,6 +1023,7 @@ end
                         SimplicialRule(),
                         SimplicialRule(),
                         SafeSeparators(),
+                        SafeSeparators(; maxmissing = 100),
                         ConnectedComponents(),
                         BestWidth(MCS(), MF()),
                         BestFill(MCS(), MF()),
@@ -2082,6 +2086,184 @@ end
     for lb in (0, 37), target in (38, 39)
         @test treewidth(weights, graph; alg = PIDBT(lb; target)) <= 38
         @test treewidth(weights, graph; alg = CliqueTrees.PIDBTLib.pidbt(weights, graph, lb; target)) <= 38
+    end
+end
+
+@testset "safe separators: weighted almost cliques" begin
+    # S = {1, 2, 3} is an almost clique: the edge {2, 3} is missing. Its full
+    # components are {4} and {5}; the component {6} is not full. Vertex 6 is
+    # lighter than both candidate centers, 2 and 3, so S is filled only if the
+    # full components are at least as heavy as the center.
+    graph = Graph(6)
+
+    for (u, v) in ((1, 2), (1, 3), (4, 1), (4, 2), (4, 3), (5, 1), (5, 2), (5, 3), (6, 1))
+        add_edge!(graph, u, v)
+    end
+
+    order = [6, 4, 5, 1, 2, 3]
+
+    for (w, filled) in ((5, true), (3, true), (2, false))
+        weights = [1, 3, 3, w, w, 1]
+        cmpgraph, _, _ = CliqueTrees.acsd(weights, graph, MinimalChordal(order))
+        @test (3 in neighbors(cmpgraph, 2)) == filled
+        @test treewidth(weights, graph; alg = SafeSeparators(PIDBT())) == treewidth(weights, graph; alg = PIDBT())
+    end
+end
+
+@testset "safe separators: minor test" begin
+    # S = {1, 2, 3} is independent, so not an almost clique, and neither is
+    # any other minimal separator. Each component of G - S is a triangle
+    # {x, y, z} with x adjacent to 1 and 2, y to 2 and 3, and z to 1 and 3:
+    # contracting x into 1, y into 2, and z into 3 makes S a clique, so S is
+    # safe.
+    graph = Graph(9)
+
+    for (x, y, z) in ((4, 5, 6), (7, 8, 9))
+        for (u, v) in ((x, 1), (x, 2), (y, 2), (y, 3), (z, 1), (z, 3), (x, y), (y, z), (x, z))
+            add_edge!(graph, u, v)
+        end
+    end
+
+    weights = ones(Int, 9)
+    min = MinimalChordal([4, 5, 6, 7, 8, 9, 1, 2, 3])
+    isclique(g) = all(u == v || v in neighbors(g, u) for u in 1:3, v in 1:3)
+    # (S has three missing edges)
+    @test !isclique(first(CliqueTrees.acsd(weights, graph, (min,), 0)))
+    @test !isclique(first(CliqueTrees.acsd(weights, graph, (min,), 2)))
+    @test isclique(first(CliqueTrees.acsd(weights, graph, (min,), 3)))
+    @test isclique(first(CliqueTrees.acsd(weights, graph, (min,), 100)))
+end
+
+@testset "safe separators: exactness" begin
+    rng = Xoshiro(2)
+    mins = (MinimalChordal(AMF()), MinimalChordal(MF()), MCSM(), LexM())
+
+    for _ in 1:100
+        n = rand(rng, 10:22)
+        graph = erdos_renyi(n, rand(rng, (0.15, 0.25, 0.35, 0.5)); rng)
+        is_connected(graph) || continue
+        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:4, n)
+        width = treewidth(weights, graph; alg = PIDBT())
+        @test treewidth(weights, graph; alg = SafeSeparators(PIDBT())) == width
+        @test treewidth(weights, graph; alg = SafeSeparators(PIDBT(); maxmissing = 100)) == width
+        @test treewidth(weights, graph; alg = SafeSeparators(PIDBT(), mins; maxmissing = 100)) == width
+    end
+end
+
+@testset "safe separators: components from the clique tree" begin
+    # the components of G - S, and their neighborhoods, for every separator S
+    # of a minimal triangulation, against a search of G
+    rng = Xoshiro(3)
+
+    for _ in 1:50
+        n = rand(rng, 8:30)
+        graph = BipartiteGraph(erdos_renyi(n, rand(rng, (0.05, 0.1, 0.2, 0.35)); rng))
+        order, tree = cliquetree(graph, MinimalChordal())
+        index = invperm(order)
+        at = CliqueTrees.ACSDTree(tree, n)
+        comps = Tuple{Int, Int}[]; ancs = Int[]
+
+        for j in eachindex(tree)
+            CliqueTrees.acsd_components!(comps, ancs, at, tree, j)
+            S = Set(order[i] for i in CliqueTrees.separator(tree, j))
+            nbrs = Dict(top => sort([order[i] for i in CliqueTrees.separator(tree, q)]) for (top, q) in comps)
+            groups = Dict{Int, Vector{Int}}()
+
+            for v in 1:n
+                v in S && continue
+                push!(get!(groups, CliqueTrees.acsd_top!(at, at.home[index[v]]), Int[]), v)
+            end
+
+            found = Set((sort(C), get(nbrs, top, Int[])) for (top, C) in groups)
+            expected = Set{Tuple{Vector{Int}, Vector{Int}}}()
+            seen = falses(n)
+
+            for v in 1:n
+                (v in S || seen[v]) && continue
+                C = [v]; N = Set{Int}(); seen[v] = true; h = 1
+
+                while h <= length(C)
+                    u = C[h]; h += 1
+
+                    for x in neighbors(graph, u)
+                        if x in S
+                            push!(N, x)
+                        elseif !seen[x]
+                            seen[x] = true; push!(C, x)
+                        end
+                    end
+                end
+
+                push!(expected, (sort(C), sort(collect(N))))
+            end
+
+            @test found == expected
+        end
+    end
+end
+
+@testset "safe reduction rules: lower bound" begin
+    # the bound returned with the kernel must not exceed the largest bag
+    # weight of an optimal decomposition (the almost simplicial rule used to
+    # scan entries of its work arrays left over from `pr3` and from earlier
+    # rounds when raising it)
+    rng = Xoshiro(1)
+
+    for _ in 1:200
+        n = rand(rng, 10:25)
+        graph = erdos_renyi(n, rand(rng, (0.15, 0.3, 0.5, 0.7)); rng)
+        is_connected(graph) || continue
+        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:3, n)
+        lb = lowerbound(weights, graph)
+        kerlb = CliqueTrees.compressreduce(5, weights, graph, lb)[5]
+        @test kerlb <= treewidth(weights, graph; alg = PIDBT())
+    end
+end
+
+@testset "quasi-clique covers" begin
+    # with β < 1, `qcc!` used to add a member of C to C again once no vertex
+    # outside C was adjacent to C, repeating vertices and writing past the
+    # end of the cover
+    graphs = (
+        complete_graph(3),
+        path_graph(4),
+        reduce(blockdiag, [path_graph(4) for _ in 1:20]),
+        complete_bipartite_graph(30, 30),
+    )
+
+    for graph in graphs, beta in (1.0, 0.8, 0.5, 0.1)
+        cover = CliqueTrees.qcc(Int, Int, graph, beta, Forward)
+        covered = Set{Tuple{Int, Int}}()
+
+        for c in vertices(cover)
+            clique = neighbors(cover, c)
+            @test allunique(clique)
+
+            for i in clique, j in clique
+                i < j && has_edge(graph, i, j) && push!(covered, (i, j))
+            end
+        end
+
+        @test length(covered) == ne(graph)
+    end
+end
+
+@static if !Sys.iswindows()
+    @testset "KaHyPar dissection with nothing to cut" begin
+        # KaHyPar crashed on hypergraphs in which no net has two or more pins:
+        # isolated vertices, disjoint edges, and quasi-clique covers with β < 1
+        # that collapse to a single quasi-clique
+        graphs = (
+            SimpleGraph(200),
+            reduce(blockdiag, [complete_graph(2) for _ in 1:200]),
+            complete_bipartite_graph(130, 130),
+        )
+
+        for graph in graphs, beta in (1.0, 0.5)
+            order, index = permutation(graph; alg = ND{1}(AMF(), KaHyParND(; beta)))
+            @test isperm(order)
+            @test index == invperm(order)
+        end
     end
 end
 

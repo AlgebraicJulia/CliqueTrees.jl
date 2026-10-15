@@ -289,7 +289,7 @@ function asr_impl!(
     width, hi4 = asr_loop!(weight, degree, number, fillin, status, marker,
         marker2, source, target, begptr, endptr, invptr, stack1, stack4,
         stack5, stack7, stack8, tmpptr, stack2, width, parked, 0, hi1,
-        zero(V), zero(V))
+        zero(V), zero(V), n)
 
     # construct the reduced graph
     m, n = pr3_make!(stack4, stack5, target, begptr, endptr, invptr, stack1,
@@ -452,6 +452,7 @@ function asr_loop!(
         hi1::V,
         hi4::V,
         hi7::V,
+        n::V,
     ) where {W, V, E}
     tol = tolerance(W)
 
@@ -526,7 +527,9 @@ function asr_loop!(
             # its minimum weighted degree is a lower bound
             mindeg = typemax(W); alive = false
 
-            for v in eachindex(status)
+            # (only the first `n` entries belong to this graph: the work
+            # arrays are shared with `pr3` and with earlier rounds)
+            for v in oneto(n)
                 if iszero(status[v] & ASR_DELETE)
                     mindeg = min(mindeg, degree[v]); alive = true
                 end

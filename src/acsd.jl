@@ -5,6 +5,8 @@ function acsd_find!(
         stat::AbstractVector{V},
         cent::AbstractVector{V},
         wperm::AbstractVector{V},
+        queue::AbstractVector{V},
+        comp::AbstractVector{V},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
@@ -17,6 +19,8 @@ function acsd_find!(
     @assert nv(graph) <= length(weights)
     @assert nv(graph) <= length(order)
     @assert nv(graph) <= length(cent)
+    @assert nv(graph) <= length(queue)
+    @assert nv(graph) <= length(comp)
     @assert length(tree) <= length(stat)
 
     function set(v::V)
@@ -123,14 +127,23 @@ function acsd_find!(
 
                         center = zero(V); k = zero(V)
 
+                        # S is safe if the center is no heavier than every
+                        # vertex outside S, or, failing that, than every
+                        # vertex of two full components (see `acsd_heavy!`)
                         if ispositive(vert)
-                            if poscnt == negcnt && weights[vert] < minout + tol
-                                center = vert; k = poscnt
+                            if poscnt == negcnt
+                                if weights[vert] < minout + tol || acsd_heavy!(queue, comp, mark, weights, graph, order, sep, node, vert)
+                                    center = vert; k = poscnt
+                                end
                             end
                         elseif negcnt == two(V)
                             if weights[alt1] < minout + tol
                                 center = alt1; k = one(V)
                             elseif weights[alt2] < minout + tol
+                                center = alt2; k = one(V)
+                            elseif acsd_heavy!(queue, comp, mark, weights, graph, order, sep, node, alt1)
+                                center = alt1; k = one(V)
+                            elseif acsd_heavy!(queue, comp, mark, weights, graph, order, sep, node, alt2)
                                 center = alt2; k = one(V)
                             end
                         end
@@ -149,6 +162,69 @@ function acsd_find!(
     end
 
     return de(graph) + twice(totcnt), numsep
+end
+
+# An almost-clique minimal separator S with center v is safe if, for each
+# component C of G - S, some full component D ≠ C can be contracted into v:
+# then G[C ∪ S] with S filled is a minor of G. With vertex weights, the
+# contracted vertex must keep the weight of v, so no vertex of D may be
+# lighter than v. This holds for every C exactly when S has two such full
+# components. The vertices of S are marked with `node` in `mark`; `comp` is
+# zero on entry and on exit.
+function acsd_heavy!(
+        queue::AbstractVector{V},
+        comp::AbstractVector{V},
+        mark::AbstractVector{V},
+        weights::AbstractVector{W},
+        graph::AbstractGraph{V},
+        order::AbstractVector{V},
+        sep::AbstractVector,
+        node::V,
+        center::V,
+    ) where {W, V}
+    tol = tolerance(W); wgt = weights[center]
+    maxcnt = convert(V, length(sep))
+    id = zero(V); hi = zero(V); num = 0
+
+    for v in vertices(graph)
+        (mark[v] == node || ispositive(comp[v])) && continue
+
+        # search the component of G - S that contains `v`, counting the
+        # vertices of S it is adjacent to
+        id += one(V); lo = hi + one(V)
+        hi += one(V); queue[hi] = v; comp[v] = id
+        heavy = true; cnt = zero(V)
+
+        while lo <= hi
+            u = queue[lo]; lo += one(V)
+            heavy = heavy && wgt < weights[u] + tol
+
+            for x in neighbors(graph, u)
+                if mark[x] == node
+                    if comp[x] != id
+                        comp[x] = id; cnt += one(V)
+                    end
+                elseif iszero(comp[x])
+                    hi += one(V); queue[hi] = x; comp[x] = id
+                end
+            end
+        end
+
+        if heavy && cnt == maxcnt
+            num += 1
+            num > 1 && break
+        end
+    end
+
+    for i in oneto(hi)
+        comp[queue[i]] = zero(V)
+    end
+
+    for i in sep
+        comp[order[i]] = zero(V)
+    end
+
+    return num > 1
 end
 
 function acsd_complete!(
@@ -293,9 +369,12 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
     mark = FVector{V}(undef, n)
     stat = FVector{V}(undef, t)
     cent = FVector{V}(undef, n)
+    queue = FVector{V}(undef, n)
+    comp = FVector{V}(undef, n)
 
     for v in vertices(graph)
         cent[v] = zero(V)
+        comp[v] = zero(V)
     end
 
     for node in oneto(t)
@@ -325,7 +404,7 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
         pass += one(V)
 
         m, numsep = acsd_find!(head, next, mark, stat, cent,
-            wperm, weights, graph, order, tree, pass)
+            wperm, queue, comp, weights, graph, order, tree, pass)
 
         iszero(numsep) && break
 
@@ -349,21 +428,68 @@ function acsd(weights::AbstractVector, graph::AbstractGraph, alg::MinimalAlgorit
     return graph, order, tree
 end
 
-function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple) where {V}
+# Apply the minimal algorithms in `mins` in turn, filling the almost-clique
+# separators of each triangulation. If `maxmissing` is positive, then also
+# fill the separators of each triangulation that have at most `maxmissing`
+# missing edges and pass the clique-minor test of Bodlaender and Koster (see
+# acsd_minor.jl), and repeat until a round fills nothing; the returned
+# triangulation is then one of the returned graph.
+function acsd(weights::AbstractVector, graph::AbstractGraph, mins::Tuple, maxmissing::Int)
+    ispositive(maxmissing) || return acsd(weights, graph, mins...)
+
+    while true
+        graph, order, tree, changed = acsd_round(weights, graph, maxmissing, false, mins...)
+        changed || return graph, order, tree
+    end
+end
+
+function acsd_round(weights::AbstractVector, graph::AbstractGraph, maxmissing::Int, changed::Bool, alg::MinimalAlgorithm, rest::MinimalAlgorithm...)
+    graph, order, tree = acsd(weights, graph, alg)
+    graph, filled = acsd_minor(weights, graph, order, tree, maxmissing)
+    changed = changed || filled
+
+    if isempty(rest)
+        return graph, order, tree, changed
+    end
+
+    return acsd_round(weights, graph, maxmissing, changed, rest...)
+end
+
+function acsd_ranks(weights::AbstractVector{<:Integer}, n::Integer)
+    return Int[weights[v] for v in oneto(n)]
+end
+
+function acsd_ranks(weights::AbstractVector, n::Integer)
+    perm = sortperm(view(weights, oneto(n)))
+    rank = Vector{Int}(undef, n)
+    r = 0
+
+    for (i, v) in enumerate(perm)
+        if i == 1 || weights[v] != weights[perm[i - 1]]
+            r += 1
+        end
+
+        rank[v] = r
+    end
+
+    return rank
+end
+
+function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int) where {V}
     n = nv(graph)
 
     if n > one(V)
         # the minimal triangulation computed by `acsd` is also a minimal
         # triangulation of `cmpgraph`, so it contains every clique minimal
         # separator of `cmpgraph`
-        cmpgraph, order, tree = acsd(weights, graph, mins...)
+        cmpgraph, order, tree = acsd(weights, graph, mins, maxmissing)
         order, tree = atomtree!(order, tree, cmpgraph)
         index = invperm(order)
 
         if length(tree) > 1
             pmtweights = weights[order]
             pmtgraph = graphpermute(cmpgraph, order, index)
-            pmtindex = safeseparators(pmtweights, pmtgraph, tree, alg, mins)
+            pmtindex = safeseparators(pmtweights, pmtgraph, tree, alg, mins, maxmissing)
 
             for v in vertices(graph)
                 i = index[v] = pmtindex[index[v]]
@@ -377,7 +503,7 @@ function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::E
     return permutation(weights, graph, alg)
 end
 
-function safeseparators(weights::AbstractVector{W}, graph::AbstractGraph{V}, tree::CliqueTree{V, E}, alg::EliminationAlgorithm, mins::Tuple) where {W, V, E}
+function safeseparators(weights::AbstractVector{W}, graph::AbstractGraph{V}, tree::CliqueTree{V, E}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int) where {W, V, E}
     n = nv(graph); m = de(graph)
     
     index = FVector{V}(undef, n)
@@ -438,7 +564,7 @@ function safeseparators(weights::AbstractVector{W}, graph::AbstractGraph{V}, tre
 
         nn = ii; mm = pp - one(E)
         subgraph = BipartiteGraph(nn, nn, mm, subptr, subtgt)
-        suborder, subindex = permutation(subwgt, subgraph, Compression(SafeSeparators(alg, mins)))
+        suborder, subindex = permutation(subwgt, subgraph, Compression(SafeSeparators(alg, mins, maxmissing)))
         subupper = sympermute!_impl!(uppptr, upptgt, subgraph, subindex, Forward)
         sublower = BipartiteGraph(nn, nn, de(subupper), subptr, subtgt)
         subclique = view(subindex, stop - strt + two(V):nn)

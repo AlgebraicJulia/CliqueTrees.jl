@@ -821,10 +821,26 @@ end
 """
     SafeSeparators{A, M} <: EliminationAlgorithm
 
-    SafeSeparators(alg::EliminationAlgorithm, min::PermutationOrAlgorithm)
+    SafeSeparators(alg::EliminationAlgorithm, min::MinimalAlgorithm; maxmissing=0)
 
-Apple an elimination algorithm to the atoms of an almost-clique separator decomposition. The algorithm
-`min` is used to compute the decomposition.
+    SafeSeparators(alg::EliminationAlgorithm, mins::Tuple; maxmissing=0)
+
+Apply an elimination algorithm to the atoms of a safe separator decomposition. The decomposition is
+computed from minimal triangulations: the algorithm `min` (or each algorithm in `mins`, in turn) computes
+one, and those of its minimal separators that are safe are filled. The atoms are decomposed again, recursively.
+
+A minimal separator ``S`` is used if it is
+
+  - a clique;
+  - an *almost clique* (``S - v`` is a clique for some *center* ``v``) with two full components whose
+    vertices are all at least as heavy as ``v``;
+  - any separator with at most `maxmissing` missing edges that passes the minor test of Bodlaender and
+    Koster: for every component ``C`` of ``G - S``, contracting parts of ``G - C`` turns ``N(C)`` into a
+    clique. The test is a greedy search, slower than the others. It is off by default (`maxmissing = 0`).
+    Values between 25 and 100 find almost every separator it can find; much larger values cost a lot of
+    time and find few more.
+
+With several algorithms in `mins`, more separators are found.
 
 !!! warning
     The algorithm `min` must compute a *minimimal* ordering. This property is guaranteed by the following
@@ -836,7 +852,8 @@ Apple an elimination algorithm to the atoms of an almost-clique separator decomp
 ### Parameters
 
   - `alg`: elimination algorithm
-  - `min`: minimal elimination algorithm
+  - `min`: minimal elimination algorithm (or a tuple `mins` of them)
+  - `maxmissing`: the largest number of missing edges in a separator given to the minor test (`0`: no minor test)
 
 ### References
 
@@ -846,10 +863,24 @@ Apple an elimination algorithm to the atoms of an almost-clique separator decomp
 struct SafeSeparators{A <: EliminationAlgorithm, M <: Tuple} <: EliminationAlgorithm
     alg::A
     min::M
+    maxmissing::Int
+
+    function SafeSeparators{A, M}(alg::A, min::M, maxmissing::Integer) where {A <: EliminationAlgorithm, M <: Tuple}
+        @assert !isnegative(maxmissing)
+        return new{A, M}(alg, min, maxmissing)
+    end
 end
 
-function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, min::MinimalAlgorithm=DEFAULT_MINIMAL_ALGORITHM)
-    return SafeSeparators(alg, (min,))
+function SafeSeparators(alg::A, mins::M, maxmissing::Integer) where {A <: EliminationAlgorithm, M <: Tuple}
+    return SafeSeparators{A, M}(alg, mins, maxmissing)
+end
+
+function SafeSeparators(alg::EliminationAlgorithm, mins::Tuple; maxmissing::Integer = 0)
+    return SafeSeparators(alg, mins, maxmissing)
+end
+
+function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, min::MinimalAlgorithm=DEFAULT_MINIMAL_ALGORITHM; maxmissing::Integer = 0)
+    return SafeSeparators(alg, (min,), maxmissing)
 end
 
 """
@@ -1071,7 +1102,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Simplic
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSeparators)
-    return safeseparators(weights, graph, alg.alg, alg.min)
+    return safeseparators(weights, graph, alg.alg, alg.min, alg.maxmissing)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents)
@@ -2562,7 +2593,12 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeSeparators{A, M}) where 
     indent = get(io, :indent, 0)
     println(io, " "^indent * "SafeSeparators{$A, $M}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
-    show(IOContext(io, :indent => indent + 4), "text/plain", alg.min)
+
+    for min in alg.min
+        show(IOContext(io, :indent => indent + 4), "text/plain", min)
+    end
+
+    println(io, " "^indent * "    maxmissing: $(alg.maxmissing)")
     return
 end
 
