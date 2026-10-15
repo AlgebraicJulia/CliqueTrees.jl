@@ -20,6 +20,12 @@ end
     include("btdp.jl")
 end
 
+@testset "Separator dynamic program" begin
+    include("sepdp.jl")
+    include("sepenum.jl")
+    include("pmcenum.jl")
+end
+
 @testset "Multifrontal" begin
     include("multifrontal.jl")
 end
