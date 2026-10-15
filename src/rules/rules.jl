@@ -143,8 +143,8 @@ function compressreduce(reduce::F, weights::AbstractVector{W}, graph00::Abstract
     inject03 = FVector{V}(undef, n00); n03 = zero(V)
 
     if verbose
-        println("| iter | \\|V\\| | \\|E\\| |")
-        println("|------|------|------|")
+        println("| iter |       n |       m |")
+        println("|------|---------|---------|")
     end
 
     lo = n00; hi = n00 + one(V); iter = 0
@@ -155,7 +155,7 @@ function compressreduce(reduce::F, weights::AbstractVector{W}, graph00::Abstract
         n10 = nv(graph10)
 
         if verbose
-            println("| ", iter, " | ", n10, " | ", half(ne(graph10)), " |")
+            println("| ", lpad(iter, 4), " | ", lpad(n10, 7), " | ", lpad(half(ne(graph10)), 7), " |")
         end
         # V11
         #  ↓ inject11
