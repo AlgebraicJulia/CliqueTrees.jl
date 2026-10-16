@@ -2187,6 +2187,74 @@ end
     end
 end
 
+@testset "safe separators: solver" begin
+    # the leaves are the atoms of the safe completion (the graph with every
+    # leaf filled in), the separator of a leaf is a clique of the completion,
+    # in the leaf and in a later one, and the orderings of the leaves glue
+    # into an ordering no wider than the widest leaf, optimal if they are
+    rng = Xoshiro(5)
+    mins = (CliqueTrees.DEFAULT_MINIMAL_ALGORITHM,)
+    nsplit = 0
+
+    for _ in 1:100
+        graph = erdos_renyi(rand(rng, 10:30), rand(rng, (0.05, 0.1, 0.2, 0.3)); rng)
+        rand(rng, Bool) && (graph = blockdiag(graph, erdos_renyi(rand(rng, 3:8), 0.4; rng)))
+        n = nv(graph); weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:4, n)
+        V = rand(rng, (Int32, Int)); maxmissing = rand(rng, (0, 100))
+        weights30, graphs30, result = CliqueTrees.safesolve(weights, BipartiteGraph{V, V}(graph), mins, maxmissing)
+        nleaf = length(result.lgraph); nsplit += nleaf > 1
+
+        classes(k) = [result.prjtgt[result.prjptr[c]:result.prjptr[c + 1] - 1] for c in result.leafptr[k]:result.leafptr[k + 1] - 1]
+        leaf(k) = reduce(vcat, classes(k))
+        sep(k) = result.septgt[result.sepptr[k]:result.sepptr[k + 1] - 1]
+        completion = Graph(n)
+
+        for k in 1:nleaf
+            cs = classes(k); g = result.lgraph[k]
+
+            for c in cs, u in c, v in c
+                u < v && add_edge!(completion, u, v)
+            end
+
+            if !iszero(g)
+                for x in vertices(graphs30[g]), y in neighbors(graphs30[g], x), u in cs[x], v in cs[y]
+                    add_edge!(completion, u, v)
+                end
+            end
+        end
+
+        @test all(e -> has_edge(completion, e), edges(graph))
+        order, tree = CliqueTrees.atomtree(completion)
+        @test Set(Set(order[i] for i in bag) for bag in tree) == Set(Set(leaf(k)) for k in 1:nleaf)
+
+        for k in 1:nleaf
+            K = sep(k)
+            @test K ⊆ leaf(k)
+            @test all(u == v || has_edge(completion, u, v) for u in K, v in K)
+            @test isempty(K) || any(K ⊆ leaf(j) for j in k + 1:nleaf)
+        end
+
+        # one step at a time
+        solver = CliqueTrees.SafeSolver(weights, BipartiteGraph{V, V}(graph), mins, maxmissing)
+        while !isnothing(CliqueTrees.safe_step!(solver)) end
+        @test CliqueTrees.SafeResult(solver).lgraph == result.lgraph
+        @test CliqueTrees.SafeResult(solver).prjtgt == result.prjtgt
+
+        orders = [randperm(rng, nv(g)) for g in graphs30]
+        order = CliqueTrees.safe_pull(result, graphs30, orders)
+        width = maximum(treewidth(w, g; alg = o) for (w, g, o) in zip(weights30, graphs30, orders); init = 0)
+        @test eltype(order) == V
+        @test sort(order) == 1:n
+        @test treewidth(weights, graph; alg = order) <= max(width, result.width)
+
+        orders = [first(permutation(w, g; alg = PIDBT())) for (w, g) in zip(weights30, graphs30)]
+        order = CliqueTrees.safe_pull(result, graphs30, orders)
+        @test treewidth(weights, graph; alg = order) == treewidth(weights, graph; alg = ConnectedComponents(PIDBT()))
+    end
+
+    @test nsplit >= 50
+end
+
 @testset "safe separators: components from the clique tree" begin
     # the components of G - S, and their neighborhoods, for every separator S
     # of a minimal triangulation, against a search of G

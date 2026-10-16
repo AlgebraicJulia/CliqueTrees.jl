@@ -2629,7 +2629,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: Log}
     println(io, " "^indent * "$A:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
-+end
+end
 
 """
     DEFAULT_ELIMINATION_ALGORITHM = AMF()

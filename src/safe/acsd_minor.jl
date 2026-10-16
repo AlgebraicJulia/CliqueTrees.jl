@@ -5,8 +5,7 @@
 # for every component C of G - S, contracting parts of G - C turns N(C) into a
 # clique, in which every vertex keeps at least its weight (Bodlaender and
 # Koster, "Safe separators for treewidth"): then every graph G[C ∪ S] with S
-# filled is a minor of G. The contractions are searched for greedily, as in
-# PIDBT's `is_safe_separator_heuristic`.
+# filled is a minor of G. The contractions are searched for greedily.
 #
 # Components. Every other minimal separator of H is parallel to S, so lies
 # inside C ∪ N(C) for a single component C of G - S; filling it changes
