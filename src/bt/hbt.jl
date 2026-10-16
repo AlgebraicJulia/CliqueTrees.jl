@@ -1031,7 +1031,7 @@ struct HBTExact{W} <: EliminationAlgorithm
     status::Base.RefValue{BTStatus}
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBTExact) where {V}
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBTExact; verbose::Bool = false) where {V}
     perm, invp, _, status = septw(weights, graph, alg.lo, alg.hi, alg.dl, 1)
 
     if status == BT_ABOVE || status == BT_TIMEOUT && alg.status[] == BT_FOUND

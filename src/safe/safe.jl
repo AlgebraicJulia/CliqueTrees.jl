@@ -184,8 +184,8 @@ end
 
 function safe_solve!(s::SafeSolver; verbose::Bool = false)
     if verbose
-        println("| iter | level |       n |       m |")
-        println("|------|-------|---------|---------|")
+        println("| iter | level |       n |       m | leaf |")
+        println("|------|-------|---------|---------|------|")
     end
 
     iter = 0
@@ -196,8 +196,8 @@ function safe_solve!(s::SafeSolver; verbose::Bool = false)
         iter += 1
 
         if verbose
-            level, n, m = step
-            println("| ", lpad(iter, 4), " | ", lpad(level, 5), " | ", lpad(n, 7), " | ", lpad(m, 7), " |")
+            level, n, m, leaf = step
+            println("| ", lpad(iter, 4), " | ", lpad(level, 5), " | ", lpad(n, 7), " | ", lpad(m, 7), " | ", lpad(leaf ? "✓" : "", 4), " |")
         end
     end
 
@@ -205,7 +205,8 @@ function safe_solve!(s::SafeSolver; verbose::Bool = false)
 end
 
 # Process the next pending node: a leaf, or the atoms of a split. Returns its
-# level, and the size of its compressed graph, or nothing if no node is left.
+# level, the size of its compressed graph, and whether it is a leaf, or nothing
+# if no node is left.
 function safe_step!(s::SafeSolver)
     while ispositive(s.level) && s.nnxt[s.level] > s.nend[s.level]
         safe_pop!(s)
@@ -227,12 +228,12 @@ function safe_step!(s::SafeSolver)
 
         if length(tree) > 1
             safe_split!(s, node, graph20, project20, graph22, order, tree)
-            return level, n20, m20
+            return level, n20, m20, false
         end
     end
 
     safe_leaf!(s, node, graph20, project20)
-    return level, n20, m20
+    return level, n20, m20, true
 end
 
 # Leave the current level: undo its fill and its merges, and drop its nodes.
@@ -772,10 +773,10 @@ function safe_pull(result::SafeResult{W, V}, graphs::AbstractVector{<:BipartiteG
     return order
 end
 
-function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int) where {V}
-    nv(graph) > one(V) || return permutation(weights, graph, alg)
-    weights30, graphs30, result = safesolve(weights, graph, mins, maxmissing)
-    orders = map(i -> first(permutation(weights30[i], graphs30[i], alg)), eachindex(graphs30))
+function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int; verbose::Bool = false) where {V}
+    nv(graph) > one(V) || return permutation(weights, graph, alg; verbose)
+    weights30, graphs30, result = safesolve(weights, graph, mins, maxmissing; verbose)
+    orders = map(i -> first(permutation(weights30[i], graphs30[i], alg; verbose)), eachindex(graphs30))
     order = safe_pull(result, graphs30, orders)
     return order, invperm(order)
 end

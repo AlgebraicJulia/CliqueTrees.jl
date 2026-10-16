@@ -977,102 +977,102 @@ julia> index == invperm(order)
 true
 ```
 """
-function permutation(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
-    return permutation(graph, alg)
+function permutation(graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, verbose::Bool = false)
+    return permutation(graph, alg; verbose)
 end
 
-function permutation(graph, alg::PermutationOrAlgorithm)
-    return permutation(BipartiteGraph(graph), alg)
+function permutation(graph, alg::PermutationOrAlgorithm; verbose::Bool = false)
+    return permutation(BipartiteGraph(graph), alg; verbose)
 end
 
-function permutation(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {V}
+function permutation(graph::AbstractGraph{V}, alg::PermutationOrAlgorithm; verbose::Bool = false) where {V}
     n = nv(graph); weights = Ones{V}(n)
-    return permutation(weights, graph, alg)
+    return permutation(weights, graph, alg; verbose)
 end
 
-function permutation(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM)
-    return permutation(weights, graph, alg)
+function permutation(weights::AbstractVector, graph; alg::PermutationOrAlgorithm = DEFAULT_ELIMINATION_ALGORITHM, verbose::Bool = false)
+    return permutation(weights, graph, alg; verbose)
 end
 
-function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm)
-    return permutation(weights, BipartiteGraph(graph), alg)
+function permutation(weights::AbstractVector, graph, alg::PermutationOrAlgorithm; verbose::Bool = false)
+    return permutation(weights, BipartiteGraph(graph), alg; verbose)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::A) where A <: EliminationAlgorithm
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::A; verbose::Bool = false) where A <: EliminationAlgorithm
     name = package(A)
     message = "`import $name` to use algorithm $A."
-    throw(ArgumentError(message))    
+    throw(ArgumentError(message))
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector) where {V}
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector; verbose::Bool = false) where {V}
     order = Vector{V}(order)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector, AbstractVector}) where {V}
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, (order, index)::Tuple{AbstractVector, AbstractVector}; verbose::Bool = false) where {V}
     order = Vector{V}(order)
     index = Vector{V}(index)
     return order, index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BFS)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BFS; verbose::Bool = false)
     order = bfs(graph)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCS)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCS; verbose::Bool = false)
     index, size = mcs(graph)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::LexBFS)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::LexBFS; verbose::Bool = false)
     index = lexbfs(graph)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RCMMD)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RCMMD; verbose::Bool = false)
     order = rcmmd(graph, alg.alg)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RCMGL)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::RCMGL; verbose::Bool = false)
     order = rcmgl(graph, alg.alg)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::LexM)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::LexM; verbose::Bool = false)
     index = lexm(graph)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCSM)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCSM; verbose::Bool = false)
     index = mcsm(graph)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF; verbose::Bool = false)
     return amf(weights, graph; exact = alg.exact)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF; verbose::Bool = false)
     return convert.(Vector, mlf(alg.strategy, weights, graph))
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD; verbose::Bool = false)
     index = mmd(weights, graph; delta = alg.delta)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD; verbose::Bool = false)
     index = md(weights, graph; mass = alg.mass, external = alg.external)
     return invperm(index), index
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S}) where {S}
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S}; verbose::Bool = false) where {S}
     return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
 end
 
-function permutation(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PIDBT) where {W, V}
+function permutation(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PIDBT; verbose::Bool = false) where {W, V}
     lo = max(convert(W, lowerbound(weights, graph, alg.lb)), convert(W, alg.target))
     perm, invp, _, _ = septw(weights, graph, lo, typemax(W))
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
@@ -1081,7 +1081,7 @@ end
 # Small graphs are solved exactly if that takes at most half the time; the
 # others by the anytime search (hbtnew). The graph is assumed connected; a
 # disconnected one is split by ConnectedComponents.
-function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT) where {V}
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT; verbose::Bool = false) where {V}
     t0 = time(); n = nv(graph)
     iszero(n) && return V[], V[]
 
@@ -1105,46 +1105,46 @@ function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT)
     return convert(Vector{V}, order), convert(Vector{V}, invp)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal; verbose::Bool = false)
     return mcs_etree(weights, graph, alg.alg)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::CompositeRotations)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::CompositeRotations; verbose::Bool = false)
     return compositerotations(graph, alg.clique, alg.alg)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Compression)
-    order = compress(weights, graph, alg.alg, alg.tau)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Compression; verbose::Bool = false)
+    order = compress(weights, graph, alg.alg, alg.tau; verbose)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules)
-    order = saferules(weights, graph, alg.alg, alg.lb, alg.rules)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules; verbose::Bool = false)
+    order = saferules(weights, graph, alg.alg, alg.lb, alg.rules; verbose)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SimplicialRule)
-    order = simplicialrule(weights, graph, alg.alg)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SimplicialRule; verbose::Bool = false)
+    order = simplicialrule(weights, graph, alg.alg; verbose)
     return order, invperm(order)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSeparators)
-    return safeseparators(weights, graph, alg.alg, alg.min, alg.maxmissing)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSeparators; verbose::Bool = false)
+    return safeseparators(weights, graph, alg.alg, alg.min, alg.maxmissing; verbose)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents)
-    return connectedcomponents(weights, graph, alg.alg)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents; verbose::Bool = false)
+    return connectedcomponents(weights, graph, alg.alg; verbose)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestWidth)
-    return bestwidth(weights, graph, alg.algs)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestWidth; verbose::Bool = false)
+    return bestwidth(weights, graph, alg.algs; verbose)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFill)
-    return bestfill(weights, graph, alg.algs)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestFill; verbose::Bool = false)
+    return bestfill(weights, graph, alg.algs; verbose)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Log)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Log; verbose::Bool = false)
     num = alg.num[] += 1
 
     if isone(num)
@@ -1157,7 +1157,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Log)
     m = rpad(de(graph), 15)
     print("\n| $i | $n | $m |")
 
-    return permutation(weights, graph, alg.alg)
+    return permutation(weights, graph, alg.alg; verbose)
 end
 
 # Algorithmic Aspects of Vertex Elimination on Graphs
@@ -2290,11 +2290,11 @@ function compress_impl!(
     return outgraph, partition
 end
 
-function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tau::Number) where {W, V}
+function compress(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm, tau::Number; verbose::Bool = false) where {W, V}
     order = Vector{V}(undef, nv(graph))
     cmpgraph, project = compress(graph, Val(:T), tau)
     cmpweights = compressweights(weights, project)
-    cmporder, cmpindex = permutation(cmpweights, cmpgraph, alg)
+    cmporder, cmpindex = permutation(cmpweights, cmpgraph, alg; verbose)
     i = zero(V)
 
     @inbounds for vcmp in cmporder, v in neighbors(project, vcmp)
@@ -2327,17 +2327,17 @@ function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVect
     return
 end
 
-function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, rules::Int) where {V}
+function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, rules::Int; verbose::Bool = false) where {V}
     width = lowerbound(weights, graph, lb)
-    innerweights, innergraph, result = compressreduce(rules, weights, graph, width)
-    innerorder, innerindex = permutation(innerweights, innergraph, alg)
+    innerweights, innergraph, result = compressreduce(rules, weights, graph, width; verbose)
+    innerorder, innerindex = permutation(innerweights, innergraph, alg; verbose)
     return rule_pull(result, innerorder)
 end
 
-function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
+function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm; verbose::Bool = false) where {W, V}
     width = zero(W)
-    innerweights, innergraph, result = compressreduce(sr, weights, graph, width)
-    innerorder, innerindex = permutation(innerweights, innergraph, alg)
+    innerweights, innergraph, result = compressreduce(sr, weights, graph, width; verbose)
+    innerorder, innerindex = permutation(innerweights, innergraph, alg; verbose)
     return rule_pull(result, innerorder)
 end
 
@@ -2406,7 +2406,7 @@ function connectedcomponents(graph::AbstractGraph{V}) where {V}
     return cmp, cmpend - one(V)
 end
 
-function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
+function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm; verbose::Bool = false) where {W, V}
     n = nv(graph); j = zero(V)
     order = Vector{V}(undef, n)
     index = Vector{V}(undef, n)
@@ -2421,7 +2421,7 @@ function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}
             subweights[v] = weights[vv]
         end
 
-        suborder, subindex = permutation(subweights, subgraph, alg)
+        suborder, subindex = permutation(subweights, subgraph, alg; verbose)
         
         for v in suborder
             vv = label[v]
