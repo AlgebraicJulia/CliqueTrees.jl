@@ -1954,21 +1954,24 @@ end
         return true
     end
 
-    # check every PMC of a solution: it is a PMC, and its components, their
-    # separators, and its superblocks are right
-    function validate(ctx, st, graph)
-        for X in st.pmcs
-            ispmc(graph, X.verts) || return false
-            cmps = bruteforce_components(graph, X.verts)
-            length(cmps) == length(X.csub) || return false
+    # check every PMC of every solution: it is a PMC, and its components,
+    # their separators, and its superblocks are right
+    function validate(hbt, graph)
+        ctx = hbt.srh.ctx; seq(b) = collect(CliqueTrees.bt_tab_seq(ctx.seps, ctx.bsep[b]))
 
-            for j in eachindex(X.csub)
-                b = X.csub[j]
+        for st in hbt.srh.sols, p in 1:CliqueTrees.hbt_len(st.sol)
+            sol = st.sol; X = collect(CliqueTrees.hbt_pmc(sol, p))
+            ispmc(graph, X) || return false
+            cmps = bruteforce_components(graph, X); cs = sol.cfst[p]:sol.cfst[p + 1] - 1
+            length(cmps) == length(cs) || return false
+
+            for c in cs
+                b = sol.csub[c]
                 C, S = cmps[findfirst(c -> ctx.bmin[b] in c[1], cmps)]
                 minimum(C) == ctx.bmin[b] || return false
                 length(C) == ctx.bsize[b] || return false
-                ctx.seps[ctx.bsep[b]] == S || return false
-                b = X.csup[j]; rest = setdiff(X.verts, S)
+                seq(b) == S || return false
+                b = sol.csup[c]; rest = setdiff(X, S)
                 D, T = only(filter(c -> rest[1] in c[1], bruteforce_components(graph, S)))
                 issubset(rest, D) && T == S || return false
                 minimum(D) == ctx.bmin[b] && length(D) == ctx.bsize[b] || return false
@@ -1995,6 +1998,7 @@ end
                 HBT(; time = 0.2, base = 8, margin = 0, pexact = 0.0),
                 HBT(; time = 0.2, base = 8, margin = 10, pexact = 1.0, near = 0),
                 HBT(; time = 0.2, base = 8, threads = 3),
+                HBT(; time = 0.2, base = 8, init = AMF(), ninit = 0),
             )
             order, index = permutation(graph; alg = ConnectedComponents(alg))
             @test sort(order) == 1:n
@@ -2008,29 +2012,38 @@ end
 
         # internal invariants of the solutions
         for merge in (true, false), margin in (0, 40)
-            g, wgt = CliqueTrees.HBTLib.hbt_graph(weights, graph)
-            ctx = CliqueTrees.HBTLib.HBTContext(g, wgt, AMF(), Xoshiro(2), 8, 10, 3, time() + 0.2; merge, margin)
-
             if is_connected(graph)
-                st = CliqueTrees.HBTLib.hbt_state(ctx, 0)
-                @test validate(ctx, st, graph)
+                hbt = CliqueTrees.hbtnew(weights, graph; seed = 2, alg = AMF(), base = 8, ntry = 10, ninit = 3, merge, margin)
+                @test validate(hbt, graph)
 
                 for _ in 1:20
-                    CliqueTrees.HBTLib.hbt_improve!(ctx, st)
+                    CliqueTrees.hbtstep!(hbt)
                 end
 
-                @test validate(ctx, st, graph)
-                @test sort(st.order) == 1:n
-                @test treewidth(weights, graph; alg = st.order) <= CliqueTrees.HBTLib.hbt_k(st.width)
+                @test validate(hbt, graph)
+                order, invp, k = CliqueTrees.hbtord(hbt)
+                @test sort(order) == 1:n && invp == invperm(order)
+                @test treewidth(weights, graph; alg = order) <= k
+                @test CliqueTrees.pmcdp(weights, graph, CliqueTrees.hbtpmc(hbt))[3] <= k
 
-                # the parallel driver
-                ctx = CliqueTrees.HBTLib.HBTContext(g, wgt, AMF(), Xoshiro(3), 8, 10, 3, time() + 0.2; merge, margin)
-                st = CliqueTrees.HBTLib.hbt_state(ctx, 0)
-                CliqueTrees.HBTLib.hbt_workers!(ctx, 2)
-                CliqueTrees.HBTLib.hbt_parallel!(ctx, st, 0)
-                @test validate(ctx, st, graph)
-                @test sort(st.order) == 1:n
-                @test treewidth(weights, graph; alg = st.order) <= CliqueTrees.HBTLib.hbt_k(st.width)
+                # a start from an ordering: no wider than it
+                init = randperm(n)
+                hbt = CliqueTrees.hbtnew(weights, graph; seed = 2, alg = AMF(), base = 8, ninit = 0, merge, margin, init)
+                @test validate(hbt, graph)
+                @test CliqueTrees.hbtord(hbt)[3] <= treewidth(weights, graph; alg = init)
+
+                for _ in 1:20
+                    CliqueTrees.hbtstep!(hbt)
+                end
+
+                @test validate(hbt, graph)
+
+                # the workers
+                hbt = CliqueTrees.hbtnew(weights, graph; seed = 3, alg = AMF(), base = 8, ntry = 10, ninit = 3, merge, margin)
+                order, invp, k = CliqueTrees.hbtrun!(hbt; mt = 0.2, nt = 3)
+                @test validate(hbt, graph)
+                @test sort(order) == 1:n
+                @test treewidth(weights, graph; alg = order) <= k
             end
         end
     end

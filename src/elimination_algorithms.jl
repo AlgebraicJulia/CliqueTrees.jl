@@ -580,7 +580,7 @@ function PIDBT(; lb::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM, target::I
 end
 
 """
-    HBT{A, L} <: EliminationAlgorithm
+    HBT{A, L, I} <: EliminationAlgorithm
 
     HBT(; time=10.0, seed=1, alg=MF(; strategy=1), lb=MMW(), kwargs...)
 
@@ -589,8 +589,9 @@ The heuristic Bouchitte-Todinca algorithm: an anytime heuristic for small-width 
 A solution is a set of potential maximal cliques. Its value is the smallest width of a tree
 decomposition whose bags all belong to the set, computed by the Bouchitte-Todinca dynamic program.
 Solutions are improved by adding potential maximal cliques taken from triangulations of local
-graphs, which are computed exactly with [`PIDBT`](@ref) when they are small and greedily with
-`alg` otherwise. Two strategies are used:
+graphs, which are computed exactly when they are small (by the safe reduction rules and safe
+separators, then dynamic programming over minimal separators, as in [`PIDBT`](@ref)) and greedily
+with `alg` otherwise. Two strategies are used:
 
   - *diversification* (Tamaki 2019) picks one of the largest bags of the current decomposition and a random
     subtree around it, and re-triangulates the corresponding local graph while forcing that bag
@@ -600,7 +601,7 @@ graphs, which are computed exactly with [`PIDBT`](@ref) when they are small and 
 
 Progress is measured by refined widths: a decomposition improves if it has a smaller largest bag,
 or as large a largest bag but fewer of them. The algorithm runs until `time` seconds have elapsed
-or the width reaches the lower bound computed by `lb`. Vertex weights are truncated to integers.
+or the width reaches the lower bound computed by `lb`. Vertex weights need not be integers.
 
 ### Parameters
 
@@ -609,7 +610,9 @@ or the width reaches the lower bound computed by `lb`. Vertex weights are trunca
   - `alg`: elimination algorithm used for greedy triangulations (made minimal with [`MinimalChordal`](@ref));
     the default is minimum average fill, as in the reference implementation
   - `lb`: lower bound algorithm or lower bound (used as a stopping criterion)
-  - `ninit`: number of randomized greedy triangulations used to seed each solution
+  - `init`: an elimination algorithm or ordering, or `nothing`; its minimal triangulation seeds the first
+    solution, along with the greedy ones (a strong one, such as [`NDS`](@ref), is often a much better start)
+  - `ninit`: number of randomized greedy triangulations used to seed each solution (at least one without `init`)
   - `base`: local graphs with at most this many vertices are triangulated exactly
   - `margin`: local graphs around a bag with b vertices are also triangulated exactly if they have
     at most b + `margin` vertices
@@ -622,13 +625,15 @@ or the width reaches the lower bound computed by `lb`. Vertex weights are trunca
   - `dsize`: maximum size of a diversified region (other sizes are drawn log-uniformly)
   - `nsep`: number of separators tried per diversification
   - `near`: diversification works around a bag of the largest weight k with probability 1/2,
-    of weight k - 1 with probability 1/4, and so on down to k - `near`
+    around a bag in the next band below k (as wide as the smallest vertex weight) with probability
+    1/4, and so on, down `near` bands; with unit weights, the bands are the weights k - 1, k - 2, ...
   - `patience`: number of steps without progress before merging
   - `xtime`, `xmin`, `xstep`: time limit in seconds for each exact triangulation of a local graph (the greedy algorithm
     is used if it runs out). The limit starts at `xmin`, and doubles every `xstep` steps without a decrease of the
     width, up to `xtime`: most exact triangulations take milliseconds, and the slow ones are worth waiting for only
     once the fast ones have stopped making progress
-  - `threads`: number of diversifications made in parallel (on Julia threads) in each step
+  - `threads`: number of tasks: the solution is diversified by `threads - 1` workers (on Julia threads)
+    as well as by the main task
   - `verbose`: print progress
 
 ### Example
@@ -656,11 +661,12 @@ julia> treewidth(graph; alg=HBT(; time=1.0))
   - Tamaki, Hisao. "A heuristic use of dynamic programming to upperbound treewidth." arXiv preprint arXiv:1909.07647 (2019).
   - Tamaki, Hisao. "Heuristic computation of exact treewidth." *20th International Symposium on Experimental Algorithms (SEA 2022)*. 2022.
 """
-@kwdef struct HBT{A <: EliminationAlgorithm, L <: WidthOrAlgorithm} <: EliminationAlgorithm
+@kwdef struct HBT{A <: EliminationAlgorithm, L <: WidthOrAlgorithm, I} <: EliminationAlgorithm
     time::Float64 = 10.0
     seed::Int = 1
     alg::A = MF(; strategy = 1)
     lb::L = DEFAULT_LOWER_BOUND_ALGORITHM
+    init::I = nothing
     ninit::Int = 10
     base::Int = 60
     ntry::Int = 50
@@ -1072,8 +1078,31 @@ function permutation(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::P
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::HBT)
-    return hbt(weights, graph, alg)
+# Small graphs are solved exactly if that takes at most half the time; the
+# others by the anytime search (hbtnew). The graph is assumed connected; a
+# disconnected one is split by ConnectedComponents.
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT) where {V}
+    t0 = time(); n = nv(graph)
+    iszero(n) && return V[], V[]
+
+    if n <= alg.base
+        bgraph, wgt = hbt_graph(weights, graph)
+        lb = convert(eltype(wgt), lowerbound(wgt, bgraph, alg.lb))
+        order, status = hbt_safe(wgt, bgraph, lb, lb, typemax(eltype(wgt)), t0 + alg.time / 2)
+
+        if status == BT_FOUND
+            order = convert(Vector{V}, order)
+            return order, invperm(order)
+        end
+    end
+
+    hbt = hbtnew(weights, graph; seed = alg.seed, alg = alg.alg, lb = alg.lb, ninit = alg.ninit,
+        base = alg.base, ntry = alg.ntry, refined = alg.refined, merge = alg.merge, diversify = alg.diversify,
+        dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, xmin = alg.xmin,
+        xstep = alg.xstep, near = alg.near, margin = alg.margin, pexact = alg.pexact, init = alg.init, verbose = alg.verbose)
+
+    order, invp, _ = hbtrun!(hbt; mt = alg.time - (time() - t0), nt = alg.threads)
+    return convert(Vector{V}, order), convert(Vector{V}, invp)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal)
@@ -2536,9 +2565,9 @@ function Base.show(io::IO, ::MIME"text/plain", alg::A) where {A <: PIDBT}
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L}) where {A, L}
+function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L, I}) where {A, L, I}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "HBT{$A, $L}:")
+    println(io, " "^indent * "HBT{$A, $L, $I}:")
 
     for name in (:time, :seed, :ninit, :base, :ntry, :refined, :merge, :diversify, :dsize, :nsep, :near, :patience, :xtime, :xmin, :xstep, :margin, :pexact, :threads)
         println(io, " "^indent * "    $name: $(getfield(alg, name))")
@@ -2546,6 +2575,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L}) where {A, L}
 
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
+    alg.init isa EliminationAlgorithm && show(IOContext(io, :indent => indent + 4), "text/plain", alg.init)
     return
 end
 

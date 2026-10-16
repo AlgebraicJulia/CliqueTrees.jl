@@ -5,7 +5,6 @@ using Random
 using Test
 
 @testset "BT dynamic program over PMCs (btdp)" begin
-    H = CliqueTrees.HBTLib
 
     function relation(n, sets)
         ptr = cumsum([1; length.(sets)]); tgt = reduce(vcat, sets; init = Int[])
@@ -78,16 +77,15 @@ using Test
 
     # the value that HBT's dynamic program gives the same PMCs
     function hbtvalue(weights, graph, sets)
-        g, wgt = H.hbt_graph(weights, graph)
-        ctx = H.HBTContext(g, wgt, AMF(), Xoshiro(1), 8, 10, 3, time() + 60.0)
-        st = H.HBTState(H.HBTPMC[], Dict{Vector{Int}, Int}(), typemax(Int), Vector{Int}[], Int[], Int[], 0, nothing, 0, 0, 0)
+        g, wgt = CliqueTrees.hbt_graph(weights, graph)
+        ctx = CliqueTrees.hbt_ctx(g, wgt); sol = CliqueTrees.hbt_sol(eltype(wgt))
 
         for X in sets
-            H.hbt_add!(st, H.hbt_pmc(ctx, sort(X)))
+            CliqueTrees.hbt_add!(ctx, sol, sort(X))
         end
 
-        width, _ = H.hbt_dp!(ctx, st)
-        return (H.hbt_k(width), H.hbt_f(width))
+        width, _ = CliqueTrees.hbt_dp!(ctx, sol)
+        return width
     end
 
     # run the program; check that the order is a permutation whose width is

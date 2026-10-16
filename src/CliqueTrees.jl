@@ -128,8 +128,4 @@ include("io.jl")
 # Submodules
 include("./Multifrontal.jl/src/Multifrontal.jl")
 
-include("./HBTLib.jl/src/HBTLib.jl")
-
-using .HBTLib
-
 end
