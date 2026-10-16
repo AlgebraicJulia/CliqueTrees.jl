@@ -793,16 +793,23 @@ to the treewidth; better lower bounds allow the algorithm to perform more reduct
   - Bodlaender, Hans L., et al. "Pre-processing for triangulation of probabilistic networks." (2001).
   - Bodlaender, Hans L., Arie M.C.A. Koster, and Frank van den Eijkhof. "Preprocessing rules for triangulation of probabilistic networks." *Computational Intelligence* 21.3 (2005): 286-305.
   - van den Eijkhof, Frank, Hans L. Bodlaender, and Arie M.C.A. Koster. "Safe reduction rules for weighted treewidth." *Algorithmica* 47 (2007): 139-158. 
+  - Medema, Michel, and Alexander Lazovik. "A safeness condition for minimal separators based on vertex connectivity." *Discrete Mathematics* 348 (2025): 114524.
 """
 struct SafeRules{A <: EliminationAlgorithm, L <: WidthOrAlgorithm, U <: EliminationAlgorithm} <: EliminationAlgorithm
     alg::A
     lb::L
     ub::U
     rules::Int
+    minfrac::Float64
 end
 
-function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm; rules::Int = 5)
-    return SafeRules(alg, lb, ub, rules)
+function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm, rules::Integer)
+    return SafeRules(alg, lb, ub, rules, 1.0e-3)
+end
+
+function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm, ub::EliminationAlgorithm; rules::Integer = 5, minfrac::Real = 1.0e-3)
+    @assert !isnegative(minfrac)
+    return SafeRules(alg, lb, ub, convert(Int, rules), convert(Float64, minfrac))
 end
 
 function SafeRules(alg::EliminationAlgorithm, lb::WidthOrAlgorithm; kwargs...)
@@ -1119,7 +1126,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Compres
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeRules; verbose::Bool = false)
-    order = saferules(weights, graph, alg.alg, alg.lb, alg.rules; verbose)
+    order = saferules(weights, graph, alg.alg, alg.lb, alg.rules; verbose, minfrac = alg.minfrac)
     return order, invperm(order)
 end
 
@@ -2327,9 +2334,9 @@ function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVect
     return
 end
 
-function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, rules::Int; verbose::Bool = false) where {V}
+function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, rules::Int; verbose::Bool = false, minfrac::Real = 0.0) where {V}
     width = lowerbound(weights, graph, lb)
-    innerweights, innergraph, result = compressreduce(rules, weights, graph, width; verbose)
+    innerweights, innergraph, result = compressreduce(rules, weights, graph, width; verbose, minfrac)
     innerorder, innerindex = permutation(innerweights, innergraph, alg; verbose)
     return rule_pull(result, innerorder)
 end
@@ -2590,6 +2597,8 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeRules{A, L, U}) where {A
     println(io, " "^indent * "SafeRules{$A, $L, $U}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
+    println(io, " "^indent * "    rules: $(alg.rules)")
+    println(io, " "^indent * "    minfrac: $(alg.minfrac)")
     return
 end
 

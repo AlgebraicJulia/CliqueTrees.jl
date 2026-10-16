@@ -22,13 +22,13 @@ const OPTION_CCORDER = Metis.METIS_OPTION_CCORDER + one(INT)
 const OPTION_PFACTOR = Metis.METIS_OPTION_PFACTOR + one(INT)
 const OPTION_UFACTOR = Metis.METIS_OPTION_UFACTOR + one(INT)
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::METIS) where {V}
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::METIS; verbose::Bool = false) where {V}
     simple = simplegraph(INT, INT, graph)
     order::Vector{V}, index::Vector{V} = metis(weights, simple, alg)
     return order, index
 end
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::ND{<:Any, <:EliminationAlgorithm, METISND})
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::ND{<:Any, <:EliminationAlgorithm, METISND}; verbose::Bool = false)
     order = dissect(weights, graph, alg)
     return order, invperm(order)
 end

@@ -12,7 +12,7 @@ const INT = SCOTCH_Num
 
 const VBipartiteGraph{V, E} = BipartiteGraph{V, E, Vector{E}, Vector{V}}
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::SCOTCH) where {V}
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::SCOTCH; verbose::Bool = false) where {V}
     order, index = scotch(weights, graph, alg)
     return order, index
 end

@@ -74,7 +74,13 @@ function RuleResult(s::RuleSolver{W, V}) where {W, V}
     return RuleResult{W, V}(s.inject03, s.n03, s.project11, s.width10)
 end
 
-function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W; verbose::Bool = false) where {W <: Number, V <: Integer}
+# Reduce a graph with the rules of level `rules`, compressing true twins
+# between rounds, until a round removes no vertex. At level 5, `ext` selects
+# the star-forest and twin rules of `asr` (`ext = 0x00`: neither). If `minfrac`
+# is positive, stop as soon as a round removes fewer than `minfrac` times the
+# vertices it started with: the last round, which finds little or nothing,
+# costs as much as a full pass over the graph.
+function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W; verbose::Bool = false, ext::UInt8 = ASR_EXT_DEFAULT, minfrac::Real = 0.0) where {W <: Number, V <: Integer}
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
     if rules == 1
@@ -87,7 +93,7 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
         ptr = FVector{E}(undef, nn)
         tgt = FVector{V}(undef, m)
 
-        return compressreduce(weights, graph, width; verbose) do w, g, wd
+        return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
             pr1_impl!(w, degree, number, status, stack1, stack4, inject, ptr, tgt, wd, g)
         end
     elseif rules == 2
@@ -104,7 +110,7 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
         ptr = FVector{E}(undef, nn)
         tgt = FVector{V}(undef, m)
 
-        return compressreduce(weights, graph, width; verbose) do w, g, wd
+        return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
             pr2_impl!(w, degree, number, status, target, begptr, stack1, stack2,
                 stack7, stack4, inject, ptr, tgt, wd, g)
         end
@@ -130,7 +136,7 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
         tmpptr = FVector{E}(undef, nn)
 
         if rules == 3
-            return compressreduce(weights, graph, width; verbose) do w, g, wd
+            return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
                 totdeg = zero(W)
 
                 @inbounds for v in vertices(g)
@@ -150,13 +156,16 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
             sbegptr = FVector{E}(undef, nn)
             stmpptr = FVector{E}(undef, nn)
 
-            return compressreduce(weights, graph, width; verbose) do w, g, wd
+            return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
                 pr4_impl!(
                     degree, number, status, marker, source, target, begptr, endptr, invptr,
                     stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
                     sfillin, ssource, starget, sbegptr, stmpptr, weight1, w, g, wd)
             end
         else
+            # level 5: the rules of `asr`, with the star-forest and twin rules
+            # selected by `ext` (see pr5.jl)
+            ws = ASRWork{V, E}(n)
             weight1 = FVector{W}(undef, n)
             afillin = FVector{Int}(undef, n)
             amarker = FVector{Int}(undef, n)
@@ -167,22 +176,22 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
             atmpptr = FVector{E}(undef, nn)
             atgt = FVector{V}(undef, m)
 
-            return compressreduce(weights, graph, width; verbose) do w, g, wd
+            return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
                 pr5_impl!(
                     degree, number, status, marker, source, target, begptr, endptr, invptr,
                     stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
                     afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt,
-                    weight1, w, g, wd)
+                    weight1, w, g, wd, ext, ws)
             end
         end
     end
 end
 
-function compressreduce(reduce::F, weights::AbstractVector{W}, graph00::AbstractGraph{V}, width00::W; verbose::Bool = false) where {F <: Function, W <: Number, V <: Integer}
-    return rule_solve!(reduce, RuleSolver(weights, graph00, width00); verbose)
+function compressreduce(reduce::F, weights::AbstractVector{W}, graph00::AbstractGraph{V}, width00::W; verbose::Bool = false, minfrac::Real = 0.0) where {F <: Function, W <: Number, V <: Integer}
+    return rule_solve!(reduce, RuleSolver(weights, graph00, width00); verbose, minfrac)
 end
 
-function rule_solve!(reduce::F, s::RuleSolver{W, V}; verbose::Bool = false) where {F <: Function, W, V}
+function rule_solve!(reduce::F, s::RuleSolver{W, V}; verbose::Bool = false, minfrac::Real = 0.0) where {F <: Function, W, V}
     if verbose
         println()
         println("| iter |       n |       m |")
@@ -191,7 +200,7 @@ function rule_solve!(reduce::F, s::RuleSolver{W, V}; verbose::Bool = false) wher
 
     lo = nv(s.graph10); hi = lo + one(V); iter = 0
 
-    while lo < hi
+    while lo < hi && (iszero(iter) || hi - lo >= minfrac * hi)
         iter += 1
         hi = lo
 

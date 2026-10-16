@@ -4,11 +4,11 @@ using CliqueTrees
 using Graphs
 using TreeWidthSolver: TreeWidthSolver
 
-function CliqueTrees.permutation(graph, alg::BT)
+function CliqueTrees.permutation(graph, alg::BT; verbose::Bool = false)
     return permutation(BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::BT) where {V}
+function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::BT; verbose::Bool = false) where {V}
     graph = Graph{Int}(graph)
 
     for v in vertices(graph)
@@ -19,15 +19,15 @@ function CliqueTrees.permutation(graph::AbstractGraph{V}, alg::BT) where {V}
     return order, invperm(order)
 end
 
-function CliqueTrees.permutation(weights::AbstractVector, graph, alg::BT)
+function CliqueTrees.permutation(weights::AbstractVector, graph, alg::BT; verbose::Bool = false)
     return permutation(weights, BipartiteGraph(graph), alg)
 end
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::BT) where {V}
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::BT; verbose::Bool = false) where {V}
     return permutation(collect(weights), graph, alg)
 end
 
-function CliqueTrees.permutation(weights::Vector, graph::AbstractGraph{V}, alg::BT) where {V}
+function CliqueTrees.permutation(weights::Vector, graph::AbstractGraph{V}, alg::BT; verbose::Bool = false) where {V}
     graph = Graph{Int}(graph)
 
     for v in vertices(graph)

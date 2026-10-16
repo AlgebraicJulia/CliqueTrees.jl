@@ -15,7 +15,7 @@ const COLAMD_AGGRESSIVE = AMDLib.COLAMD_AGGRESSIVE
 
 const VECTOR{T} = Union{Vector{T}, FVector{T}}
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::Union{AMD, SymAMD})
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::Union{AMD, SymAMD}; verbose::Bool = false)
     order = amd(graph, alg)
     return order, invperm(order)
 end

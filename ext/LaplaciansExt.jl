@@ -6,7 +6,7 @@ using Graphs
 using Laplacians
 using SparseArrays
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::Spectral)
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::Spectral; verbose::Bool = false)
     order = spectralorder(graph; tol = alg.tol)
     return order, invperm(order)
 end

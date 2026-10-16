@@ -5,7 +5,7 @@ using CliqueTrees: postorder, nov, readeo, writegr
 using FlowCutterPACE17_jll
 using Graphs
 
-function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::FlowCutter)
+function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::FlowCutter; verbose::Bool = false)
     index = flowcutter(graph, alg.time, alg.seed)
     return invperm(index), index
 end
