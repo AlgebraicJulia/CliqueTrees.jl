@@ -2408,8 +2408,6 @@ end
         lb = lowerbound(weights, graph)
         kerlb = CliqueTrees.compressreduce(5, weights, graph, lb)[3].width
         @test kerlb <= treewidth(weights, graph; alg = PIDBT())
-        kerlb = CliqueTrees.compressreduce(5, weights, graph, lb; ext = 0x00)[3].width
-        @test kerlb <= treewidth(weights, graph; alg = PIDBT())
     end
 end
 
@@ -2420,7 +2418,7 @@ end
     rng = Xoshiro(2)
     nfired = 0
 
-    for trial in 1:300
+    for trial in 1:1000
         n = rand(rng, 6:12)
         graph = erdos_renyi(n, rand(rng, (0.2, 0.35, 0.5)); rng)
 
@@ -2455,46 +2453,23 @@ end
         weights = rand(rng, Bool) ? ones(Int, nv(graph)) : rand(rng, 1:3, nv(graph))
         width = treewidth(weights, graph; alg = PIDBT())
 
-        for ext in (0x01, 0x02, 0x03, 0x07)
-            kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, width; ext)
-            nfired += nv(kg) < nv(graph)
-            @test result.width <= width
+        kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, width)
+        nfired += nv(kg) < nv(graph)
+        @test result.width <= width
 
-            # eliminated vertices, then an optimal ordering of the kernel
-            kerorder = if nv(kg) > 0
-                first(permutation(Int[kw[i] for i in 1:nv(kg)], kg; alg = ConnectedComponents(PIDBT())))
-            else
-                Int[]
-            end
-
-            order = CliqueTrees.rule_pull(result, kerorder)
-            @test sort(order) == 1:nv(graph)
-            @test treewidth(weights, graph; alg = order) == width
+        # eliminated vertices, then an optimal ordering of the kernel
+        kerorder = if nv(kg) > 0
+            first(permutation(Int[kw[i] for i in 1:nv(kg)], kg; alg = ConnectedComponents(PIDBT())))
+        else
+            Int[]
         end
+
+        order = CliqueTrees.rule_pull(result, kerorder)
+        @test sort(order) == 1:nv(graph)
+        @test treewidth(weights, graph; alg = order) == width
     end
 
     @test nfired > 0
-
-    # the unit connector: in this weighted graph (a kernel of bfwa62 with the
-    # lower bound 7), vertex 4 is almost simplicial with friend 7 and
-    # w(N[4]) = 8. The connector of Eijkhof et al. fails, since every region
-    # joining 7 to the leaves 3 and 9 has a vertex lighter than 7, but the two
-    # units of 7 have the connectors {2, 5} and {10, 6, 1}. So N[4] is a clique
-    # minor, the lower bound becomes 8, and the graph is reduced completely.
-    weights = [2, 1, 1, 3, 1, 3, 2, 1, 1, 1]
-    graph = Graph(10)
-
-    for (a, b) in ((1, 3), (1, 6), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 10),
-            (3, 4), (3, 5), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (5, 8), (5, 9), (5, 10),
-            (6, 8), (6, 10), (7, 8), (7, 10), (8, 9), (8, 10), (9, 10))
-        add_edge!(graph, a, b)
-    end
-
-    @test treewidth(weights, graph; alg = PIDBT()) == 8
-    kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, 7; ext = 0x03)
-    @test nv(kg) > 0 && result.width == 7
-    kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, 7)
-    @test nv(kg) == 0 && result.width == 8
 end
 
 @testset "quasi-clique covers" begin

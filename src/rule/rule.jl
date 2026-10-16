@@ -75,12 +75,11 @@ function RuleResult(s::RuleSolver{W, V}) where {W, V}
 end
 
 # Reduce a graph with the rules of level `rules`, compressing true twins
-# between rounds, until a round removes no vertex. At level 5, `ext` selects
-# the star-forest and twin rules of `asr` (`ext = 0x00`: neither). If `minfrac`
-# is positive, stop as soon as a round removes fewer than `minfrac` times the
-# vertices it started with: the last round, which finds little or nothing,
-# costs as much as a full pass over the graph.
-function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W; verbose::Bool = false, ext::UInt8 = ASR_EXT_DEFAULT, minfrac::Real = 0.0) where {W <: Number, V <: Integer}
+# between rounds, until a round removes no vertex. If `minfrac` is positive,
+# stop as soon as a round removes fewer than `minfrac` times the vertices it
+# started with: the last round, which finds little or nothing, costs as much
+# as a full pass over the graph.
+function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W; verbose::Bool = false, minfrac::Real = 0.0) where {W <: Number, V <: Integer}
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
     if rules == 1
@@ -163,9 +162,6 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
                     sfillin, ssource, starget, sbegptr, stmpptr, weight1, w, g, wd)
             end
         else
-            # level 5: the rules of `asr`, with the star-forest and twin rules
-            # selected by `ext` (see pr5.jl)
-            ws = ASRWork{V, E}(n)
             weight1 = FVector{W}(undef, n)
             afillin = FVector{Int}(undef, n)
             amarker = FVector{Int}(undef, n)
@@ -181,7 +177,7 @@ function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::Abstr
                     degree, number, status, marker, source, target, begptr, endptr, invptr,
                     stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
                     afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt,
-                    weight1, w, g, wd, ext, ws)
+                    weight1, w, g, wd)
             end
         end
     end
