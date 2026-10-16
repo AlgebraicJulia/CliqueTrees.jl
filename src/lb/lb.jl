@@ -71,9 +71,11 @@ end
 
 # Call `f(V, E, totdeg)`, where `totdeg` is the total weight of the
 # vertices of `graph`, and `V` and `E` are the integer types of the
-# working arrays of a lower bound algorithm: 32-bit integers when they
-# suffice. If `grow` is true, then the algorithm adds edges to the
-# graph, so its arc storage may grow to a multiple of n².
+# working arrays of a lower bound algorithm: `V` for vertices and
+# weighted degrees, and `E` for arcs. Each is a 32-bit integer when it
+# suffices. If `grow` is true, then the algorithm adds edges to the
+# graph, so its arc storage may grow to a multiple of n²; this affects
+# `E` only.
 function lbcall(f::F, weights::AbstractVector, graph::AbstractGraph{V}, grow::Bool) where {F, V}
     @assert nv(graph) <= length(weights)
 
@@ -91,8 +93,14 @@ function lbcall(f::F, weights::AbstractVector, graph::AbstractGraph{V}, grow::Bo
     cap = mmwcapacity(n, m) + 4n
     grow && (cap = max(cap, 4n * n))
 
-    if n < typemax(Int32) ÷ 4 && cap < typemax(Int32) && totdeg < typemax(Int32)
-        return f(Int32, Int32, totdeg)
+    # the vertices and weighted degrees fit in 32 bits
+    if n < typemax(Int32) ÷ 4 && totdeg < typemax(Int32)
+        # the arcs fit in 32 bits
+        if cap < typemax(Int32)
+            return f(Int32, Int32, totdeg)
+        else
+            return f(Int32, promote_type(etype(graph), Int), totdeg)
+        end
     else
         return f(promote_type(V, Int), promote_type(etype(graph), Int), totdeg)
     end
