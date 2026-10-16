@@ -777,7 +777,7 @@ end
 function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int; verbose::Bool = false) where {V}
     nv(graph) > one(V) || return permutation(weights, graph, alg; verbose)
     weights30, graphs30, result = safesolve(weights, graph, mins, maxmissing; verbose)
-    orders = map(i -> first(permutation(weights30[i], graphs30[i], alg; verbose)), eachindex(graphs30))
+    orders = batch_permutation(weights30, graphs30, alg; verbose)
     order = safe_pull(result, graphs30, orders)
     return order, invperm(order)
 end

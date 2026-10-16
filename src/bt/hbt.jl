@@ -1672,7 +1672,7 @@ end
 # other would mostly wait.) Returns the statistics of the workers.
 # ---------------------------------------------------------------------------
 
-function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, nt::Integer)
+function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
     ctx = srh.ctx
     workers = [hbt_srh(hbt_ctx(ctx.graph, ctx.wgt), Xoshiro(rand(srh.rng, UInt64)), srh.par) for _ in 2:nt]
 
@@ -1686,7 +1686,7 @@ function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, nt::Integer)
     tasks = [Threads.@spawn hbt_wrk(w, snap, lck, stop, results) for w in workers]
 
     try
-        while !hbt_expired(srh) && st.width[][1] > lb
+        while !hbt_expired(srh) && hbt_going(st, lb, ub)
             k = st.width[][1]
 
             if isready(results)
@@ -1759,16 +1759,17 @@ function hbtstep!(hbt::NamedTuple)
     return hbt_imp!(srh, srh.sols[1])
 end
 
-# Improve the solution for at most mt seconds, or until its width meets the
-# lower bound, with nt tasks (see hbt_par!); returns hbtord(hbt).
-function hbtrun!(hbt::NamedTuple; mt::Real = 10.0, nt::Integer = Threads.nthreads())
+# Improve the solution for at most mt seconds, until its width meets the
+# lower bound lb, or until it falls below ub (if ub is not nothing), with nt
+# tasks (see hbt_par!); returns hbtord(hbt).
+function hbtrun!(hbt::NamedTuple; mt::Real = 10.0, nt::Integer = Threads.nthreads(), lb = hbt.lb, ub = nothing)
     srh = hbt.srh; st = srh.sols[1]; srh.deadline[] = time() + mt
     stats = (0, 0, 0, 0)
 
     if nt > 1 && srh.par.diversify
-        stats = hbt_par!(srh, st, hbt.lb, nt)
+        stats = hbt_par!(srh, st, lb, ub, nt)
     else
-        while !hbt_expired(srh) && st.width[][1] > hbt.lb
+        while !hbt_expired(srh) && hbt_going(st, lb, ub)
             hbt_imp!(srh, st)
         end
     end
@@ -1782,6 +1783,13 @@ function hbtrun!(hbt::NamedTuple; mt::Real = 10.0, nt::Integer = Threads.nthread
     return hbtord(hbt)
 end
 
+# Whether to keep improving a solution: its width is above the lower bound
+# lb, and not below ub.
+function hbt_going(st::NamedTuple, lb, ub)
+    k = st.width[][1]
+    return k > lb && (isnothing(ub) || k >= ub)
+end
+
 # The best ordering, its inverse, and its width.
 function hbtord(hbt::NamedTuple)
     st = hbt.srh.sols[1]; order = copy(st.order)
@@ -1792,4 +1800,119 @@ end
 function hbtpmc(hbt::NamedTuple)
     sol = hbt.srh.sols[1].sol; tab = sol.pmcs; n = nv(hbt.srh.ctx.graph); np = hbt_len(sol)
     return BipartiteGraph{Int, Int}(n, np, length(tab.tgt), copy(tab.ptr), copy(tab.tgt))
+end
+
+# ---------------------------------------------------------------------------
+# Batches
+#
+# A batch of graphs (see batch_permutation) is one problem whose width is
+# that of its widest graph: the leaves of a safe separator decomposition, or
+# the components of a graph. HBT spends one time budget on the batch, on a
+# widest graph until it falls below the next widest, as Tamaki's reference
+# implementation does with the atoms of a graph (main.UpLow): improving a
+# graph that is not the widest does not lower the width. A graph that is
+# never the widest keeps its first ordering.
+#
+# Each graph starts with the best of ninit greedy orderings (and that of
+# init, if init is an elimination algorithm), as the first solution of a
+# search does. When it is first the widest, a graph with at most base
+# vertices is solved exactly, with at most half the remaining time, as a
+# small graph is; its width is then a lower bound on that of the batch. Any
+# other graph gets an anytime search (hbtnew), which it keeps between turns.
+# The search makes its own first solution: seeding it with the graph's
+# ordering as well would add a second triangulation to that solution, and
+# the components of the bags of a triangulation are the costly part of
+# making one. The run stops early once the widest graph meets the largest
+# lower bound of a graph.
+# ---------------------------------------------------------------------------
+
+function batch_permutation(weights::AbstractVector{<:AbstractVector{W}}, graphs::AbstractVector{<:AbstractGraph{V}}, alg::HBT; verbose::Bool = false) where {W, V}
+    dl = time() + alg.time; ngraph = length(graphs)
+    orders = Vector{Vector{V}}(undef, ngraph)
+    widths = Vector{W}(undef, ngraph)
+    lowers = Vector{W}(undef, ngraph)
+    inits = Vector{Union{Nothing, Vector{V}}}(nothing, ngraph)
+    tried = falses(ngraph)
+    searches = Vector{Any}(nothing, ngraph)
+    grd = (; rng = Xoshiro(alg.seed), par = (; alg = alg.alg))
+
+    # an ordering given as init is one of a single graph, so it is not used
+    ninit = alg.init isa EliminationAlgorithm ? alg.ninit : max(1, alg.ninit)
+
+    # the best of the triangulation by init and ninit greedy ones, as for
+    # the first solution of a search
+    for i in oneto(ngraph)
+        weight = weights[i]; graph = graphs[i]
+        lowers[i] = convert(W, lowerbound(weight, graph, alg.lb))
+        widths[i] = typemax(W)
+
+        if alg.init isa EliminationAlgorithm
+            order, _ = permutation(weight, graph, MinimalChordal(alg.init))
+            inits[i] = orders[i] = order
+            widths[i] = treewidth(weight, graph, order)
+        end
+
+        for _ in oneto(ninit)
+            widths[i] <= lowers[i] && break
+            order = hbt_grd(grd, weight, graph)
+            width = treewidth(weight, graph, order)
+
+            if width < widths[i]
+                orders[i] = order; widths[i] = width
+            end
+        end
+    end
+
+    lb = maximum(lowers; init = zero(W))
+
+    if alg.verbose && ispositive(ngraph)
+        n = maximum(nv, graphs)
+        println("hbt: $ngraph graphs, the largest with $n vertices; width $(hbt_str(maximum(widths))), lower bound $(hbt_str(lb))")
+    end
+
+    while ispositive(ngraph) && time() < dl
+        k, i = findmax(widths)
+        k <= lb && break
+
+        # the width of the next widest graph
+        ub = nothing
+
+        for j in oneto(ngraph)
+            j == i || (ub = isnothing(ub) ? widths[j] : max(ub, widths[j]))
+        end
+
+        weight = weights[i]; graph = graphs[i]
+
+        if !tried[i] && nv(graph) <= alg.base
+            tried[i] = true
+            bgraph, wgt = hbt_graph(weight, graph)
+            order, status = hbt_safe(wgt, bgraph, lowers[i], lowers[i], typemax(W), time() + (dl - time()) / 2)
+
+            if status == BT_FOUND
+                orders[i] = convert(Vector{V}, order)
+                widths[i] = lowers[i] = treewidth(weight, graph, orders[i])
+                lb = max(lb, lowers[i])
+            end
+        else
+            if isnothing(searches[i])
+                searches[i] = hbt_new(weight, graph, alg; lb = lowers[i], init = inits[i])
+            end
+
+            order, _, width = hbtrun!(searches[i]; mt = dl - time(), nt = alg.threads, lb, ub)
+
+            if width < widths[i]
+                orders[i] = convert(Vector{V}, order); widths[i] = width
+            end
+        end
+    end
+
+    return orders
+end
+
+# An anytime search with the parameters of alg.
+function hbt_new(weights::AbstractVector, graph::AbstractGraph, alg::HBT; seed::Integer = alg.seed, lb = alg.lb, init = alg.init)
+    return hbtnew(weights, graph; seed, alg = alg.alg, lb, ninit = alg.ninit,
+        base = alg.base, ntry = alg.ntry, refined = alg.refined, merge = alg.merge, diversify = alg.diversify,
+        dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, xmin = alg.xmin,
+        xstep = alg.xstep, near = alg.near, margin = alg.margin, pexact = alg.pexact, init, verbose = alg.verbose)
 end

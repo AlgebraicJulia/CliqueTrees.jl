@@ -603,15 +603,21 @@ Progress is measured by refined widths: a decomposition improves if it has a sma
 or as large a largest bag but fewer of them. The algorithm runs until `time` seconds have elapsed
 or the width reaches the lower bound computed by `lb`. Vertex weights need not be integers.
 
+Given a batch of graphs (see [`batch_permutation`](@ref)), as by [`SafeSeparators`](@ref) or
+[`ConnectedComponents`](@ref), the algorithm spends one time budget on the batch: on its widest graph,
+until it is no longer the widest. Graphs with at most `base` vertices are triangulated exactly when
+they are first the widest.
+
 ### Parameters
 
-  - `time`: time budget in seconds
+  - `time`: time budget in seconds (for a whole batch)
   - `seed`: random seed
   - `alg`: elimination algorithm used for greedy triangulations (made minimal with [`MinimalChordal`](@ref));
     the default is minimum average fill, as in the reference implementation
   - `lb`: lower bound algorithm or lower bound (used as a stopping criterion)
   - `init`: an elimination algorithm or ordering, or `nothing`; its minimal triangulation seeds the first
-    solution, along with the greedy ones (a strong one, such as [`NDS`](@ref), is often a much better start)
+    solution, along with the greedy ones (a strong one, such as [`NDS`](@ref), is often a much better start).
+    An ordering is one of a single graph, so it is not used for a batch
   - `ninit`: number of randomized greedy triangulations used to seed each solution (at least one without `init`)
   - `base`: local graphs with at most this many vertices are triangulated exactly
   - `margin`: local graphs around a bag with b vertices are also triangulated exactly if they have
@@ -1103,13 +1109,40 @@ function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT;
         end
     end
 
-    hbt = hbtnew(weights, graph; seed = alg.seed, alg = alg.alg, lb = alg.lb, ninit = alg.ninit,
-        base = alg.base, ntry = alg.ntry, refined = alg.refined, merge = alg.merge, diversify = alg.diversify,
-        dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, xmin = alg.xmin,
-        xstep = alg.xstep, near = alg.near, margin = alg.margin, pexact = alg.pexact, init = alg.init, verbose = alg.verbose)
-
+    hbt = hbt_new(weights, graph, alg)
     order, invp, _ = hbtrun!(hbt; mt = alg.time - (time() - t0), nt = alg.threads)
     return convert(Vector{V}, order), convert(Vector{V}, invp)
+end
+
+"""
+    batch_permutation(weights, graphs, alg::EliminationAlgorithm)
+
+Construct a fill-reducing permutation of each graph in a batch, with the vertex weights
+`weights[i]` of `graphs[i]`. Returns a vector of permutations: the `i`th is one of `graphs[i]`.
+
+The graphs of a batch are independent parts of one problem, such as the components of a graph
+([`ConnectedComponents`](@ref)) or the leaves of a safe separator decomposition
+([`SafeSeparators`](@ref)). By default, each graph is ordered by `alg` in turn, but an algorithm
+can order a batch as a whole: [`HBT`](@ref) spends one time budget on it.
+
+```julia-repl
+julia> using CliqueTrees, Graphs
+
+julia> graphs = [path_graph(3), cycle_graph(4)];
+
+julia> weights = [ones(3), ones(4)];
+
+julia> orders = batch_permutation(weights, graphs, MMD());
+
+julia> map(length, orders)
+2-element Vector{Int64}:
+ 3
+ 4
+```
+"""
+function batch_permutation(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph}, alg::EliminationAlgorithm; verbose::Bool = false)
+    # TODO: order the graphs in parallel
+    return map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs))
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal; verbose::Bool = false)
@@ -2417,23 +2450,25 @@ function connectedcomponents(weights::AbstractVector{W}, graph::AbstractGraph{V}
     n = nv(graph); j = zero(V)
     order = Vector{V}(undef, n)
     index = Vector{V}(undef, n)
-    subweights = Vector{W}(undef, n)
     components, m = connectedcomponents(graph)
 
+    labels = [first(components[i]) for i in oneto(m)]
+    subgraphs = [last(components[i]) for i in oneto(m)]
+    subweights = Vector{Vector{W}}(undef, m)
+
     for i in oneto(m)
-        label, subgraph = components[i]
+        label = labels[i]; subweight = subweights[i] = Vector{W}(undef, length(label))
 
-        for v in vertices(subgraph)
-            vv = label[v]
-            subweights[v] = weights[vv]
+        for v in eachindex(label)
+            subweight[v] = weights[label[v]]
         end
+    end
 
-        suborder, subindex = permutation(subweights, subgraph, alg; verbose)
-        
-        for v in suborder
-            vv = label[v]
-            j += one(V); order[j] = vv; index[vv] = j
-        end
+    suborders = batch_permutation(subweights, subgraphs, alg; verbose)
+
+    for i in oneto(m), v in suborders[i]
+        vv = labels[i][v]
+        j += one(V); order[j] = vv; index[vv] = j
     end
 
     return order, index

@@ -56,6 +56,7 @@ SafeRules
 SafeSeparators
 ConnectedComponents
 permutation
+batch_permutation
 ```
 
 ## Supernodes

@@ -2135,6 +2135,83 @@ end
     end
 end
 
+@testset "batch permutations" begin
+    # by default, each graph of a batch is ordered on its own
+    rng = Xoshiro(6)
+    graphs = [BipartiteGraph(erdos_renyi(n, 0.3; rng)) for n in (5, 12, 1, 20)]
+    weights = [rand(rng, 1:3, nv(graph)) for graph in graphs]
+    orders = batch_permutation(weights, graphs, MMD())
+    @test length(orders) == length(graphs)
+
+    for (weight, graph, order) in zip(weights, graphs, orders)
+        @test order == first(permutation(weight, graph; alg = MMD()))
+    end
+
+    @test isempty(batch_permutation(Vector{Int}[], BipartiteGraph{Int, Int}[], MMD()))
+end
+
+@testset "heuristic treewidth (HBT): batches" begin
+    # pieces joined by bridges, and an isolated piece
+    function pieces(rng, sizes, p)
+        graph = Graph(0)
+
+        for (i, n) in enumerate(sizes)
+            piece = erdos_renyi(n, p; rng); m = nv(graph)
+            add_vertices!(graph, n)
+
+            for e in edges(piece)
+                add_edge!(graph, src(e) + m, dst(e) + m)
+            end
+
+            1 < i < length(sizes) && add_edge!(graph, m, m + 1)
+        end
+
+        return graph
+    end
+
+    rng = Xoshiro(4)
+
+    # every leaf, or every component, is small, so a widest one is solved
+    # exactly: the width is the treewidth
+    for _ in 1:10
+        sizes = rand(rng, 15:30, 5)
+
+        for (graph, alg) in (
+                (pieces(rng, sizes, 0.2), SafeSeparators(HBT(; time = 30.0))),
+                (reduce(blockdiag, [erdos_renyi(k, 0.2; rng) for k in sizes]), ConnectedComponents(HBT(; time = 30.0))),
+            )
+            n = nv(graph); weights = rand(rng, 1:3, n)
+            exact = treewidth(weights, graph; alg = SafeSeparators(PIDBT()))
+            order, index = permutation(weights, graph; alg)
+            @test sort(order) == 1:n
+            @test index == invperm(order)
+            @test treewidth(weights, graph; alg = order) == exact
+        end
+    end
+
+    # leaves above base, a vertex type other than Int, the minor test, and an
+    # ordering as init (not used for a batch)
+    graph = pieces(rng, [70, 80, 90], 0.07); n = nv(graph)
+    lower = lowerbound(graph)
+
+    for V in (Int32, Int), maxmissing in (0, 50), init in (nothing, MMD(), randperm(rng, n))
+        bgraph = BipartiteGraph{V, V}(graph)
+        order, index = permutation(bgraph; alg = SafeSeparators(HBT(; time = 0.3, init); maxmissing))
+        @test eltype(order) == V
+        @test sort(order) == 1:n
+        @test index == invperm(order)
+        @test treewidth(graph; alg = order) >= lower
+    end
+
+    # one budget for the whole batch
+    graphs = [BipartiteGraph(erdos_renyi(120, 0.1; rng)) for _ in 1:4]
+    weights = [ones(Int, 120) for _ in 1:4]
+    batch_permutation(weights, graphs, HBT(; time = 0.1))
+    elapsed = @elapsed orders = batch_permutation(weights, graphs, HBT(; time = 1.0))
+    @test all(order -> sort(order) == 1:120, orders)
+    @test elapsed < 3.0
+end
+
 @testset "safe separators: weighted almost cliques" begin
     # S = {1, 2, 3} is an almost clique: the edge {2, 3} is missing. Its full
     # components are {4} and {5}; the component {6} is not full. Vertex 6 is
