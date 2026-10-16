@@ -1075,10 +1075,10 @@ function hbt_exa(srh::NamedTuple, weights::AbstractVector{W}, H::AbstractGraph, 
     lb = max(lb, convert(W, lowerbound(weights, H, DEFAULT_LOWER_BOUND_ALGORITHM)))
     lb > cap && return missing
     dl = min(srh.deadline[], time() + srh.cutoff[])
-    kerweights, kergraph, inject, project, kerlb = compressreduce(HBT_RULES, weights, H, lb)
+    kerweights, kergraph, result = compressreduce(HBT_RULES, weights, H, lb)
 
     # one task: the search may have workers of its own
-    kerorder, status = hbt_safe(kerweights, kergraph, max(lb, kerlb), max(lb, kerlb, target), cap, dl)
+    kerorder, status = hbt_safe(kerweights, kergraph, max(lb, result.width), max(lb, result.width, target), cap, dl)
     status == BT_ABOVE && return missing
 
     if status == BT_TIMEOUT
@@ -1087,16 +1087,7 @@ function hbt_exa(srh::NamedTuple, weights::AbstractVector{W}, H::AbstractGraph, 
     end
 
     srh.nexact[] += 1
-    order = Vector{Int}(undef, nv(H)); i = 0
-
-    for v in inject
-        i += 1; order[i] = v
-    end
-
-    for x in kerorder, v in neighbors(project, x)
-        i += 1; order[i] = v
-    end
-
+    order = rule_pull(result, kerorder)
     order, _ = permutation(weights, H, MinimalChordal(order))
     return order
 end

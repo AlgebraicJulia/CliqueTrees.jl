@@ -2328,41 +2328,17 @@ function compressweights_impl!(cmpweights::AbstractVector, weights::AbstractVect
 end
 
 function saferules(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, lb::WidthOrAlgorithm, rules::Int) where {V}
-    n = nv(graph)
     width = lowerbound(weights, graph, lb)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(rules, weights, graph, width)
+    innerweights, innergraph, result = compressreduce(rules, weights, graph, width)
     innerorder, innerindex = permutation(innerweights, innergraph, alg)
-
-    order = Vector{V}(undef, n); i = zero(V)
-
-    for v in inject
-        i += one(V); order[i] = v
-    end
-
-    for j in innerorder, v in neighbors(project, j)
-        i += one(V); order[i] = v
-    end 
-
-    return order
+    return rule_pull(result, innerorder)
 end
 
 function simplicialrule(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::EliminationAlgorithm) where {W, V}
-    n = nv(graph)
     width = zero(W)
-    innerweights, innergraph, inject, project, innerwidth = compressreduce(sr, weights, graph, width)
+    innerweights, innergraph, result = compressreduce(sr, weights, graph, width)
     innerorder, innerindex = permutation(innerweights, innergraph, alg)
-
-    order = Vector{V}(undef, n); i = zero(V)
-
-    for v in inject
-        i += one(V); order[i] = v
-    end
-
-    for j in innerorder, v in neighbors(project, j)
-        i += one(V); order[i] = v
-    end 
-
-    return order
+    return rule_pull(result, innerorder)
 end
 
 function connectedcomponents(graph::AbstractGraph{V}) where {V}
