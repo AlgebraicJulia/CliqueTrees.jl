@@ -121,7 +121,7 @@ include("packages.jl")
 include("mcs_etree.jl")
 include("acsd.jl")
 include("acsd_minor.jl")
-include("rules/rules.jl")
+include("rule/rule.jl")
 include("bt/bt.jl")
 include("io.jl")
 
