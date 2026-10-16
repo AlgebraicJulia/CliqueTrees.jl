@@ -184,6 +184,7 @@ end
 
 function safe_solve!(s::SafeSolver; verbose::Bool = false)
     if verbose
+        println()
         println("| iter | level |       n |       m | leaf |")
         println("|------|-------|---------|---------|------|")
     end

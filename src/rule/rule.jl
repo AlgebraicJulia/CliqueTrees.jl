@@ -184,6 +184,7 @@ end
 
 function rule_solve!(reduce::F, s::RuleSolver{W, V}; verbose::Bool = false) where {F <: Function, W, V}
     if verbose
+        println()
         println("| iter |       n |       m |")
         println("|------|---------|---------|")
     end
