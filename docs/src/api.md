@@ -8,6 +8,8 @@ CurrentModule = CliqueTrees
 ```@docs
 LowerBoundAlgorithm
 MMW
+LBN
+LBP
 lowerbound
 DEFAULT_LOWER_BOUND_ALGORITHM
 ```

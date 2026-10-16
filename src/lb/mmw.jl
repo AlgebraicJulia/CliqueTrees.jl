@@ -1,20 +1,4 @@
 """
-    LowerBoundAlgorithm
-
-An algorithm for computing a lower bound to the treewidth of a graph. The options are
-
-| type          | name            | time | space    |
-|:--------------|:----------------|:-----|:---------|
-| [`MMW`](@ref) | minor-min-width |      | O(m + n) |
-"""
-abstract type LowerBoundAlgorithm end
-
-"""
-    WidthOrAlgorithm = Union{Number, LowerBoundAlgorithm}
-"""
-const WidthOrAlgorithm = Union{Number, LowerBoundAlgorithm}
-
-"""
     MMW{S} <: LowerBoundAlgorithm
 
     MMW{S}()
@@ -39,82 +23,13 @@ function MMW()
     return MMW{3}()
 end
 
-"""
-    lowerbound([weights, ]graph;
-        alg::WidthOrAlgorithm=DEFAULT_LOWER_BOUND_ALGORITHM)
-
-Compute a lower bound to the treewidth of a graph.
-
-```jldoctest
-julia> using CliqueTrees
-
-julia> graph = [
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ];
-
-julia> lowerbound(graph)
-2
-```
-"""
-function lowerbound(graph; alg::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
-    return lowerbound(graph, alg)
-end
-
-function lowerbound(graph, alg::WidthOrAlgorithm)
-    return lowerbound(BipartiteGraph(graph), alg)
-end
-
-function lowerbound(graph::AbstractGraph{V}, width::Integer) where {V}
-    return convert(V, width)
-end
-
-function lowerbound(graph::AbstractGraph{V}, alg::LowerBoundAlgorithm) where {V}
-    n = nv(graph); weights = Ones{V}(n)
-    return lowerbound(weights, graph, alg) - one(V)
-end
-
-function lowerbound(weights::AbstractVector, graph; alg::WidthOrAlgorithm = DEFAULT_LOWER_BOUND_ALGORITHM)
-    return lowerbound(weights, graph, alg)
-end
-
-function lowerbound(weights::AbstractVector, graph, alg::WidthOrAlgorithm)
-    return lowerbound(weights, BipartiteGraph(graph), alg)
-end
-
-function lowerbound(weights::AbstractVector{W}, graph::AbstractGraph, width::Number) where {W}
-    return convert(W, width)
-end
-
 function lowerbound(weights::AbstractVector, graph::AbstractGraph, ::MMW{S}) where {S}
     return mmw(weights, graph, Val(S))
 end
 
-function mmw(weights::AbstractVector{W}, graph::AbstractGraph{V}, strategy::Val) where {W, V}
-    @assert nv(graph) <= length(weights)
-
-    n = nv(graph); m = de(graph)
-
-    # `totdeg` is the total weight of the
-    # vertices in the graph
-    totdeg = 0
-
-    @inbounds for v in oneto(n)
-        totdeg += trunc(Int, weights[v])
-    end
-
-    # the working arrays use 32-bit integers
-    # when they suffice
-    if n < typemax(Int32) ÷ 4 && mmwcapacity(n, m) + 4n < typemax(Int32) && totdeg < typemax(Int32)
-        width = mmw(Int32, Int32, totdeg, weights, graph, strategy)
-    else
-        width = mmw(promote_type(V, Int), promote_type(etype(graph), Int), totdeg, weights, graph, strategy)
+function mmw(weights::AbstractVector{W}, graph::AbstractGraph, strategy::Val) where {W}
+    width = lbcall(weights, graph, false) do V, E, totdeg
+        mmw(V, E, totdeg, weights, graph, strategy)
     end
 
     return convert(W, width)
@@ -127,7 +42,6 @@ function mmw(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
 
     marker = FVector{V}(undef, n)
     hubmark = FVector{V}(undef, n)
-    stash = FVector{V}(undef, n)
 
     degree = FVector{V}(undef, n)
     target = FVector{V}(undef, cap)
@@ -140,9 +54,9 @@ function mmw(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
     prev = FVector{V}(undef, n)
     next = FVector{V}(undef, n)
 
-    width = mmw_impl!(marker, hubmark, stash, degree, target, invptr,
-        begptr, endptr, limptr, head, prev, next, cap, totdeg, weight,
-        graph, strategy)
+    width = mmw_impl!(marker, hubmark, degree, target, invptr, begptr,
+        endptr, limptr, head, prev, next, cap, totdeg, weight, graph,
+        strategy)
 
     return width
 end
@@ -174,9 +88,9 @@ function mmwweights(::Type{V}, weights::AbstractVector, n::V) where {V}
 end
 
 """
-  mmw_impl!(marker, hubmark, stash, degree, target, invptr,
-    begptr, endptr, limptr, head, prev, next, cap, totdeg,
-    weight, graph, strategy)
+  mmw_impl!(marker, hubmark, degree, target, invptr, begptr,
+    endptr, limptr, head, prev, next, cap, totdeg, weight,
+    graph, strategy)
 
 Contraction and Treewidth Lower Bounds
 Bodlaender, Koster, and Wolle
@@ -226,9 +140,11 @@ output parameters:
 
 working arrays:
   - miscellaneous:
-    - `marker`: marker array
+    - `marker`: marker array; during a compaction of the
+      arc storage, it serves as the array `stash` of
+      [`mmw_compact!`](@ref), so the tags of `marker` are
+      negative
     - `hubmark`: marks the neighbors of a vertex `hub`
-    - `stash`: temporary vertex array
   - adjacency lists:
     - `target`: the target vertex of an arc
     - `invptr`: the reverse of an arc
@@ -246,7 +162,6 @@ working arrays:
 function mmw_impl!(
         marker::AbstractVector{V},
         hubmark::AbstractVector{V},
-        stash::AbstractVector{V},
         degree::AbstractVector{V},
         target::AbstractVector{V},
         invptr::AbstractVector{E},
@@ -265,7 +180,6 @@ function mmw_impl!(
 
     @assert nv(graph) <= length(marker)
     @assert nv(graph) <= length(hubmark)
-    @assert nv(graph) <= length(stash)
     @assert nv(graph) <= length(degree)
     @assert de(graph) <  cap
     @assert cap       <= length(target)
@@ -321,14 +235,16 @@ function mmw_impl!(
         v = popfirst!(set(mindeg))
         remdeg -= weight[v]
 
-        # find a neighbor according to strategy `S`
+        # find a neighbor according to strategy `S`; the tag
+        # is negative, since `marker` stores vertices during a
+        # compaction
         w = mmw_search!(marker, hubmark, degree, target, begptr,
-            endptr, weight, hub, epoch, tag, v, strategy)
+            endptr, weight, hub, epoch, -tag, v, strategy)
 
         # if a neighbor was found, contract the edge
-        # {`v`, `w`}
+        # {`v`, `w`}; `marker` serves as `stash`
         if ispositive(w)
-            pfree, hub, epoch = mmw_contract!(hubmark, stash, degree,
+            pfree, hub, epoch = mmw_contract!(hubmark, marker, degree,
                 target, invptr, begptr, endptr, limptr, head, prev,
                 next, weight, pfree, cap, hub, epoch, n, v, w)
 
@@ -362,7 +278,7 @@ output parameters:
  - `pfree`: first free arc
 """
 function mmw_init!(
-        marker::AbstractVector{V},
+        marker::AbstractVector{T},
         hubmark::AbstractVector{V},
         degree::AbstractVector{V},
         target::AbstractVector{V},
@@ -376,7 +292,7 @@ function mmw_init!(
         totdeg::V,
         weight::AbstractVector{V},
         graph::AbstractGraph,
-    ) where {V, E}
+    ) where {T, V, E}
 
     n = convert(V, nv(graph)); nn = n + one(V)
 
@@ -474,7 +390,7 @@ output parameters:
  - `w`: chosen neighbor, or zero if there is none
 """
 function mmw_search!(
-        marker::AbstractVector{V},
+        marker::AbstractVector{T},
         hubmark::AbstractVector{V},
         degree::AbstractVector{V},
         target::AbstractVector{V},
@@ -483,10 +399,10 @@ function mmw_search!(
         weight::AbstractVector{V},
         hub::V,
         epoch::V,
-        tag::V,
+        tag::T,
         v::V,
         strategy::Val{S},
-    ) where {V, E, S}
+    ) where {T, V, E, S}
 
     # `wgt` is the weight of `v`
     @inbounds wgt = weight[v]
@@ -546,7 +462,7 @@ output parameters:
  - `w`: chosen neighbor, or zero if there is none
 """
 function mmw_search!(
-        marker::AbstractVector{V},
+        marker::AbstractVector{T},
         hubmark::AbstractVector{V},
         degree::AbstractVector{V},
         target::AbstractVector{V},
@@ -555,10 +471,10 @@ function mmw_search!(
         weight::AbstractVector{V},
         hub::V,
         epoch::V,
-        tag::V,
+        tag::T,
         v::V,
         strategy::Val{3},
-    ) where {V, E}
+    ) where {T, V, E}
 
     # the arcs {`pbeg`, ..., `pend` - 1} are
     # incident to `v`
@@ -636,14 +552,14 @@ output parameters:
  - `scr`: the sum, or a number no less than `maxscr`
 """
 function mmw_score(
-        marker::AbstractVector{V},
+        marker::AbstractVector{T},
         target::AbstractVector{V},
         pbeg::E,
         pend::E,
         weight::AbstractVector{V},
-        tag::V,
+        tag::T,
         maxscr::V,
-    ) where {V, E}
+    ) where {T, V, E}
     scr = zero(V)
 
     # the indices are converted to `Int`, so that
@@ -720,7 +636,7 @@ updated parameters:
 """
 function mmw_contract!(
         hubmark::AbstractVector{V},
-        stash::AbstractVector{V},
+        stash::AbstractVector{T},
         degree::AbstractVector{V},
         target::AbstractVector{V},
         invptr::AbstractVector{E},
@@ -738,7 +654,7 @@ function mmw_contract!(
         n::V,
         v::V,
         w::V,
-    ) where {V, E}
+    ) where {T, V, E}
 
     # `set(i)` constructs the bucket for weighted degree `i`
     function set(i::V)
@@ -937,7 +853,7 @@ updated parameters:
  - `pfree`: first free arc
 """
 function mmw_relocate!(
-        stash::AbstractVector{V},
+        stash::AbstractVector{T},
         target::AbstractVector{V},
         invptr::AbstractVector{E},
         begptr::AbstractVector{E},
@@ -948,7 +864,7 @@ function mmw_relocate!(
         n::V,
         w::V,
         need::E,
-    ) where {V, E}
+    ) where {T, V, E}
     # `len` is the length of the list of `w`
     @inbounds len = endptr[w] - begptr[w]
 
@@ -1006,7 +922,7 @@ working arrays:
  - `stash`: the first neighbor of every vertex
 """
 function mmw_compact!(
-        stash::AbstractVector{V},
+        stash::AbstractVector{T},
         target::AbstractVector{V},
         invptr::AbstractVector{E},
         begptr::AbstractVector{E},
@@ -1014,7 +930,7 @@ function mmw_compact!(
         limptr::AbstractVector{E},
         pfree::E,
         n::V,
-    ) where {V, E}
+    ) where {T, V, E}
     # replace the first arc (`v`, `x`) of every
     # nonempty list with -`v`; store `x` in `stash`
     @inbounds for v in oneto(n)
@@ -1075,8 +991,3 @@ function Base.show(io::IO, ::MIME"text/plain", alg::MMW{S}) where {S}
     println(io, " "^indent * "MMW{$S}")
     return nothing
 end
-
-"""
-    DEFAULT_LOWER_BOUND_ALGORITHM = MMW()
-"""
-const DEFAULT_LOWER_BOUND_ALGORITHM = MMW()

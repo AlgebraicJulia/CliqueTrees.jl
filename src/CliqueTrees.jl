@@ -34,7 +34,7 @@ const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
 export BipartiteGraph, FBipartiteGraph, BipartiteEdgeIter, pointers, targets
 
 # Lower Bound Algorithms
-export MMW, lowerbound
+export MMW, LBN, LBP, lowerbound
 
 # Dissection Algorithms
 export METISND, KaHyParND
@@ -103,7 +103,7 @@ include("singly_linked_lists.jl")
 include("doubly_linked_lists.jl")
 include("bipartite_graphs.jl")
 include("bipartite_edge_iter.jl")
-include("lower_bound_algorithms.jl")
+include("lb/lb.jl")
 include("dissection_algorithms.jl")
 include("elimination_algorithms.jl")
 include("parent.jl")

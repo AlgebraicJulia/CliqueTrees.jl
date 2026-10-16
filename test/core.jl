@@ -559,6 +559,12 @@ end
             MMW{1}(),
             MMW{2}(),
             MMW{3}(),
+            LBN{1}(),
+            LBN{2}(),
+            LBN{3}(),
+            LBP{1}(),
+            LBP{2}(),
+            LBP{3}(),
         )
         @test isone(-lowerbound(graph; alg))
         @test iszero(lowerbound(weights, graph; alg))
@@ -631,6 +637,12 @@ end
             MMW{1}(),
             MMW{2}(),
             MMW{3}(),
+            LBN{1}(),
+            LBN{2}(),
+            LBN{3}(),
+            LBP{1}(),
+            LBP{2}(),
+            LBP{3}(),
         )
         @test iszero(lowerbound(graph; alg))
         @test istwo(lowerbound(weights, graph; alg))
@@ -983,6 +995,12 @@ end
                         MMW{1}(),
                         MMW{2}(),
                         MMW{3}(),
+                        LBN{1}(),
+                        LBN{2}(),
+                        LBN{3}(),
+                        LBP{1}(),
+                        LBP{2}(),
+                        LBP{3}(),
                     )
                     @test lowerbound(graph; alg) <= uwidth
                     @test lowerbound(weights, graph; alg) <= wwidth
@@ -1511,6 +1529,12 @@ end
         MMW{1}(),
         MMW{2}(),
         MMW{3}(),
+        LBN{1}(),
+        LBN{2}(),
+        LBN{3}(),
+        LBP{1}(),
+        LBP{2}(),
+        LBP{3}(),
     )
 
     tw_algs = (
