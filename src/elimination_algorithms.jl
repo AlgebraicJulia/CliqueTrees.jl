@@ -402,6 +402,7 @@ end
         width = 120,
         level = 6,
         imbalance = 130,
+        scale = 1,
     )
 
 The [nested dissection algorithm](https://en.wikipedia.org/wiki/Nested_dissection).
@@ -436,6 +437,8 @@ maximum imbalance of the vertex separator.
   - `width`: minimum width
   - `level`: maximum level
   - `imbalance`: separator imbalance
+  - `scale`: weight scale; the separator algorithms take integer weights, so
+    floating-point weights are multiplied by `scale` and truncated
 """
 struct ND{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
     alg::A
@@ -470,6 +473,7 @@ struct NDS{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: Eliminatio
     width::Int
     level::Int
     imbalances::StepRange{Int, Int}
+    scale::Int
 end
 
 function NDS{S}(
@@ -477,11 +481,13 @@ function NDS{S}(
         width::Integer = 120,
         level::Integer = 6,
         imbalances::AbstractRange = 130:130,
+        scale::Integer = 1,
     ) where {S, A, D}
     @assert ispositive(width)
     @assert ispositive(level)
     @assert ispositive(first(imbalances))
-    return NDS{S, A, D}(alg, dis, width, level, imbalances)
+    @assert ispositive(scale)
+    return NDS{S, A, D}(alg, dis, width, level, imbalances, scale)
 end
 
 function NDS(args...; kwargs...)
@@ -1124,7 +1130,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD; ver
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::NDS{S}; verbose::Bool = false) where {S}
-    return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, Val(S))
+    return dissectsearch(weights, graph, alg.alg, alg.dis, alg.width, alg.level, alg.imbalances, alg.scale, Val(S))
 end
 
 function permutation(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PIDBT; verbose::Bool = false) where {W, V}
@@ -1938,11 +1944,11 @@ function MDLib.md(weights::AbstractVector, graph::AbstractGraph; kwargs...)
     return md(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
-function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, ::Val{S}) where {S}
+function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, scale::Integer, ::Val{S}) where {S}
     minscore = minpair = nothing
 
     for imbalance in imbalances
-        curalg = ND{S}(alg, dis; width, level, imbalance)
+        curalg = ND{S}(alg, dis; width, level, imbalance, scale)
         curpair = permutation(weights, graph, curalg)
 
         if isone(S)
