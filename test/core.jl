@@ -80,7 +80,6 @@ end
     @test_throws ArgumentError permutation(matrix; alg = METIS())
     @test_throws ArgumentError permutation(matrix; alg = ND(MMD(), METISND()))
     @test_throws ArgumentError permutation(matrix; alg = ND(MMD(), KaHyParND()))
-    @test_throws ArgumentError permutation(matrix; alg = Spectral())
     @test_throws ArgumentError permutation(matrix; alg = FlowCutter())
     @test_throws ArgumentError permutation(matrix; alg = BT())
 end
@@ -88,7 +87,6 @@ end
 import AMD as AMDLib
 import FlowCutterPACE17_jll
 import KaHyPar
-import Laplacians
 import Metis
 import TreeWidthSolver
 
@@ -496,7 +494,6 @@ end
             ND{2}(MMD(), KaHyParND(); width = 5),
             ND{1}(MCS(), METISND(); width = 5),
             ND{2}(MCS(), KaHyParND(); width = 5),
-            Spectral(),
             FlowCutter(; time = 1),
             BT(),
             PIDBT(),
@@ -593,7 +590,6 @@ end
             NDS{1}(MCS(), METISND(); width = 5),
             NDS{2}(MCS(), METIS_OR_KAHYPAR(); width = 5),
             NDS{1}(MMD(), METIS_OR_KAHYPAR(); width = 5, imbalances = 100:50:200, scale = 100),
-            # Spectral(),
             SafeFlowCutter(; time = 1),
             BT(),
             PIDBT(),
@@ -675,7 +671,6 @@ end
             NDS{1}(MCS(), METISND(); width = 5),
             NDS{2}(MCS(), METIS_OR_KAHYPAR(); width = 5),
             NDS{1}(MMD(), METIS_OR_KAHYPAR(); width = 5, imbalances = 100:50:200, scale = 100),
-            # Spectral,
             SafeFlowCutter(; time = 1),
             BT(),
             PIDBT(),
@@ -1039,7 +1034,6 @@ end
                         SimplicialRule(NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
                         NDS{1}(MCS(), METISND(); width = 5),
                         SimplicialRule(NDS{2}(MCS(), METIS_OR_KAHYPAR(); width = 5)),
-                        Spectral(),
                         SafeFlowCutter(; time = 1),
                         BT(),
                         PIDBT(),

@@ -495,26 +495,6 @@ function NDS(args...; kwargs...)
 end
 
 """
-    Spectral <: EliminationAlgorithm
-
-    Spectral(; tol=0.0)
-
-The spectral ordering algorithm only works on connected graphs.
-In order to use it, import the package [Laplacians](https://github.com/danspielman/Laplacians.jl).
-
-### Parameters
-
-  - `tol`: tolerance for convergence
-
-### References
-
-  - Barnard, Stephen T., Alex Pothen, and Horst D. Simon. "A spectral algorithm for envelope reduction of sparse matrices." *Proceedings of the 1993 ACM/IEEE Conference on Supercomputing.* 1993.
-"""
-@kwdef struct Spectral <: EliminationAlgorithm
-    tol::Float64 = 0.0
-end
-
-"""
     FlowCutter <: EliminationAlgorithm
 
     FlowCutter(; time=5, seed=0)
@@ -2605,13 +2585,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::ND{S, A, D}) where {S, A, D}
     println(io, " "^indent * "    level: $(alg.level)")
     println(io, " "^indent * "    imbalance: $(alg.imbalance)")
     println(io, " "^indent * "    scale: $(alg.scale)")
-    return
-end
-
-function Base.show(io::IO, ::MIME"text/plain", alg::Spectral)
-    indent = get(io, :indent, 0)
-    println(io, " "^indent * "Spectral:")
-    println(io, " "^indent * "    tol: $(alg.tol)")
     return
 end
 

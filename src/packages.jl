@@ -13,7 +13,6 @@ package(::Type{<:METIS}) = "Metis"
 package(::Type{<:SCOTCH}) = "Scotch"
 package(::Type{<:AMD}) = "AMD"
 package(::Type{<:SymAMD}) = "AMD"
-package(::Type{<:Spectral}) = "Laplacians"
 package(::Type{<:FlowCutter}) = "FlowCutterPACE17_jll"
 package(::Type{<:BT}) = "TreeWidthSolver"
 

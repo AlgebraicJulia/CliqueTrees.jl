@@ -44,7 +44,6 @@ MAF
 MMD
 METIS
 ND
-Spectral
 FlowCutter
 BT
 PIDBT

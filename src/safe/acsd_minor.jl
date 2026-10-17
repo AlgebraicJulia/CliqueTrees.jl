@@ -54,9 +54,10 @@
 # Its cost grows quickly with the number of missing edges of S, so only
 # separators with at most `maxmissing` missing edges are tested. The pairs are found
 # by one breadth-first search from all the candidate first nodes at once,
-# which takes the candidate second node it reaches last (the one furthest
-# from the first nodes): taking the nearest one instead found fewer safe
-# separators.
+# which takes the first candidate second node it reaches. (Taking the last
+# one, the furthest from the first nodes, finds about as many separators, but
+# the search must then go on until it has reached them all, and some are
+# walled off by other nodes.)
 
 
 # the clique tree, and the components of G - S for the current separator
@@ -218,7 +219,6 @@ mutable struct ACSDMinor{V}
     bits::Vector{UInt64}
     label::Vector{Int}
     mw::Vector{Int}         # least weight
-    nstamp::Vector{Int}
     nvia::Vector{V}
     # per missing edge
     edges::Vector{Tuple{Int, Int}}
@@ -234,7 +234,7 @@ end
 
 function ACSDMinor{V}(n::Integer) where {V}
     return ACSDMinor{V}(zeros(Int, n), zeros(Int, n), zeros(Int, n), zeros(V, n), zeros(Int, n), V[], V[], 0,
-        0, 0, Vector{V}[], UInt64[], Int[], Int[], Int[], V[],
+        0, 0, Vector{V}[], UInt64[], Int[], Int[], V[],
         Tuple{Int, Int}[], Int[], Int[], Int[], Int[], UInt64[], Bool[], V[], Tuple{Int, Int}[])
 end
 
@@ -267,12 +267,12 @@ function acsd_newnode!(ms::ACSDMinor{V}, graph::AbstractGraph{V}, weights::Vecto
     ms.nn += 1; i = ms.nn
 
     if i > length(ms.verts)
-        push!(ms.verts, V[]); push!(ms.label, 0); push!(ms.mw, 0); push!(ms.nstamp, 0); push!(ms.nvia, zero(V))
+        push!(ms.verts, V[]); push!(ms.label, 0); push!(ms.mw, 0); push!(ms.nvia, zero(V))
     end
 
     length(ms.bits) < i * ms.W && resize!(ms.bits, i * ms.W)
     empty!(ms.verts[i]); push!(ms.verts[i], v)
-    ms.label[i] = 0; ms.mw[i] = weights[v]; ms.nstamp[i] = 0
+    ms.label[i] = 0; ms.mw[i] = weights[v]
     off = acsd_off(ms, i)
 
     for k in 1:ms.W
@@ -366,20 +366,20 @@ end
 # A pair of nodes (D₁, D₂), D₁ touching a and not b, D₂ touching b and not a,
 # joined by a path through free vertices of the region that are no lighter
 # than the lighter of a and b: one breadth-first search from every candidate
-# D₁, taking the last candidate D₂ that it reaches. Returns (D₁, D₂), or
+# D₁, taking the first candidate D₂ that it reaches. Returns (D₁, D₂), or
 # (0, 0) if there is none; the path is left in `parent` and `nvia`.
 function acsd_pair!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVector{V}, top::V, graph::AbstractGraph{V}, weights::Vector{Int}, a::Int, b::Int) where {V}
     wmin = min(acsd_wt(ms, weights, a), acsd_wt(ms, weights, b))
     ms.tag += 1; tag = ms.tag
     queue = ms.queue; empty!(queue)
-    n2 = 0
+    found = false
 
     for i in 1:ms.nn
         ms.mw[i] >= wmin || continue
         off = acsd_off(ms, i); ha = acsd_hasbit(ms.bits, off, a); hb = acsd_hasbit(ms.bits, off, b)
 
         if hb && !ha
-            n2 += 1
+            found = true
         elseif ha && !hb
             for v in ms.verts[i]
                 ms.stamp[v] = tag; ms.parent[v] = zero(V); ms.src[v] = i; push!(queue, v)
@@ -387,7 +387,9 @@ function acsd_pair!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVector{V},
         end
     end
 
-    last = 0; nfound = 0; head = 1
+    # (no candidate D₂: nothing to search for)
+    found || return 0, 0
+    head = 1
 
     while head <= length(queue)
         u = queue[head]; head += 1
@@ -396,13 +398,11 @@ function acsd_pair!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVector{V},
             s = ms.status[x]
 
             if ispositive(s)
-                ms.nstamp[s] == tag && continue
                 off = acsd_off(ms, s)
 
                 if ms.mw[s] >= wmin && acsd_hasbit(ms.bits, off, b) && !acsd_hasbit(ms.bits, off, a)
-                    ms.nstamp[s] = tag; ms.nvia[s] = u; last = s; nfound += 1
-                    # every candidate has been reached: none is further
-                    nfound == n2 && return ms.src[u], last
+                    ms.nvia[s] = u
+                    return ms.src[u], s
                 end
             elseif ms.stamp[x] != tag && weights[x] >= wmin && iszero(ms.status[x])
                 # (`u` is in the region, so `x` is not in the component: no
@@ -412,7 +412,6 @@ function acsd_pair!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVector{V},
         end
     end
 
-    ispositive(last) && return ms.src[ms.nvia[last]], last
     return 0, 0
 end
 
