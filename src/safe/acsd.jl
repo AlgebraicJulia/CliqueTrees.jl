@@ -480,7 +480,8 @@ end
 # Apply the minimal algorithms in `mins` in turn, filling the almost-clique
 # separators of each triangulation. If `maxmissing` is positive, then also
 # fill the separators of each triangulation that have at most `maxmissing`
-# missing edges and pass the clique-minor test of Bodlaender and Koster (see
+# missing edges and pass the connectivity test of Medema and Lazovik (see
+# acsd_flow.jl) or the clique-minor test of Bodlaender and Koster (see
 # acsd_minor.jl), and repeat until a round fills nothing; the returned
 # triangulation is then one of the returned graph.
 function acsd(weights::AbstractVector, graph::AbstractGraph, mins::Tuple, maxmissing::Int)

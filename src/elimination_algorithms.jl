@@ -854,11 +854,14 @@ A minimal separator ``S`` is used if it is
   - a clique;
   - an *almost clique* (``S - v`` is a clique for some *center* ``v``) with two full components whose
     vertices are all at least as heavy as ``v``;
-  - any separator with at most `maxmissing` missing edges that passes the minor test of Bodlaender and
-    Koster: for every component ``C`` of ``G - S``, contracting parts of ``G - C`` turns ``N(C)`` into a
-    clique. The test is a greedy search, slower than the others. It is off by default (`maxmissing = 0`).
-    Values between 25 and 100 find almost every separator it can find; much larger values cost a lot of
-    time and find few more.
+  - any separator with at most `maxmissing` missing edges that passes one of two tests, slower than the
+    others. They are off by default (`maxmissing = 0`). Values between 25 and 100 find almost every
+    separator they can find; much larger values cost a lot of time and find few more.
+      - the connectivity test of Medema and Lazovik: for a clique ``K \\subseteq S`` and every component
+        ``C`` of ``G - S``, the ends of every missing edge of ``S`` are joined by a flow of value
+        ``w(S - K)`` in ``G - C - K``, with vertex capacities ``w``.
+      - the minor test of Bodlaender and Koster: for every component ``C`` of ``G - S``, contracting
+        parts of ``G - C`` turns ``N(C)`` into a clique. It is a greedy search.
 
 With several algorithms in `mins`, more separators are found.
 
@@ -873,11 +876,12 @@ With several algorithms in `mins`, more separators are found.
 
   - `alg`: elimination algorithm
   - `min`: minimal elimination algorithm (or a tuple `mins` of them)
-  - `maxmissing`: the largest number of missing edges in a separator given to the minor test (`0`: no minor test)
+  - `maxmissing`: the largest number of missing edges in a separator given to the connectivity and minor tests (`0`: neither)
 
 ### References
 
   - Bodlaender, Hans L., and Arie MCA Koster. "Safe separators for treewidth." *Discrete Mathematics* 306.3 (2006): 337-350.
+  - Medema, Michel, and Alexander Lazovik. "A safeness condition for minimal separators based on vertex connectivity." *Discrete Mathematics* 348 (2025): 114524.
   - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." arXiv preprint arXiv:2108.07551 (2021).
 """
 struct SafeSeparators{A <: EliminationAlgorithm, M <: Tuple} <: EliminationAlgorithm

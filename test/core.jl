@@ -2310,6 +2310,67 @@ end
     @test isclique(first(CliqueTrees.acsd(weights, graph, (min,), 100)))
 end
 
+@testset "safe separators: connectivity test" begin
+    # S = {1, 2, 3, 4} is the 4-cycle 1-2-3-4, and the two components of G - S
+    # are the vertices 5 and 6, each adjacent to all of S (the octahedron). S
+    # is not an almost clique, and neither test of Bodlaender and Koster fills
+    # it: the region outside a component is a single vertex. But K = {3, 4} is
+    # a clique, and outside each component and K, the ends of each missing
+    # edge, {1, 3} and {2, 4}, are joined by |S - K| = 2 disjoint paths: 1-2-3
+    # and through the other component (Medema and Lazovik, Theorem 16).
+    graph = Graph(6)
+
+    for (u, v) in ((1, 2), (2, 3), (3, 4), (4, 1)), x in (5, 6), s in 1:4
+        add_edge!(graph, u, v); add_edge!(graph, x, s)
+    end
+
+    weights = ones(Int, 6)
+    min = MinimalChordal([5, 6, 1, 2, 3, 4])
+    isclique(g) = all(u == v || v in neighbors(g, u) for u in 1:4, v in 1:4)
+    @test !isclique(first(CliqueTrees.acsd(weights, graph, (min,), 0)))
+    @test !isclique(first(CliqueTrees.acsd(weights, graph, (min,), 1)))
+    @test isclique(first(CliqueTrees.acsd(weights, graph, (min,), 2)))
+
+    # with weights, K = {3, 4} (say) and the requirement is w(1) + w(2); the
+    # path 1-2-3 carries w(2), and the other component carries w(5) or w(6).
+    # So S passes if w(5) and w(6) are at least w(1) = w(3). If they are less,
+    # S is not safe: filling {2, 4, 5, 6} instead gives lighter bags.
+    weights = [2, 1, 2, 1, 1, 1]
+    @test !isclique(first(CliqueTrees.acsd(weights, graph, (min,), 2)))
+    weights = [2, 1, 2, 1, 2, 2]
+    @test isclique(first(CliqueTrees.acsd(weights, graph, (min,), 2)))
+
+    # every separator that passes the test is safe
+    rng = Xoshiro(17)
+
+    for _ in 1:300
+        n = rand(rng, 6:12)
+        graph = erdos_renyi(n, rand(rng, (0.25, 0.4)); rng)
+        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:3, n)
+        bgraph = BipartiteGraph(graph)
+        order, tree = cliquetree(weights, bgraph, CliqueTrees.DEFAULT_MINIMAL_ALGORITHM)
+        index = invperm(order); at = CliqueTrees.ACSDTree(tree, n)
+        fs = CliqueTrees.ACSDFlow(weights, bgraph, length(tree))
+        comps = Tuple{Int, Int}[]; ancs = Int[]
+        width = treewidth(weights, graph; alg = PIDBT())
+
+        for (j, bag) in enumerate(tree)
+            S = separator(bag)
+            length(S) < 2 && continue
+            iszero(CliqueTrees.acsd_missing!(fs, order, S)) && continue
+            CliqueTrees.acsd_components!(comps, ancs, at, tree, j)
+            CliqueTrees.acsd_flowsafe!(fs, at, index, weights, order, S) || continue
+            filled = copy(graph)
+
+            for a in S, b in S
+                a < b && add_edge!(filled, order[a], order[b])
+            end
+
+            @test treewidth(weights, filled; alg = PIDBT()) == width
+        end
+    end
+end
+
 @testset "safe separators: exactness" begin
     rng = Xoshiro(2)
     mins = (MinimalChordal(AMF()), MinimalChordal(MF()), MCSM(), LexM())

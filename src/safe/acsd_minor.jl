@@ -38,9 +38,11 @@
 #      node, merge a node touching a (and not b) with a node touching b (and
 #      not a) along a path through free vertices of R, none lighter than the
 #      lighter of a and b. If there is no such pair, fail.
-#   3. Phase 2: while there are more than k/2 nodes (k = |N|), merge a pair
-#      for the missing edge with the fewest nodes that could cover it. Stop at
-#      the first edge with no pair. Then drop the nodes that cover nothing.
+#   3. Phase 2: if the nodes can already be labelled (phase 3, leaving out the
+#      nodes that cover nothing), succeed. Otherwise, while there are more
+#      than k/2 nodes (k = |N|), merge a pair for the missing edge with the
+#      fewest nodes that could cover it. Stop at the first edge with no pair.
+#      Then drop the nodes that cover nothing.
 #   4. Phase 3: label greedily. Each round labels one node D with a vertex v
 #      it touches (no vertex of D lighter than v), maximizing (n, c): c is the
 #      number of missing edges at v that D covers, and n the least number of
@@ -227,12 +229,13 @@ mutable struct ACSDMinor{V}
     rem::Vector{UInt64}
     isend::Vector{Bool}
     Nl::Vector{V}
+    dry::Vector{Tuple{Int, Int}}
 end
 
 function ACSDMinor{V}(n::Integer) where {V}
     return ACSDMinor{V}(zeros(Int, n), zeros(Int, n), zeros(Int, n), zeros(V, n), zeros(Int, n), V[], V[], 0,
         0, 0, Vector{V}[], UInt64[], Int[], Int[], Int[], V[],
-        Tuple{Int, Int}[], Int[], Int[], Int[], Int[], UInt64[], Bool[], V[])
+        Tuple{Int, Int}[], Int[], Int[], Int[], Int[], UInt64[], Bool[], V[], Tuple{Int, Int}[])
 end
 
 @inline function acsd_hasbit(bits::Vector{UInt64}, off::Int, s::Int)
@@ -493,7 +496,20 @@ function acsd_cliqueminor!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVec
         e = acsd_uncovered(ms, weights)
     end
 
-    # phase 2
+    # phase 2: first try to label the nodes as they are, without the ones that
+    # cover nothing (label -1)
+    dry = ms.dry; resize!(dry, length(edges)); copyto!(dry, edges)
+
+    for i in 1:ms.nn
+        ms.label[i] = acsd_coversany(ms, i) ? 0 : -1
+    end
+
+    acsd_label!(ms, weights, dry, k) && return true
+
+    for i in 1:ms.nn
+        ms.label[i] = 0
+    end
+
     e = acsd_leastcovered(ms, weights)
 
     while 2ms.nn > k && ispositive(e)
@@ -515,6 +531,13 @@ function acsd_cliqueminor!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVec
     end
 
     # phase 3
+    return acsd_label!(ms, weights, edges, k)
+end
+
+# Phase 3: label the nodes greedily, covering the missing edges `edges` (which
+# are removed as they are covered). Returns false if it gets stuck.
+function acsd_label!(ms::ACSDMinor, weights::Vector{Int}, edges::Vector{Tuple{Int, Int}}, k::Int)
+    W = ms.W
     count = ms.count; val = ms.val; order = ms.order; bucket = ms.bucket; rem = ms.rem
     resize!(rem, k * W)
 
@@ -617,33 +640,9 @@ function acsd_cliqueminor!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVec
     return true
 end
 
-# does S = sep(j), with at most `maxmissing` missing edges, pass the test?
-function acsd_minorsafe!(ms::ACSDMinor{V}, at::ACSDTree{V}, comps::Vector{Tuple{V, V}}, ancs::Vector{V}, index::AbstractVector{V}, graph::AbstractGraph{V}, weights::Vector{Int}, order::AbstractVector{V}, tree::CliqueTree{V}, j::V, maxmissing::Int) where {V}
-    S = separator(tree, j)
-
-    # the missing edges of S
-    ms.tag += 1; tag = ms.tag
-
-    for i in S
-        ms.stamp[order[i]] = tag
-    end
-
-    missing = 0
-
-    for i in S
-        v = order[i]; c = 0
-
-        for x in neighbors(graph, v)
-            c += (x != v) & (ms.stamp[x] == tag)
-        end
-
-        missing += length(S) - 1 - c
-    end
-
-    # (each missing edge is counted twice)
-    (iszero(missing) || missing > 2maxmissing) && return false
-    acsd_components!(comps, ancs, at, tree, j)
-
+# Does S pass the minor test? The components of G - S are `comps` (see
+# `acsd_components!`).
+function acsd_minorsafe!(ms::ACSDMinor{V}, at::ACSDTree{V}, comps::Vector{Tuple{V, V}}, index::AbstractVector{V}, graph::AbstractGraph{V}, weights::Vector{Int}, order::AbstractVector{V}, tree::CliqueTree{V}) where {V}
     for (top, q) in comps
         N = separator(tree, q)
         length(N) < 2 && continue
@@ -677,24 +676,32 @@ end
 
 # Fill the separators of the clique tree `tree` (of a minimal triangulation
 # of `graph`) that are not cliques, have at most `maxmissing` missing edges,
-# and pass the minor test. The separators are all tested against the same
-# graph and filled together: they are pairwise parallel, so filling one keeps
-# the certificates of the others.
+# and pass the connectivity test (acsd_flow.jl) or the minor test. The
+# separators are all tested against the same graph and filled together: they
+# are pairwise parallel, so filling one keeps the certificates of the others.
 function acsd_minor(weights::AbstractVector, graph::AbstractGraph{V}, order::AbstractVector{V}, tree::CliqueTree{V}, maxmissing::Int) where {V}
     n = nv(graph)
     n < 4 && return graph, false
 
-    # the test only compares weights, so their ranks will do
+    # the minor test only compares weights, so their ranks will do
     rank = acsd_ranks(weights, n)
     index = invperm(order)
     at = ACSDTree(tree, n)
     ms = ACSDMinor{V}(n)
+    fs = ACSDFlow(weights, graph, length(tree))
     comps = Tuple{V, V}[]; ancs = V[]; fills = V[]
 
     for j in oneto(convert(V, length(tree)))
-        length(separator(tree, j)) < 3 && continue
+        S = separator(tree, j)
+        length(S) < 2 && continue
 
-        if acsd_minorsafe!(ms, at, comps, ancs, index, graph, rank, order, tree, j, maxmissing)
+        # (each missing edge is counted twice)
+        missing = acsd_missing!(fs, order, S)
+        (iszero(missing) || missing > 2maxmissing) && continue
+        acsd_components!(comps, ancs, at, tree, j)
+
+        if acsd_flowsafe!(fs, at, index, weights, order, S) ||
+                (length(S) > 2 && acsd_minorsafe!(ms, at, comps, index, graph, rank, order, tree))
             push!(fills, j)
         end
     end
