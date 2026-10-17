@@ -42,11 +42,12 @@ function pr5(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::Number)
     abegptr = FVector{E}(undef, nn)
     atmpptr = FVector{E}(undef, nn)
     atgt = FVector{V}(undef, m)
+    aunits = FVector{W}(undef, n)
 
     return pr5_impl!(
         degree, number, status, marker, source, target, begptr, endptr, invptr,
         stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
-        afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt,
+        afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt, aunits,
         weight1, weights, graph, convert(W, width))
 end
 
@@ -60,7 +61,7 @@ function pr5_impl!(
         tmpptr::AbstractVector{E},
         afillin::AbstractVector{Int}, amarker::AbstractVector{Int}, amarker2::AbstractVector{Int},
         asource::AbstractVector{V}, atarget::AbstractVector{V}, abegptr::AbstractVector{E},
-        atmpptr::AbstractVector{E}, atgt::AbstractVector{V},
+        atmpptr::AbstractVector{E}, atgt::AbstractVector{V}, aunits::AbstractVector{W},
         weight1::AbstractVector{W}, weight::AbstractVector{W}, graph::AbstractGraph{V}, width::W,
     ) where {W, V, E}
     n0 = nv(graph)
@@ -94,7 +95,7 @@ function pr5_impl!(
         weight1, degree, number, afillin, status, amarker, amarker2, asource,
         atarget, abegptr, endptr, invptr, stack1, stack2, stack3, stack5,
         stack6, stack7, atmpptr, atgt, stack8, marker, source, target, tmpptr,
-        totdeg1, width1, graph1)
+        aunits, totdeg1, width1, graph1)
 
     n2 = nv(graph2); m2 = n1 - n2
 
@@ -151,12 +152,13 @@ function asr(weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W) wher
     eb = FVector{V}(undef, n)
     mdeg = FVector{V}(undef, n)
     pz = FVector{E}(undef, n)
+    units = FVector{W}(undef, n)
 
     return asr_impl!(
         weight, degree, number, fillin, status, marker, marker2, source,
         target, begptr, endptr, invptr, stack1, stack4, stack5, stack7,
-        stack8, stack2, tmpptr, tgt, twin0, ea, eb, mdeg, pz, totdeg, width,
-        graph)
+        stack8, stack2, tmpptr, tgt, twin0, ea, eb, mdeg, pz, units, totdeg,
+        width, graph)
 end
 
 """
@@ -185,7 +187,9 @@ each at least as heavy as u, that is adjacent to u and to every
 vertex of N(v) \\ N[u]. Contracting Q into u makes N[v] a clique
 in a weighted minor of the graph, so weight(N[v]) is a lower bound
 for the treewidth: `width` is raised to it, and v is contracted
-into u (see `asr_connector!`).
+into u (see `asr_connector!`). If there is no connector, the unit
+connector may still find one connected set per unit of weight of u
+(see `asr_connector_units!`).
 
 Each vertex v stores its fill-in: the number of missing edges in
 N(v), computed by [`fillin!`](@ref). A vertex is simplicial if
@@ -238,6 +242,8 @@ The state of the algorithm is a collection of arrays and scalars.
     - `twin0`: zero if a vertex had a false twin at the start of
                the round, and its degree then otherwise
     - `ea`, `eb`, `mdeg`, `pz`, and `tgt`: work space
+  - unit connector (see `asr_connector_units!`):
+    - `units`: the units of weight of a vertex not yet lent
   - scalars:
     - `width`: treewidth lower bound
     - `parked`: the value of `width` when the first vertex was parked
@@ -281,6 +287,7 @@ function asr_impl!(
         eb::AbstractVector{V},
         mdeg::AbstractVector{V},
         pz::AbstractVector{E},
+        units::AbstractVector{W},
         totdeg::W,
         width::W,
         graph::AbstractGraph{V},
@@ -313,11 +320,17 @@ function asr_impl!(
     @assert n <= length(eb)
     @assert n <= length(mdeg)
     @assert n <= length(pz)
+    @assert n <= length(units)
 
     # initialize the quotient graph, the fill-in, and the work queue
     width, parked, hi1 = asr_init!(weight, degree, number, fillin, status,
         marker, marker2, source, target, begptr, endptr, invptr, stack1,
         stack4, stack5, tmpptr, tgt, totdeg, width, graph)
+
+    # the units of each vertex, for the unit connector
+    @inbounds for v in vertices(graph)
+        units[v] = weight[v]
+    end
 
     # the false-twin classes, for the twin rule (`stack2`, `stack4`,
     # `stack7`, `stack8`, and `tgt` are free here)
@@ -331,7 +344,7 @@ function asr_impl!(
     width, hi4 = asr_loop!(weight, degree, number, fillin, status, marker,
         marker2, source, target, begptr, endptr, invptr, stack1, stack4,
         stack5, stack7, stack8, tmpptr, stack2, twin0, mdeg, ea, eb, tgt, pz,
-        width, parked, 0, hi1, zero(V), zero(V), n)
+        units, width, parked, 0, hi1, zero(V), zero(V), n)
 
     # construct the reduced graph
     m, n = pr3_make!(stack4, stack5, target, begptr, endptr, invptr, stack1,
@@ -494,6 +507,7 @@ function asr_loop!(
         eb::AbstractVector{V},
         bcov::AbstractVector{V},
         pz::AbstractVector{E},
+        units::AbstractVector{W},
         width::W,
         parked::W,
         tag::Int,
@@ -554,6 +568,14 @@ function asr_loop!(
                             found, tag = asr_connector!(weight, number, marker,
                                 marker2, stack2, stack5, stack8, target, begptr,
                                 endptr, invptr, tag, v, u)
+
+                            if !found
+                                # the unit connector (see below)
+                                found, tag = asr_connector_units!(units, ea,
+                                    eb, mdeg, weight, number, marker, marker2,
+                                    stack2, stack5, stack8, target, begptr, endptr,
+                                    invptr, tag, v, u)
+                            end
                         end
 
                         if found
@@ -749,7 +771,7 @@ function asr_simplicial!(
 
         # the missing edges in N(`w`) incident to `v` join
         # `v` to the neighbors of `w` outside N[`v`]
-        fillin[w] -= Int(number[w] - d)
+        fillin[w] -= number[w] - d
         number[w] -= one(V)
         degree[w] -= wgt
 
@@ -780,7 +802,7 @@ function asr_friend!(
     ) where {W, V, E}
     tol = tolerance(W)
 
-    @inbounds fil = fillin[v]; d = Int(number[v]); wgt = weight[v]
+    @inbounds fil = fillin[v]; d = number[v]; wgt = weight[v]
 
     # mark the neighbors of `v` with `ntag`
     tag += 1; ntag = tag
@@ -797,7 +819,8 @@ function asr_friend!(
 
         # in the first pass, skip vertices of large degree; in
         # the second pass, skip the vertices scanned in the first
-        (Int(number[x]) <= twice(d)) == isone(pass) || continue
+        # (`number[x] - d ≤ d` cannot overflow)
+        (number[x] - d <= d) == isone(pass) || continue
 
         # `miss` is the number of missing edges incident to `x`
         tag += 1; tag2 = tag
@@ -882,7 +905,7 @@ function asr_connector!(
     tol = tolerance(W)
 
     # `d` is the degree of `v`
-    @inbounds d = Int(number[v])
+    @inbounds d = number[v]
 
     # `uwgt` is the weight of `u`: every vertex of Q
     # must be at least this heavy
@@ -1058,7 +1081,7 @@ function asr_contract!(
     # neighbor of `v` not adjacent to `u`, one at a time. Each edge
     # decreases the fill-in of every common neighbor of `u` and `x`.
     # The vertices `x` are moved to the front of `stack8`.
-    @inbounds unum = Int(number[u]); uwgtadd = zero(W); nx = zero(V)
+    @inbounds unum = number[u]; uwgtadd = zero(W); nx = zero(V)
 
     @inbounds for i in oneto(k)
         x = stack8[i]
@@ -1084,9 +1107,9 @@ function asr_contract!(
             # neighbors of `x` not adjacent to `u`, are new missing
             # edges at `u` and `x`
             fillin[u] += unum - c
-            fillin[x] += Int(number[x]) - c
+            fillin[x] += number[x] - c
 
-            unum += 1; number[x] += one(V); marker[x] = tag
+            unum += one(V); number[x] += one(V); marker[x] = tag
             uwgtadd += weight[x]
 
             # move `x` to the front
@@ -1096,12 +1119,12 @@ function asr_contract!(
         end
     end
 
-    @inbounds number[u] = convert(V, unum)
+    @inbounds number[u] = unum
 
     # N[`v`] is now a clique (unless `rem` is given): remove `v` from the graph
     @inbounds for i in oneto(k)
         z = stack8[i]
-        fillin[z] -= Int(number[z] - d)
+        fillin[z] -= number[z] - d
         isnothing(rem) || (fillin[z] -= rem[z])
         number[z] -= one(V)
         hi1 = asr_touch!(status, stack1, hi1, z)
@@ -1873,4 +1896,237 @@ function asr_mincover!(
     end
 
     return wcur
+end
+
+# ---------------------------------------------------------------------------
+# The unit connector of `asr`
+# ---------------------------------------------------------------------------
+
+# the unit connector looks for at most this many connectors
+const ASR_UNIT_ROUNDS = 64
+
+# The unit connector. `v` is almost simplicial with friend `u`, w(N[`v`]) is
+# larger than `width`, and `asr_connector!` found no connector. Think of a
+# vertex of weight w as w unit-weight true twins (the equivalence behind twin
+# compression; rational weights can be scaled to integers). Then N[`v`] is a
+# clique minor if each of the w(`u`) units of `u` has its own connector: a
+# connected set of units outside N[`v`] that is adjacent to `u` and touches
+# every leaf (every vertex of N(`v`) not adjacent to `u`). A vertex q can lend
+# its units to at most w(q) of them. The connector of `asr_connector!` is the
+# case where one set of vertices, each at least as heavy as `u`, serves every
+# unit.
+#
+# The connectors are found greedily, one per round. A round searches the
+# vertices outside N[`v`] with units left, starting from one neighbor of `u`
+# (a root), until every leaf is touched, and keeps the paths of the search tree
+# that reach the leaves. The roots are tried in turn; if none reaches every
+# leaf, the round starts from all of them at once (each tree of the forest
+# contains a neighbor of `u`, so the paths and `u` still form a connected set).
+# Every vertex of the connector lends α units, where α is the least number of
+# units left on it, or the number still needed. The search gives up after
+# `ASR_UNIT_ROUNDS` rounds, or after scanning as many arcs as `asr_connector!`
+# may.
+#
+# Work space (see `asr_extend!`; the star-forest and twin rules do not run at
+# the same time): `units[q]` is the number of units of q left, and equals
+# `weight[q]` outside a search; `ea` holds the leaves, then the vertices that
+# have lent units; `stack2` holds the roots and `stack8` the search queue;
+# `mdeg[q]` is the parent of q in the search forest, and `eb[x]` the vertex
+# that touched the leaf x.
+function asr_connector_units!(
+        units::AbstractVector{W},
+        ea::AbstractVector{V},
+        eb::AbstractVector{V},
+        mdeg::AbstractVector{V},
+        weight::AbstractVector{W},
+        number::AbstractVector{V},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        stack2::AbstractVector{V},
+        stack5::AbstractVector{V},
+        stack8::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        tag::Int,
+        v::V,
+        u::V,
+    ) where {W, V, E}
+    tol = tolerance(W)
+
+    # mark N[`v`] with `ntag`
+    tag += 1; ntag = tag; marker[v] = ntag
+
+    pr3_reach!(nothing, stack5, target, begptr, endptr, invptr, v) do _, _, y
+        @inbounds marker[y] = ntag
+        return
+    end
+
+    # mark N(`u`) with `utag`, then the leaves with `xtag`; list them in `ea`
+    tag += 1; utag = tag
+
+    pr3_reach!(nothing, stack5, target, begptr, endptr, invptr, u) do _, _, y
+        @inbounds marker2[y] = utag
+        return
+    end
+
+    tag += 1; xtag = tag
+
+    nx = pr3_reach!(zero(V), stack5, target, begptr, endptr, invptr, v) do nx, _, y
+        @inbounds if y != u && marker2[y] != utag
+            marker2[y] = xtag; nx += one(V); ea[nx] = y
+        end
+
+        return nx
+    end
+
+    iszero(nx) && return false, tag
+
+    # the roots: the neighbors of `u` outside N[`v`]
+    ns = pr3_reach!(zero(V), stack5, target, begptr, endptr, invptr, u) do ns, _, z
+        @inbounds if marker[z] != ntag
+            ns += one(V); stack2[ns] = z
+        end
+
+        return ns
+    end
+
+    iszero(ns) && return false, tag
+
+    # `need` is the number of units of `u` without a connector; the vertices
+    # that have lent units are `ea[nx + 1:np]`
+    need = weight[u]; np = nx; found = false
+    budget = ASR_CONNECTOR_BASE + ASR_CONNECTOR_DEGREE * number[v]; visits = 0
+
+    for _ in oneto(ASR_UNIT_ROUNDS)
+        ok = false
+
+        # one root at a time, then all of them
+        for s in oneto(ns + one(V))
+            lo, hi = s <= ns ? (s, s) : (one(V), ns)
+            s <= ns && units[stack2[s]] < tol && continue
+
+            ok, tag, visits = asr_unit_search!(units, eb, mdeg, ea, stack2,
+                marker, marker2, stack5, stack8, target, begptr, endptr, invptr,
+                tag, lo, hi, ntag, xtag, nx, visits)
+
+            (ok || visits > budget) && break
+        end
+
+        (ok && visits <= budget) || break
+
+        # the connector: the paths from the leaves to the roots. `alpha` is
+        # the number of units that each of its vertices lends.
+        tag += 1; ptag = tag; alpha = need
+
+        @inbounds for i in oneto(nx)
+            q = eb[ea[i]]
+
+            while ispositive(q) && marker2[q] != ptag
+                marker2[q] = ptag; alpha = min(alpha, units[q]); q = mdeg[q]
+            end
+        end
+
+        tag += 1; ptag = tag
+
+        @inbounds for i in oneto(nx)
+            q = eb[ea[i]]
+
+            while ispositive(q) && marker2[q] != ptag
+                marker2[q] = ptag
+
+                # list `q` when it lends units for the first time
+                if units[q] == weight[q]
+                    np += one(V); ea[np] = q
+                end
+
+                units[q] -= alpha; q = mdeg[q]
+            end
+        end
+
+        need -= alpha
+
+        if need < tol
+            found = true
+            break
+        end
+    end
+
+    # give the units back
+    @inbounds for i in nx + one(V):np
+        q = ea[i]; units[q] = weight[q]
+    end
+
+    return found, tag
+end
+
+# One round of the unit-connector search: a breadth-first search from the
+# roots `stack2[lo:hi]` through the vertices outside N[v] (marked `ntag`)
+# with units left. Returns true if every leaf `ea[1:nx]` (marked `xtag`) is
+# touched; then `eb[x]` is the vertex that touched the leaf x, and `mdeg` holds
+# the parents in the search forest.
+function asr_unit_search!(
+        units::AbstractVector{W},
+        eb::AbstractVector{V},
+        mdeg::AbstractVector{V},
+        ea::AbstractVector{V},
+        stack2::AbstractVector{V},
+        marker::AbstractVector{Int},
+        marker2::AbstractVector{Int},
+        stack5::AbstractVector{V},
+        stack8::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        invptr::AbstractVector{E},
+        tag::Int,
+        lo::V,
+        hi::V,
+        ntag::Int,
+        xtag::Int,
+        nx::V,
+        visits::Int,
+    ) where {W, V, E}
+    tol = tolerance(W)
+
+    # visited vertices are marked with `vtag`; `eb[x]` is zero until a vertex
+    # touches the leaf x
+    tag += 1; vtag = tag; tl = zero(V)
+
+    @inbounds for i in oneto(nx)
+        eb[ea[i]] = zero(V)
+    end
+
+    @inbounds for s in lo:hi
+        z = stack2[s]
+
+        if marker[z] != vtag && units[z] >= tol
+            marker[z] = vtag; mdeg[z] = zero(V); tl += one(V); stack8[tl] = z
+        end
+    end
+
+    hd = one(V); covered = zero(V)
+
+    @inbounds while hd <= tl && covered < nx
+        q = stack8[hd]; hd += one(V)
+
+        tl, covered, visits = pr3_reach!((tl, covered, visits), stack5, target,
+                begptr, endptr, invptr, q) do (tl, covered, visits), _, y
+            visits += 1
+
+            @inbounds if marker2[y] == xtag
+                # `y` is a leaf, touched by `q`
+                if iszero(eb[y])
+                    eb[y] = q; covered += one(V)
+                end
+            elseif marker[y] != ntag && marker[y] != vtag && units[y] >= tol
+                marker[y] = vtag; mdeg[y] = q; tl += one(V); stack8[tl] = y
+            end
+
+            return (tl, covered, visits)
+        end
+    end
+
+    return covered == nx, tag, visits
 end

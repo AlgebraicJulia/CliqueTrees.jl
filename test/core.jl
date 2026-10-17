@@ -509,6 +509,8 @@ end
             SafeSeparators(),
             SafeSeparators(; maxmissing = 100),
             ConnectedComponents(),
+            ConnectedComponents{2}(),
+            ConnectedComponents{3}(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
         )
@@ -606,6 +608,8 @@ end
             SafeSeparators(),
             SafeSeparators(; maxmissing = 100),
             ConnectedComponents(),
+            ConnectedComponents{2}(),
+            ConnectedComponents{3}(),
             BestWidth(MCS(), MF()),
         )
 
@@ -684,6 +688,8 @@ end
             SafeSeparators(),
             SafeSeparators(; maxmissing = 100),
             ConnectedComponents(),
+            ConnectedComponents{2}(),
+            ConnectedComponents{3}(),
             BestWidth(MCS(), MF()),
             BestFill(MCS(), MF()),
         )
@@ -1046,6 +1052,8 @@ end
                         SafeSeparators(),
                         SafeSeparators(; maxmissing = 100),
                         ConnectedComponents(),
+                        ConnectedComponents{2}(),
+                        ConnectedComponents{3}(),
                         BestWidth(MCS(), MF()),
                         BestFill(MCS(), MF()),
                     )
@@ -2233,6 +2241,51 @@ end
     end
 end
 
+@testset "safe separators: heavy components" begin
+    # the full components of G - S with no vertex lighter than a weight, read
+    # off the clique tree of a minimal triangulation, against a search
+    rng = Xoshiro(11)
+
+    for _ in 1:300
+        n = rand(rng, 4:20)
+        graph = erdos_renyi(n, rand(rng, (0.15, 0.3, 0.5)); rng)
+        weights = rand(rng, 1:3, n)
+        order, tree = cliquetree(weights, BipartiteGraph(graph), CliqueTrees.DEFAULT_MINIMAL_ALGORITHM)
+        hv = CliqueTrees.ACSDHeavy(weights, order, tree)
+
+        for (j, bag) in enumerate(tree)
+            sep = separator(bag)
+            isempty(sep) && continue
+            S = Set(order[i] for i in sep)
+
+            for wgt in 1:4
+                seen = falses(n); num = 0
+
+                for v in 1:n
+                    (v in S || seen[v]) && continue
+                    queue = [v]; seen[v] = true; heavy = true; nbrs = Set{Int}()
+
+                    while !isempty(queue)
+                        u = pop!(queue); heavy &= weights[u] >= wgt
+
+                        for x in neighbors(graph, u)
+                            if x in S
+                                push!(nbrs, x)
+                            elseif !seen[x]
+                                seen[x] = true; push!(queue, x)
+                            end
+                        end
+                    end
+
+                    num += heavy && length(nbrs) == length(S)
+                end
+
+                @test CliqueTrees.acsd_heavy!(hv, tree, j, wgt) == (num >= 2)
+            end
+        end
+    end
+end
+
 @testset "safe separators: minor test" begin
     # S = {1, 2, 3} is independent, so not an almost clique, and neither is
     # any other minimal separator. Each component of G - S is a triangle
@@ -2393,6 +2446,167 @@ end
     end
 end
 
+@testset "connected components: blocks" begin
+    # random graphs with many blocks: small random pieces glued at cut
+    # vertices, several components, and isolated vertices
+    function blocky(rng)
+        graph = Graph(0)
+
+        for _ in 1:rand(rng, 1:3)
+            base = nv(graph)
+
+            for _ in 1:rand(rng, 1:5)
+                k = rand(rng, 1:6); s = nv(graph)
+                vs = collect(s + 1:s + k)
+                s > base && pushfirst!(vs, rand(rng, base + 1:s))
+                add_vertices!(graph, k)
+                p = rand(rng, (0.3, 0.6, 0.9))
+
+                for a in vs, b in vs
+                    a < b && rand(rng) < p && add_edge!(graph, a, b)
+                end
+
+                for i in 1:length(vs) - 1
+                    rand(rng, Bool) && add_edge!(graph, vs[i], vs[i + 1])
+                end
+            end
+        end
+
+        rand(rng) < 0.3 && add_vertices!(graph, rand(rng, 1:2))
+        return graph
+    end
+
+    rng = Xoshiro(4)
+
+    # the block tree, against `biconnected_components`
+    for _ in 1:300
+        graph = rand(rng, Bool) ? blocky(rng) : erdos_renyi(rand(rng, 1:25), rand(rng, (0.05, 0.1, 0.2)); rng)
+        n = nv(graph)
+        order, tree = CliqueTrees.blocktree(BipartiteGraph(graph))
+        @test sort(order) == 1:n
+        @test sum(length(residual(bag)) for bag in tree; init = 0) == n
+
+        found = Set(Set(order[i] for i in bag) for bag in tree)
+        expected = Set(Set(Iterators.flatten((src(e), dst(e)) for e in comp)) for comp in biconnected_components(graph))
+
+        for v in vertices(graph)
+            iszero(degree(graph, v)) && push!(expected, Set(v))
+        end
+
+        @test found == expected
+
+        for (j, bag) in enumerate(tree)
+            res = residual(bag); sep = separator(bag)
+            p = CliqueTrees.parentindex(tree, j)
+
+            if isnothing(p)
+                @test isempty(sep)
+            else
+                @test length(sep) == 1
+                @test only(sep) > last(res)
+                @test only(sep) in tree[p]
+            end
+        end
+    end
+
+    # exactness
+    for _ in 1:150
+        graph = blocky(rng); n = nv(graph)
+        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:4, n)
+        width = treewidth(weights, graph; alg = ConnectedComponents(PIDBT()))
+        @test treewidth(weights, graph; alg = ConnectedComponents{2}(PIDBT())) == width
+    end
+end
+
+
+@testset "connected components: separation pairs" begin
+    # random biconnected graphs with many separation pairs
+    function pairy(rng)
+        while true
+            n = rand(rng, 4:14); graph = Graph(n)
+
+            if rand(rng, Bool)
+                # a cycle with chords
+                for i in 1:n
+                    add_edge!(graph, i, mod1(i + 1, n))
+                end
+
+                for _ in 1:rand(rng, 0:n)
+                    a, b = rand(rng, 1:n, 2)
+                    a != b && add_edge!(graph, a, b)
+                end
+            else
+                # a small dense core, then vertices attached to two or three earlier ones
+                k = rand(rng, 4:6)
+
+                for a in 1:k, b in a + 1:k
+                    rand(rng) < 0.7 && add_edge!(graph, a, b)
+                end
+
+                for v in k + 1:n
+                    for _ in 1:rand(rng, 2:3)
+                        add_edge!(graph, v, rand(rng, 1:v - 1))
+                    end
+                end
+            end
+
+            is_connected(graph) && isempty(articulation(graph)) && return graph
+        end
+    end
+
+    rng = Xoshiro(5)
+
+    for _ in 1:300
+        graph = pairy(rng); n = nv(graph)
+        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:4, n)
+
+        # the decomposition: a tree decomposition of the filled graph whose
+        # separators are filled pairs
+        pairs = CliqueTrees.tuttetree(weights, BipartiteGraph(graph))
+
+        if !isnothing(pairs)
+            filled, order, tree = pairs
+            bags = [Set(order[i] for i in bag) for bag in tree]
+            @test sort(order) == 1:n
+            @test all(has_edge(filled, src(e), dst(e)) for e in edges(graph))
+            @test all(any(src(e) in bag && dst(e) in bag for bag in bags) for e in edges(filled))
+
+            for (j, bag) in enumerate(tree)
+                sep = [order[i] for i in separator(bag)]
+                p = CliqueTrees.parentindex(tree, j)
+
+                if isnothing(p)
+                    @test isempty(sep)
+                else
+                    @test length(sep) == 2
+                    @test all(v in bags[p] for v in sep)
+                    @test has_edge(filled, sep[1], sep[2])
+                end
+            end
+        end
+
+        # exactness
+        width = treewidth(weights, graph; alg = PIDBT())
+        @test treewidth(weights, graph; alg = ConnectedComponents{3}(PIDBT())) == width
+    end
+
+    # {1, 2} separates the light vertex 5 from the rest, and the flow from
+    # 1 to 2 through 5 is 1: the pair is safe only if 1 or 2 is light
+    for (w, safe) in ((1, true), (3, false))
+        graph = Graph(5)
+
+        for (u, v) in ((1, 3), (1, 4), (2, 3), (2, 4), (3, 4), (1, 5), (2, 5))
+            add_edge!(graph, u, v)
+        end
+
+        weights = [w, w, 1, 1, 1]
+        pairs = CliqueTrees.tuttetree(weights, BipartiteGraph(graph))
+        @test !isnothing(pairs) == safe
+        @test treewidth(weights, graph; alg = ConnectedComponents{3}(PIDBT())) == treewidth(weights, graph; alg = PIDBT())
+    end
+end
+
+
 @testset "safe reduction rules: lower bound" begin
     # the bound returned with the kernel must not exceed the largest bag
     # weight of an optimal decomposition (the almost simplicial rule used to
@@ -2470,6 +2684,31 @@ end
     end
 
     @test nfired > 0
+end
+
+@testset "safe reduction rules: unit connector" begin
+    # in this weighted graph (a kernel of bfwa62 with the lower bound 7),
+    # vertex 4 is almost simplicial with friend 7 and w(N[4]) = 8. The
+    # connector of Eijkhof et al. fails, since every region joining 7 to the
+    # leaves 3 and 9 has a vertex lighter than 7, but the two units of 7 have
+    # the connectors {2, 5} and {10, 6, 1}. So N[4] is a clique minor, the
+    # lower bound becomes 8, and the graph is reduced completely.
+    weights = [2, 1, 1, 3, 1, 3, 2, 1, 1, 1]
+    graph = Graph(10)
+
+    for (a, b) in ((1, 3), (1, 6), (1, 8), (1, 9), (2, 5), (2, 6), (2, 7), (2, 8), (2, 10),
+            (3, 4), (3, 5), (3, 8), (3, 9), (4, 7), (4, 8), (4, 9), (5, 8), (5, 9), (5, 10),
+            (6, 8), (6, 10), (7, 8), (7, 10), (8, 9), (8, 10), (9, 10))
+        add_edge!(graph, a, b)
+    end
+
+    @test treewidth(weights, graph; alg = PIDBT()) == 8
+    kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, 7)
+    @test nv(kg) == 0 && result.width == 8
+
+    # the same graph with real weights
+    kw, kg, result = CliqueTrees.compressreduce(5, Float64.(weights), graph, 7.0)
+    @test nv(kg) == 0 && result.width == 8.0
 end
 
 @testset "quasi-clique covers" begin

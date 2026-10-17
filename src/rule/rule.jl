@@ -80,106 +80,171 @@ end
 # started with: the last round, which finds little or nothing, costs as much
 # as a full pass over the graph.
 function compressreduce(rules::Integer, weights::AbstractVector{W}, graph::AbstractGraph{V}, width::W; verbose::Bool = false, minfrac::Real = 0.0) where {W <: Number, V <: Integer}
-    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
-
     if rules == 1
-        degree = FVector{W}(undef, n)
-        number = FVector{V}(undef, n)
-        status = FVector{UInt8}(undef, n)
-        stack1 = FVector{V}(undef, n)
-        stack4 = FVector{V}(undef, n)
-        inject = FVector{V}(undef, n)
-        ptr = FVector{E}(undef, nn)
-        tgt = FVector{V}(undef, m)
-
-        return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
-            pr1_impl!(w, degree, number, status, stack1, stack4, inject, ptr, tgt, wd, g)
-        end
+        return compressreduce(rule_reducer(Val(1), W, graph), weights, graph, width; verbose, minfrac)
     elseif rules == 2
-        degree = FVector{W}(undef, n)
-        number = FVector{V}(undef, n)
-        status = FVector{UInt8}(undef, n)
-        target = FVector{V}(undef, m)
-        begptr = FVector{E}(undef, nn)
-        stack1 = FVector{V}(undef, n)
-        stack2 = FVector{V}(undef, n)
-        stack7 = FVector{V}(undef, n)
-        stack4 = FVector{V}(undef, n)
-        inject = FVector{V}(undef, n)
-        ptr = FVector{E}(undef, nn)
-        tgt = FVector{V}(undef, m)
-
-        return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
-            pr2_impl!(w, degree, number, status, target, begptr, stack1, stack2,
-                stack7, stack4, inject, ptr, tgt, wd, g)
-        end
+        return compressreduce(rule_reducer(Val(2), W, graph), weights, graph, width; verbose, minfrac)
+    elseif rules == 3
+        return compressreduce(rule_reducer(Val(3), W, graph), weights, graph, width; verbose, minfrac)
+    elseif rules == 4
+        return compressreduce(rule_reducer(Val(4), W, graph), weights, graph, width; verbose, minfrac)
     else
-        degree = FVector{W}(undef, n)
-        number = FVector{V}(undef, n)
-        status = FVector{UInt8}(undef, n)
-        marker = FVector{V}(undef, n)
-        source = FVector{V}(undef, m)
-        target = FVector{V}(undef, m)
-        begptr = FVector{E}(undef, nn)
-        endptr = FVector{E}(undef, n)
-        invptr = FVector{E}(undef, m)
-        stack1 = FVector{V}(undef, n)
-        stack2 = FVector{V}(undef, n)
-        stack3 = FVector{V}(undef, n)
-        stack4 = FVector{V}(undef, n)
-        stack5 = FVector{V}(undef, n)
-        stack6 = FVector{V}(undef, n)
-        stack7 = FVector{V}(undef, n)
-        stack8 = FVector{V}(undef, n)
-        stack0 = FVector{V}(undef, n)
-        tmpptr = FVector{E}(undef, nn)
+        return compressreduce(rule_reducer(Val(5), W, graph), weights, graph, width; verbose, minfrac)
+    end
+end
 
-        if rules == 3
-            return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
-                totdeg = zero(W)
+# The reduction of each level, as a function (w, g, wd) of the weights,
+# graph, and lower bound of a round, with its work arrays. (Each is built by
+# its own method: a closure that captures a variable assigned in more than one
+# branch of a function captures it in a box, and calls through it are not
+# inferred.)
+function rule_reducer(::Val{1}, ::Type{W}, graph::AbstractGraph{V}) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    stack1 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    inject = FVector{V}(undef, n)
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, m)
 
-                @inbounds for v in vertices(g)
-                    totdeg += w[v]
-                end
+    return function (w, g, wd)
+        return pr1_impl!(w, degree, number, status, stack1, stack4, inject, ptr, tgt, wd, g)
+    end
+end
 
-                pr3_impl!(
-                    w, degree, number, status, marker, source, target, begptr,
-                    endptr, invptr, stack1, stack2, stack3, stack4, stack5, stack6,
-                    stack7, stack8, stack0, tmpptr, totdeg, wd, g)
-            end
-        elseif rules == 4
-            weight1 = FVector{W}(undef, n)
-            sfillin = FVector{Int}(undef, n)
-            ssource = FVector{V}(undef, m)
-            starget = FVector{V}(undef, m)
-            sbegptr = FVector{E}(undef, nn)
-            stmpptr = FVector{E}(undef, nn)
+function rule_reducer(::Val{2}, ::Type{W}, graph::AbstractGraph{V}) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    stack1 = FVector{V}(undef, n)
+    stack2 = FVector{V}(undef, n)
+    stack7 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    inject = FVector{V}(undef, n)
+    ptr = FVector{E}(undef, nn)
+    tgt = FVector{V}(undef, m)
 
-            return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
-                pr4_impl!(
-                    degree, number, status, marker, source, target, begptr, endptr, invptr,
-                    stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
-                    sfillin, ssource, starget, sbegptr, stmpptr, weight1, w, g, wd)
-            end
-        else
-            weight1 = FVector{W}(undef, n)
-            afillin = FVector{Int}(undef, n)
-            amarker = FVector{Int}(undef, n)
-            amarker2 = FVector{Int}(undef, n)
-            asource = FVector{V}(undef, m)
-            atarget = FVector{V}(undef, m)
-            abegptr = FVector{E}(undef, nn)
-            atmpptr = FVector{E}(undef, nn)
-            atgt = FVector{V}(undef, m)
+    return function (w, g, wd)
+        return pr2_impl!(w, degree, number, status, target, begptr, stack1, stack2,
+            stack7, stack4, inject, ptr, tgt, wd, g)
+    end
+end
 
-            return compressreduce(weights, graph, width; verbose, minfrac) do w, g, wd
-                pr5_impl!(
-                    degree, number, status, marker, source, target, begptr, endptr, invptr,
-                    stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
-                    afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt,
-                    weight1, w, g, wd)
-            end
+function rule_reducer(::Val{3}, ::Type{W}, graph::AbstractGraph{V}) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    marker = FVector{V}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
+    stack1 = FVector{V}(undef, n)
+    stack2 = FVector{V}(undef, n)
+    stack3 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    stack5 = FVector{V}(undef, n)
+    stack6 = FVector{V}(undef, n)
+    stack7 = FVector{V}(undef, n)
+    stack8 = FVector{V}(undef, n)
+    stack0 = FVector{V}(undef, n)
+    tmpptr = FVector{E}(undef, nn)
+
+    return function (w, g, wd)
+        totdeg = zero(W)
+
+        @inbounds for v in vertices(g)
+            totdeg += w[v]
         end
+
+        return pr3_impl!(
+            w, degree, number, status, marker, source, target, begptr,
+            endptr, invptr, stack1, stack2, stack3, stack4, stack5, stack6,
+            stack7, stack8, stack0, tmpptr, totdeg, wd, g)
+    end
+end
+
+function rule_reducer(::Val{4}, ::Type{W}, graph::AbstractGraph{V}) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    marker = FVector{V}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
+    stack1 = FVector{V}(undef, n)
+    stack2 = FVector{V}(undef, n)
+    stack3 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    stack5 = FVector{V}(undef, n)
+    stack6 = FVector{V}(undef, n)
+    stack7 = FVector{V}(undef, n)
+    stack8 = FVector{V}(undef, n)
+    stack0 = FVector{V}(undef, n)
+    tmpptr = FVector{E}(undef, nn)
+    weight1 = FVector{W}(undef, n)
+    sfillin = FVector{Int}(undef, n)
+    ssource = FVector{V}(undef, m)
+    starget = FVector{V}(undef, m)
+    sbegptr = FVector{E}(undef, nn)
+    stmpptr = FVector{E}(undef, nn)
+
+    return function (w, g, wd)
+        return pr4_impl!(
+            degree, number, status, marker, source, target, begptr, endptr, invptr,
+            stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
+            sfillin, ssource, starget, sbegptr, stmpptr, weight1, w, g, wd)
+    end
+end
+
+function rule_reducer(::Val{5}, ::Type{W}, graph::AbstractGraph{V}) where {W, V}
+    E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
+    degree = FVector{W}(undef, n)
+    number = FVector{V}(undef, n)
+    status = FVector{UInt8}(undef, n)
+    marker = FVector{V}(undef, n)
+    source = FVector{V}(undef, m)
+    target = FVector{V}(undef, m)
+    begptr = FVector{E}(undef, nn)
+    endptr = FVector{E}(undef, n)
+    invptr = FVector{E}(undef, m)
+    stack1 = FVector{V}(undef, n)
+    stack2 = FVector{V}(undef, n)
+    stack3 = FVector{V}(undef, n)
+    stack4 = FVector{V}(undef, n)
+    stack5 = FVector{V}(undef, n)
+    stack6 = FVector{V}(undef, n)
+    stack7 = FVector{V}(undef, n)
+    stack8 = FVector{V}(undef, n)
+    stack0 = FVector{V}(undef, n)
+    tmpptr = FVector{E}(undef, nn)
+    weight1 = FVector{W}(undef, n)
+    afillin = FVector{Int}(undef, n)
+    amarker = FVector{Int}(undef, n)
+    amarker2 = FVector{Int}(undef, n)
+    asource = FVector{V}(undef, m)
+    atarget = FVector{V}(undef, m)
+    abegptr = FVector{E}(undef, nn)
+    atmpptr = FVector{E}(undef, nn)
+    atgt = FVector{V}(undef, m)
+    aunits = FVector{W}(undef, n)
+
+    return function (w, g, wd)
+        return pr5_impl!(
+            degree, number, status, marker, source, target, begptr, endptr, invptr,
+            stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
+            afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt, aunits,
+            weight1, w, g, wd)
     end
 end
 

@@ -60,6 +60,7 @@
 # the clique tree, and the components of G - S for the current separator
 struct ACSDTree{V}
     parent::Vector{V}   # parent node (0 at a root)
+    root::Vector{V}     # the root of the tree of a node
     fdesc::Vector{V}    # first descendant
     home::Vector{V}     # index -> node whose residual contains it
     rfirst::Vector{V}   # first index of a residual
@@ -97,6 +98,13 @@ function ACSDTree(tree::CliqueTree{V}, n::Integer) where {V}
         end
     end
 
+    # (the parent of a node comes after it)
+    root = Vector{V}(undef, t)
+
+    for q in reverse(oneto(t))
+        p = parent[q]; root[q] = iszero(p) ? q : root[p]
+    end
+
     bptr = zeros(Int, n + 1)
 
     for q in oneto(t)
@@ -120,7 +128,7 @@ function ACSDTree(tree::CliqueTree{V}, n::Integer) where {V}
         end
     end
 
-    return ACSDTree{V}(parent, fdesc, home, rfirst, rlast, bptr, btgt,
+    return ACSDTree{V}(parent, root, fdesc, home, rfirst, rlast, bptr, btgt,
         zeros(Int, n), zeros(Int, t), zeros(Int, t), zeros(V, t), V[], Ref(0))
 end
 
@@ -159,12 +167,7 @@ function acsd_components!(comps::Vector{Tuple{V, V}}, ancs::Vector{V}, at::ACSDT
         push!(comps, (a, lower)); lower = a
     end
 
-    r = j
-
-    while ispositive(at.parent[r])
-        r = at.parent[r]
-    end
-
+    r = at.root[j]
     at.istop[r] = tag
     push!(comps, (r, lower))
     sort!(comps; by = ((top, _),) -> at.rlast[top] - at.rfirst[at.fdesc[top]], rev = true)

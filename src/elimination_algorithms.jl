@@ -904,25 +904,63 @@ function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM,
 end
 
 """
-    ConnectedComponents{A} <: EliminationAlgorithm
+    ConnectedComponents{N, A} <: EliminationAlgorithm
+
+    ConnectedComponents{N}(alg::PermutationOrAlgorithm)
 
     ConnectedComponents(alg::PermutationOrAlgorithm)
 
     ConnectedComponents()
 
-Apply an elimination algorithm to each connected component of a graph.
+Apply an elimination algorithm to the `N`-connected components of a graph, for `N = 1` (the
+default), `2`, or `3`. Each `N` splits the components of `N - 1` further.
+
+  - `N = 1`: the connected components.
+  - `N = 2`: the blocks (biconnected components), which meet at cut vertices.
+  - `N = 3`: the triconnected components of each block (its Tutte decomposition), which meet at
+    separation pairs ``\\{a, b\\}``; the edge ``ab`` is added. A separation pair is used if
+    ``a`` and ``b`` are adjacent, or if, for every component ``C`` of ``G - \\{a, b\\}``, the
+    vertex-capacitated flow from ``a`` to ``b`` in ``G - C`` is at least ``\\min(w(a), w(b))``
+    (Medema and Lazovik, Theorem 16). With unit weights, every separation pair is used; with other
+    weights, the components may be coarser.
+
+The separators are safe, so the treewidth of a graph is the largest treewidth of its components.
+The decomposition takes linear time (with weights and `N = 3`, plus the flow tests).
 
 ### Parameters
 
+  - `N`: connectivity (`1`, `2`, or `3`)
   - `alg`: elimination algorithm
 
+### References
+
+  - Hopcroft, John, and Robert Tarjan. "Algorithm 447: efficient algorithms for graph manipulation." *Communications of the ACM* 16.6 (1973): 372-378.
+  - Bourneuf, Romain, and Tim Planken. "A Structural Linear-Time Algorithm for Computing the Tutte Decomposition." arXiv preprint arXiv:2508.06212 (2025).
+  - Medema, Michel, and Alexander Lazovik. "A safeness condition for minimal separators based on vertex connectivity." *Discrete Mathematics* 348 (2025): 114524.
 """
-struct ConnectedComponents{A <: PermutationOrAlgorithm} <: EliminationAlgorithm
+struct ConnectedComponents{N, A <: PermutationOrAlgorithm} <: EliminationAlgorithm
     alg::A
+
+    function ConnectedComponents{N, A}(alg::A) where {N, A <: PermutationOrAlgorithm}
+        @assert N isa Int && 1 <= N <= 3
+        return new{N, A}(alg)
+    end
+end
+
+function ConnectedComponents{N}(alg::A) where {N, A <: PermutationOrAlgorithm}
+    return ConnectedComponents{N, A}(alg)
+end
+
+function ConnectedComponents{N}() where {N}
+    return ConnectedComponents{N}(DEFAULT_ELIMINATION_ALGORITHM)
+end
+
+function ConnectedComponents(alg::PermutationOrAlgorithm)
+    return ConnectedComponents{1}(alg)
 end
 
 function ConnectedComponents()
-    return ConnectedComponents(DEFAULT_ELIMINATION_ALGORITHM)
+    return ConnectedComponents{1}()
 end
 
 struct Best{S, A <: NTuple{<:Any, PermutationOrAlgorithm}} <: EliminationAlgorithm
@@ -1172,8 +1210,8 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSep
     return safeseparators(weights, graph, alg.alg, alg.min, alg.maxmissing; verbose)
 end
 
-function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents; verbose::Bool = false)
-    return connectedcomponents(weights, graph, alg.alg; verbose)
+function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents{N}; verbose::Bool = false) where {N}
+    return connectedcomponents(weights, graph, alg.alg, Val(N); verbose)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::BestWidth; verbose::Bool = false)
@@ -2650,9 +2688,9 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeSeparators{A, M}) where 
     return
 end
 
-function Base.show(io::IO, ::MIME"text/plain", alg::ConnectedComponents{A}) where {A}
+function Base.show(io::IO, ::MIME"text/plain", alg::ConnectedComponents{N, A}) where {N, A}
     indent = get(io, :indent, 0)
-    println(io, " "^indent * "ConnectedComponents{$A}:")
+    println(io, " "^indent * "ConnectedComponents{$N, $A}:")
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     return
 end

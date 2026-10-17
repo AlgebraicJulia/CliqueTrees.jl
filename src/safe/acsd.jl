@@ -1,3 +1,22 @@
+# the clique tree and the weights by position, for `acsd_heavy!` (see below)
+struct ACSDHeavy{V, W, A}
+    at::A                       # the clique tree (an `ACSDTree`)
+    rmq::RMQ{V, W}              # the weights, by position
+    comps::Vector{Tuple{V, V}}  # the components of G - S
+    ancs::Vector{V}
+    subs::Vector{Tuple{V, V}}   # the ranges of the components that are subtrees
+end
+
+function ACSDHeavy(weights::AbstractVector{W}, order::AbstractVector{V}, tree::CliqueTree{V}) where {W, V}
+    n = length(order); val = FVector{W}(undef, n)
+
+    @inbounds for i in oneto(n)
+        val[i] = weights[order[i]]
+    end
+
+    return ACSDHeavy(ACSDTree(tree, n), RMQ(V, val, false), Tuple{V, V}[], V[], Tuple{V, V}[])
+end
+
 function acsd_find!(
         head::AbstractVector{V},
         next::AbstractVector{V},
@@ -5,8 +24,7 @@ function acsd_find!(
         stat::AbstractVector{V},
         cent::AbstractVector{V},
         wperm::AbstractVector{V},
-        queue::AbstractVector{V},
-        comp::AbstractVector{V},
+        hv::Union{Nothing, ACSDHeavy},
         weights::AbstractVector{W},
         graph::AbstractGraph{V},
         order::AbstractVector{V},
@@ -19,8 +37,6 @@ function acsd_find!(
     @assert nv(graph) <= length(weights)
     @assert nv(graph) <= length(order)
     @assert nv(graph) <= length(cent)
-    @assert nv(graph) <= length(queue)
-    @assert nv(graph) <= length(comp)
     @assert length(tree) <= length(stat)
 
     function set(v::V)
@@ -132,7 +148,7 @@ function acsd_find!(
                         # vertex of two full components (see `acsd_heavy!`)
                         if ispositive(vert)
                             if poscnt == negcnt
-                                if weights[vert] < minout + tol || acsd_heavy!(queue, comp, mark, weights, graph, order, sep, node, vert)
+                                if weights[vert] < minout + tol || acsd_heavy!(hv, tree, node, weights[vert])
                                     center = vert; k = poscnt
                                 end
                             end
@@ -141,9 +157,9 @@ function acsd_find!(
                                 center = alt1; k = one(V)
                             elseif weights[alt2] < minout + tol
                                 center = alt2; k = one(V)
-                            elseif acsd_heavy!(queue, comp, mark, weights, graph, order, sep, node, alt1)
+                            elseif acsd_heavy!(hv, tree, node, weights[alt1])
                                 center = alt1; k = one(V)
-                            elseif acsd_heavy!(queue, comp, mark, weights, graph, order, sep, node, alt2)
+                            elseif acsd_heavy!(hv, tree, node, weights[alt2])
                                 center = alt2; k = one(V)
                             end
                         end
@@ -169,62 +185,94 @@ end
 # then G[C ∪ S] with S filled is a minor of G. With vertex weights, the
 # contracted vertex must keep the weight of v, so no vertex of D may be
 # lighter than v. This holds for every C exactly when S has two such full
-# components. The vertices of S are marked with `node` in `mark`; `comp` is
-# zero on entry and on exit.
-function acsd_heavy!(
-        queue::AbstractVector{V},
-        comp::AbstractVector{V},
-        mark::AbstractVector{V},
-        weights::AbstractVector{W},
-        graph::AbstractGraph{V},
-        order::AbstractVector{V},
-        sep::AbstractVector,
-        node::V,
-        center::V,
-    ) where {W, V}
-    tol = tolerance(W); wgt = weights[center]
-    maxcnt = convert(V, length(sep))
-    id = zero(V); hi = zero(V); num = 0
+# components.
+#
+# The components of G - S are read off the clique tree of the minimal
+# triangulation (see `acsd_components!` in acsd_minor.jl). Their vertices are
+# ranges of positions in the elimination order: the subtree below a node or,
+# for a segment of the path from S to the root, the subtree below its top
+# minus the subtree below the node that cuts it off (two ranges), minus the
+# positions of S and the subtrees of the other components. So the least
+# weight of a component is the least of a few range-minimum queries, one per
+# gap between these positions, and a component is full if its neighborhood,
+# which is a separator of the tree, is as large as S.
+#
+# Returns true if S = sep(`node`) has two full components with no vertex
+# lighter than `wgt`.
+function acsd_heavy!(hv::ACSDHeavy{V, W}, tree::CliqueTree{V}, node::V, wgt::W) where {V, W}
+    tol = tolerance(W); at = hv.at; sep = separator(tree, node); k = length(sep)
+    comps = acsd_components!(hv.comps, hv.ancs, at, tree, node)
+    subs = hv.subs; empty!(subs)
 
-    for v in vertices(graph)
-        (mark[v] == node || ispositive(comp[v])) && continue
+    for (top, q) in comps
+        top == q && push!(subs, (at.rfirst[at.fdesc[q]], at.rlast[q]))
+    end
 
-        # search the component of G - S that contains `v`, counting the
-        # vertices of S it is adjacent to
-        id += one(V); lo = hi + one(V)
-        hi += one(V); queue[hi] = v; comp[v] = id
-        heavy = true; cnt = zero(V)
+    sort!(subs)
+    num = 0
 
-        while lo <= hi
-            u = queue[lo]; lo += one(V)
-            heavy = heavy && wgt < weights[u] + tol
+    for (top, q) in comps
+        length(separator(tree, q)) == k || continue
 
-            for x in neighbors(graph, u)
-                if mark[x] == node
-                    if comp[x] != id
-                        comp[x] = id; cnt += one(V)
-                    end
-                elseif iszero(comp[x])
-                    hi += one(V); queue[hi] = x; comp[x] = id
-                end
-            end
+        if top == q
+            # a subtree
+            heavy = acsd_rmin(hv, at.rfirst[at.fdesc[q]], at.rlast[q]) + tol > wgt
+        else
+            # a segment of the path to the root, cut off by `q`
+            lo = at.rfirst[at.fdesc[top]]; hi = at.rlast[top]
+            qlo = at.rfirst[at.fdesc[q]]; qhi = at.rlast[q]
+
+            heavy = acsd_gaps(hv, subs, sep, lo, qlo - one(V), wgt, tol) &&
+                acsd_gaps(hv, subs, sep, qhi + one(V), hi, wgt, tol)
         end
 
-        if heavy && cnt == maxcnt
+        if heavy
             num += 1
-            num > 1 && break
+            num > 1 && return true
         end
     end
 
-    for i in oneto(hi)
-        comp[queue[i]] = zero(V)
-    end
+    return false
+end
 
-    for i in sep
-        comp[order[i]] = zero(V)
-    end
+# Is no position in `lo:hi`, other than those of `sep` and of the ranges
+# `subs` (both sorted), lighter than `wgt`? Every range of `subs` is inside
+# `lo:hi` or disjoint from it.
+function acsd_gaps(hv::ACSDHeavy{V, W}, subs::Vector{Tuple{V, V}}, sep::AbstractVector{V}, lo::V, hi::V, wgt::W, tol::W) where {V, W}
+    lo > hi && return true
+    i = searchsortedfirst(sep, lo); s = searchsortedfirst(subs, (lo, zero(V)))
+    cur = lo
 
-    return num > 1
+    while true
+        # the next position of `sep`, or the next range of `subs`, in `lo:hi`
+        nxt = hi + one(V); skip = hi + one(V)
+
+        if i <= length(sep) && sep[i] <= hi
+            nxt = skip = sep[i]
+        end
+
+        if s <= length(subs) && first(subs[s]) < nxt
+            nxt = first(subs[s]); skip = last(subs[s])
+            s += 1
+        elseif nxt <= hi
+            i += 1
+        end
+
+        if cur < nxt
+            acsd_rmin(hv, cur, nxt - one(V)) + tol > wgt || return false
+        end
+
+        nxt > hi && return true
+        cur = skip + one(V)
+    end
+end
+
+# with equal weights, the center is never heavier than a vertex outside S
+acsd_heavy!(::Nothing, tree::CliqueTree, node::Integer, wgt::Number) = false
+
+# the least weight of the positions `i:j`
+@inline function acsd_rmin(hv::ACSDHeavy, i::Integer, j::Integer)
+    return hv.rmq.val[rmq(hv.rmq, i, j)]
 end
 
 function acsd_complete!(
@@ -369,12 +417,9 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
     mark = FVector{V}(undef, n)
     stat = FVector{V}(undef, t)
     cent = FVector{V}(undef, n)
-    queue = FVector{V}(undef, n)
-    comp = FVector{V}(undef, n)
 
     for v in vertices(graph)
         cent[v] = zero(V)
-        comp[v] = zero(V)
     end
 
     for node in oneto(t)
@@ -393,6 +438,10 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
         sortperm!(wperm, view(weights, oneto(n)))
     end
 
+    # the clique tree and the weights by position, for the weighted test (see
+    # `acsd_heavy!`); with equal weights the test is never needed
+    hv = maxwgt < minwgt + tolerance(W) ? nothing : ACSDHeavy(weights, order, tree)
+
     # fill the almost-clique separators of the triangulation, then re-check its
     # other separators: filling one can turn another into an almost clique. the
     # triangulation stays a minimal triangulation of every graph between the
@@ -404,7 +453,7 @@ function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalA
         pass += one(V)
 
         m, numsep = acsd_find!(head, next, mark, stat, cent,
-            wperm, queue, comp, weights, graph, order, tree, pass)
+            wperm, hv, weights, graph, order, tree, pass)
 
         iszero(numsep) && break
 

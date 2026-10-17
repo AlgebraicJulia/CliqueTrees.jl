@@ -66,7 +66,7 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
     norig = zero(V)
-    iwlen = twice(m) + convert(E, 4n)
+    iwlen = twice(m) + convert(E, 4n) + one(E)
 
     @inbounds for i in oneto(n)
         norig += trunc(V, vwght[i])
