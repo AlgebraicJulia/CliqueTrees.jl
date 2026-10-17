@@ -77,6 +77,10 @@ function lbn(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
     alist = FVector{V}(undef, n)
     apos = FVector{V}(undef, n)
 
+    # the seed pairs grow when they are found
+    seed = Vector{V}(undef, 0)
+    seedw = Vector{V}(undef, 0)
+
     fill!(auxmark, 0)
     fill!(inwork, 0)
 
@@ -87,13 +91,17 @@ function lbn(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
     # since `nbrmark` stores vertices during a compaction
     tag = Int(n)
 
+    # `nseed` is the number of seed pairs; it is negative
+    # until they are found
+    nseed = -1
+
     # while the hypothesis "the weighted treewidth is at most
     # `width`" is refuted, increase `width`
     while true
-        refuted, tag = lbn_impl!(hubmark, degree, target, invptr, begptr,
-            endptr, limptr, head, prev, next, nbrmark, auxmark, buffer,
-            work, inwork, nbrs, alist, apos, tag, totdeg, width, weight,
-            graph, strategy)
+        refuted, nseed, tag = lbn_impl!(hubmark, degree, target, invptr,
+            begptr, endptr, limptr, head, prev, next, nbrmark, auxmark,
+            buffer, work, inwork, nbrs, alist, apos, seed, seedw, nseed,
+            tag, totdeg, width, weight, graph, strategy)
 
         refuted || break
         width += one(V)
@@ -117,7 +125,8 @@ end
 """
     lbn_impl!(hubmark, degree, target, invptr, begptr, endptr, limptr,
         head, prev, next, nbrmark, auxmark, buffer, work, inwork, nbrs,
-        alist, apos, tag, totdeg, width, weight, graph, strategy)
+        alist, apos, seed, seedw, nseed, tag, totdeg, width, weight,
+        graph, strategy)
 
 New Lower and Upper Bounds for Graph Treewidth
 Clautiaux, Carlier, Moukrim, and Nègre
@@ -172,14 +181,19 @@ The state of the algorithm is a collection of arrays and scalars.
     - `buffer`: the vertices at distance two from a vertex, and the
                 vertices to be joined to it
     - `work`: work stack of vertices to be scanned
-    - `inwork`: membership in `work`: `inwork[v]` is -1 if and only
-                if `v` is in `work`
+    - `inwork`: membership in `work`: `inwork[v]` is negative if and
+                only if `v` is in `work`, and then the first
+                -1 - `inwork[v]` neighbors of `v` are old (see
+                [`lbn_push!`](@ref))
     - `nbrs`: the neighbors of a contracted vertex, and the weight
               of the common neighbors of two vertices
     - `alist`: list of the remaining vertices
     - `apos`: positions in `alist`
+    - `seed`, `seedw`: the seed pairs (see [`lbn_seed!`](@ref)); they
+      grow when they are found
   - scalars:
     - `tag`: a running marker tag
+    - `nseed`: number of seed pairs
     - `pfree`: first free arc
     - `hub`, `epoch`: as in [`mmw_impl!`](@ref)
     - `nalive`: length of `alist`
@@ -194,6 +208,10 @@ input parameters:
 
 output parameters:
   - `refuted`: true if the hypothesis is refuted
+
+updated parameters:
+  - `nseed`: number of seed pairs, or a negative number if they
+             have not been found
   - `tag`: a running marker tag
 """
 function lbn_impl!(
@@ -215,6 +233,9 @@ function lbn_impl!(
         nbrs::AbstractVector{V},
         alist::AbstractVector{V},
         apos::AbstractVector{V},
+        seed::Vector{V},
+        seedw::Vector{V},
+        nseed::Int,
         tag::Int,
         totdeg::V,
         width::V,
@@ -246,10 +267,10 @@ function lbn_impl!(
     thr = width - lbnwmin(weight, n) + one(V)
 
     # initialize the graph, and improve it
-    mindeg, pfree, nalive, tag = lbn_init!(hubmark, degree, target,
-        invptr, begptr, endptr, limptr, head, prev, next, nbrmark,
-        auxmark, buffer, work, inwork, nbrs, alist, apos, tag, totdeg,
-        thr, weight, graph)
+    mindeg, pfree, nalive, nseed, tag = lbn_init!(hubmark, degree,
+        target, invptr, begptr, endptr, limptr, head, prev, next,
+        nbrmark, auxmark, buffer, work, inwork, nbrs, alist, apos, seed,
+        seedw, nseed, tag, totdeg, thr, weight, graph)
 
     # the neighbors `x` of `hub` satisfy
     #    hubmark[x] = `epoch`
@@ -268,13 +289,13 @@ function lbn_impl!(
         # if the minimum degree is greater than `width`, then
         # the hypothesis is refuted
         if mindeg > width
-            return true, tag
+            return true, nseed, tag
         end
 
         # if the remaining graph is too light to refute the
         # hypothesis, stop
         if remdeg <= width
-            return false, tag
+            return false, nseed, tag
         end
 
         # select a vertex of minimum degree
@@ -307,17 +328,24 @@ function lbn_impl!(
         mindeg = max(mindeg - weight[v], zero(V))
     end
 
-    return false, tag
+    return false, nseed, tag
 end
 
 """
     lbn_init!(hubmark, degree, target, invptr, begptr, endptr, limptr,
         head, prev, next, nbrmark, auxmark, buffer, work, inwork, nbrs,
-        alist, apos, tag, totdeg, thr, weight, graph)
+        alist, apos, seed, seedw, nseed, tag, totdeg, thr, weight, graph)
 
 Initialize the adjacency lists, the bucket queue, and the list of
 remaining vertices, and join every two vertices whose common
 neighbors weigh at least `thr`.
+
+The seed pairs, whose common neighbors weigh at least `thr` in the
+input graph, are found in the first test (see [`lbn_seed!`](@ref)).
+The threshold increases from test to test, so in later tests the seed
+pairs whose common neighbors weigh less than `thr` are discarded. The
+seed pairs are joined, and their vertices are scanned (see
+[`lbn_improve!`](@ref)).
 
 input parameters:
   - `totdeg`: total vertex weight
@@ -329,6 +357,10 @@ output parameters:
   - `mindeg`: a lower bound on the minimum weighted degree
   - `pfree`: first free arc
   - `nalive`: length of `alist`
+
+updated parameters:
+  - `nseed`: number of seed pairs, or a negative number if they
+             have not been found
   - `tag`: a running marker tag
 """
 function lbn_init!(
@@ -350,6 +382,9 @@ function lbn_init!(
         nbrs::AbstractVector{V},
         alist::AbstractVector{V},
         apos::AbstractVector{V},
+        seed::Vector{V},
+        seedw::Vector{V},
+        nseed::Int,
         tag::Int,
         totdeg::V,
         thr::V,
@@ -372,11 +407,37 @@ function lbn_init!(
 
     nalive = Int(n)
 
-    # scan every vertex
+    # find the seed pairs, or discard the seed pairs whose
+    # common neighbors weigh less than `thr`
+    if isnegative(nseed)
+        nseed, tag = lbn_seed!(degree, target, begptr, endptr, nbrmark,
+            auxmark, nbrs, buffer, seed, seedw, tag, thr, weight, n)
+    else
+        k = 0
+
+        @inbounds for i in oneto(nseed)
+            if seedw[i] >= thr
+                k += 1; seedw[k] = seedw[i]
+                seed[twice(k) - 1] = seed[twice(i) - 1]
+                seed[twice(k)] = seed[twice(i)]
+            end
+        end
+
+        nseed = k
+    end
+
+    # join the seed pairs, and scan their vertices
     nwork = 0
 
-    @inbounds for v in reverse(oneto(n))
-        nwork = lbn_push!(work, inwork, nwork, v)
+    @inbounds for i in oneto(nseed)
+        u = seed[twice(i) - 1]; y = seed[twice(i)]
+
+        nwork = lbn_push!(work, inwork, nwork, u, endptr[u] - begptr[u])
+        nwork = lbn_push!(work, inwork, nwork, y, endptr[y] - begptr[y])
+
+        pfree = lbn_addedge!(hubmark, nbrmark, degree, target, invptr,
+            begptr, endptr, limptr, head, prev, next, weight, pfree,
+            zero(V), zero(V), n, u, y)
     end
 
     pfree, tag = lbn_improve!(hubmark, degree, target, invptr, begptr,
@@ -384,7 +445,180 @@ function lbn_init!(
         work, inwork, alist, nalive, nwork, pfree, zero(V), zero(V), tag,
         thr, weight, n)
 
-    return mindeg, pfree, nalive, tag
+    return mindeg, pfree, nalive, nseed, tag
+end
+
+"""
+    lbn_seed!(degree, target, begptr, endptr, nbrmark, auxmark, common,
+        buffer, seed, seedw, tag, thr, weight, n)
+
+Find the *seed pairs*: the pairs of nonadjacent vertices whose common
+neighbors weigh at least `thr`. The pair {`u`, `y`}, where `u` < `y`,
+is stored in `seed[2i - 1]` and `seed[2i]`, and the weight of the
+common neighbors of `u` and `y` in `seedw[i]`.
+
+A vertex `u` whose neighbors weigh less than `thr` is skipped. If `u`
+has fewer non-neighbors than neighbors, then each non-neighbor is
+tested directly (see [`lbn_common`](@ref)); otherwise, the weight of
+the common neighbors is counted for every vertex at distance two from
+`u`.
+
+input parameters:
+  - `thr`: threshold
+  - `weight`: vertex weight
+  - `n`: number of vertices
+
+output parameters:
+  - `nseed`: number of seed pairs
+
+updated parameters:
+  - `tag`: a running marker tag
+"""
+function lbn_seed!(
+        degree::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        nbrmark::AbstractVector{Int},
+        auxmark::AbstractVector{Int},
+        common::AbstractVector{V},
+        buffer::AbstractVector{V},
+        seed::Vector{V},
+        seedw::Vector{V},
+        tag::Int,
+        thr::V,
+        weight::AbstractVector{V},
+        n::V,
+    ) where {V, E}
+
+    # `nseed` is the number of seed pairs
+    nseed = 0
+
+    @inbounds for u in oneto(n)
+        # the neighbors of `u` must weigh at least `thr`
+        if degree[u] - weight[u] >= thr
+            tag += 1
+
+            # mark the closed neighborhood of `u`
+            nbrmark[u] = tag
+
+            for p in begptr[u]:endptr[u] - one(E)
+                nbrmark[target[p]] = tag
+            end
+
+            # `nt` is the number of vertices `y` > `u` such that
+            # `common[y]` is the weight of the common neighbors
+            # of `u` and `y`
+            nt = 0
+
+            # `lenu` is the number of neighbors of `u`
+            lenu = Int(endptr[u] - begptr[u])
+
+            # if `u` has fewer non-neighbors than neighbors,
+            # then test its non-neighbors directly
+            if Int(n) - 1 - lenu < lenu
+                for y in u + one(V):n
+                    # `slack` is the greatest weight that the
+                    # neighbors of `y` outside of N(`u`) may have
+                    slack = degree[y] - weight[y] - thr
+
+                    if nbrmark[y] != tag && !isnegative(slack)
+                        cy = lbn_common(degree, target, begptr, endptr, nbrmark, weight, tag, slack, y)
+
+                        if ispositive(cy)
+                            nt += 1; buffer[nt] = y; common[y] = cy
+                        end
+                    end
+                end
+
+            # otherwise, count the weight of the common neighbors
+            # of `u` and each vertex `y` > `u` at distance two
+            else
+                for p in begptr[u]:endptr[u] - one(E)
+                    x = target[p]; wx = weight[x]
+
+                    for q in begptr[x]:endptr[x] - one(E)
+                        y = target[q]
+
+                        if y > u && nbrmark[y] != tag && degree[y] - weight[y] >= thr
+                            if auxmark[y] != tag
+                                auxmark[y] = tag; common[y] = zero(V)
+                                nt += 1; buffer[nt] = y
+                            end
+
+                            common[y] += wx
+                        end
+                    end
+                end
+            end
+
+            # store the pairs {`u`, `y`} whose common neighbors
+            # weigh at least `thr`
+            for i in oneto(nt)
+                y = buffer[i]
+
+                if common[y] >= thr
+                    nseed += 1
+
+                    if length(seedw) < nseed
+                        cap = max(twice(length(seedw)), nseed)
+                        resize!(seed, twice(cap)); resize!(seedw, cap)
+                    end
+
+                    seed[twice(nseed) - 1] = u; seed[twice(nseed)] = y
+                    seedw[nseed] = common[y]
+                end
+            end
+        end
+    end
+
+    return nseed, tag
+end
+
+"""
+    lbn_common(degree, target, begptr, endptr, nbrmark, weight, tag,
+        slack, y)
+
+Compute the weight of the common neighbors of a vertex `u` and the
+vertex `y`, where the closed neighborhood of `u` is marked with `tag`
+in `nbrmark`, if it is at least `thr`, where
+
+    `slack` = degree[`y`] - weight[`y`] - `thr`;
+
+otherwise, return zero (see [`lbn_test`](@ref)).
+
+input parameters:
+  - `tag`: tag for marking vertices
+  - `slack`: the greatest weight of the neighbors of `y` outside of
+             the closed neighborhood of `u`
+  - `y`: a vertex that is not adjacent to `u`
+"""
+function lbn_common(
+        degree::AbstractVector{V},
+        target::AbstractVector{V},
+        begptr::AbstractVector{E},
+        endptr::AbstractVector{E},
+        nbrmark::AbstractVector{Int},
+        weight::AbstractVector{V},
+        tag::Int,
+        slack::V,
+        y::V,
+    ) where {V, E}
+
+    # `miss` is the weight of the neighbors of `y` outside
+    # of the closed neighborhood of `u`
+    miss = zero(V)
+
+    @inbounds for p in begptr[y]:endptr[y] - one(E)
+        x = target[p]
+        miss += ifelse(nbrmark[x] == tag, zero(V), weight[x])
+
+        if miss > slack
+            return zero(V)
+        end
+    end
+
+    @inbounds return degree[y] - weight[y] - miss
 end
 
 """
@@ -601,18 +835,21 @@ function lbn_contracted!(
             end
         end
 
+        # `lenw` is the number of old neighbors of `w`
+        lenw = endptr[w] - begptr[w]
+
         for i in oneto(nf)
             y = buffer[i]
+
+            nwork = lbn_push!(work, inwork, nwork, y, endptr[y] - begptr[y])
 
             pfree = lbn_addedge!(hubmark, nbrmark, degree, target,
                 invptr, begptr, endptr, limptr, head, prev, next, weight,
                 pfree, hub, epoch, n, w, y)
-
-            nwork = lbn_push!(work, inwork, nwork, y)
         end
 
         if ispositive(nf)
-            nwork = lbn_push!(work, inwork, nwork, w)
+            nwork = lbn_push!(work, inwork, nwork, w, lenw)
         end
     end
 
@@ -657,18 +894,21 @@ function lbn_contracted!(
                 end
             end
 
+            # `lena` is the number of old neighbors of `a`
+            lena = endptr[a] - begptr[a]
+
             for j in oneto(nf)
                 b = buffer[j]
+
+                nwork = lbn_push!(work, inwork, nwork, b, endptr[b] - begptr[b])
 
                 pfree = lbn_addedge!(hubmark, nbrmark, degree, target,
                     invptr, begptr, endptr, limptr, head, prev, next,
                     weight, pfree, hub, epoch, n, a, b)
-
-                nwork = lbn_push!(work, inwork, nwork, b)
             end
 
             if ispositive(nf)
-                nwork = lbn_push!(work, inwork, nwork, a)
+                nwork = lbn_push!(work, inwork, nwork, a, lena)
             end
         end
     end
@@ -735,10 +975,19 @@ weigh at least `thr`. Joining `u` and `y` changes the common
 neighbors of the pairs that contain `u` or `y` only, so both are
 scanned again.
 
-A vertex `u` whose neighbors weigh less than `thr` is skipped. If `u`
-has fewer non-neighbors than neighbors, then each non-neighbor is
-tested directly (see [`lbn_test`](@ref)); otherwise, the weight of the
-common neighbors is counted for every vertex at distance two from `u`.
+A vertex is pushed onto the work stack when it gains neighbors, which
+are appended to its adjacency list (see [`lbn_push!`](@ref)). The
+common neighbors of `u` and `y` have changed only if `y` is adjacent to
+a new neighbor of `u`, or `u` is adjacent to a new neighbor of `y`, so
+`u` is scanned by testing the vertices adjacent to its new neighbors
+(see [`lbn_test`](@ref)), unless the arcs that leave its new neighbors
+are more than half of the arcs that leave its neighbors.
+
+A vertex `u` whose neighbors weigh less than `thr` is skipped. A vertex
+that is scanned in full is scanned in one of two ways. If `u` has fewer
+non-neighbors than neighbors, then each non-neighbor is tested
+directly; otherwise, the weight of the common neighbors is counted for
+every vertex at distance two from `u`.
 
 input parameters:
   - `nalive`: length of `alist`
@@ -784,18 +1033,29 @@ function lbn_improve!(
     ) where {V, E}
 
     @inbounds while ispositive(nwork)
-        # pop a vertex `u` from the work stack
-        u = work[nwork]; nwork -= 1; inwork[u] = 0
+        # pop a vertex `u` from the work stack; its neighbors
+        # after the first `old` are new
+        u = work[nwork]; nwork -= 1; old = -1 - inwork[u]; inwork[u] = 0
 
         # the neighbors of `u` must weigh at least `thr`
         if degree[u] - weight[u] >= thr
             tag += 1
 
-            # mark the closed neighborhood of `u`
-            nbrmark[u] = tag
+            # `pnew` is the arc to the first new neighbor of `u`
+            pnew = begptr[u] + convert(E, old)
+
+            # mark the closed neighborhood of `u`; `call` is the
+            # number of arcs that leave the neighbors of `u`, and
+            # `cnew` is the number that leave its new neighbors
+            nbrmark[u] = tag; call = cnew = 0
 
             for p in begptr[u]:endptr[u] - one(E)
-                nbrmark[target[p]] = tag
+                x = target[p]; nbrmark[x] = tag
+                len = Int(endptr[x] - begptr[x]); call += len
+
+                if p >= pnew
+                    cnew += len
+                end
             end
 
             # `nf` is the number of vertices to be joined to `u`
@@ -804,9 +1064,34 @@ function lbn_improve!(
             # `lenu` is the number of neighbors of `u`
             lenu = Int(endptr[u] - begptr[u])
 
+            # if `u` has old neighbors, and the arcs that leave its
+            # new neighbors are fewer than half of the arcs that leave
+            # its neighbors, then test the vertices adjacent to its
+            # new neighbors
+            if ispositive(old) && twice(cnew) < call
+                for p in pnew:endptr[u] - one(E)
+                    x = target[p]
+
+                    for q in begptr[x]:endptr[x] - one(E)
+                        y = target[q]
+
+                        # `slack` is the greatest weight that the
+                        # neighbors of `y` outside of N(`u`) may have
+                        slack = degree[y] - weight[y] - thr
+
+                        if nbrmark[y] != tag && auxmark[y] != tag && !isnegative(slack)
+                            auxmark[y] = tag
+
+                            if lbn_test(degree, target, begptr, endptr, nbrmark, weight, tag, slack, y)
+                                nf += 1; buffer[nf] = y
+                            end
+                        end
+                    end
+                end
+
             # if `u` has fewer non-neighbors than neighbors,
             # then test its non-neighbors directly
-            if nalive - 1 - lenu < lenu
+            elseif nalive - 1 - lenu < lenu
                 for i in oneto(nalive)
                     y = alist[i]
 
@@ -852,19 +1137,20 @@ function lbn_improve!(
                 end
             end
 
-            # join `u` to `buffer[1:nf]`
+            # join `u` to `buffer[1:nf]`; the new neighbors of `u`
+            # follow its first `lenu`
             for i in oneto(nf)
                 y = buffer[i]
+
+                nwork = lbn_push!(work, inwork, nwork, y, endptr[y] - begptr[y])
 
                 pfree = lbn_addedge!(hubmark, nbrmark, degree, target,
                     invptr, begptr, endptr, limptr, head, prev, next,
                     weight, pfree, hub, epoch, n, u, y)
-
-                nwork = lbn_push!(work, inwork, nwork, y)
             end
 
             if ispositive(nf)
-                nwork = lbn_push!(work, inwork, nwork, u)
+                nwork = lbn_push!(work, inwork, nwork, u, lenu)
             end
         end
     end
@@ -1032,11 +1318,20 @@ function lbn_reserve!(
     return pfree
 end
 
-# push the vertex `v` onto the work stack, unless it is there
-# already; returns the new height of the stack
-function lbn_push!(work::AbstractVector{V}, inwork::AbstractVector{Int}, nwork::Int, v::V) where {V}
-    @inbounds if inwork[v] != -1
-        inwork[v] = -1
+"""
+    lbn_push!(work, inwork, nwork, v, old)
+
+Push the vertex `v` onto the work stack, unless it is there already,
+before neighbors are appended to its adjacency list: the first `old`
+neighbors of `v` are old. While `v` is on the stack,
+
+    inwork[`v`] = -1 - `old`.
+
+Returns the new height of the stack.
+"""
+function lbn_push!(work::AbstractVector{V}, inwork::AbstractVector{Int}, nwork::Int, v::V, old::Integer) where {V}
+    @inbounds if !isnegative(inwork[v])
+        inwork[v] = -1 - Int(old)
         nwork += 1; work[nwork] = v
     end
 

@@ -83,14 +83,23 @@ function lbp(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
     from = FVector{Int}(undef, twice(n))
     step = FVector{E}(undef, twice(n))
     queue = FVector{Int}(undef, twice(n))
+    farc = FVector{E}(undef, twice(n))
 
-    parent = FVector{V}(undef, n)
-    arena = Vector{V}(undef, 0)
+    # the seed pairs grow when they are found
+    seed = Vector{V}(undef, 0)
+    seedw = Vector{V}(undef, 0)
+
+    # the pockets grow when they are stored
+    arena = Vector{Int}(undef, 0)
+    pnext = Vector{Int}(undef, 0)
+    pstart = Vector{Int}(undef, 0)
+    plast = FVector{Int}(undef, n)
     pocket = FVector{Int}(undef, n)
 
     fill!(auxmark, 0)
     fill!(fstamp, 0)
     fill!(nodemark, 0)
+    fill!(farc, one(E))
 
     # `width` is the MMW bound
     width = mmw(V, E, totdeg, weights, graph, strategy)
@@ -99,13 +108,17 @@ function lbp(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
     # since `nbrmark` stores vertices during a compaction
     tag = Int(n)
 
+    # `nseed` is the number of seed pairs; it is negative
+    # until they are found
+    nseed = -1
+
     # `width` is the LBN+ bound; `nodemark` serves as the array
     # `inwork` of the test
     while true
-        refuted, tag = lbn_impl!(hubmark, degree, target, invptr, begptr,
-            endptr, limptr, head, prev, next, nbrmark, auxmark, buffer,
-            work, nodemark, nbrs, alist, apos, tag, totdeg, width,
-            weight, graph, strategy)
+        refuted, nseed, tag = lbn_impl!(hubmark, degree, target, invptr,
+            begptr, endptr, limptr, head, prev, next, nbrmark, auxmark,
+            buffer, work, nodemark, nbrs, alist, apos, seed, seedw, nseed,
+            tag, totdeg, width, weight, graph, strategy)
 
         refuted || break
         width += one(V)
@@ -113,11 +126,12 @@ function lbp(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, gra
 
     # `width` is the LBP+ bound
     while true
-        refuted, tag = lbp_impl!(hubmark, degree, target, invptr, begptr,
-            endptr, limptr, head, prev, next, nbrmark, auxmark, buffer,
-            work, nbrs, alist, apos, flow, fstamp, nodemark, from, step,
-            queue, parent, arena, pocket, tag, totdeg, width, weight,
-            graph, strategy)
+        refuted, nseed, tag = lbp_impl!(hubmark, degree, target, invptr,
+            begptr, endptr, limptr, head, prev, next, nbrmark, auxmark,
+            buffer, work, nbrs, alist, apos, seed, seedw, nseed, flow,
+            fstamp, nodemark, from, step, queue, farc, arena, pnext,
+            pstart, plast, pocket, tag, totdeg, width, weight, graph,
+            strategy)
 
         refuted || break
         width += one(V)
@@ -129,8 +143,9 @@ end
 """
     lbp_impl!(hubmark, degree, target, invptr, begptr, endptr,
         limptr, head, prev, next, nbrmark, auxmark, buffer, work, nbrs,
-        alist, apos, flow, fstamp, nodemark, from, step, queue, parent,
-        arena, pocket, tag, totdeg, width, weight, graph, strategy)
+        alist, apos, seed, seedw, nseed, flow, fstamp, nodemark, from,
+        step, queue, farc, arena, pnext, pstart, plast, pocket, tag,
+        totdeg, width, weight, graph, strategy)
 
 New Lower and Upper Bounds for Graph Treewidth
 Clautiaux, Carlier, Moukrim, and Nègre
@@ -165,10 +180,10 @@ vertices form a set S of weight less than `thr`: the pair (P, S) is a
 *pocket*. A pocket remains a pocket when the rule joins two vertices,
 since no such vertices are separated by S. It also remains a pocket
 when `v` is contracted into `w`, if the contracted vertex joins S
-whenever `v` is in S. So the pockets are stored, in terms of the
-vertices of the graph at the start of the test, and a contracted
-vertex is represented by the vertex that it was contracted into. Each
-vertex keeps the smallest pocket that contains it in P.
+whenever `v` is in S. So the pockets are stored, and `v` is replaced
+by `w` in each of them (see [`lbp_absorb!`](@ref)). Each vertex keeps
+a list of its entries in the pockets, and the smallest pocket that
+contains it in P.
 
 The state of the algorithm is a collection of arrays and scalars.
 
@@ -183,8 +198,8 @@ The state of the algorithm is a collection of arrays and scalars.
                  the arrays `marker` and `stash` of
                  [`mmw_impl!`](@ref)
     - `auxmark`: marks the vertices whose count is valid, the
-                 neighbors of a contracted vertex, the neighbors of
-                 a sink, and the vertices of a pocket
+                 neighbors of a contracted vertex, the vertices of a
+                 pocket, and the neighbors of the ends of a flow
     - `buffer`: the vertices at distance two from a vertex, the
                 candidate sinks of a query, and the vertices to be
                 joined to a vertex
@@ -192,27 +207,37 @@ The state of the algorithm is a collection of arrays and scalars.
     - `nbrs`: the neighbors of a contracted vertex, and the weight
               of the common neighbors of two vertices
     - `alist`, `apos`: list of the remaining vertices
+    - `seed`, `seedw`: the seed pairs (see [`lbn_seed!`](@ref))
   - flows (see [`lbp_flow!`](@ref)):
     - `flow`, `fstamp`: the flow through the vertex `x` is stored in
       `flow[x]`, and the flow on the arc `p` in `flow[n + p]`; `flow`
       and `fstamp` grow with the arc storage
     - `nodemark`, `from`, `step`, `queue`: searches for augmenting
       paths (see [`lbp_augment!`](@ref)); before the searches,
-      `nodemark` marks vertices and `step` stores arcs (see
-      [`lbp_paths!`](@ref) and [`lbp_pockets!`](@ref))
+      `nodemark` marks vertices, `step` stores arcs, and `queue`
+      stores vertices (see [`lbp_paths!`](@ref))
+    - `farc`: the last arc that received flow into the vertex `x` is
+      `farc[2x - 1]`, and out of `x` is `farc[2x]`
 
   The arrays of the searches are free outside of the queries, when
   the work stack is used: `nodemark` serves as the array `inwork` (see
   [`lbn_impl!`](@ref)).
-  - pockets (see [`lbp_pockets!`](@ref)):
-    - `parent`: the vertex that a vertex was contracted into
-    - `arena`: storage for the pockets
-    - `pocket`: the smallest pocket of a vertex
+  - pockets (see [`lbp_store!`](@ref)):
+    - `arena`: storage for the pockets; the pocket `q` is stored as
+               its size `arena[q]`, a mark `arena[q + 1]`, and its
+               entries: the vertices of P (positive) and S (negative)
+    - `pnext`: the entries of a vertex form a circular list, and
+               `pnext[l]` is the entry after the entry `l`; `pnext`
+               grows with `arena`
+    - `pstart`: the pocket of an entry; it grows with `arena`
+    - `plast`: the last entry of a vertex
+    - `pocket`: the smallest pocket that contains a vertex in P
   - scalars:
     - `tag`: a running marker tag
     - `pcap`: capacity of `arena`
     - `alen`: used length of `arena`
-    - `pfree`, `hub`, `epoch`, `nalive`: see [`lbn_impl!`](@ref)
+    - `pfree`, `hub`, `epoch`, `nalive`, `nseed`: see
+      [`lbn_impl!`](@ref)
 
 input parameters:
   - `totdeg`: total vertex weight
@@ -223,6 +248,10 @@ input parameters:
 
 output parameters:
   - `refuted`: true if the hypothesis is refuted
+
+updated parameters:
+  - `nseed`: number of seed pairs, or a negative number if they
+             have not been found
   - `tag`: a running marker tag
 """
 function lbp_impl!(
@@ -243,14 +272,20 @@ function lbp_impl!(
         nbrs::AbstractVector{V},
         alist::AbstractVector{V},
         apos::AbstractVector{V},
+        seed::Vector{V},
+        seedw::Vector{V},
+        nseed::Int,
         flow::Vector{V},
         fstamp::Vector{Int},
         nodemark::AbstractVector{Int},
         from::AbstractVector{Int},
         step::AbstractVector{E},
         queue::AbstractVector{Int},
-        parent::AbstractVector{V},
-        arena::Vector{V},
+        farc::AbstractVector{E},
+        arena::Vector{Int},
+        pnext::Vector{Int},
+        pstart::Vector{Int},
+        plast::AbstractVector{Int},
         pocket::AbstractVector{Int},
         tag::Int,
         totdeg::V,
@@ -264,7 +299,7 @@ function lbp_impl!(
     @assert twice(nv(graph)) <= length(from)
     @assert twice(nv(graph)) <= length(step)
     @assert twice(nv(graph)) <= length(queue)
-    @assert nv(graph) <= length(parent)
+    @assert nv(graph) <= length(plast)
     @assert nv(graph) <= length(pocket)
 
     # `set(i)` constructs the bucket for weighted degree `i`
@@ -284,10 +319,10 @@ function lbp_impl!(
     pcap = 4mmwcapacity(Int(n), Int(de(graph))) + 16Int(n)
 
     # initialize the graph, and improve it by the neighbor rule
-    mindeg, pfree, nalive, tag = lbn_init!(hubmark, degree, target,
-        invptr, begptr, endptr, limptr, head, prev, next, nbrmark,
-        auxmark, buffer, work, nodemark, nbrs, alist, apos, tag, totdeg,
-        thr, weight, graph)
+    mindeg, pfree, nalive, nseed, tag = lbn_init!(hubmark, degree,
+        target, invptr, begptr, endptr, limptr, head, prev, next,
+        nbrmark, auxmark, buffer, work, nodemark, nbrs, alist, apos, seed,
+        seedw, nseed, tag, totdeg, thr, weight, graph)
 
     # the neighbors `x` of `hub` satisfy
     #    hubmark[x] = `epoch`
@@ -295,7 +330,7 @@ function lbp_impl!(
 
     # forget the pockets of the last test
     @inbounds for x in oneto(n)
-        parent[x] = x; pocket[x] = 0
+        plast[x] = pocket[x] = 0
     end
 
     alen = 0
@@ -307,8 +342,9 @@ function lbp_impl!(
 
         nf, alen, tag = lbp_query!(degree, target, invptr, begptr,
             endptr, nbrmark, auxmark, buffer, alist, flow, fstamp,
-            nodemark, from, step, queue, parent, arena, pocket, nalive,
-            alen, pcap, tag, thr, weight, n, s, i + 1)
+            nodemark, from, step, queue, farc, arena, pnext, pstart,
+            plast, pocket, nalive, alen, pcap, tag, thr, weight, n, s,
+            i + 1)
 
         pfree = lbp_join!(hubmark, nbrmark, degree, target, invptr,
             begptr, endptr, limptr, head, prev, next, buffer, apos, nf,
@@ -328,13 +364,13 @@ function lbp_impl!(
         # if the minimum degree is greater than `width`, then
         # the hypothesis is refuted
         if mindeg > width
-            return true, tag
+            return true, nseed, tag
         end
 
         # if the remaining graph is too light to refute the
         # hypothesis, stop
         if remdeg <= width
-            return false, tag
+            return false, nseed, tag
         end
 
         # select a vertex of minimum degree
@@ -356,14 +392,15 @@ function lbp_impl!(
                 nbrmark, auxmark, buffer, work, nodemark, nbrs, alist,
                 nalive, pfree, hub, epoch, tag, thr, weight, n, v, w)
 
-            # `v` is represented by `w`; only the pairs that
-            # contain `w` can have become inseparable
-            parent[v] = w
+            # replace `v` by `w` in the pockets; only the pairs
+            # that contain `w` can have become inseparable
+            lbp_absorb!(arena, pnext, pstart, plast, pocket, v, w)
 
             nf, alen, tag = lbp_query!(degree, target, invptr, begptr,
                 endptr, nbrmark, auxmark, buffer, alist, flow, fstamp,
-                nodemark, from, step, queue, parent, arena, pocket,
-                nalive, alen, pcap, tag, thr, weight, n, w, 1)
+                nodemark, from, step, queue, farc, arena, pnext, pstart,
+                plast, pocket, nalive, alen, pcap, tag, thr, weight, n, w,
+                1)
 
             pfree = lbp_join!(hubmark, nbrmark, degree, target, invptr,
                 begptr, endptr, limptr, head, prev, next, buffer, apos,
@@ -380,27 +417,32 @@ function lbp_impl!(
         mindeg = max(mindeg - weight[v], zero(V))
     end
 
-    return false, tag
+    return false, nseed, tag
 end
 
 """
     lbp_query!(degree, target, invptr, begptr, endptr, nbrmark,
         auxmark, buffer, alist, flow, fstamp, nodemark, from, step,
-        queue, parent, arena, pocket, nalive, alen, pcap, tag, thr,
-        weight, n, s, lo)
+        queue, farc, arena, pnext, pstart, plast, pocket, nalive, alen,
+        pcap, tag, thr, weight, n, s, lo)
 
 Find the vertices `y` in `alist[lo:nalive]` that are not adjacent to
 the vertex `s` and cannot be separated from `s` by a set of weight
 less than `thr`. They are stored in `buffer[1:nf]`.
 
 The candidates are the vertices `y` whose neighbors weigh at least
-`thr`, since the neighbors of `y` separate it from `s`. A candidate
-is discarded if a stored pocket separates it from `s` (see
-[`lbp_pockets!`](@ref)). Otherwise, a flow from `s` to `y` is computed
-(see [`lbp_flow!`](@ref)). If it falls short of `thr`, then the search
-that failed to augment it found a minimum cut: if the search from `s`
-was exhausted, then the vertices that it did not reach are separated
-from `s` by the cut; otherwise, the vertices that reach `y` are. These
+`thr`, since the neighbors of `y` separate it from `s`. The pocket of a
+vertex separates it from every vertex outside of the pocket, so a
+candidate is discarded if `s` is outside of its pocket, or if it is
+outside of the pocket of `s`. The pockets that contain `s` and the
+vertices of the pocket of `s` are marked first, so that each candidate
+is tested in constant time.
+
+Otherwise, a flow from `s` to `y` is computed (see
+[`lbp_flow!`](@ref)). If it falls short of `thr`, then the search that
+failed to augment it found a minimum cut: if the search from `s` was
+exhausted, then the vertices that it did not reach are separated from
+`s` by the cut; otherwise, the vertices that reach `y` are. These
 candidates are discarded, and the pocket is stored (see
 [`lbp_store!`](@ref)).
 
@@ -436,8 +478,11 @@ function lbp_query!(
         from::AbstractVector{Int},
         step::AbstractVector{E},
         queue::AbstractVector{Int},
-        parent::AbstractVector{V},
-        arena::Vector{V},
+        farc::AbstractVector{E},
+        arena::Vector{Int},
+        pnext::Vector{Int},
+        pstart::Vector{Int},
+        plast::AbstractVector{Int},
         pocket::AbstractVector{Int},
         nalive::Int,
         alen::Int,
@@ -455,14 +500,28 @@ function lbp_query!(
         return 0, alen, tag
     end
 
-    # mark the closed neighborhood of `s`
-    tag += 1; stag = tag
+    # `stag` and `stag + 1` are the tags of the query
+    tag += 2; stag = tag - 1
 
+    # mark the closed neighborhood of `s`
     @inbounds begin
         nbrmark[s] = stag
 
         for p in begptr[s]:endptr[s] - one(E)
             nbrmark[target[p]] = stag
+        end
+    end
+
+    # mark the pockets that contain `s` with `stag` or
+    # `stag + 1`
+    lbp_mark!(arena, pnext, pstart, plast, stag, s)
+
+    # `q` is the pocket of `s`; mark its vertices
+    @inbounds q = pocket[s]
+
+    @inbounds if ispositive(q)
+        for l in q + 2:q + 1 + arena[q]
+            auxmark[abs(arena[l])] = stag
         end
     end
 
@@ -473,14 +532,15 @@ function lbp_query!(
         y = alist[i]
 
         if nbrmark[y] != stag && degree[y] - weight[y] >= thr
-            nc += 1; buffer[nc] = y
+            # discard `y` if it is outside of the pocket of
+            # `s`, or if `s` is outside of the pocket of `y`
+            r = pocket[y]
+
+            if (iszero(q) || auxmark[y] == stag) && (iszero(r) || arena[r + 1] >= stag)
+                nc += 1; buffer[nc] = y
+            end
         end
     end
-
-    # discard the candidates that a stored pocket
-    # separates from `s`
-    nc, tag = lbp_pockets!(buffer, parent, arena, pocket, auxmark,
-        nodemark, nc, alen, tag, s)
 
     # `nf` is the number of vertices found
     nf = 0
@@ -490,15 +550,15 @@ function lbp_query!(
 
         if ispositive(y)
             value, tag, ctag, fwd, qlo, qhi = lbp_flow!(weight, target,
-                invptr, begptr, endptr, nbrmark, auxmark, flow, fstamp,
-                nodemark, from, step, queue, tag, stag, thr, n, s, y)
+                invptr, begptr, endptr, auxmark, flow, fstamp, nodemark,
+                from, step, queue, farc, tag, thr, n, s, y)
 
             if value >= thr
                 nf += 1; buffer[nf] = y
             else
                 # store the pocket
-                alen = lbp_store!(nodemark, queue, arena, pocket, alen,
-                    pcap, ctag, fwd, qlo, qhi, n)
+                alen = lbp_store!(nodemark, queue, arena, pnext, pstart,
+                    plast, pocket, alen, pcap, ctag, fwd, qlo, qhi, n)
 
                 # discard the candidates that the cut separates
                 # from `s`
@@ -584,143 +644,129 @@ function lbp_join!(
 end
 
 """
-    lbp_pockets!(buffer, parent, arena, pocket, auxmark, nodemark,
-        nc, alen, tag, s)
+    lbp_absorb!(arena, pnext, pstart, plast, pocket, v, w)
 
-Discard the candidates `buffer[1:nc]` that a stored pocket separates
-from the vertex `s`. The pocket of `s` separates it from every vertex
-outside of the pocket. The pocket of a candidate `y` separates `y`
-from `s` if `s` is outside of it. The candidates are sorted by pocket,
-so that each pocket is read once.
-
-A pocket is stored in `arena` as its length, followed by the vertices
-of P (positive) and S (negative). A vertex `x` stands for the vertex
-that represents it (see [`lbp_find!`](@ref)). If an S-vertex stands
-for a vertex of P, then that vertex has joined S, and the pocket no
-longer contains it in P. The vertices of a pocket are marked in
-`auxmark`, and the vertices of S in `nodemark`.
+Replace the vertex `v` by the vertex `w` in the pockets, after the
+contraction of `v` into `w`, and append the entries of `v` to the
+entries of `w`. If `v` is in S of the pocket of `w`, then the
+contracted vertex is in S, and the pocket no longer contains `w` in P.
 
 input parameters:
-  - `alen`: used length of `arena`
-  - `s`: source
-
-updated parameters:
-  - `nc`: number of candidates
-  - `tag`: a running marker tag
+  - `v`: contracted vertex
+  - `w`: the vertex that `v` was contracted into
 """
-function lbp_pockets!(
-        buffer::AbstractVector{V},
-        parent::AbstractVector{V},
-        arena::AbstractVector{V},
+function lbp_absorb!(
+        arena::AbstractVector{Int},
+        pnext::AbstractVector{Int},
+        pstart::AbstractVector{Int},
+        plast::AbstractVector{Int},
         pocket::AbstractVector{Int},
-        auxmark::AbstractVector{Int},
-        nodemark::AbstractVector{Int},
-        nc::Int,
-        alen::Int,
-        tag::Int,
-        s::V,
+        v::V,
+        w::V,
     ) where {V}
 
-    # if no pocket is stored, stop
-    if iszero(alen)
-        return nc, tag
+    # `lv` is the last entry of `v`
+    @inbounds lv = plast[v]
+
+    # if `v` has no entries, stop
+    if iszero(lv)
+        return
     end
 
-    # `q` is the pocket of `s`
-    @inbounds q = pocket[s]
+    # `q` is the pocket of `w`
+    @inbounds q = pocket[w]; l = lv
 
-    @inbounds if ispositive(q)
-        tag += 1; valid = true
+    @inbounds while true
+        l = pnext[l]
 
-        # mark the vertices of the pocket
-        for i in q + 1:q + Int(arena[q])
-            e = arena[i]; r = lbp_find!(parent, abs(e))
-
-            # if `s` is in S, then the pocket does
-            # not contain `s` in P
-            if r == s && isnegative(e)
-                valid = false; break
-            end
-
-            auxmark[r] = tag
-        end
-
-        # discard the candidates outside of the pocket
-        if valid
-            k = 0
-
-            for i in oneto(nc)
-                y = buffer[i]
-
-                if auxmark[y] == tag
-                    k += 1; buffer[k] = y
-                end
-            end
-
-            nc = k
+        if ispositive(arena[l])
+            arena[l] = w
         else
-            pocket[s] = 0
+            arena[l] = -w
+
+            # if `v` is in S, then the pocket no
+            # longer contains `w` in P
+            if pstart[l] == q
+                pocket[w] = 0
+            end
         end
+
+        l == lv && break
     end
 
-    # sort the candidates by pocket
-    @inbounds sort!(view(buffer, oneto(nc)); by = y -> pocket[y])
+    # `lw` is the last entry of `w`
+    @inbounds lw = plast[w]
 
-    # `k` is the number of candidates left
-    k = 0; i = 1
+    # splice the two circular lists
+    @inbounds if ispositive(lw)
+        pnext[lv], pnext[lw] = pnext[lw], pnext[lv]
+    end
 
-    @inbounds while i <= nc
-        # `buffer[i:j - 1]` are the candidates in the pocket `q`
-        q = pocket[buffer[i]]; j = i + 1
+    @inbounds plast[w] = lv
+    return
+end
 
-        while j <= nc && pocket[buffer[j]] == q
-            j += 1
-        end
+# mark the pockets `q` that contain the vertex `x` with
+#    arena[q + 1] = `tag`
+# if `x` is in P, and `tag + 1` if `x` is in S, removing the
+# duplicate entries of `x`
+function lbp_mark!(arena::AbstractVector{Int}, pnext::AbstractVector{Int}, pstart::AbstractVector{Int}, plast::AbstractVector{Int}, tag::Int, x::V) where {V}
+    # `lx` is the last entry of `x`
+    @inbounds lx = plast[x]
 
-        if iszero(q)
-            for l in i:j - 1
-                k += 1; buffer[k] = buffer[l]
+    # if `x` has no entries, stop
+    if iszero(lx)
+        return
+    end
+
+    # `prev` is the entry before `l`
+    @inbounds prev = lx; l = pnext[lx]
+
+    @inbounds while true
+        e = arena[l]; q = pstart[l]; next = pnext[l]
+
+        # the entry is a duplicate if the pocket is marked
+        # with `tag + 1`, or with `tag` and `x` is in P
+        if arena[q + 1] == tag + 1 || (arena[q + 1] == tag && ispositive(e))
+            pnext[prev] = next
+
+            if l == lx
+                plast[x] = prev; break
             end
         else
-            tag += 1; inside = false
+            arena[q + 1] = ispositive(e) ? tag : tag + 1
 
-            # mark the vertices of S
-            for l in q + 1:q + Int(arena[q])
-                e = arena[l]; r = lbp_find!(parent, abs(e))
-
-                if r == s
-                    inside = true; break
-                end
-
-                if isnegative(e)
-                    nodemark[r] = tag
-                end
+            if l == lx
+                break
             end
 
-            for l in i:j - 1
-                y = buffer[l]
-
-                # if `s` is in the pocket, then keep `y`
-                if inside
-                    k += 1; buffer[k] = y
-
-                # if `y` is in S, then the pocket no longer
-                # contains `y` in P
-                elseif nodemark[y] == tag
-                    pocket[y] = 0; k += 1; buffer[k] = y
-                end
-            end
+            prev = l
         end
 
-        i = j
+        l = next
     end
 
-    return k, tag
+    return
+end
+
+# append the entry `l` to the entries of the vertex `x`
+function lbp_link!(pnext::AbstractVector{Int}, plast::AbstractVector{Int}, l::Int, x::V) where {V}
+    # `lx` is the last entry of `x`
+    @inbounds lx = plast[x]
+
+    @inbounds if iszero(lx)
+        pnext[l] = l
+    else
+        pnext[l] = pnext[lx]; pnext[lx] = l
+    end
+
+    @inbounds plast[x] = l
+    return
 end
 
 """
-    lbp_store!(nodemark, queue, arena, pocket, alen, pcap, ctag,
-        fwd, qlo, qhi, n)
+    lbp_store!(nodemark, queue, arena, pnext, pstart, plast, pocket,
+        alen, pcap, ctag, fwd, qlo, qhi, n)
 
 Store the pocket found by an exhausted search, if it is smaller than
 the pocket of one of the vertices of P. The search marked the nodes
@@ -743,7 +789,10 @@ updated parameters:
 function lbp_store!(
         nodemark::AbstractVector{Int},
         queue::AbstractVector{Int},
-        arena::Vector{V},
+        arena::Vector{Int},
+        pnext::Vector{Int},
+        pstart::Vector{Int},
+        plast::AbstractVector{Int},
         pocket::AbstractVector{Int},
         alen::Int,
         pcap::Int,
@@ -785,35 +834,43 @@ function lbp_store!(
     end
 
     # if the storage is full, forget every pocket
-    if alen + len + 1 > pcap
+    if alen + len + 2 > pcap
         @inbounds for x in oneto(n)
-            pocket[x] = 0
+            plast[x] = pocket[x] = 0
         end
 
         alen = 0
     end
 
-    if length(arena) < alen + len + 1
-        resize!(arena, max(twice(length(arena)), alen + len + 1))
+    if length(arena) < alen + len + 2
+        cap = max(twice(length(arena)), alen + len + 2)
+        resize!(arena, cap); resize!(pnext, cap); resize!(pstart, cap)
     end
 
     # `q` is the new pocket
     q = alen + 1
+
     @inbounds arena[q] = len
-    alen = q
+    @inbounds arena[q + 1] = 0
+    alen = q + 1
 
     @inbounds for i in qlo:qhi
         nd = queue[i]; x = convert(V, (nd + 1) >> 1)
 
+        # `x` is in P
         if iseven(nd) == fwd
-            alen += 1; arena[alen] = x
+            alen += 1; arena[alen] = x; pstart[alen] = q
+            lbp_link!(pnext, plast, alen, x)
             r = pocket[x]
 
             if iszero(r) || arena[r] > len
                 pocket[x] = q
             end
+
+        # `x` is in S
         elseif nodemark[lbpother(nd)] != ctag
-            alen += 1; arena[alen] = -x
+            alen += 1; arena[alen] = -x; pstart[alen] = q
+            lbp_link!(pnext, plast, alen, x)
         end
     end
 
@@ -823,16 +880,6 @@ end
 # the other node of the vertex of the node `nd`
 function lbpother(nd::Int)
     return isodd(nd) ? nd + 1 : nd - 1
-end
-
-# the vertex that represents the vertex `x`: the vertex that
-# it was contracted into, if any
-function lbp_find!(parent::AbstractVector{V}, x::V) where {V}
-    @inbounds while parent[x] != x
-        y = parent[x]; parent[x] = parent[y]; x = y
-    end
-
-    return x
 end
 
 # the flow on the arc `p`, which is stored in `flow[n + p]`;
@@ -862,14 +909,12 @@ end
 end
 
 """
-    lbp_flow!(weight, target, invptr, begptr, endptr, nbrmark,
-        auxmark, flow, fstamp, nodemark, from, step, queue, tag, stag,
-        thr, n, s, t)
+    lbp_flow!(weight, target, invptr, begptr, endptr, auxmark, flow,
+        fstamp, nodemark, from, step, queue, farc, tag, thr, n, s, t)
 
 Compute a flow of value `thr` from the vertex `s` to the vertex `t`,
 or else a maximum flow, where every vertex other than `s` and `t` has
-capacity equal to its weight. The closed neighborhood of `s` is marked
-with `stag` in `nbrmark`.
+capacity equal to its weight.
 
 The flow through a vertex `x` is `flow[x]`, and the flow on an arc
 `p` is `flow[n + p]`, if the corresponding entry of `fstamp` is the
@@ -879,7 +924,6 @@ length two, three, and four, which are sent greedily (see
 [`lbp_augment!`](@ref)).
 
 input parameters:
-  - `stag`: tag of the closed neighborhood of `s`
   - `thr`: threshold
   - `n`: number of vertices
   - `s`: source
@@ -901,7 +945,6 @@ function lbp_flow!(
         invptr::Vector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        nbrmark::AbstractVector{Int},
         auxmark::AbstractVector{Int},
         flow::Vector{V},
         fstamp::Vector{Int},
@@ -909,8 +952,8 @@ function lbp_flow!(
         from::AbstractVector{Int},
         step::AbstractVector{E},
         queue::AbstractVector{Int},
+        farc::AbstractVector{E},
         tag::Int,
-        stag::Int,
         thr::V,
         n::V,
         s::V,
@@ -932,14 +975,14 @@ function lbp_flow!(
 
     # send flow along the paths of length two, three, and four
     value, tag = lbp_paths!(weight, target, invptr, begptr, endptr,
-        nbrmark, auxmark, flow, fstamp, nodemark, step, ftag, tag, stag,
+        auxmark, flow, fstamp, nodemark, step, queue, farc, ftag, tag,
         thr, n, s, t)
 
     # augment the flow
     while value < thr
         del, tag, ctag, fwd, qlo, qhi = lbp_augment!(weight, target,
             invptr, begptr, endptr, flow, fstamp, nodemark, from, step,
-            queue, ftag, tag, thr - value, n, s, t)
+            queue, farc, ftag, tag, thr - value, n, s, t)
 
         # if there is no augmenting path, stop
         if iszero(del)
@@ -953,32 +996,41 @@ function lbp_flow!(
 end
 
 """
-    lbp_paths!(weight, target, invptr, begptr, endptr, nbrmark,
-        auxmark, flow, fstamp, nodemark, step, ftag, tag, stag, thr, n,
-        s, t)
+    lbp_paths!(weight, target, invptr, begptr, endptr, auxmark, flow,
+        fstamp, nodemark, step, queue, farc, ftag, tag, thr, n, s, t)
 
-Send flow greedily from the vertex `s` to the vertex `t` along paths
+Send flow greedily between the vertices `s` and `t` along paths of
+length two, three, and four, until its value is `thr`. On sparse
+graphs, nearly every augmenting path has one of these forms.
 
-  - (`s`, `x`, `t`), where `x` is a common neighbor of `s` and `t`
-  - (`s`, `a`, `b`, `t`), where `a` is a neighbor of `s` but not `t`
-    and `b` is a neighbor of `t` but not `s`
-  - (`s`, `a`, `b`, `c`, `t`), where `a` is a neighbor of `s` and `c`
-    is a neighbor of `t` but not `s`
+Let `f` and `h` be `s` and `t`, in some order. The paths are
 
-until its value is `thr`. On sparse graphs, nearly every augmenting
-path has one of these forms. The paths of length four are found by
-recording, for each vertex `b` with an unsaturated neighbor `c` of `t`,
-one such `c`.
+  - (`f`, `x`, `h`), where `x` is a common neighbor of `f` and `h`
+  - (`f`, `a`, `b`, `h`), where `a` is a neighbor of `f`, and `b` is a
+    neighbor of `h` but not `f`
+  - (`f`, `a`, `b`, `c`, `h`), where `a` is a neighbor of `f`, and `c`
+    is a neighbor of `h` but not `f`
 
-The searches for augmenting paths have not started, so their arrays
-are free: `step[2x - 1]` is the arc (`s`, `x`) for each neighbor `x` of
-`s`, and the arc (`x`, `t`) for each other neighbor `x` of `t`; the
-vertices `b` are marked in `nodemark`, and `step[2b]` is the arc
-(`b`, `c`).
+The paths of length four are found by recording, for each vertex `b`
+with an unsaturated neighbor `c` of `h`, one such `c`. The paths are
+found either by scanning the neighbors of each `a`, which tends to send
+more flow, or by scanning the neighbors of each `b`, which reads few of
+the arcs that leave the neighbors of `f`. If the numbers of arcs that
+leave the neighbors of `s` and of `t` differ by a factor of more than
+four, then `h` is the end with fewer such arcs, and the paths are found
+by scanning the neighbors of each `b`; otherwise, `f` is the end with
+fewer such arcs, and the paths are found by scanning the neighbors of
+each `a`. If `f` is `t`, then the flow runs along the paths backward.
+
+A vertex is marked in `auxmark` if it is an unsaturated neighbor of `f`
+or of `h` but not `f`. The searches for augmenting paths have not
+started, so their arrays are free: `step[2x - 1]` is the arc (`f`, `x`)
+for each neighbor `x` of `f`, and the arc (`x`, `h`) for each other
+neighbor `x` of `h`; the vertices `b` are marked in `nodemark` and
+stored in `queue`, and `step[2b]` is the arc (`b`, `c`).
 
 input parameters:
   - `ftag`: tag of the flow
-  - `stag`: tag of the closed neighborhood of `s`
   - `thr`: threshold
   - `n`: number of vertices
   - `s`: source
@@ -996,15 +1048,15 @@ function lbp_paths!(
         invptr::AbstractVector{E},
         begptr::AbstractVector{E},
         endptr::AbstractVector{E},
-        nbrmark::AbstractVector{Int},
         auxmark::AbstractVector{Int},
         flow::AbstractVector{V},
         fstamp::AbstractVector{Int},
         nodemark::AbstractVector{Int},
         step::AbstractVector{E},
+        queue::AbstractVector{Int},
+        farc::AbstractVector{E},
         ftag::Int,
         tag::Int,
-        stag::Int,
         thr::V,
         n::V,
         s::V,
@@ -1014,155 +1066,295 @@ function lbp_paths!(
     # `value` is the value of the flow
     value = zero(V)
 
-    # record the arcs (`s`, `x`)
-    @inbounds for p in begptr[s]:endptr[s] - one(E)
-        step[twice(Int(target[p])) - 1] = p
+    # `rs` and `rt` are the numbers of arcs that leave the
+    # neighbors of `s` and `t`
+    rs = lbpreach(target, begptr, endptr, s)
+    rt = lbpreach(target, begptr, endptr, t)
+
+    # `near` is true if the paths are found by scanning the
+    # neighbors of each `b`
+    near = max(rs, rt) > 4min(rs, rt)
+
+    # `rev` is true if the flow runs from `h` to `f`
+    if near == (rs <= rt)
+        f = t; h = s; rev = true
+    else
+        f = s; h = t; rev = false
     end
 
-    # send flow along the paths (`s`, `x`, `t`), and mark the other
-    # neighbors of `t`; record the arcs (`x`, `t`)
-    tag += 1; ttag = tag
+    # mark the neighbors of `f`, and record the arcs (`f`, `x`)
+    tag += 1; ftg = tag
 
-    @inbounds for q in begptr[t]:endptr[t] - one(E)
+    @inbounds for p in begptr[f]:endptr[f] - one(E)
+        x = target[p]; auxmark[x] = ftg; step[twice(Int(x)) - 1] = p
+    end
+
+    # send flow along the paths (`f`, `x`, `h`), and mark the other
+    # neighbors of `h`; record the arcs (`x`, `h`)
+    tag += 1; htg = tag
+
+    @inbounds for q in begptr[h]:endptr[h] - one(E)
         x = target[q]; i = twice(Int(x)) - 1
 
-        if nbrmark[x] == stag
+        if auxmark[x] == ftg
             del = min(weight[x], thr - value)
-            lbpflow!(flow, fstamp, ftag, n, step[i], del)
-            lbpflow!(flow, fstamp, ftag, n, invptr[q], del)
+            lbpset!(flow, fstamp, farc, target, invptr, ftag, n, rev, step[i], del)
+            lbpset!(flow, fstamp, farc, target, invptr, ftag, n, rev, invptr[q], del)
             lbpthrough!(flow, fstamp, ftag, x, del)
-            value += del
+            auxmark[x] = 0; value += del
 
             if value >= thr
                 return value, tag
             end
         else
-            auxmark[x] = ttag; step[i] = invptr[q]
+            auxmark[x] = htg; step[i] = invptr[q]
         end
     end
 
-    # send flow along the paths (`s`, `a`, `b`, `t`)
-    @inbounds for p in begptr[s]:endptr[s] - one(E)
-        a = target[p]
+    if near
+        # send flow along the paths (`f`, `a`, `b`, `h`), scanning
+        # the neighbors of each `b`
+        @inbounds for q in begptr[h]:endptr[h] - one(E)
+            b = target[q]
 
-        if auxmark[a] != ttag && iszero(lbpthrough(flow, fstamp, ftag, a))
-            # `tha` is the flow through `a`
-            tha = zero(V)
+            if auxmark[b] == htg
+                # `thb` is the flow through `b`
+                thb = zero(V)
 
-            for pp in begptr[a]:endptr[a] - one(E)
-                b = target[pp]
+                for qq in begptr[b]:endptr[b] - one(E)
+                    a = target[qq]
 
-                if auxmark[b] == ttag
-                    # `bt` is the arc (`b`, `t`)
-                    bt = step[twice(Int(b)) - 1]
-                    thb = lbpthrough(flow, fstamp, ftag, b)
-                    del = min(weight[a] - tha, weight[b] - thb, thr - value)
+                    if auxmark[a] == ftg
+                        # `tha` is the flow through `a`
+                        tha = lbpthrough(flow, fstamp, ftag, a)
+                        del = min(weight[a] - tha, weight[b] - thb, thr - value)
 
-                    if ispositive(del)
-                        lbpflow!(flow, fstamp, ftag, n, p, lbpflow(flow, fstamp, ftag, n, p) + del)
-                        lbpflow!(flow, fstamp, ftag, n, pp, del)
-                        lbpflow!(flow, fstamp, ftag, n, bt, lbpflow(flow, fstamp, ftag, n, bt) + del)
-                        lbpthrough!(flow, fstamp, ftag, b, thb + del)
-                        tha += del; value += del
+                        lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, step[twice(Int(a)) - 1], del)
+                        lbpset!(flow, fstamp, farc, target, invptr, ftag, n, rev, invptr[qq], del)
+                        lbpthrough!(flow, fstamp, ftag, a, tha + del)
+                        thb += del; value += del
 
-                        if value >= thr
-                            lbpthrough!(flow, fstamp, ftag, a, tha)
-                            return value, tag
+                        if tha + del >= weight[a]
+                            auxmark[a] = 0
                         end
 
-                        if tha >= weight[a]
+                        if value >= thr || thb >= weight[b]
                             break
                         end
                     end
                 end
-            end
 
-            if ispositive(tha)
-                lbpthrough!(flow, fstamp, ftag, a, tha)
+                if ispositive(thb)
+                    lbpset!(flow, fstamp, farc, target, invptr, ftag, n, rev, invptr[q], thb)
+                    lbpthrough!(flow, fstamp, ftag, b, thb)
+
+                    if thb >= weight[b]
+                        auxmark[b] = 0
+                    end
+                end
+
+                if value >= thr
+                    return value, tag
+                end
+            end
+        end
+    else
+        # send flow along the paths (`f`, `a`, `b`, `h`), scanning
+        # the neighbors of each `a`
+        @inbounds for p in begptr[f]:endptr[f] - one(E)
+            a = target[p]
+
+            if auxmark[a] == ftg
+                # `tha` is the flow through `a`
+                tha = zero(V)
+
+                for pp in begptr[a]:endptr[a] - one(E)
+                    b = target[pp]
+
+                    if auxmark[b] == htg
+                        # `thb` is the flow through `b`
+                        thb = lbpthrough(flow, fstamp, ftag, b)
+                        del = min(weight[a] - tha, weight[b] - thb, thr - value)
+
+                        lbpset!(flow, fstamp, farc, target, invptr, ftag, n, rev, pp, del)
+                        lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, step[twice(Int(b)) - 1], del)
+                        lbpthrough!(flow, fstamp, ftag, b, thb + del)
+                        tha += del; value += del
+
+                        if thb + del >= weight[b]
+                            auxmark[b] = 0
+                        end
+
+                        if value >= thr || tha >= weight[a]
+                            break
+                        end
+                    end
+                end
+
+                if ispositive(tha)
+                    lbpset!(flow, fstamp, farc, target, invptr, ftag, n, rev, p, tha)
+                    lbpthrough!(flow, fstamp, ftag, a, tha)
+
+                    if tha >= weight[a]
+                        auxmark[a] = 0
+                    end
+                end
+
+                if value >= thr
+                    return value, tag
+                end
             end
         end
     end
 
     # for every vertex `b` with an unsaturated neighbor `c` of
-    # `t`, record the arc (`b`, `c`) for one such `c`
-    tag += 1; btag = tag
+    # `h`, record the arc (`b`, `c`) for one such `c`
+    tag += 1; btag = tag; nb = 0
 
-    @inbounds for q in begptr[t]:endptr[t] - one(E)
+    @inbounds for q in begptr[h]:endptr[h] - one(E)
         c = target[q]
 
-        if auxmark[c] == ttag && lbpthrough(flow, fstamp, ftag, c) < weight[c]
+        if auxmark[c] == htg
             for qq in begptr[c]:endptr[c] - one(E)
                 b = target[qq]
 
-                if b != s && b != t && lbpthrough(flow, fstamp, ftag, b) < weight[b]
+                if b != f && b != h && lbpthrough(flow, fstamp, ftag, b) < weight[b]
+                    if nodemark[b] != btag
+                        nb += 1; queue[nb] = Int(b)
+                    end
+
                     nodemark[b] = btag; step[twice(Int(b))] = invptr[qq]
                 end
             end
         end
     end
 
-    # send flow along the paths (`s`, `a`, `b`, `c`, `t`)
-    @inbounds for p in begptr[s]:endptr[s] - one(E)
-        a = target[p]
+    if near
+        # send flow along the paths (`f`, `a`, `b`, `c`, `h`),
+        # scanning the neighbors of each `b`
+        @inbounds for i in oneto(nb)
+            b = convert(V, queue[i])
 
-        # `tha` is the flow through `a`
-        tha = lbpthrough(flow, fstamp, ftag, a)
+            # `thb` is the flow through `b`
+            thb = lbpthrough(flow, fstamp, ftag, b)
 
-        if auxmark[a] != ttag && tha < weight[a]
-            for pp in begptr[a]:endptr[a] - one(E)
-                b = target[pp]
+            for qq in begptr[b]:endptr[b] - one(E)
+                thb < weight[b] || break
+                a = target[qq]
 
-                if nodemark[b] == btag && b != a
-                    # `thb` is the flow through `b`
-                    thb = lbpthrough(flow, fstamp, ftag, b)
+                if auxmark[a] == ftg
+                    # `bc` is the arc (`b`, `c`)
+                    bc = lbp_neighbor!(target, begptr, endptr, auxmark, step, htg, b)
 
-                    if thb < weight[b]
+                    # if `b` has no unsaturated neighbor `c`, then
+                    # go to the next `b`
+                    if iszero(bc)
+                        break
+                    end
+
+                    # `c` is a neighbor of `h`
+                    c = target[bc]
+
+                    # `tha` and `thc` are the flows through `a` and `c`
+                    tha = lbpthrough(flow, fstamp, ftag, a)
+                    thc = lbpthrough(flow, fstamp, ftag, c)
+                    del = min(weight[a] - tha, weight[b] - thb, weight[c] - thc, thr - value)
+
+                    lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, step[twice(Int(a)) - 1], del)
+                    lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, invptr[qq], del)
+                    lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, bc, del)
+                    lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, step[twice(Int(c)) - 1], del)
+                    lbpthrough!(flow, fstamp, ftag, a, tha + del)
+                    lbpthrough!(flow, fstamp, ftag, c, thc + del)
+                    thb += del; value += del
+
+                    if tha + del >= weight[a]
+                        auxmark[a] = 0
+                    end
+
+                    if thc + del >= weight[c]
+                        auxmark[c] = 0
+                    end
+
+                    if value >= thr
+                        lbpthrough!(flow, fstamp, ftag, b, thb)
+                        return value, tag
+                    end
+                end
+            end
+
+            lbpthrough!(flow, fstamp, ftag, b, thb)
+
+            # if `b` is a saturated neighbor of `h`, then unmark it
+            if thb >= weight[b] && auxmark[b] == htg
+                auxmark[b] = 0
+            end
+        end
+    else
+        # send flow along the paths (`f`, `a`, `b`, `c`, `h`),
+        # scanning the neighbors of each `a`
+        @inbounds for p in begptr[f]:endptr[f] - one(E)
+            a = target[p]
+
+            if auxmark[a] == ftg
+                # `tha` is the flow through `a`
+                tha = lbpthrough(flow, fstamp, ftag, a)
+
+                for pp in begptr[a]:endptr[a] - one(E)
+                    tha < weight[a] || break
+                    b = target[pp]
+
+                    if nodemark[b] == btag
                         # `bc` is the arc (`b`, `c`)
-                        bc = step[twice(Int(b))]; c = target[bc]
+                        bc = lbp_neighbor!(target, begptr, endptr, auxmark, step, htg, b)
 
-                        # if `c` is saturated, then look for another
-                        if lbpthrough(flow, fstamp, ftag, c) >= weight[c]
-                            c = zero(V)
+                        # if `b` has no unsaturated neighbor `c`, then
+                        # unmark `b`
+                        if iszero(bc)
+                            nodemark[b] = 0
+                        else
+                            # `c` is a neighbor of `h`
+                            c = target[bc]
 
-                            for qq in begptr[b]:endptr[b] - one(E)
-                                cc = target[qq]
-
-                                if auxmark[cc] == ttag && cc != a && lbpthrough(flow, fstamp, ftag, cc) < weight[cc]
-                                    c = cc; bc = qq; step[twice(Int(b))] = qq
-                                    break
-                                end
-                            end
-
-                            if iszero(c)
-                                nodemark[b] = 0
-                            end
-                        end
-
-                        if ispositive(c) && c != a
-                            # `ct` is the arc (`c`, `t`), and `thc` is
-                            # the flow through `c`
-                            ct = step[twice(Int(c)) - 1]
+                            # `thb` and `thc` are the flows through `b`
+                            # and `c`
+                            thb = lbpthrough(flow, fstamp, ftag, b)
                             thc = lbpthrough(flow, fstamp, ftag, c)
                             del = min(weight[a] - tha, weight[b] - thb, weight[c] - thc, thr - value)
 
-                            lbpflow!(flow, fstamp, ftag, n, p, lbpflow(flow, fstamp, ftag, n, p) + del)
-                            lbpflow!(flow, fstamp, ftag, n, pp, lbpflow(flow, fstamp, ftag, n, pp) + del)
-                            lbpflow!(flow, fstamp, ftag, n, bc, lbpflow(flow, fstamp, ftag, n, bc) + del)
-                            lbpflow!(flow, fstamp, ftag, n, ct, lbpflow(flow, fstamp, ftag, n, ct) + del)
-                            tha += del; lbpthrough!(flow, fstamp, ftag, a, tha)
+                            lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, p, del)
+                            lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, pp, del)
+                            lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, bc, del)
+                            lbpsend!(flow, fstamp, farc, target, invptr, ftag, n, rev, step[twice(Int(c)) - 1], del)
                             lbpthrough!(flow, fstamp, ftag, b, thb + del)
                             lbpthrough!(flow, fstamp, ftag, c, thc + del)
-                            value += del
+                            tha += del; value += del
 
-                            if value >= thr
-                                return value, tag
+                            # if `b` is saturated, then unmark it
+                            if thb + del >= weight[b]
+                                nodemark[b] = 0
+
+                                if auxmark[b] == htg
+                                    auxmark[b] = 0
+                                end
                             end
 
-                            if tha >= weight[a]
-                                break
+                            if thc + del >= weight[c]
+                                auxmark[c] = 0
+                            end
+
+                            if value >= thr
+                                lbpthrough!(flow, fstamp, ftag, a, tha)
+                                return value, tag
                             end
                         end
                     end
+                end
+
+                lbpthrough!(flow, fstamp, ftag, a, tha)
+
+                if tha >= weight[a]
+                    auxmark[a] = 0
                 end
             end
         end
@@ -1171,9 +1363,70 @@ function lbp_paths!(
     return value, tag
 end
 
+# the arc (`b`, `c`), where `c` is an unsaturated neighbor of `h`
+# but not `f`, or zero if there is none. The arc `step[2b]` is
+# tried first.
+function lbp_neighbor!(target::AbstractVector{V}, begptr::AbstractVector{E}, endptr::AbstractVector{E}, auxmark::AbstractVector{Int}, step::AbstractVector{E}, htg::Int, b::V) where {V, E}
+    @inbounds bc = step[twice(Int(b))]
+
+    @inbounds if auxmark[target[bc]] != htg
+        bc = zero(E)
+
+        for qc in begptr[b]:endptr[b] - one(E)
+            if auxmark[target[qc]] == htg
+                bc = step[twice(Int(b))] = qc
+                break
+            end
+        end
+    end
+
+    return bc
+end
+
+# the number of arcs that leave the neighbors of the vertex `x`
+function lbpreach(target::AbstractVector{V}, begptr::AbstractVector{E}, endptr::AbstractVector{E}, x::V) where {V, E}
+    m = 0
+
+    @inbounds for p in begptr[x]:endptr[x] - one(E)
+        y = target[p]; m += Int(endptr[y] - begptr[y])
+    end
+
+    return m
+end
+
+# the arc `p`, or the arc opposite to `p` if `rev` is true
+@inline function lbparc(invptr::AbstractVector{E}, rev::Bool, p::E) where {E}
+    @inbounds return rev ? invptr[p] : p
+end
+
+# add `del` units of flow to the arc `p`, or to the arc opposite
+# to `p` if `rev` is true
+@inline function lbpsend!(flow::AbstractVector{V}, fstamp::AbstractVector{Int}, farc::AbstractVector{E}, target::AbstractVector, invptr::AbstractVector{E}, ftag::Int, n, rev::Bool, p::E, del::V) where {V, E}
+    q = lbparc(invptr, rev, p)
+    lbpadd!(flow, fstamp, farc, target, invptr, ftag, n, q, lbpflow(flow, fstamp, ftag, n, q) + del)
+    return
+end
+
+# send `del` units of flow along the arc `p`, or along the arc
+# opposite to `p` if `rev` is true, which carries no flow
+@inline function lbpset!(flow::AbstractVector{V}, fstamp::AbstractVector{Int}, farc::AbstractVector{E}, target::AbstractVector, invptr::AbstractVector{E}, ftag::Int, n, rev::Bool, p::E, del::V) where {V, E}
+    lbpadd!(flow, fstamp, farc, target, invptr, ftag, n, lbparc(invptr, rev, p), del)
+    return
+end
+
+# set the flow on the arc `p` to `f` > 0, and record `p` as an arc
+# that carries flow out of its tail and into its head
+@inline function lbpadd!(flow::AbstractVector{V}, fstamp::AbstractVector{Int}, farc::AbstractVector{E}, target::AbstractVector, invptr::AbstractVector{E}, ftag::Int, n, p::E, f::V) where {V, E}
+    lbpflow!(flow, fstamp, ftag, n, p, f)
+    @inbounds farc[twice(Int(target[p])) - 1] = p
+    @inbounds farc[twice(Int(target[invptr[p]]))] = p
+    return
+end
+
 """
     lbp_augment!(weight, target, invptr, begptr, endptr, flow,
-        fstamp, nodemark, from, step, queue, ftag, tag, need, n, s, t)
+        fstamp, nodemark, from, step, queue, farc, ftag, tag, need, n,
+        s, t)
 
 Find an augmenting path from the vertex `s` to the vertex `t`, and send
 at most `need` units of flow along it.
@@ -1196,6 +1449,11 @@ it was reached from. The searches stop when they meet. If either is
 exhausted, then there is no augmenting path, and the nodes that it
 reached form one side of a minimum cut. So the cost of a failed search
 is proportional to the smaller side of the cut.
+
+A search that undoes flow on the arcs that enter (or leave) a vertex
+`x` scans the arcs of `x`, unless one unit of flow passes through `x`:
+then a single arc carries it, and if the arc `farc[2x - 1]` (or
+`farc[2x]`) carries flow, then it is that arc.
 
 input parameters:
   - `ftag`: tag of the flow
@@ -1226,6 +1484,7 @@ function lbp_augment!(
         from::AbstractVector{Int},
         step::AbstractVector{E},
         queue::AbstractVector{Int},
+        farc::AbstractVector{E},
         ftag::Int,
         tag::Int,
         need::V,
@@ -1319,9 +1578,18 @@ function lbp_augment!(
                     end
                 end
 
-                # undo flow on the arcs (`a`, `x`)
+                # undo flow on the arcs (`a`, `x`); if one unit flows
+                # through `x`, then the arc `farc[nd]` carries it, if
+                # it carries any flow
                 if iszero(meet) && ispositive(thx)
-                    pbeg = begptr[x]; pend = endptr[x]
+                    p = farc[nd]; q = invptr[p]
+
+                    if isone(thx) && begptr[x] <= q < endptr[x] && ispositive(lbpflow(flow, fstamp, ftag, n, p))
+                        pbeg = q; pend = q + one(E)
+                    else
+                        pbeg = begptr[x]; pend = endptr[x]
+                    end
+
                     fwork += Int(pend - pbeg)
 
                     for q in pbeg:pend - one(E)
@@ -1396,9 +1664,18 @@ function lbp_augment!(
                     end
                 end
 
-                # undo flow on the arcs (`y`, `b`)
+                # undo flow on the arcs (`y`, `b`); if one unit flows
+                # through `y`, then the arc `farc[nd]` carries it, if
+                # it carries any flow
                 if iszero(meet) && ispositive(thy)
-                    pbeg = begptr[y]; pend = endptr[y]
+                    p = farc[nd]
+
+                    if isone(thy) && begptr[y] <= p < endptr[y] && ispositive(lbpflow(flow, fstamp, ftag, n, p))
+                        pbeg = p; pend = p + one(E)
+                    else
+                        pbeg = begptr[y]; pend = endptr[y]
+                    end
+
                     bwork += Int(pend - pbeg)
 
                     for p in pbeg:pend - one(E)
@@ -1448,23 +1725,23 @@ function lbp_augment!(
 
     # augment
     if mfwd
-        lbp_push!(flow, fstamp, ftag, n, meet, mstep, del); nd = mnode
+        lbp_push!(flow, fstamp, farc, target, invptr, ftag, n, meet, mstep, del); nd = mnode
     else
         nd = meet
     end
 
     @inbounds while nd != sout
-        lbp_push!(flow, fstamp, ftag, n, nd, step[nd], del); nd = from[nd]
+        lbp_push!(flow, fstamp, farc, target, invptr, ftag, n, nd, step[nd], del); nd = from[nd]
     end
 
     if mfwd
         nd = meet
     else
-        lbp_push!(flow, fstamp, ftag, n, mnode, mstep, del); nd = mnode
+        lbp_push!(flow, fstamp, farc, target, invptr, ftag, n, mnode, mstep, del); nd = mnode
     end
 
     @inbounds while nd != tin
-        lbp_push!(flow, fstamp, ftag, n, from[nd], step[nd], del); nd = from[nd]
+        lbp_push!(flow, fstamp, farc, target, invptr, ftag, n, from[nd], step[nd], del); nd = from[nd]
     end
 
     return del, tag, 0, false, 1, 0
@@ -1498,6 +1775,9 @@ end
 function lbp_push!(
         flow::AbstractVector{V},
         fstamp::AbstractVector{Int},
+        farc::AbstractVector{E},
+        target::AbstractVector{V},
+        invptr::AbstractVector{E},
         ftag::Int,
         n::V,
         nd::Int,
@@ -1510,7 +1790,7 @@ function lbp_push!(
         thx = lbpthrough(flow, fstamp, ftag, x)
         lbpthrough!(flow, fstamp, ftag, x, iseven(nd) ? thx + del : thx - del)
     elseif ispositive(a)
-        lbpflow!(flow, fstamp, ftag, n, a, lbpflow(flow, fstamp, ftag, n, a) + del)
+        lbpadd!(flow, fstamp, farc, target, invptr, ftag, n, a, lbpflow(flow, fstamp, ftag, n, a) + del)
     else
         lbpflow!(flow, fstamp, ftag, n, -a, lbpflow(flow, fstamp, ftag, n, -a) - del)
     end
