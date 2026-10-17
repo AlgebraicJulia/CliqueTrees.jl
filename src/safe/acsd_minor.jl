@@ -254,7 +254,8 @@ end
     return acsd_hasbit(ms.bits, off, a) & acsd_hasbit(ms.bits, off, b)
 end
 
-# is vertex `x` free and in the region (not in the component `top`)?
+# is vertex `x` free and in the region (not in the component `top`)? Only
+# the seeds need this: the region is closed, apart from N.
 @inline function acsd_free(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVector{V}, top::V, x::V) where {V}
     iszero(ms.status[x]) || return false
     i = index[x]
@@ -403,7 +404,9 @@ function acsd_pair!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVector{V},
                     # every candidate has been reached: none is further
                     nfound == n2 && return ms.src[u], last
                 end
-            elseif ms.stamp[x] != tag && weights[x] >= wmin && acsd_free(ms, at, index, top, x)
+            elseif ms.stamp[x] != tag && weights[x] >= wmin && iszero(ms.status[x])
+                # (`u` is in the region, so `x` is not in the component: no
+                # vertex of the region is adjacent to it)
                 ms.stamp[x] = tag; ms.parent[x] = u; ms.src[x] = ms.src[u]; push!(queue, x)
             end
         end
@@ -486,6 +489,19 @@ function acsd_cliqueminor!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVec
         end
     end
 
+    # the labels form a vertex cover of the missing edges, one label per node,
+    # and merging only removes nodes: with fewer nodes than a matching of the
+    # missing edges, the search fails
+    fill!(isend, false); nmatch = 0
+
+    for (a, b) in edges
+        if !isend[a] && !isend[b]
+            isend[a] = isend[b] = true; nmatch += 1
+        end
+    end
+
+    ms.nn < nmatch && return false
+
     # phase 1
     e = acsd_uncovered(ms, weights)
 
@@ -495,6 +511,8 @@ function acsd_cliqueminor!(ms::ACSDMinor{V}, at::ACSDTree{V}, index::AbstractVec
         acsd_merge!(ms, graph, weights, i1, i2)
         e = acsd_uncovered(ms, weights)
     end
+
+    ms.nn < nmatch && return false
 
     # phase 2: first try to label the nodes as they are, without the ones that
     # cover nothing (label -1)

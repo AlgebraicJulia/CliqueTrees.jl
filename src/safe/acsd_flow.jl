@@ -138,8 +138,9 @@ function acsd_missing!(fs::ACSDFlow{V, E}, order::AbstractVector{V}, S::Abstract
     return missing
 end
 
-# the capacity of vertex v for the current missing edge
-@inline function acsd_cap(fs::ACSDFlow{V, E, W}, at::ACSDTree{V}, index::AbstractVector{V}, weights::AbstractVector{W}, v::V) where {V, E, W}
+# the capacity of vertex v for the current missing edge, if v is not in the
+# removed component (see `acsd_maxflow!`)
+@inline function acsd_cap(fs::ACSDFlow{V, E, W}, weights::AbstractVector{W}, v::V) where {V, E, W}
     (v == fs.va || v == fs.vb) && return typemax(W)
 
     if fs.stamp[v] == fs.stag
@@ -147,7 +148,6 @@ end
         return ispositive(s) && fs.inX[s] ? weights[v] : zero(W)
     end
 
-    ispositive(fs.drop) && acsd_top!(at, at.home[index[v]]) == fs.drop && return zero(W)
     return weights[v]
 end
 
@@ -234,7 +234,7 @@ function acsd_bound(fs::ACSDFlow{V, E, W}, at::ACSDTree{V}, index::AbstractVecto
     fs.tag += 1; tag = fs.tag; empty!(fs.tops); tot = big = zero(W)
 
     @inbounds for p in fs.ptr[v]:fs.ptr[v + one(V)] - one(E)
-        u = fs.tgt[p]; c = acsd_cap(fs, at, index, weights, u); tot += c
+        u = fs.tgt[p]; c = acsd_cap(fs, weights, u); tot += c
         fs.stamp[u] == fs.stag && continue
         top = acsd_top!(at, at.home[index[u]])
 
@@ -315,7 +315,7 @@ function acsd_maxflow!(fs::ACSDFlow{V, E, W}, at::ACSDTree{V}, index::AbstractVe
                 # in(v): to out(v), or back along an arc with flow into v
                 v = -x
 
-                if fs.sout[v] != tag && fs.fv[v] < acsd_cap(fs, at, index, weights, v)
+                if fs.sout[v] != tag && fs.fv[v] < acsd_cap(fs, weights, v)
                     fs.sout[v] = tag; fs.aout[v] = zero(E); push!(queue, v)
                 end
 
@@ -327,8 +327,10 @@ function acsd_maxflow!(fs::ACSDFlow{V, E, W}, at::ACSDTree{V}, index::AbstractVe
                     end
                 end
             else
-                # out(v): back to in(v), or along an arc with no flow into v
-                v = x
+                # out(v): back to in(v), or along an arc with no flow into v.
+                # Only a step out of S can enter the removed component: no
+                # other vertex outside of S is adjacent to it.
+                v = x; insep = ispositive(fs.drop) && fs.stamp[v] == fs.stag
 
                 if v != va && fs.sin[v] != tag && ispositive(fs.fv[v])
                     fs.sin[v] = tag; fs.ain[v] = zero(E); push!(queue, -v)
@@ -337,8 +339,10 @@ function acsd_maxflow!(fs::ACSDFlow{V, E, W}, at::ACSDTree{V}, index::AbstractVe
                 for p in fs.ptr[v]:fs.ptr[v + one(V)] - one(E)
                     u = fs.tgt[p]
 
-                    if fs.fe[p] >= zero(W) && fs.sin[u] != tag && u != va && ispositive(acsd_cap(fs, at, index, weights, u))
-                        fs.sin[u] = tag; fs.ain[u] = p; push!(queue, -u)
+                    if fs.fe[p] >= zero(W) && fs.sin[u] != tag && u != va && ispositive(acsd_cap(fs, weights, u))
+                        if !insep || fs.stamp[u] == fs.stag || acsd_top!(at, at.home[index[u]]) != fs.drop
+                            fs.sin[u] = tag; fs.ain[u] = p; push!(queue, -u)
+                        end
                     end
                 end
             end
@@ -362,7 +366,7 @@ function acsd_maxflow!(fs::ACSDFlow{V, E, W}, at::ACSDTree{V}, index::AbstractVe
                 v = x; p = fs.aout[v]
 
                 if iszero(p)
-                    d = min(d, acsd_cap(fs, at, index, weights, v) - fs.fv[v]); x = -v
+                    d = min(d, acsd_cap(fs, weights, v) - fs.fv[v]); x = -v
                 else
                     d = min(d, fs.fe[p]); x = -fs.tgt[p]
                 end
