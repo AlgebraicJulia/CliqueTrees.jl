@@ -1820,7 +1820,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
     # the band below that with probability 1/4, and so on, down to near
     # bands (re-triangulating near the largest bags makes room for removing
     # them later); with unit weights, the bands are the weights k, k - 1, ...
-    k = snp.width[1]; u = minimum(wgt); delta = 0
+    k = snp.width[1]; u = minimum(wgt); tol = tolerance(W); delta = 0
 
     while delta < par.near && rand(rng, Bool)
         delta += 1
@@ -1838,15 +1838,25 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
         push!(bw, w)
     end
 
-    while isempty(top)
-        hi = k - delta * u; lo = hi - u
+    # the bands are anchored at the heaviest bag as summed here, not at k: with
+    # float weights the two sums can differ in the last bits, and a bag just
+    # heavier than k would fall between two bands (and the walk below would
+    # never end). k stays the width of the solution for the rest of the function.
+    kmax = maximum(bw)
+
+    while isempty(top) && !isnegative(delta)
+        hi = kmax - delta * u; lo = hi - u
 
         for i in oneto(nt)
-            lo < bw[i] <= hi && push!(top, i)
+            lo + tol <= bw[i] < hi + tol && push!(top, i)
         end
 
         delta -= 1
     end
+
+    # outside the supported weights (u below the tolerance, or lost to rounding
+    # next to kmax) every band can be empty
+    isempty(top) && push!(top, argmax(bw))
 
     i0 = rand(rng, top); X0 = view(btgt, bptr[i0]:bptr[i0 + 1] - 1)
 
