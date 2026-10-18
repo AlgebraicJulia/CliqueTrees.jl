@@ -195,6 +195,7 @@ end
 #   - 51 to 66: `bestwidth` and `bestfill`
 #   - 71 to 82: the lower bound MMW
 #   - 91 to 109: MCS-ETree (`MinimalChordal`)
+#   - 111 to 119: `cliquetree`
 #
 # A task does not see the workspace of the task that spawned it; tasks spawned
 # with `spawnwork` get workspaces of their own, from a pool shared by every

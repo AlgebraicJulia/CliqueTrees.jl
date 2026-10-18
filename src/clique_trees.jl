@@ -106,25 +106,27 @@ end
 function cliquetree(weights::AbstractVector, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm, snd::SupernodeType = Maximal()) where {V}
     E = etype(graph); n = nv(graph); m = half(de(graph))
     nn = n + one(V); nnn = nn + one(V)
-    
-    target1 = FVector{V}(undef, max(m, nn))
-    target2 = FVector{V}(undef, m)
+    order, index = permutation(weights, graph, alg)
+
+    # the arrays that the clique tree does not keep are taken from slots 111 to
+    # 119 of the workspace, once the ordering is made
+    ws = workspace()
+    target1 = workvector(ws, V, 111, max(m, nn))
+    target2 = workvector(ws, V, 112, m)
     target3 = FVector{V}(undef, n)
 
-    pointer1 = FVector{E}(undef, nn)
-    pointer2 = FVector{E}(undef, nn)
+    pointer1 = workvector(ws, E, 113, nn)
+    pointer2 = workvector(ws, E, 114, nn)
     pointer3 = FVector{V}(undef, nnn)
 
-    colcount = FVector{V}(undef, n)
-    elmorder = FVector{V}(undef, n)
-    elmindex = FVector{V}(undef, n)
+    colcount = workvector(ws, V, 115, n)
+    elmorder = workvector(ws, V, 116, n)
+    elmindex = workvector(ws, V, 117, n)
     sndptr = FVector{V}(undef, nn)
     sepptr = FVector{E}(undef, nn)
-    new = FVector{V}(undef, n)
+    new = workvector(ws, V, 118, n)
     parent = FVector{V}(undef, n)
-    elmtree = Parent{V}(n)
-
-    order, index = permutation(weights, graph, alg)
+    elmtree = Parent(n, workvector(ws, V, 119, n))
 
     sndtree, upper, lower = supernodetree_impl!(target1, target2,
         target3, pointer1, pointer2, pointer3, colcount,
