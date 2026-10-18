@@ -2937,4 +2937,14 @@ end
     alg = ND(bw, METISND(); width = 16, level = 8, scale = 100)
     order = first(permutation(w, g, alg))
     @test all(==(order), fetch.([Threads.@spawn(first(permutation(w, g, alg))) for _ in 1:4]))
+
+    # a dissection orders the large subtrees on other tasks; with Log, which
+    # keeps it on one task, it is the serial dissection
+    g = Graphs.grid([60, 60]); w = rand(Xoshiro(5), (1.0, log2(3.0), 2.0), nv(g))
+
+    for S in (1, 2, 3), level in (6, 12)
+        alg = ND{S}(bw, METISND(; seed = S); width = 16, level, scale = 100)
+        log = ND{S}(CliqueTrees.Log(bw), METISND(; seed = S); width = 16, level, scale = 100)
+        @test first(permutation(w, g, alg)) == redirect_stdout(() -> first(permutation(w, g, log)), devnull)
+    end
 end

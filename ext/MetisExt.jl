@@ -173,20 +173,52 @@ end
 # level. The graph G'[W] of a node is realized, compressed, when the node is
 # split and again when its children have returned; at most one realized graph
 # is alive at a time.
-function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, label::BipartiteGraph{INT, INT}, alg::ND{S}) where {S}
-    n = nv(graph); m = ne(graph); nn = n + one(INT); ng = n
-    maxlevel = convert(INT, alg.level)
-    minwidth = convert(INT, alg.width)
-    imbalance = convert(INT, alg.imbalance)
-    nl = maxlevel + one(INT)
+function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, label::BipartiteGraph{INT, INT}, alg::ND)
+    n = nv(graph)
 
-    # the separators of the ancestors of the current node (a stack)
+    # the root: every vertex in its own class, below no separator
     nelm = FScalar{INT}(undef); nelm[] = zero(INT)
-    elmptr = FVector{INT}(undef, maxlevel + two(INT)); elmptr[begin] = one(INT)
+    elmptr = FVector{INT}(undef, convert(INT, alg.level) + two(INT)); elmptr[begin] = one(INT)
     pinvtx = Vector{INT}(undef, n)
     pinlvl = Vector{INT}(undef, n)
     pinnext = Vector{INT}(undef, n)
     pinhead = FVector{INT}(undef, n)
+    ufp = FVector{INT}(undef, n)
+
+    @inbounds for v in oneto(n)
+        pinhead[v] = zero(INT); ufp[v] = v
+    end
+
+    segment, _ = dissectnode(weights, graph, ufp, nelm, elmptr, pinvtx, pinlvl,
+        pinnext, pinhead, zero(INT), alg)
+
+    # expand the vertices of the twin-free graph
+    j = zero(INT); result = FVector{INT}(undef, ne(label))
+
+    @inbounds for i in oneto(n), w in neighbors(label, segment[i])
+        j += one(INT); result[j] = w
+    end
+
+    return result
+end
+
+# Children with at least this many vertices (of the twin-free graph) are
+# dissected on another task: see `spawnsubtree`. Concurrent subtrees still
+# call METIS one at a time (see `LOCK`), which bounds the speedup of one
+# dissection by the share of METIS in its serial time.
+const MINSUBTREE = 256
+
+# Dissect the subtree of the node at level `level0` whose vertex set is every
+# vertex of `graph`. The classes of the node are in `ufp`, and the separators
+# of its ancestors are on the stack. Returns `segment`, whose first entries are
+# the residual of the node, and the length of the residual.
+function dissectnode(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, ufp::AbstractVector{INT}, nelm::AbstractScalar{INT}, elmptr::AbstractVector{INT}, pinvtx::Vector{INT}, pinlvl::Vector{INT}, pinnext::Vector{INT}, pinhead::AbstractVector{INT}, level0::INT, alg::ND{S}) where {S}
+    n = nv(graph); m = ne(graph); nn = n + one(INT)
+    maxlevel = convert(INT, alg.level)
+    minwidth = convert(INT, alg.width)
+    imbalance = convert(INT, alg.imbalance)
+    nl = maxlevel + one(INT)
+    @assert nelm[] == level0 < nl
 
     # the realization of the current node
     tag = FScalar{Int}(undef); tag[] = 0
@@ -205,7 +237,6 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     segment = FVector{INT}(undef, n)
     vertexset = FVector{INT}(undef, n)
     cls = FVector{INT}(undef, n)
-    ufp = FVector{INT}(undef, n)
     rmark = FVector{Int}(undef, n)
     rid = FVector{INT}(undef, n)
     mrg = Vector{INT}(undef, n)
@@ -220,8 +251,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     mrgstop = FVector{INT}(undef, nl)
 
     @inbounds for v in oneto(n)
-        pinhead[v] = zero(INT); stamp[v] = 0; rmark[v] = 0
-        ufp[v] = vertexset[v] = v
+        stamp[v] = 0; rmark[v] = 0; vertexset[v] = v
     end
 
     work00 = FScalar{INT}(undef)
@@ -247,8 +277,12 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     # returned
     greedy = Vector{Union{Nothing, Task}}(nothing, nl)
 
-    level = zero(INT); nw = n; t = 0; nmrg = zero(INT); nlog = zero(INT)
-    @inbounds base[begin] = one(INT)
+    # the residual of child 1 of a branch, when the child is dissected on
+    # another task (see `spawnsubtree`)
+    subtree = Vector{Union{Nothing, Task}}(nothing, nl)
+
+    level = level0; nw = n; t = 0; nmrg = zero(INT); nlog = zero(INT); nres = zero(INT)
+    @inbounds base[level0 + one(INT)] = one(INT)
     descend = true
 
     @inbounds while true
@@ -260,7 +294,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             set = view(vertexset, oneto(nw)); setcls = view(cls, oneto(nw))
         else
             # the node at `level` has returned; its residual starts at base[l]
-            iszero(level) && break
+            level == level0 && break
             level -= one(INT); l = level + one(INT)
             p = base[l]; sstart = elmptr[l]; sstop = elmptr[l + one(INT)] - one(INT)
 
@@ -269,8 +303,9 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 nlog = applymerges!(ufp, mlog, nlog, mrg, mrgstart[l], mrgstop[l])
                 nw = mergesorted!(vertexset, segment, p, p + na[l] - one(INT), pinvtx, sstart, sstop)
 
-                # move the residual of child 1 down, to base[l]
-                copyto!(segment, p, segment, p + na[l], nb[l])
+                # move the residual of child 1 down, to base[l], unless child 1
+                # is on another task: then it goes there when it is fetched
+                isnothing(subtree[l]) && copyto!(segment, p, segment, p + na[l], nb[l])
 
                 side[l] = zero(INT); level += one(INT)
                 base[level + one(INT)] = p + nb[l]
@@ -281,6 +316,11 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             # child 0 has returned: join the node at `level`
             nlog = rollback!(ufp, mlog, nlog, logstart[l]); nmrg = mrgbase[l]
             nw = zero(INT)
+
+            if !isnothing(subtree[l])
+                copyto!(segment, p, fetchunwrap(subtree[l]), one(INT), nb[l])
+                subtree[l] = nothing
+            end
 
             for q in p:(p + na[l] + nb[l] - one(INT))
                 nw += one(INT); vertexset[nw] = segment[q]
@@ -338,6 +378,16 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
             level += one(INT)
             base[level + one(INT)] = p + nap
+
+            # a large child 1 is dissected on another task; child 0 starts
+            # here as if child 1 had returned
+            if nw >= MINSUBTREE && isparallel(alg.alg, false)
+                subtree[l] = spawnsubtree(tag, stamp, work04, weights, graph,
+                    ufp, nelm, elmptr, pinvtx, pinlvl, vertexset, nw, level, alg)
+
+                descend = false
+            end
+
             continue
         end
 
@@ -435,18 +485,105 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             end
         end
 
-        writeresidual!(segment, base[l], work03, n, cmplabel, rmark, t)
+        nres = writeresidual!(segment, base[l], work03, n, cmplabel, rmark, t)
         descend = false
     end
 
-    # expand the vertices of the twin-free graph
-    j = zero(INT); result = FVector{INT}(undef, ne(label))
+    return segment, nres
+end
 
-    @inbounds for i in oneto(ng), w in neighbors(label, segment[i])
-        j += one(INT); result[j] = w
+# Dissect the subtree of the node at `level` with vertex set
+# W = vertexset[1:nw] on another task, as an independent instance of
+# `dissectnode`: the inputs of the subtree are G[W], the classes of W, and the
+# separators of the ancestors of the node, restricted to W. They are copied
+# here, before the task starts, with the vertices of W renumbered 1:nw in
+# increasing order, so that every list the subtree reads (neighbors, classes,
+# separators) comes in the same order as in the serial code: the subtree
+# computes the same realized graphs, separators, and orderings. The classes
+# of W lie in W, and so do the members of the separators that the subtree
+# reads (the separators of the nodes below the node's parent). Returns a task
+# whose result is the residual of the node.
+function spawnsubtree(tag::AbstractScalar{Int}, stamp::AbstractVector{Int}, newid::AbstractVector{INT}, weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, ufp::AbstractVector{INT}, nelm::AbstractScalar{INT}, elmptr::AbstractVector{INT}, pinvtx::AbstractVector{INT}, pinlvl::AbstractVector{INT}, vertexset::AbstractVector{INT}, nw::INT, level::INT, alg::ND)
+    @assert nelm[] == level
+    set = vertexset[oneto(nw)]; t = tag[] += 1; m = zero(INT); npin = zero(INT)
+
+    @inbounds for i in oneto(nw)
+        v = set[i]; stamp[v] = t; newid[v] = i
     end
 
-    return result
+    @inbounds for v in set, w in neighbors(graph, v)
+        if stamp[w] == t
+            m += one(INT)
+        end
+    end
+
+    @inbounds for p in oneto(elmptr[level + one(INT)] - one(INT))
+        if stamp[pinvtx[p]] == t
+            npin += one(INT)
+        end
+    end
+
+    # G[W], its weights, and the classes of W
+    subweights = Vector{INT}(undef, nw)
+    subufp = FVector{INT}(undef, nw)
+    subptr = Vector{INT}(undef, nw + one(INT))
+    subtgt = Vector{INT}(undef, max(m, one(INT)))
+    subptr[begin] = p = one(INT)
+
+    @inbounds for i in oneto(nw)
+        v = set[i]; u = ufp[v]; @assert stamp[u] == t
+        subweights[i] = weights[v]; subufp[i] = newid[u]
+
+        for w in neighbors(graph, v)
+            if stamp[w] == t
+                subtgt[p] = newid[w]; p += one(INT)
+            end
+        end
+
+        subptr[i + one(INT)] = p
+    end
+
+    subgraph = BipartiteGraph(nw, nw, m, subptr, subtgt)
+
+    # the separators of the ancestors, restricted to W
+    subnelm = FScalar{INT}(undef); subnelm[] = level
+    subelmptr = FVector{INT}(undef, convert(INT, alg.level) + two(INT))
+    subpinvtx = Vector{INT}(undef, max(npin, nw))
+    subpinlvl = Vector{INT}(undef, max(npin, nw))
+    subpinnext = Vector{INT}(undef, max(npin, nw))
+    subpinhead = FVector{INT}(undef, nw)
+
+    @inbounds for i in oneto(nw)
+        subpinhead[i] = zero(INT)
+    end
+
+    @inbounds subelmptr[begin] = q = one(INT)
+
+    @inbounds for l in oneto(level)
+        for p in elmptr[l]:(elmptr[l + one(INT)] - one(INT))
+            v = pinvtx[p]
+
+            if stamp[v] == t
+                i = newid[v]; subpinvtx[q] = i; subpinlvl[q] = pinlvl[p]
+                subpinnext[q] = subpinhead[i]; subpinhead[i] = q; q += one(INT)
+            end
+        end
+
+        subelmptr[l + one(INT)] = q
+    end
+
+    return Threads.@spawn begin
+        segment, nres = dissectnode(subweights, subgraph, subufp, subnelm,
+            subelmptr, subpinvtx, subpinlvl, subpinnext, subpinhead, level, alg)
+
+        residual = Vector{INT}(undef, nres)
+
+        @inbounds for i in oneto(nres)
+            residual[i] = set[segment[i]]
+        end
+
+        residual
+    end
 end
 
 function setoptions!(options::AbstractVector{INT}, imbalance::INT, alg::METISND)
