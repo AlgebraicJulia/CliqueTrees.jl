@@ -307,7 +307,41 @@ function workvector(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int, n::Integer
         end
     end
 
-    return view(mem::Memory{T}, oneto(n))
+    return WorkVector(mem::Memory{T}, n)
+end
+
+# The first `n` entries of a slot. A view of the slot would do, but the
+# orderings index views of `Memory` about 10% slower than `FVector`s.
+struct WorkVector{T} <: DenseVector{T}
+    mem::Memory{T}
+    n::Int
+end
+
+function Base.size(vector::WorkVector)
+    return (vector.n,)
+end
+
+function Base.IndexStyle(::Type{<:WorkVector})
+    return IndexLinear()
+end
+
+@propagate_inbounds function Base.getindex(vector::WorkVector, i::Int)
+    @boundscheck checkbounds(vector, i)
+    return @inbounds vector.mem[i]
+end
+
+@propagate_inbounds function Base.setindex!(vector::WorkVector, x, i::Int)
+    @boundscheck checkbounds(vector, i)
+    @inbounds vector.mem[i] = x
+    return vector
+end
+
+function Base.unsafe_convert(::Type{Ptr{T}}, vector::WorkVector{T}) where {T}
+    return Base.unsafe_convert(Ptr{T}, vector.mem)
+end
+
+function Base.elsize(::Type{WorkVector{T}}) where {T}
+    return Base.elsize(Memory{T})
 end
 
 # Spawn a task that runs `f()`, an ordering of `graph`, with a workspace from
