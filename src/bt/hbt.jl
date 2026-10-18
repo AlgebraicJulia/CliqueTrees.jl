@@ -62,9 +62,9 @@ function bt_tab_eq(tab::NamedTuple, i::Int, x::AbstractVector{Int})
     return true
 end
 
-# The index of the sequence x, or zero.
-function bt_tab_find(tab::NamedTuple, x::AbstractVector{Int})
-    slot = tab.slot; m = length(slot) - 1; s = (bt_tab_hsh(x) % Int) & m
+# The index of the sequence x (with hash h), or zero.
+function bt_tab_find(tab::NamedTuple, x::AbstractVector{Int}, h::UInt64 = bt_tab_hsh(x))
+    slot = tab.slot; m = length(slot) - 1; s = (h % Int) & m
 
     @inbounds while true
         i = slot[s + 1]
@@ -74,9 +74,9 @@ function bt_tab_find(tab::NamedTuple, x::AbstractVector{Int})
     end
 end
 
-# The index of the sequence x, added if it is new, and whether it is.
-function bt_tab_add!(tab::NamedTuple, x::AbstractVector{Int})
-    i = bt_tab_find(tab, x)
+# The index of the sequence x (with hash h), added if it is new, and whether it is.
+function bt_tab_add!(tab::NamedTuple, x::AbstractVector{Int}, h::UInt64 = bt_tab_hsh(x))
+    i = bt_tab_find(tab, x, h)
     ispositive(i) && return i, false
     append!(tab.tgt, x); push!(tab.ptr, length(tab.tgt) + 1)
     i = bt_tab_len(tab)
@@ -84,14 +84,14 @@ function bt_tab_add!(tab::NamedTuple, x::AbstractVector{Int})
     if 2i > length(tab.slot)
         bt_tab_rhs!(tab, 2length(tab.slot))
     else
-        bt_tab_slt!(tab, i)
+        bt_tab_slt!(tab, i, h)
     end
 
     return i, true
 end
 
-function bt_tab_slt!(tab::NamedTuple, i::Int)
-    slot = tab.slot; m = length(slot) - 1; s = (bt_tab_hsh(bt_tab_seq(tab, i)) % Int) & m
+function bt_tab_slt!(tab::NamedTuple, i::Int, h::UInt64 = bt_tab_hsh(bt_tab_seq(tab, i)))
+    slot = tab.slot; m = length(slot) - 1; s = (h % Int) & m
 
     @inbounds while ispositive(slot[s + 1])
         s = (s + 1) & m
@@ -1360,7 +1360,9 @@ function hbt_lif(srh::NamedTuple, L::NamedTuple, cptr::Vector{Int}, ctgt::Vector
         hbt_lft!(ctx, sol, L, c, view(ctgt, cptr[c]:cptr[c + 1] - 1))
     end
 
-    return (; sol, ctx.seps, ctx.bmin, ctx.bsep, ctx.bsize, ctx.bwgt)
+    # (and the hashes of the PMCs, made here and not by the main task)
+    hsh = [bt_tab_hsh(hbt_pmc(sol, p)) for p in oneto(hbt_len(sol))]
+    return (; sol, hsh, ctx.seps, ctx.bmin, ctx.bsep, ctx.bwgt, ctx.bsize)
 end
 
 # Add the PMCs of r (see hbt_lif) to the solution, as hbt_adc! adds the cliques
@@ -1374,17 +1376,17 @@ function hbt_put!(srh::NamedTuple, st::NamedTuple, r::NamedTuple, side::Union{No
 
     for p in oneto(hbt_len(src))
         hbt_expired(srh) && break
-        X = hbt_pmc(src, p)
+        X = hbt_pmc(src, p); h = r.hsh[p]
 
         if !isnothing(side)
-            q = bt_tab_find(side.sol.pmcs, X)
+            q = bt_tab_find(side.sol.pmcs, X, h)
 
             if ispositive(q)
                 hbt_cpy!(sol, side.sol, q); continue
             end
         end
 
-        last(bt_tab_add!(sol.pmcs, X)) || continue
+        last(bt_tab_add!(sol.pmcs, X, h)) || continue
         push!(sol.pwgt, src.pwgt[p])
 
         @inbounds for c in src.cfst[p]:src.cfst[p + 1] - 1
