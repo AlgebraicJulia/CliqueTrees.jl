@@ -1206,17 +1206,37 @@ function isparallel(alg, verbose::Bool)
     return Threads.nthreads() > 1 && !verbose && !(alg isa Log)
 end
 
-# Compute one ordering of a graph for each algorithm in a tuple, in parallel
-# if the graph is large. The results are the same as in serial: the external
-# partitioners, whose random number generators are global, run one at a time
-# (see ext/MetisExt.jl, ext/KaHyParExt.jl, and ext/ScotchExt.jl).
-function permutations(weights::AbstractVector, graph::AbstractGraph, algs::Tuple; verbose::Bool = false)
-    if length(algs) < 2 || de(graph) < MINPARALLEL || !all(alg -> isparallel(alg, verbose), algs)
-        return map(alg -> permutation(weights, graph, alg; verbose), algs)
+# Orderings of a graph by the algorithms of a tuple run in parallel if the
+# graph is large.
+function isparallel(graph::AbstractGraph, algs::Tuple, verbose::Bool)
+    return length(algs) > 1 && de(graph) >= MINPARALLEL && all(alg -> isparallel(alg, verbose), algs)
+end
+
+# Order a graph by each algorithm of a tuple, in parallel, and return the
+# ordering of least score, the first one on ties, as `bestwidth` and `bestfill`
+# do in serial. Each task scores its own ordering. The results are the same as
+# in serial: the external partitioners, whose random number generators are
+# global, run one at a time (see ext/MetisExt.jl, ext/KaHyParExt.jl, and
+# ext/ScotchExt.jl).
+function bestof(score::Function, weights::AbstractVector, graph::AbstractGraph, algs::Tuple)
+    tasks = map(algs) do alg
+        return Threads.@spawn begin
+            pair = permutation(weights, graph, alg)
+            score(weights, graph, pair), pair
+        end
     end
 
-    tasks = map(alg -> Threads.@spawn(permutation(weights, graph, alg)), algs)
-    return map(fetchunwrap, tasks)
+    minscore = minpair = nothing
+
+    for task in tasks
+        curscore, curpair = fetchunwrap(task)
+
+        if isnothing(minscore) || curscore < minscore
+            minscore, minpair = curscore, curpair
+        end
+    end
+
+    return minpair
 end
 
 # Wait for a task and rethrow its exception, if any, as it was thrown.

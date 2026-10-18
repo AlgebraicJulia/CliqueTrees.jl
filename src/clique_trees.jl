@@ -705,9 +705,10 @@ function treewidth_impl!(
 end
 
 function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}; verbose::Bool = false) where {W, V}
+    isparallel(graph, algs, verbose) && return bestof(treewidth, weights, graph, algs)
     E = etype(graph); m = de(graph); n = nv(graph)
 
-    pairs = permutations(weights, graph, algs; verbose)
+    pairs = map(alg -> permutation(weights, graph, alg; verbose), algs)
 
     indices = map(pairs) do (order, index)
         return index
@@ -892,9 +893,10 @@ function treefill_impl!(
 end
 
 function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}; verbose::Bool = false) where {W, V}
+    isparallel(graph, algs, verbose) && return bestof(treefill, weights, graph, algs)
     E = etype(graph); m = de(graph); n = nv(graph)
 
-    pairs = permutations(weights, graph, algs; verbose)
+    pairs = map(alg -> permutation(weights, graph, alg; verbose), algs)
 
     indices = map(pairs) do (order, index)
         return index
