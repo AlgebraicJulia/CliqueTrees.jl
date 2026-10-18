@@ -75,8 +75,8 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     #       -------------------
     #       LOCAL VARIABLES ...
     #       -------------------
-    perm = FVector{V}(undef, n)
-    invp = FVector{V}(undef, n)
+    perm = Vector{V}(undef, n)
+    invp = Vector{V}(undef, n)
 
     @inbounds for i in oneto(n)
         perm[i] = i

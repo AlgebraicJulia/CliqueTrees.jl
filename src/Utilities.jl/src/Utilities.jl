@@ -20,7 +20,7 @@ export eltypedegree, de
 export MAX_ITEMS_PRINTED, printiterator
 
 # work arrays
-export Workspace, withworkspace, workspace, workvector, spawnwork, giveback!
+export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, checkout, spawnwork, giveback!
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
@@ -188,7 +188,7 @@ end
 # the slots; an ordering must not run another ordering while it holds slots,
 # and must not return its slots. The slots are
 #
-#   - 1: the bucket array of AMF and MMD
+#   - 1: the bucket array of AMF and MMD (`BUCKETS`)
 #   - 2, 3: arrays as large as the graph (AMF, MMD, MF, `bestwidth`)
 #   - 4 to 12: AMF and MMD
 #   - 21 to 43: MF
@@ -198,14 +198,17 @@ end
 # with `spawnwork` get workspaces of their own, which are kept for later tasks.
 struct Workspace
     slots::Vector{Any}
+    hints::Vector{Int}
     idle::Vector{Workspace}
 end
 
 function Workspace()
-    return Workspace(Any[], Workspace[])
+    return Workspace(Any[], Int[], Workspace[])
 end
 
 const WORKSPACE = :CliqueTreesWorkspace
+
+const BUCKETS = 1
 
 function withworkspace(f)
     storage = current_task().storage
@@ -224,8 +227,50 @@ function workspace()
     return get(storage::IdDict{Any, Any}, WORKSPACE, nothing)::Union{Nothing, Workspace}
 end
 
+# Expect arrays of length up to `n` from slot `i`. A request for at least half
+# of that gets all of it, so that a slot grows at most once for a graph whose
+# size is known in advance.
+function reserve!(ws::Workspace, i::Int, n::Integer)
+    hints = ws.hints
+
+    while length(hints) < i
+        push!(hints, 0)
+    end
+
+    hints[i] = n
+    return
+end
+
+# the largest arrays in slots 1 to 3 for orderings of a graph; a hint that is
+# off costs at most an allocation, so overflow is ignored
+function reserve!(ws::Workspace, weights::AbstractVector, graph::AbstractGraph)
+    n = nv(graph); m = de(graph); w = 0
+
+    @inbounds for v in oneto(n)
+        w += hintweight(weights[v])
+    end
+
+    reserve!(ws, BUCKETS, twice(w) + 2)
+    reserve!(ws, 2, twice(m) + 4n + 1)
+    reserve!(ws, 3, m)
+    return
+end
+
+function hintweight(w::Integer)
+    return w % Int
+end
+
+function hintweight(w::AbstractFloat)
+    return isfinite(w) && abs(w) < 1.0e18 ? trunc(Int, w) : 0
+end
+
+function hintweight(w)
+    return 0
+end
+
 # an uninitialized array of length `n`: slot `i` of the workspace, or a new
-# array if there is no workspace; a slot grows by at least a factor of two
+# array if there is no workspace; a slot grows by at least a factor of two,
+# or to its hint (see `reserve!`)
 function workvector(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int, n::Integer) where {T}
     n = convert(Int, n)
 
@@ -240,28 +285,46 @@ function workvector(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int, n::Integer
 
         mem = slots[i]
 
-        if !(mem isa Memory{T})
-            mem = slots[i] = Memory{T}(undef, n)
-        elseif length(mem) < n
-            mem = slots[i] = Memory{T}(undef, max(n, twice(length(mem))))
+        if !(mem isa Memory{T}) || length(mem) < n
+            hint = i <= length(ws.hints) ? ws.hints[i] : 0
+
+            if n <= hint <= twice(n)
+                len = hint
+            elseif mem isa Memory{T}
+                len = max(n, twice(length(mem)))
+            else
+                len = n
+            end
+
+            mem = slots[i] = Memory{T}(undef, len)
         end
     end
 
     return view(mem::Memory{T}, oneto(n))
 end
 
-# Spawn a task that runs `f()`. If the current task has a workspace, then the
-# new task gets one too, taken from the idle workspaces of the current one;
-# the current task gives it back with `giveback!` once the new task is done.
-function spawnwork(f)
+# A workspace for a task that orders `graph`, taken from the idle workspaces
+# of the current task, or nothing if the current task has no workspace. The
+# current task gives it back with `giveback!` once that task is done.
+function checkout(weights::AbstractVector, graph::AbstractGraph)
     ws = workspace()
-
-    if isnothing(ws)
-        return Threads.@spawn(f()), nothing
-    end
-
+    isnothing(ws) && return nothing
     child = isempty(ws.idle) ? Workspace() : pop!(ws.idle)
-    return Threads.@spawn(task_local_storage(f, WORKSPACE, child)), child
+    reserve!(child, weights, graph)
+    return child
+end
+
+# Spawn a task that runs `f()` with the workspace `child`.
+function spawnwork(f, child::Union{Nothing, Workspace})
+    isnothing(child) && return Threads.@spawn f()
+    return Threads.@spawn task_local_storage(f, WORKSPACE, child)
+end
+
+# Spawn a task that runs `f()`, an ordering of `graph`, with a workspace from
+# `checkout`.
+function spawnwork(f, weights::AbstractVector, graph::AbstractGraph)
+    child = checkout(weights, graph)
+    return spawnwork(f, child), child
 end
 
 function giveback!(child::Union{Nothing, Workspace})

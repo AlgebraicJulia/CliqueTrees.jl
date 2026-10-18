@@ -74,10 +74,10 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
 
     nbbuck = twice(norig)
 
-    # the bucket array is in slot 1 and the adjacency array in slot 2, as in
-    # MMDLib and MDLib
+    # the work arrays are in slots 1 to 11 of the workspace (see Utilities);
+    # the bucket array and the adjacency array share slots with MMDLib
     ws = workspace()
-    head = workvector(ws, V, 1, nbbuck + two(V))
+    head = workvector(ws, V, BUCKETS, nbbuck + two(V))
     iw = workvector(ws, V, 2, iwlen)
     len = workvector(ws, V, 3, n)
     pe = workvector(ws, E, 4, nn)

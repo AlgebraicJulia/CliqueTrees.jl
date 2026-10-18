@@ -85,7 +85,7 @@ end
 function spawngreedy(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::EliminationAlgorithm)
     weights = collect(view(weights, oneto(nv(graph))))
     graph = copygraph(graph)
-    return spawnwork(() -> permutation(weights, graph, alg))
+    return spawnwork(() -> permutation(weights, graph, alg), weights, graph)
 end
 
 function copygraph(graph::BipartiteGraph{INT, INT})
@@ -162,8 +162,17 @@ function dissect(weights::FVector{INT}, graph::AbstractGraph{V}, alg::ND) where 
     # merge twins up front: every graph in the dissection is then twin-free
     cmpgraph, cmpweights, project = compresstwins(weights, simple)
 
-    # the orderings at the nodes share one workspace
-    order = convert(Vector{V}, withworkspace(() -> dissectsimple(cmpweights, cmpgraph, project, alg)))
+    # The orderings at the nodes share one workspace. Their bucket arrays are
+    # largest at the root; if the orderings at the large nodes run on other
+    # tasks (see `spawngreedy`), then those tasks reserve them.
+    order = withworkspace() do
+        if !isparallel(alg.alg, false)
+            reserve!(workspace(), BUCKETS, twice(sum(Int, cmpweights; init = 0)) + 2)
+        end
+
+        return convert(Vector{V}, dissectsimple(cmpweights, cmpgraph, project, alg))
+    end
+
     return order
 end
 
@@ -249,6 +258,13 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     greedy = Vector{Union{Nothing, Task}}(nothing, nl)
     greedyws = Vector{Union{Nothing, Workspace}}(nothing, nl)
 
+    # the partition and dissection ordering of the current node, and scratch
+    # space for sorting
+    part = FVector{INT}(undef, n)
+    ndsorder = Vector{INT}(undef, n)
+    ndsindex = Vector{INT}(undef, n)
+    scratch = Vector{INT}(undef, n)
+
     level = zero(INT); nw = n; t = 0; nmrg = zero(INT); nlog = zero(INT)
     @inbounds base[begin] = one(INT)
     descend = true
@@ -292,7 +308,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 nw += one(INT); vertexset[nw] = pinvtx[q]
             end
 
-            sort!(view(vertexset, oneto(nw)))
+            sort!(view(vertexset, oneto(nw)); scratch)
             popelements!(nelm, elmptr, pinvtx, pinnext, pinhead, level)
             t += 1; nc = classify!(cls, rmark, rid, ufp, vertexset, nw, t)
             set = view(vertexset, oneto(nw)); setcls = view(cls, oneto(nw))
@@ -319,7 +335,6 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 greedy[l], greedyws[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
             end
 
-            part = FVector{INT}(undef, n)
             separator!(work03, work00, part, cmpweights, cmpgraph, imbalance, alg.dis)
 
             p = base[l]; mrgbase[l] = nmrg
@@ -359,8 +374,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 order, index = permutation(cmpweights, cmpgraph, alg.alg)
             else      # branch: child 0, then child 1, then the separator
                 p = base[l]
-                ndsorder = Vector{INT}(undef, n)
-                ndsindex = Vector{INT}(undef, n)
+                resize!(ndsorder, n)
+                resize!(ndsindex, n)
                 i = zero(INT)
 
                 # the residuals list vertices of the quotient

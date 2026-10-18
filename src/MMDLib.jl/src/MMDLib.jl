@@ -42,11 +42,11 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
         total += vwght[node]
     end
 
-    # the slots hold arrays of the same types as in AMFLib, which runs on the
-    # same graphs: the bucket array is in slot 1 and the adjacency array in
-    # slot 2; slot 12 may hold the weights
+    # the work arrays are in slots 1 to 11 of the workspace (see Utilities),
+    # of the same types as in AMFLib, which runs on the same graphs; slot 12
+    # may hold the weights
     ws = workspace()
-    deghead = workvector(ws, V, 1, total)
+    deghead = workvector(ws, V, BUCKETS, total)
     newadjncy = workvector(ws, V, 2, nnz)
     needsupdate = workvector(ws, V, 3, neqns)
     supersize = workvector(ws, V, 5, neqns)

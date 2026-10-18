@@ -1216,7 +1216,7 @@ function permutations(weights::AbstractVector, graph::AbstractGraph, algs::Tuple
         return map(alg -> permutation(weights, graph, alg; verbose), algs)
     end
 
-    pairs = map(alg -> spawnwork(() -> permutation(weights, graph, alg)), algs)
+    pairs = map(alg -> spawnwork(() -> permutation(weights, graph, alg), weights, graph), algs)
 
     # the type of a task's result is not inferred
     results = map(algs, pairs) do alg, (task, child)
