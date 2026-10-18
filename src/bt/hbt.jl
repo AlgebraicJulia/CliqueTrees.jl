@@ -751,18 +751,24 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
             bt_put!(adj, bt_get(adj, bt_wrd(i), i) & ~bt_bit(i), bt_wrd(i), i)
         end
 
-        ptr = Vector{Int}(undef, nu + 1); tgt = Int[]; ptr[1] = 1
+        ptr = Vector{Int}(undef, nu + 1); ptr[1] = 1; m = 0
+
+        @inbounds for i in oneto(nu), k in oneto(nwrd)
+            m += count_ones(bt_get(adj, k, i))
+        end
+
+        tgt = Vector{Int}(undef, m); m = 0
 
         @inbounds for i in oneto(nu)
             for k in oneto(nwrd)
                 word = bt_get(adj, k, i)
 
                 while !iszero(word)
-                    push!(tgt, bt_vtx(Int, k, word)); word &= word - one(UInt64)
+                    m += 1; tgt[m] = bt_vtx(Int, k, word); word &= word - one(UInt64)
                 end
             end
 
-            ptr[i + 1] = length(tgt) + 1
+            ptr[i + 1] = m + 1
         end
 
         # keep the packed sets only if a search over them is no slower than
@@ -2073,6 +2079,10 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
     # neighborhood of the component of H - N[a] containing b
     tried = bt_tab()
 
+    # H + S, made in the same arrays for every S (it is done with when the
+    # next is made)
+    ptr = Vector{Int}(undef, nu + 1); tgt = Int[]
+
     for _ in oneto(par.nsep)
         hbt_expired(srh) && break
         a = 0; b = 0
@@ -2091,7 +2101,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
         last(bt_tab_add!(tried, S)) || continue
 
         # H + S
-        ptr = Vector{Int}(undef, nu + 1); tgt = Int[]; ptr[1] = 1
+        empty!(tgt); sizehint!(tgt, de(H) + length(S)^2); ptr[1] = 1
         sm = hbt_stp!(ctx)
 
         for v in S
