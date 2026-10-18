@@ -1120,6 +1120,11 @@ struct HBTExact{W} <: EliminationAlgorithm
     status::Base.RefValue{BTStatus}
 end
 
+# The pieces run one after another, on the task of the search: they share the
+# deadline and the status, and a parallel search has a task on every thread
+# (see isconcurrent).
+isconcurrent(alg::HBTExact) = false
+
 function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBTExact; verbose::Bool = false) where {V}
     perm, invp, _, status = septw(weights, graph, alg.lo, alg.hi, alg.dl, 1)
 
