@@ -172,6 +172,10 @@ function hbt_ctx(graph::BipartiteGraph{Int, Int}, wgt::Vector{W}) where {W}
         bstamp = Int[], bloc = Int[], bwid = Tuple{W, Int}[], bcapp = Int[], bcapj = Int[],
         active = Int[], cnt = Int[], sorted = Int[], cptr = Int[],
         capb = Int[], capp = Int[], capj = Int[], capp2 = Int[], capj2 = Int[],
+
+        # the groups of the components of a PMC (hbt_add!)
+        gdst = Int[], gid = Int[], gsmk = Int[], gsof = Int[], gin = Bool[], gptr = Int[], gtgt = Int[],
+        gm = Int[], gsz = Int[], gw = W[],
     )
 end
 
@@ -244,19 +248,29 @@ function hbt_add!(ctx::NamedTuple, sol::NamedTuple, X::AbstractVector{Int}, cmin
     # about d^2 |S| + d t for d distinct separators, not t^2 |S|. (A PMC can
     # have thousands of components, most with one of a few separators.) The
     # lists and sums are made in the same order as one component at a time.
-    dist = Int[]; gid = Vector{Int}(undef, t); gof = Dict{Int, Int}()
+    # (The arrays are kept in the context: the group of the separator s is
+    # gsof[s] if gsmk[s] is the stamp sg.)
+    dist = ctx.gdst; gid = ctx.gid; gsmk = ctx.gsmk; gsof = ctx.gsof
+    empty!(dist); resize!(gid, t); sg = hbt_stp!(ctx)
 
-    @inbounds for j in oneto(t)
-        g = get!(gof, csep[j]) do
-            push!(dist, csep[j]); length(dist)
-        end
-
-        gid[j] = g
+    if length(gsmk) < bt_tab_len(seps)
+        m = length(gsmk); resize!(gsmk, bt_tab_len(seps)); resize!(gsof, bt_tab_len(seps))
+        fill!(view(gsmk, m + 1:length(gsmk)), 0)
     end
 
-    d = length(dist); isin = falses(d)
-    gptr = Vector{Int}(undef, d + 1); gtgt = Int[]
-    gm = Vector{Int}(undef, d); gsz = Vector{Int}(undef, d); gw = Vector{W}(undef, d)
+    @inbounds for j in oneto(t)
+        c = csep[j]
+
+        if gsmk[c] != sg
+            gsmk[c] = sg; push!(dist, c); gsof[c] = length(dist)
+        end
+
+        gid[j] = gsof[c]
+    end
+
+    d = length(dist); isin = resize!(ctx.gin, d)
+    gptr = resize!(ctx.gptr, d + 1); gtgt = empty!(ctx.gtgt)
+    gm = resize!(ctx.gm, d); gsz = resize!(ctx.gsz, d); gw = resize!(ctx.gw, d)
 
     @inbounds for g in oneto(d)
         s = hbt_stp!(ctx)
@@ -403,7 +417,7 @@ function hbt_add!(ctx::NamedTuple, sol::NamedTuple, X::AbstractVector{Int})
             end
         end
 
-        sort!(sep)
+        sort!(sep; alg = QuickSort)
         push!(cmin, v0); push!(csize, sz); push!(cwgt, w); push!(csep, hbt_sep!(ctx, sep))
     end
 
@@ -629,7 +643,7 @@ function hbt_td(ctx::NamedTuple, sol::NamedTuple, root::Int)
             end
 
             lo = length(btgt) + 1; append!(btgt, queue); append!(btgt, sep)
-            sort!(view(btgt, lo:length(btgt))); push!(bptr, length(btgt) + 1); push!(parent, pn)
+            sort!(view(btgt, lo:length(btgt)); alg = QuickSort); push!(bptr, length(btgt) + 1); push!(parent, pn)
         else
             append!(btgt, hbt_pmc(sol, p)); push!(bptr, length(btgt) + 1); push!(parent, pn)
             node = length(parent); c = ctx.bcapj[b]; f = sol.cfst[p] - 1
@@ -717,7 +731,7 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
             end
         end
 
-        sort!(nb)
+        sort!(nb; alg = QuickSort)
         push!(bmin, v0); push!(bsize, sz); push!(bwgt, w); push!(nidx, first(bt_tab_add!(nbrs, nb)))
     end
 
@@ -813,7 +827,7 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
         q = 1
 
         @inbounds for i in oneto(nu)
-            lo = ptr[i]; hi = ptr[i + 1] - 1; sort!(view(tgt, lo:hi)); ptr[i] = q
+            lo = ptr[i]; hi = ptr[i + 1] - 1; sort!(view(tgt, lo:hi); alg = QuickSort); ptr[i] = q
 
             for k in lo:hi
                 if k == lo || tgt[k] != tgt[k - 1]
@@ -934,7 +948,7 @@ function hbt_cpl!(ctx::NamedTuple, L::NamedTuple, sk::Int)
             end
         end
 
-        sort!(sep)
+        sort!(sep; alg = QuickSort)
         push!(L.cmin, U[v0]); push!(L.csize, sz); push!(L.cwgt, w)
         append!(L.qtgt, sep); push!(L.qptr, length(L.qtgt) + 1)
     end
@@ -1098,7 +1112,7 @@ function hbt_grd(srh::NamedTuple, weights::AbstractVector, graph::AbstractGraph)
             tgt[k] = invp[x]; k += 1
         end
 
-        sort!(view(tgt, ptr[i]:k - 1)); ptr[i + 1] = k
+        sort!(view(tgt, ptr[i]:k - 1); alg = QuickSort); ptr[i + 1] = k
     end
 
     pgraph = BipartiteGraph{Int, Int}(n, n, ptr[n + 1] - 1, ptr, tgt)
@@ -1224,7 +1238,7 @@ function hbt_cls!(cptr::Vector{Int}, ctgt::Vector{Int}, srh::NamedTuple, L::Name
             push!(ctgt, label[v])
         end
 
-        K = view(ctgt, lo:length(ctgt)); sort!(K)
+        K = view(ctgt, lo:length(ctgt)); sort!(K; alg = QuickSort)
 
         if hbt_isnbr(L, K)
             resize!(ctgt, lo - 1)
@@ -1828,7 +1842,7 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = noth
                 end
 
                 length(U) < bound || continue
-                sort!(U)
+                sort!(U; alg = QuickSort)
                 any(F -> F == U, Us) && continue
                 i = searchsortedlast(Us, U; by = length)
                 insert!(Us, i + 1, copy(U))
@@ -2056,7 +2070,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
         end
     end
 
-    sort!(U)
+    sort!(U; alg = QuickSort)
     L = hbt_loc(ctx, U); H = L.graph; nu = length(U); weights = L.wgt
 
     # X₀ in local numbering (loc is set by hbt_loc)
@@ -2124,7 +2138,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
                     x == v || push!(tgt, x)
                 end
 
-                sort!(view(tgt, start:length(tgt))); m = start - 1
+                sort!(view(tgt, start:length(tgt)); alg = QuickSort); m = start - 1
 
                 for i in start:length(tgt)
                     if m < start || tgt[i] != tgt[m]
@@ -2178,7 +2192,7 @@ function hbt_msp(ctx::NamedTuple, H::AbstractGraph, a::Int, b::Int, lmark::Vecto
         end
     end
 
-    return sort!(S)
+    return sort!(S; alg = QuickSort)
 end
 
 function hbt_stats(srh::NamedTuple)
