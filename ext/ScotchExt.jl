@@ -18,20 +18,23 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V
 end
 
 # Scotch keeps its random number generator in global state, so concurrent calls
-# give different results than the same calls made one at a time
+# would interleave their draws; its orderings never run concurrently with other
+# orderings (see `isconcurrent`), and the lock guards calls made by users from
+# several threads
 const LOCK = ReentrantLock()
 
 function scotch(weights::AbstractVector, graph::AbstractGraph{V}, alg::SCOTCH) where {V}
     vwght = scotch_vwght(weights, graph)
     xadj, adjncy = scotch_graph(graph)
 
-    scotchgraph = graph_build(xadj, adjncy; index_start=one(INT), v_weights=vwght)
+    permtab, peritab = @lock LOCK begin
+        scotchgraph = graph_build(xadj, adjncy; index_start=one(INT), v_weights=vwght)
 
-    strat = strat_build(:graph_order;
-        strategy=alg.strategy, level_nbr=alg.level, imbalance_ratio=alg.imbalance)
+        strat = strat_build(:graph_order;
+            strategy=alg.strategy, level_nbr=alg.level, imbalance_ratio=alg.imbalance)
 
-    permtab, peritab = @lock LOCK block_ordering(scotchgraph, strat;
-        permutation=true, inv_permutation=true)
+        block_ordering(scotchgraph, strat; permutation=true, inv_permutation=true)
+    end
 
     order = convert(Vector{V}, peritab)
     index = convert(Vector{V}, permtab)

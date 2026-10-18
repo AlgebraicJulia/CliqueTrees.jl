@@ -315,6 +315,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
         if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
             if (isone(S) || istwo(S)) && m >= MINPARALLEL && isparallel(alg.alg, false)
                 greedy[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
+            else
+                greedy[l] = nothing
             end
 
             part = FVector{INT}(undef, n)

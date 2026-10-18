@@ -1177,23 +1177,33 @@ function batch_permutation(weights::AbstractVector{<:AbstractVector}, graphs::Ab
     # the graphs are ordered by worker tasks, largest first, each worker taking
     # the next graph when it is done with the last; the orders do not depend on
     # the schedule
-    queue = sort!(collect(eachindex(graphs)); by = i -> de(graphs[i]), rev = true)
-    orders = Vector{Any}(undef, length(graphs))
+    indices = collect(eachindex(graphs)); n = length(indices)
+    queue = sort!(collect(oneto(n)); by = k -> de(graphs[indices[k]]), rev = true)
+    P = Base.promote_op(permutation, eltype(weights), eltype(graphs), typeof(alg))
+    T = isconcretetype(P) && P <: Tuple{Any, Any} ? fieldtype(P, 1) : Any
+    orders = Vector{T}(undef, n)
     next = Threads.Atomic{Int}(1)
+    failed = Threads.Atomic{Bool}(false)
 
-    tasks = map(oneto(min(Threads.nthreads(), length(graphs)))) do _
+    tasks = map(oneto(min(Threads.nthreads(), n))) do _
         return Threads.@spawn begin
-            while true
-                k = Threads.atomic_add!(next, 1)
-                k > length(queue) && break
-                i = queue[k]
-                orders[i] = first(permutation(weights[i], graphs[i], alg))
+            while !failed[]
+                j = Threads.atomic_add!(next, 1)
+                j > n && break
+                k = queue[j]; i = indices[k]
+
+                try
+                    orders[k] = first(permutation(weights[i], graphs[i], alg))
+                catch
+                    failed[] = true
+                    rethrow()
+                end
             end
         end
     end
 
-    foreach(waitunwrap, tasks)
-    return map(identity, orders)
+    fetchall(tasks)
+    return T === Any ? map(identity, orders) : orders
 end
 
 # Graphs with fewer edges than this are ordered on the calling task: below
@@ -1201,9 +1211,10 @@ end
 const MINPARALLEL = 4096
 
 # Orderings run in parallel when Julia has more than one thread, unless they
-# print: verbose output and Log would interleave.
+# print or one of the algorithms they are made of cannot share the machine
+# (see `isconcurrent`).
 function isparallel(alg, verbose::Bool)
-    return Threads.nthreads() > 1 && !verbose && !(alg isa Log)
+    return Threads.nthreads() > 1 && !verbose && allconcurrent(alg)
 end
 
 # Orderings of a graph by the algorithms of a tuple run in parallel if the
@@ -1212,13 +1223,39 @@ function isparallel(graph::AbstractGraph, algs::Tuple, verbose::Bool)
     return length(algs) > 1 && de(graph) >= MINPARALLEL && all(alg -> isparallel(alg, verbose), algs)
 end
 
+# Whether an algorithm can run concurrently with other orderings without
+# changing its result: Log prints, HBT and FlowCutter run on a time budget,
+# and Scotch draws from a random stream that carries over between calls.
+isconcurrent(alg) = true
+isconcurrent(alg::Union{Log, HBT, FlowCutter, SCOTCH}) = false
+
+# Whether an algorithm and the algorithms it is made of are all concurrent.
+function allconcurrent(alg)
+    isconcurrent(alg) || return false
+
+    for name in fieldnames(typeof(alg))
+        x = getfield(alg, name)
+
+        if x isa EliminationAlgorithm
+            allconcurrent(x) || return false
+        elseif x isa Tuple
+            all(allconcurrent, x) || return false
+        end
+    end
+
+    return true
+end
+
 # Order a graph by each algorithm of a tuple, in parallel, and return the
 # ordering of least score, the first one on ties, as `bestwidth` and `bestfill`
 # do in serial. Each task scores its own ordering. The results are the same as
-# in serial: the external partitioners, whose random number generators are
-# global, run one at a time (see ext/MetisExt.jl, ext/KaHyParExt.jl, and
-# ext/ScotchExt.jl).
+# in serial: the external partitioners whose random number generators are
+# global (METIS, KaHyPar) reseed them on every call and run one at a time (see
+# ext/MetisExt.jl and ext/KaHyParExt.jl).
 function bestof(score::Function, weights::AbstractVector, graph::AbstractGraph, algs::Tuple)
+    P = Union{map(alg -> Base.promote_op(permutation, typeof(weights), typeof(graph), typeof(alg)), algs)...}
+    S = Base.promote_op(score, typeof(weights), typeof(graph), P)
+
     tasks = map(algs) do alg
         return Threads.@spawn begin
             pair = permutation(weights, graph, alg)
@@ -1228,21 +1265,20 @@ function bestof(score::Function, weights::AbstractVector, graph::AbstractGraph, 
 
     minscore = minpair = nothing
 
-    for task in tasks
-        curscore, curpair = fetchunwrap(task)
-
+    for (curscore, curpair) in fetchall(tasks)
         if isnothing(minscore) || curscore < minscore
             minscore, minpair = curscore, curpair
         end
     end
 
-    return minpair
+    return minpair::P
 end
 
-# Wait for a task and rethrow its exception, if any, as it was thrown.
-function waitunwrap(task::Task)
-    fetchunwrap(task)
-    return
+# Wait for all tasks, then return their results or rethrow the first exception,
+# as it was thrown: no task is left running.
+function fetchall(tasks)
+    foreach(task -> try wait(task) catch end, tasks)
+    return map(fetchunwrap, tasks)
 end
 
 function fetchunwrap(task::Task)
@@ -2023,7 +2059,8 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
     if length(imbalances) < 2 || de(graph) < MINPARALLEL || !isparallel(alg, false)
         results = map(score, imbalances)
     else
-        results = map(fetchunwrap, map(imbalance -> Threads.@spawn(score(imbalance)), imbalances))
+        R = Base.promote_op(score, Int)
+        results = map(result -> result::R, fetchall(map(imbalance -> Threads.@spawn(score(imbalance)), imbalances)))
     end
 
     minscore = minpair = nothing
