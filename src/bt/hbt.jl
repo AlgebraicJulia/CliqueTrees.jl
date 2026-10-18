@@ -1265,14 +1265,93 @@ end
 # Triangulate the local graph on U and add the resulting PMCs of G to the
 # solution, if the triangulation is no wider than the solution.
 function hbt_lcl!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, U::Vector{Int})
-    L = hbt_loc(srh.ctx, U); H = L.graph; weights = L.wgt
-    k = st.width[][1]
-    order = hbt_tri(srh, weights, H, k, hbt_limit(srh, st.maxbag[]); cap = k)
-    ismissing(order) && return
-    cptr = Int[1]; ctgt = Int[]
-    hbt_cls!(cptr, ctgt, srh, L, H, order, typemax(eltype(weights))) <= k || return
+    L, cptr, ctgt = hbt_lcc(srh, U, st.width[][1], hbt_limit(srh, st.maxbag[]))
     hbt_adc!(srh, st, L, cptr, ctgt, side)
     return
+end
+
+# The local graph on U and the cliques of its triangulation (exact if it has
+# at most limit vertices), or no cliques if the triangulation is wider than k.
+function hbt_lcc(srh::NamedTuple, U::Vector{Int}, k, limit::Int)
+    L = hbt_loc(srh.ctx, U); H = L.graph; weights = L.wgt
+    cptr = Int[1]; ctgt = Int[]
+    order = hbt_tri(srh, weights, H, k, limit; cap = k)
+
+    if !ismissing(order) && hbt_cls!(cptr, ctgt, srh, L, H, order, typemax(eltype(weights))) > k
+        resize!(cptr, 1); empty!(ctgt)
+    end
+
+    return L, cptr, ctgt
+end
+
+# The cliques (cptr, ctgt) of the local graph L lifted to PMCs of G apart from
+# any solution, for hbt_put!: the PMCs that hbt_adc! would add to a solution
+# without them, in a solution of their own whose blocks are named in a context
+# of their own (it shares the scratch space of ctx), with the blocks and
+# separators of that context. Most of the cost of adding a clique to a solution
+# is its lifting, which a worker does this way for the main task.
+function hbt_lif(srh::NamedTuple, L::NamedTuple, cptr::Vector{Int}, ctgt::Vector{Int})
+    W = eltype(srh.ctx.wgt); sol = hbt_sol(W)
+    ctx = merge(srh.ctx, (; seps = bt_tab(), swgt = W[], blks = bt_tab(), bmin = Int[], bsep = Int[], bsize = Int[], bwgt = W[]))
+
+    for c in oneto(length(cptr) - 1)
+        hbt_expired(srh) && break
+        hbt_lft!(ctx, sol, L, view(ctgt, cptr[c]:cptr[c + 1] - 1))
+    end
+
+    return (; sol, ctx.seps, ctx.bmin, ctx.bsep, ctx.bsize, ctx.bwgt)
+end
+
+# Add the PMCs of r (see hbt_lif) to the solution, as hbt_adc! adds the cliques
+# they were lifted from: the same PMCs, in the same order, with the same blocks.
+# (A block is new to the solution's context only in a PMC new to the solution,
+# and the first such PMC is the one that r has it from.) The blocks and
+# separators of r are renamed (bmap, smap) as they are first met.
+function hbt_put!(srh::NamedTuple, st::NamedTuple, r::NamedTuple, side::Union{Nothing, NamedTuple} = nothing)
+    ctx = srh.ctx; sol = st.sol; src = r.sol
+    bmap = zeros(Int, length(r.bmin)); smap = zeros(Int, bt_tab_len(r.seps))
+
+    for p in oneto(hbt_len(src))
+        hbt_expired(srh) && break
+        X = hbt_pmc(src, p)
+
+        if !isnothing(side)
+            q = bt_tab_find(side.sol.pmcs, X)
+
+            if ispositive(q)
+                hbt_cpy!(sol, side.sol, q); continue
+            end
+        end
+
+        last(bt_tab_add!(sol.pmcs, X)) || continue
+        push!(sol.pwgt, src.pwgt[p])
+
+        @inbounds for c in src.cfst[p]:src.cfst[p + 1] - 1
+            push!(sol.csub, hbt_ren!(ctx, r, bmap, smap, src.csub[c]))
+            push!(sol.csup, hbt_ren!(ctx, r, bmap, smap, src.csup[c]))
+
+            for i in src.iptr[c]:src.iptr[c + 1] - 1
+                push!(sol.itgt, src.itgt[i])
+            end
+
+            push!(sol.iptr, length(sol.itgt) + 1)
+        end
+
+        push!(sol.cfst, length(sol.csub) + 1)
+    end
+
+    return
+end
+
+# The block of ctx named b in r.
+function hbt_ren!(ctx::NamedTuple, r::NamedTuple, bmap::Vector{Int}, smap::Vector{Int}, b::Int)
+    @inbounds if iszero(bmap[b])
+        s = r.bsep[b]
+        iszero(smap[s]) && (smap[s] = hbt_sep!(ctx, bt_tab_seq(r.seps, s)))
+        bmap[b] = hbt_blk!(ctx, r.bmin[b], smap[s], r.bsize[b], r.bwgt[b])
+    end
+
+    return @inbounds bmap[b]
 end
 
 # ---------------------------------------------------------------------------
@@ -1661,7 +1740,7 @@ end
 # Merge (Tamaki 2022): pairs of PMCs X of st and Y of side, where side has no
 # greater width, pick out small focus sets U, whose local graphs are
 # triangulated; their PMCs and those of side are added to st.
-function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple)
+function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = nothing)
     hbt_cut!(srh, st.kstall[])
     ctx = srh.ctx; g = ctx.graph; n = nv(g); sol = st.sol
     mark1 = ctx.mark1; mark2 = ctx.mark2; mark3 = ctx.mark3; queue = ctx.queue
@@ -1743,9 +1822,15 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple)
     nf = bt_tab_len(focuses)
     list = sortperm(oneto(nf); by = f -> focuses.ptr[f + 1] - focuses.ptr[f])
 
-    for i in oneto(min(nf, srh.par.ntry))
-        hbt_expired(srh) && break
-        hbt_lcl!(srh, st, side, collect(bt_tab_seq(focuses, list[i])))
+    Us = [collect(bt_tab_seq(focuses, list[i])) for i in oneto(min(nf, srh.par.ntry))]
+
+    if isnothing(pool)
+        for U in Us
+            hbt_expired(srh) && break
+            hbt_lcl!(srh, st, side, U)
+        end
+    else
+        hbt_lcp!(srh, st, side, pool, Us)
     end
 
     for q in oneto(hbt_len(side.sol))
@@ -1757,43 +1842,58 @@ end
 
 # Merge with an independent solution of no greater width, improving that
 # solution first if necessary (recursively, with the same strategies).
-function hbt_imm!(srh::NamedTuple, st::NamedTuple)
+function hbt_imm!(srh::NamedTuple, st::NamedTuple, pool = nothing)
     side = hbt_side!(srh, st)
 
     if side.width[][1] > st.width[][1]
-        hbt_imp!(srh, side)
+        hbt_imp!(srh, side, pool)
         return false
     else
-        return hbt_mrg!(srh, st, side)
+        return hbt_mrg!(srh, st, side, pool)
     end
 end
 
 # One improvement step. With both strategies on, a solution is diversified,
 # and merged with an independent solution only once it has gone patience
-# steps without progress.
-function hbt_imp!(srh::NamedTuple, st::NamedTuple)
-    k = st.width[][1]
+# steps without progress. In a parallel search (pool), the step adds every
+# diversification that the workers have made of the solution since the last
+# step, and counts as that many steps.
+function hbt_imp!(srh::NamedTuple, st::NamedTuple, pool = nothing)
+    k = st.width[][1]; n = 1
 
     if srh.par.diversify
-        hbt_dvs!(srh, st)
+        rs = hbt_take!(srh, st, pool)
+
+        if isempty(rs)
+            hbt_dvs!(srh, st)
+        else
+            for r in rs
+                hbt_put!(srh, st, r)
+            end
+
+            n = length(rs)
+        end
+
         improved = hbt_upd!(srh, st)
     else
         improved = false
     end
 
-    return hbt_end!(srh, st, k, improved)
+    improved = hbt_end!(srh, st, k, improved, n, pool)
+    hbt_pub!(pool, st, improved)
+    return improved
 end
 
 # Merge if the solution has stalled, and count the steps without progress.
-function hbt_end!(srh::NamedTuple, st::NamedTuple, k, improved::Bool)
+function hbt_end!(srh::NamedTuple, st::NamedTuple, k, improved::Bool, n::Int = 1, pool = nothing)
     par = srh.par
 
     if par.merge && !hbt_expired(srh) && (!par.diversify || st.stall[] >= par.patience)
-        improved |= hbt_imm!(srh, st)
+        improved |= hbt_imm!(srh, st, pool)
     end
 
-    st.stall[] = improved ? 0 : st.stall[] + 1
-    st.kstall[] = st.width[][1] < k ? 0 : st.kstall[] + 1
+    st.stall[] = improved ? 0 : st.stall[] + n
+    st.kstall[] = st.width[][1] < k ? 0 : st.kstall[] + n
     return improved
 end
 
@@ -2071,47 +2171,47 @@ end
 # ---------------------------------------------------------------------------
 # Workers
 #
-# With nt tasks, nt - 1 workers diversify the latest snapshot of the
-# solution, again and again, each with a context and random numbers of its
-# own, and pass the results to this task, which adds them to the solution,
-# evaluates it, and merges when it stalls, as hbt_imp! does. When no result
-# is waiting, this task diversifies the solution itself. (The time of a
-# diversification varies a great deal, so workers that waited for each
-# other would mostly wait.) Returns the statistics of the workers.
+# With nt tasks, the main task improves the solution as hbt_imp! does, and
+# nt - 1 workers do the costly parts of its steps: they diversify the latest
+# snapshot of each solution that the main task is improving (the solution,
+# and the solutions merged with it while it is stalled), again and again,
+# each with a context and random numbers of its own, and lift the cliques to
+# PMCs (hbt_lif). A step of the main task adds all the diversifications made
+# since its last step (hbt_put!), and when it merges, the workers triangulate
+# the local graphs of the merge with it. At most cap diversifications of a
+# solution wait or are being made, so that a main task that falls behind
+# holds the workers back instead of a growing heap of stale results. When no
+# diversification is waiting and none is being made, the main task makes one
+# itself. Returns the statistics of the workers.
 # ---------------------------------------------------------------------------
 
 function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
-    ctx = srh.ctx
-    workers = [hbt_srh(hbt_ctx(ctx.graph, ctx.wgt), Xoshiro(rand(srh.rng, UInt64)), srh.par) for _ in 2:nt]
+    ctx = srh.ctx; pool = hbt_pool(nt)
+    seeds = [rand(srh.rng, UInt64) for _ in 2:nt]
+    workers = Vector{Any}(nothing, nt - 1)
 
-    for w in workers
-        w.deadline[] = srh.deadline[]; w.t0[] = srh.t0[]
+    # each worker makes its context on its own thread
+    tasks = map(eachindex(seeds)) do i
+        return Threads.@spawn begin
+            w = hbt_srh(hbt_ctx(ctx.graph, ctx.wgt), Xoshiro(seeds[i]), srh.par)
+            w.deadline[] = srh.deadline[]; w.t0[] = srh.t0[]; workers[i] = w
+            withworkspace(() -> hbt_wrk(w, pool))
+        end
     end
 
-    # the snapshot copies the decomposition only when it changes
-    cur = hbt_cop(st); snap = Ref(merge(cur, (; kstall = st.kstall[])))
-    lck = ReentrantLock(); stop = Threads.Atomic{Bool}(false); results = Channel{Any}(typemax(Int))
-    tasks = [Threads.@spawn hbt_wrk(w, snap, lck, stop, results) for w in workers]
-
     try
-        while !hbt_expired(srh) && hbt_going(st, lb, ub)
-            k = st.width[][1]
-
-            if isready(results)
-                L, cptr, ctgt = take!(results)
-            else
-                L, cptr, ctgt = hbt_div(srh, hbt_snp(st))
+        withworkspace() do
+            while !hbt_expired(srh) && hbt_going(st, lb, ub) && !pool.stop[]
+                @lock pool.lock pool.round[] += 1
+                hbt_imp!(srh, st, pool)
             end
-
-            hbt_adc!(srh, st, L, cptr, ctgt)
-            improved = hbt_upd!(srh, st)
-            hbt_end!(srh, st, k, improved)
-            improved && (cur = hbt_cop(st))
-            s = merge(cur, (; kstall = st.kstall[]))
-            lock(() -> (snap[] = s), lck)
         end
     finally
-        stop[] = true; foreach(wait, tasks)
+        @lock pool.lock begin
+            pool.stop[] = true; notify(pool.wake); notify(pool.ready)
+        end
+
+        foreach(wait, tasks)
     end
 
     stats = (0, 0, 0, 0)
@@ -2123,13 +2223,181 @@ function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
     return stats
 end
 
+# The pool of a parallel search, guarded by lock: the latest snapshot of each
+# solution, by depth (snaps), the main task's last round of steps that wanted
+# its diversifications (want), these diversifications (queue), and the number
+# being made (busy); the local graphs of the current merge (jobs), the next
+# to take, the number done, and their cliques (jres). Workers wait on wake for
+# something to do, and the main task on ready for results.
+function hbt_pool(nt::Integer)
+    lock = ReentrantLock()
+
+    return (;
+        lock, wake = Threads.Condition(lock), ready = Threads.Condition(lock),
+        cap = 2 * (Int(nt) - 1), stop = Ref(false), round = Ref(0),
+        snaps = Any[], want = Int[], queue = Vector{Any}[], busy = Int[],
+        jobs = Any[], next = Ref(1), done = Ref(0), jres = Any[],
+    )
+end
+
+function hbt_wrk(w::NamedTuple, pool::NamedTuple)
+    try
+        while !hbt_expired(w)
+            job = hbt_job!(pool)
+            isnothing(job) && break
+            i, x = job
+
+            if ispositive(i)
+                # the local graph of a merge
+                r = nothing
+
+                if !hbt_expired(w)
+                    hbt_cut!(w, x.kstall)
+                    r = hbt_lif(w, hbt_lcc(w, x.U, x.k, x.limit)...)
+                end
+
+                @lock pool.lock begin
+                    pool.jres[i] = r; pool.done[] += 1; notify(pool.ready)
+                end
+            else
+                # a diversification of the solution at depth -i - 1
+                r = hbt_lif(w, hbt_div(w, x)...)
+
+                @lock pool.lock begin
+                    push!(pool.queue[-i], r); pool.busy[-i] -= 1; notify(pool.ready)
+                end
+            end
+        end
+    catch
+        # the main task waits for no more results
+        @lock pool.lock begin
+            pool.stop[] = true; notify(pool.wake); notify(pool.ready)
+        end
+
+        rethrow()
+    end
+
+    return
+end
+
+# The next job of a worker, waiting for one: (i, x) for the local graph x of
+# the merge, the ith, or (-d, x) for a diversification of the snapshot x of
+# the solution at depth d - 1, the one with the fewest diversifications
+# waiting or being made, of the solutions wanted in the last two rounds;
+# nothing once the search stops.
+function hbt_job!(pool::NamedTuple)
+    @lock pool.lock begin
+        while !pool.stop[]
+            i = pool.next[]
+
+            if i <= length(pool.jobs)
+                pool.next[] = i + 1
+                return (i, pool.jobs[i])
+            end
+
+            d = 0; m = pool.cap
+
+            for e in eachindex(pool.snaps)
+                if pool.want[e] >= pool.round[] - 1
+                    f = length(pool.queue[e]) + pool.busy[e]
+
+                    if f < m
+                        d = e; m = f
+                    end
+                end
+            end
+
+            if ispositive(d)
+                pool.busy[d] += 1
+                return (-d, pool.snaps[d])
+            end
+
+            wait(pool.wake)
+        end
+    end
+
+    return nothing
+end
+
+# The diversifications of the solution made by the workers since the last
+# step (none: the main task makes one itself), and want them in this round.
+function hbt_take!(srh::NamedTuple, st::NamedTuple, pool::NamedTuple)
+    d = st.depth + 1
+
+    @lock pool.lock begin
+        while length(pool.snaps) < d
+            push!(pool.snaps, nothing); push!(pool.want, -1); push!(pool.queue, Any[]); push!(pool.busy, 0)
+        end
+    end
+
+    isnothing(pool.snaps[d]) && hbt_pub!(pool, st, true)
+
+    @lock pool.lock begin
+        fresh = pool.want[d] < pool.round[] - 1; pool.want[d] = pool.round[]
+        rs = pool.queue[d]
+        isempty(rs) || (pool.queue[d] = Any[])
+        (fresh || !isempty(rs)) && notify(pool.wake)
+        return rs
+    end
+end
+
+hbt_take!(srh::NamedTuple, st::NamedTuple, pool::Nothing) = ()
+
+# Publish the snapshot of a solution after a step: its decomposition is copied
+# only when it changes.
+function hbt_pub!(pool::NamedTuple, st::NamedTuple, improved::Bool)
+    d = st.depth + 1
+    snap = improved ? hbt_cop(st) : pool.snaps[d]
+    snap = merge(snap, (; kstall = st.kstall[]))
+    @lock pool.lock pool.snaps[d] = snap
+    return
+end
+
+hbt_pub!(pool::Nothing, st::NamedTuple, improved::Bool) = nothing
+
 # A snapshot of the decomposition of a solution, apart from it.
 hbt_cop(st::NamedTuple) = (; bptr = copy(st.bptr), btgt = copy(st.btgt), parent = copy(st.parent), width = st.width[])
 
-function hbt_wrk(w::NamedTuple, snap::Ref, lck::ReentrantLock, stop::Threads.Atomic{Bool}, results::Channel)
-    while !stop[] && !hbt_expired(w)
-        s = lock(() -> snap[], lck)
-        put!(results, hbt_div(w, s))
+# Triangulate the local graphs on the sets Us, with the workers, and add their
+# PMCs to the solution, in order, as hbt_lcl! does.
+function hbt_lcp!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool::NamedTuple, Us::Vector{Vector{Int}})
+    k = st.width[][1]; limit = hbt_limit(srh, st.maxbag[]); kstall = st.kstall[]; m = length(Us)
+
+    @lock pool.lock begin
+        resize!(pool.jres, m); fill!(pool.jres, nothing)
+
+        for U in Us
+            push!(pool.jobs, (; U, k, limit, kstall))
+        end
+
+        notify(pool.wake)
+    end
+
+    # this task takes jobs too, then waits for the others
+    while true
+        i = @lock pool.lock begin
+            j = pool.next[]; j <= m && (pool.next[] = j + 1); j
+        end
+
+        i > m && break
+        r = hbt_expired(srh) ? nothing : hbt_lif(srh, hbt_lcc(srh, Us[i], k, limit)...)
+
+        @lock pool.lock begin
+            pool.jres[i] = r; pool.done[] += 1
+        end
+    end
+
+    rs = @lock pool.lock begin
+        while pool.done[] < m && !pool.stop[]
+            wait(pool.ready)
+        end
+
+        rs = copy(pool.jres); empty!(pool.jobs); empty!(pool.jres); pool.next[] = 1; pool.done[] = 0
+        rs
+    end
+
+    for r in rs
+        isnothing(r) || hbt_put!(srh, st, r, side)
     end
 
     return
@@ -2181,8 +2449,10 @@ function hbtrun!(hbt::NamedTuple; mt::Real = 10.0, nt::Integer = Threads.nthread
     if nt > 1 && srh.par.diversify
         stats = hbt_par!(srh, st, lb, ub, nt)
     else
-        while !hbt_expired(srh) && hbt_going(st, lb, ub)
-            hbt_imp!(srh, st)
+        withworkspace() do
+            while !hbt_expired(srh) && hbt_going(st, lb, ub)
+                hbt_imp!(srh, st)
+            end
         end
     end
 
