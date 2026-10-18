@@ -85,7 +85,7 @@ end
 function spawngreedy(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::EliminationAlgorithm)
     weights = collect(view(weights, oneto(nv(graph))))
     graph = copygraph(graph)
-    return Threads.@spawn permutation(weights, graph, alg)
+    return spawnwork(() -> permutation(weights, graph, alg))
 end
 
 function copygraph(graph::BipartiteGraph{INT, INT})
@@ -162,7 +162,8 @@ function dissect(weights::FVector{INT}, graph::AbstractGraph{V}, alg::ND) where 
     # merge twins up front: every graph in the dissection is then twin-free
     cmpgraph, cmpweights, project = compresstwins(weights, simple)
 
-    order = convert(Vector{V}, dissectsimple(cmpweights, cmpgraph, project, alg))
+    # the orderings at the nodes share one workspace
+    order = convert(Vector{V}, withworkspace(() -> dissectsimple(cmpweights, cmpgraph, project, alg)))
     return order
 end
 
@@ -246,6 +247,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     # `spawngreedy`) and compared with its dissection when its children have
     # returned
     greedy = Vector{Union{Nothing, Task}}(nothing, nl)
+    greedyws = Vector{Union{Nothing, Workspace}}(nothing, nl)
 
     level = zero(INT); nw = n; t = 0; nmrg = zero(INT); nlog = zero(INT)
     @inbounds base[begin] = one(INT)
@@ -314,7 +316,7 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
         if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
             if (isone(S) || istwo(S)) && m >= MINPARALLEL && isparallel(alg.alg, false)
-                greedy[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
+                greedy[l], greedyws[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
             end
 
             part = FVector{INT}(undef, n)
@@ -349,6 +351,9 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             tree = Parent(n, work06)
             upper = BipartiteGraph(n, n, half(m), work09, work01)
             lower = BipartiteGraph(n, n, half(m), work10, work02)
+
+            # the type of a task's result is not inferred
+            local order::Vector{INT}, index::Vector{INT}
 
             if isleaf # leaf
                 order, index = permutation(cmpweights, cmpgraph, alg.alg)
@@ -389,10 +394,14 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
                 if isone(S) || istwo(S)
                     sets = UnionFind(n, work03, work04, work05)
 
+                    # the type of a task's result is not inferred
+                    local grdorder::Vector{INT}, grdindex::Vector{INT}
+
                     if isnothing(greedy[l])
                         grdorder, grdindex = permutation(cmpweights, cmpgraph, alg.alg)
                     else
                         grdorder, grdindex = fetchunwrap(greedy[l]); greedy[l] = nothing
+                        giveback!(greedyws[l]); greedyws[l] = nothing
                     end
 
                     if isone(S)

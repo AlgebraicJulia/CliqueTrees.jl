@@ -117,7 +117,8 @@ function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) wher
     cmpgraph, cmpweights, project = compresstwins(weights, simple)
 
     cover = qcc(VINT2, EINT, cmpgraph, alg.dis.beta, alg.dis.order)
-    order = convert(Vector{V}, dissectsimple(cmpweights, reverse(cover), cmpgraph, project, alg))
+    # the orderings at the nodes share one workspace
+    order = convert(Vector{V}, withworkspace(() -> dissectsimple(cmpweights, reverse(cover), cmpgraph, project, alg)))
     return order
 end
 

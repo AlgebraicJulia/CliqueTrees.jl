@@ -1171,18 +1171,19 @@ julia> map(length, orders)
 """
 function batch_permutation(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph}, alg::EliminationAlgorithm; verbose::Bool = false)
     if !isparallel(alg, verbose) || length(graphs) < 2 || sum(de, graphs) < MINPARALLEL
-        return map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs))
+        # the orderings share one workspace
+        return withworkspace(() -> map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs)))
     end
 
     # the graphs are ordered by worker tasks, largest first, each worker taking
     # the next graph when it is done with the last; the orders do not depend on
-    # the schedule
+    # the schedule. The orderings of a worker share one workspace.
     queue = sort!(collect(eachindex(graphs)); by = i -> de(graphs[i]), rev = true)
     orders = Vector{Any}(undef, length(graphs))
     next = Threads.Atomic{Int}(1)
 
     tasks = map(oneto(min(Threads.nthreads(), length(graphs)))) do _
-        return Threads.@spawn begin
+        return Threads.@spawn withworkspace() do
             while true
                 k = Threads.atomic_add!(next, 1)
                 k > length(queue) && break
@@ -1215,8 +1216,17 @@ function permutations(weights::AbstractVector, graph::AbstractGraph, algs::Tuple
         return map(alg -> permutation(weights, graph, alg; verbose), algs)
     end
 
-    tasks = map(alg -> Threads.@spawn(permutation(weights, graph, alg)), algs)
-    return map(fetchunwrap, tasks)
+    pairs = map(alg -> spawnwork(() -> permutation(weights, graph, alg)), algs)
+
+    # the type of a task's result is not inferred
+    results = map(algs, pairs) do alg, (task, child)
+        return fetchunwrap(task)::Base.promote_op(permutation, typeof(weights), typeof(graph), typeof(alg))
+    end
+
+    # give the workspaces back in reverse, so that each algorithm gets the
+    # same one next time
+    foreach(((task, child),) -> giveback!(child), reverse(pairs))
+    return results
 end
 
 # Wait for a task and rethrow its exception, if any, as it was thrown.
@@ -1942,7 +1952,12 @@ function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V)
     return alpha
 end
 
+# AMF and MMD do not modify their input
 function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    if issimplegraph(graph)
+        return amf(nv(graph), weights, pointers(graph), targets(graph); kwargs...)
+    end
+
     simple = simplegraph(graph)
     return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
@@ -1956,7 +1971,7 @@ function mlf(strategy::Integer, weights::AbstractVector, graph::AbstractGraph; k
 end
 
 function mlf(score::MLFScore, weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
-    intweights = FVector{Int}(undef, nv(graph))
+    intweights = workvector(workspace(), Int, 43, nv(graph))
 
     @inbounds for v in vertices(graph)
         intweights[v] = convert(Int, weights[v])
@@ -1969,13 +1984,18 @@ function mlf(score::MLFScore, weights::AbstractVector, graph::AbstractGraph{V}; 
     E = etype(graph)
     n = nv(graph)
     m = de(graph)
-    ptr = FVector{E}(undef, n + 1)
-    tgt = FVector{V}(undef, m + 2n)
+    ws = workspace()
+    ptr = workvector(ws, E, 41, n + 1)
+    tgt = workvector(ws, V, 2, m + 2n)
     simple = simplegraph!(ptr, tgt, graph)
     return mlf!(score, nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
 function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    if issimplegraph(graph)
+        return mmd(nv(graph), weights, pointers(graph), targets(graph); kwargs...)
+    end
+
     simple = simplegraph(graph)
     return mmd(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
@@ -2001,7 +2021,7 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
 
     # the imbalances are tried in parallel, and the results compared in order
     if length(imbalances) < 2 || de(graph) < MINPARALLEL || !isparallel(alg, false)
-        results = map(score, imbalances)
+        results = withworkspace(() -> map(score, imbalances))
     else
         results = map(fetchunwrap, map(imbalance -> Threads.@spawn(score(imbalance)), imbalances))
     end

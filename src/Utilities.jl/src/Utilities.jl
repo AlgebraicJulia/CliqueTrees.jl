@@ -19,6 +19,9 @@ export eltypedegree, de
 # printing
 export MAX_ITEMS_PRINTED, printiterator
 
+# work arrays
+export Workspace, withworkspace, workspace, workvector, spawnwork, giveback!
+
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
 
@@ -173,6 +176,99 @@ function printelements(io::IO, iterator)
             print(io, "\n ⋮")
             break
         end
+    end
+
+    return
+end
+
+# A task-local cache of work arrays, installed by `withworkspace` for the
+# duration of a call that runs many small orderings, such as a nested
+# dissection. An ordering takes its arrays when it starts and is done with
+# them when it returns, so the orderings run one after another by a task share
+# the slots; an ordering must not run another ordering while it holds slots,
+# and must not return its slots. The slots are
+#
+#   - 1: the bucket array of AMF and MMD
+#   - 2, 3: arrays as large as the graph (AMF, MMD, MF, `bestwidth`)
+#   - 4 to 12: AMF and MMD
+#   - 21 to 43: MF
+#   - 51 to 66: `bestwidth` and `bestfill`
+#
+# A task does not see the workspace of the task that spawned it; tasks spawned
+# with `spawnwork` get workspaces of their own, which are kept for later tasks.
+struct Workspace
+    slots::Vector{Any}
+    idle::Vector{Workspace}
+end
+
+function Workspace()
+    return Workspace(Any[], Workspace[])
+end
+
+const WORKSPACE = :CliqueTreesWorkspace
+
+function withworkspace(f)
+    storage = current_task().storage
+
+    if !isnothing(storage) && haskey(storage::IdDict{Any, Any}, WORKSPACE)
+        return f()
+    end
+
+    return task_local_storage(f, WORKSPACE, Workspace())
+end
+
+# the workspace of the current task, if any
+function workspace()
+    storage = current_task().storage
+    isnothing(storage) && return nothing
+    return get(storage::IdDict{Any, Any}, WORKSPACE, nothing)::Union{Nothing, Workspace}
+end
+
+# an uninitialized array of length `n`: slot `i` of the workspace, or a new
+# array if there is no workspace; a slot grows by at least a factor of two
+function workvector(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int, n::Integer) where {T}
+    n = convert(Int, n)
+
+    if isnothing(ws)
+        mem = Memory{T}(undef, n)
+    else
+        slots = ws.slots
+
+        while length(slots) < i
+            push!(slots, nothing)
+        end
+
+        mem = slots[i]
+
+        if !(mem isa Memory{T})
+            mem = slots[i] = Memory{T}(undef, n)
+        elseif length(mem) < n
+            mem = slots[i] = Memory{T}(undef, max(n, twice(length(mem))))
+        end
+    end
+
+    return view(mem::Memory{T}, oneto(n))
+end
+
+# Spawn a task that runs `f()`. If the current task has a workspace, then the
+# new task gets one too, taken from the idle workspaces of the current one;
+# the current task gives it back with `giveback!` once the new task is done.
+function spawnwork(f)
+    ws = workspace()
+
+    if isnothing(ws)
+        return Threads.@spawn(f()), nothing
+    end
+
+    child = isempty(ws.idle) ? Workspace() : pop!(ws.idle)
+    return Threads.@spawn(task_local_storage(f, WORKSPACE, child)), child
+end
+
+function giveback!(child::Union{Nothing, Workspace})
+    ws = workspace()
+
+    if !isnothing(ws) && !isnothing(child)
+        push!(ws.idle, child)
     end
 
     return

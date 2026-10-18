@@ -435,6 +435,23 @@ function simplegraph(graph)
     return simplegraph(BipartiteGraph(graph))
 end
 
+# Is `simplegraph(graph)` a copy of `graph`? Then an ordering that only reads
+# its input can skip the copy.
+function issimplegraph(graph::AbstractGraph)
+    return false
+end
+
+function issimplegraph(graph::BipartiteGraph{V, E}) where {V, E}
+    nov(graph) == nv(graph) || return false
+    @inbounds isone(pointers(graph)[begin]) || return false
+
+    @inbounds for j in vertices(graph), i in neighbors(graph, j)
+        i == j && return false
+    end
+
+    return true
+end
+
 function simplegraph(graph::AbstractGraph{V}) where {V}
     E = etype(graph)
     return simplegraph(V, E, graph)
