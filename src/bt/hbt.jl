@@ -2134,7 +2134,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
         last(bt_tab_add!(tried, S)) || continue
 
         # H + S
-        empty!(tgt); sizehint!(tgt, de(H) + length(S)^2); ptr[1] = 1
+        empty!(tgt); sizehint!(tgt, de(H) + length(S)^2; shrink = false); ptr[1] = 1
         sm = hbt_stp!(ctx)
 
         for v in S
