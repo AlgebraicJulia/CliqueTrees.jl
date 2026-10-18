@@ -1750,8 +1750,12 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = noth
     hbt_cut!(srh, st.kstall[])
     ctx = srh.ctx; g = ctx.graph; n = nv(g); sol = st.sol
     mark1 = ctx.mark1; mark2 = ctx.mark2; mark3 = ctx.mark3; queue = ctx.queue
-    srh.nstep[] += 1
-    focuses = bt_tab()
+    srh.nstep[] += 1; ntry = srh.par.ntry
+
+    # the ntry smallest focuses, a focus of a size found first before those
+    # of its size found later (as a stable sort of all of them would order
+    # them), without repeats
+    Us = Vector{Int}[]
 
     # the scope: a random PMC X and the largest component C of G - X
     p = rand(srh.rng, oneto(hbt_len(sol)))
@@ -1788,7 +1792,7 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = noth
             end
         end
 
-        if ispositive(o)
+        if ispositive(o) && ispositive(ntry)
             k = st.width[][1]; U = Int[]
 
             for q in oneto(hbt_len(side.sol))
@@ -1803,9 +1807,12 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = noth
                     mark2[y] = sy
                 end
 
+                # (a focus as large as the largest of ntry kept ones is not
+                # kept, so its search stops there)
+                bound = length(Us) < ntry ? typemax(Int) : length(last(Us))
                 empty!(U); empty!(queue); push!(queue, o); mark3[o] = sy; head = 1
 
-                while head <= length(queue)
+                while head <= length(queue) && length(U) < bound
                     u = queue[head]; head += 1
                     mark1[u] == ss && push!(U, u)
 
@@ -1820,15 +1827,15 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = noth
                     end
                 end
 
-                bt_tab_add!(focuses, sort!(U))
+                length(U) < bound || continue
+                sort!(U)
+                any(F -> F == U, Us) && continue
+                i = searchsortedlast(Us, U; by = length)
+                insert!(Us, i + 1, copy(U))
+                length(Us) > ntry && pop!(Us)
             end
         end
     end
-
-    nf = bt_tab_len(focuses)
-    list = sortperm(oneto(nf); by = f -> focuses.ptr[f + 1] - focuses.ptr[f])
-
-    Us = [collect(bt_tab_seq(focuses, list[i])) for i in oneto(min(nf, srh.par.ntry))]
 
     if isnothing(pool)
         for U in Us
