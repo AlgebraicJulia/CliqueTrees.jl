@@ -135,8 +135,8 @@ function BranchSolver(
     fill!(localid, 0)
     fill!(vstamp, 0)
 
-    @inbounds for t in targets(H)
-        deg[t] += 1
+    @inbounds for i in arcs(H)
+        deg[targets(H)[i]] += 1
     end
 
     root = 0
@@ -779,8 +779,8 @@ function branchstats(weights::AbstractVector, hypergraph::BipartiteGraph, point:
     fill!(delta, 0.0)
     fill!(closedwt, 0.0)
 
-    @inbounds for t in targets(H)
-        deg[t] += 1
+    @inbounds for i in arcs(H)
+        deg[targets(H)[i]] += 1
     end
 
     @inbounds for x in oneto(nn)
@@ -979,6 +979,7 @@ function cliques(tree::CliqueTree, label::AbstractVector{Int}, H::BipartiteGraph
     free        = FVector{Int}(undef, m)       # overallocated: |free| ≤ m
     asptr       = FVector{Int}(undef, nc + 1)
     as          = FVector{Int}(undef, m)       # overallocated: |assigned| ≤ m
+    fillp       = FVector{Int}(undef, nc + 1)  # reused fill cursor (chptr, then asptr)
 
     fill!(prnt, 0)
     fill!(cliqueof, 0)
@@ -1045,7 +1046,7 @@ function cliques(tree::CliqueTree, label::AbstractVector{Int}, H::BipartiteGraph
         chptr[i + 1] += chptr[i]
     end
 
-    fillp = copy(chptr)
+    copyto!(fillp, chptr)
 
     @inbounds for i in oneto(nc)
         p = prnt[i]
@@ -1092,7 +1093,7 @@ function cliques(tree::CliqueTree, label::AbstractVector{Int}, H::BipartiteGraph
         asptr[i + 1] += asptr[i]
     end
 
-    fillp = copy(asptr)
+    copyto!(fillp, asptr)
 
     @inbounds for e in oneto(m)
         i = owner[e]
@@ -1965,8 +1966,8 @@ function greedy_tree(
     G     = newstore(S, nw, 3)
     order = FVector{Int}(undef, k - 1)   # the k-1 internal nodes, in recompute! order
     stack = FVector{Int}(undef, nn)      # DFS scratch for recompute!
-    UA    = copy(M)
-    LG    = copy(M)
+    UA    = newstore(S, nw, k)           # live unions / legs, seeded from M
+    LG    = newstore(S, nw, k)
 
     fill!(left, 0)
     fill!(right, 0)
@@ -1975,6 +1976,8 @@ function greedy_tree(
     fill!(alive, true)
     fill!(cnt, 0)
     fill!(G, zero(UInt64))      # msetbit!/mclearbit! update zeroed words
+    copyto!(UA, M)
+    copyto!(LG, M)
 
     @inbounds for i in oneto(k)
         node[i] = i
