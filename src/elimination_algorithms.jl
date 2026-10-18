@@ -1150,7 +1150,8 @@ Construct a fill-reducing permutation of each graph in a batch, with the vertex 
 
 The graphs of a batch are independent parts of one problem, such as the components of a graph
 ([`ConnectedComponents`](@ref)) or the leaves of a safe separator decomposition
-([`SafeSeparators`](@ref)). By default, each graph is ordered by `alg` in turn, but an algorithm
+([`SafeSeparators`](@ref)). By default, each graph is ordered by `alg`, in parallel if Julia
+has more than one thread (the result does not depend on the number of threads), but an algorithm
 can order a batch as a whole: [`HBT`](@ref) spends one time budget on it.
 
 ```julia-repl
@@ -1169,8 +1170,68 @@ julia> map(length, orders)
 ```
 """
 function batch_permutation(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph}, alg::EliminationAlgorithm; verbose::Bool = false)
-    # TODO: order the graphs in parallel
-    return map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs))
+    if !isparallel(alg, verbose) || length(graphs) < 2 || sum(de, graphs) < MINPARALLEL
+        return map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs))
+    end
+
+    # the graphs are ordered by worker tasks, largest first, each worker taking
+    # the next graph when it is done with the last; the orders do not depend on
+    # the schedule
+    queue = sort!(collect(eachindex(graphs)); by = i -> de(graphs[i]), rev = true)
+    orders = Vector{Any}(undef, length(graphs))
+    next = Threads.Atomic{Int}(1)
+
+    tasks = map(oneto(min(Threads.nthreads(), length(graphs)))) do _
+        return Threads.@spawn begin
+            while true
+                k = Threads.atomic_add!(next, 1)
+                k > length(queue) && break
+                i = queue[k]
+                orders[i] = first(permutation(weights[i], graphs[i], alg))
+            end
+        end
+    end
+
+    foreach(waitunwrap, tasks)
+    return map(identity, orders)
+end
+
+# Graphs with fewer edges than this are ordered on the calling task: below
+# this size, spawning a task costs about as much as the ordering itself.
+const MINPARALLEL = 4096
+
+# Orderings run in parallel when Julia has more than one thread, unless they
+# print: verbose output and Log would interleave.
+function isparallel(alg, verbose::Bool)
+    return Threads.nthreads() > 1 && !verbose && !(alg isa Log)
+end
+
+# Compute one ordering of a graph for each algorithm in a tuple, in parallel
+# if the graph is large. The results are the same as in serial: the external
+# partitioners, whose random number generators are global, run one at a time
+# (see ext/MetisExt.jl, ext/KaHyParExt.jl, and ext/ScotchExt.jl).
+function permutations(weights::AbstractVector, graph::AbstractGraph, algs::Tuple; verbose::Bool = false)
+    if length(algs) < 2 || de(graph) < MINPARALLEL || !all(alg -> isparallel(alg, verbose), algs)
+        return map(alg -> permutation(weights, graph, alg; verbose), algs)
+    end
+
+    tasks = map(alg -> Threads.@spawn(permutation(weights, graph, alg)), algs)
+    return map(fetchunwrap, tasks)
+end
+
+# Wait for a task and rethrow its exception, if any, as it was thrown.
+function waitunwrap(task::Task)
+    fetchunwrap(task)
+    return
+end
+
+function fetchunwrap(task::Task)
+    try
+        return fetch(task)
+    catch e
+        e isa TaskFailedException && throw(task.exception)
+        rethrow()
+    end
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal; verbose::Bool = false)
@@ -1925,9 +1986,7 @@ function MDLib.md(weights::AbstractVector, graph::AbstractGraph; kwargs...)
 end
 
 function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, scale::Integer, ::Val{S}) where {S}
-    minscore = minpair = nothing
-
-    for imbalance in imbalances
+    function score(imbalance)
         curalg = ND{S}(alg, dis; width, level, imbalance, scale)
         curpair = permutation(weights, graph, curalg)
 
@@ -1937,6 +1996,19 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
             curscore = (treefill(weights, graph, curpair), treewidth(weights, graph, curpair))
         end
 
+        return curscore, curpair
+    end
+
+    # the imbalances are tried in parallel, and the results compared in order
+    if length(imbalances) < 2 || de(graph) < MINPARALLEL || !isparallel(alg, false)
+        results = map(score, imbalances)
+    else
+        results = map(fetchunwrap, map(imbalance -> Threads.@spawn(score(imbalance)), imbalances))
+    end
+
+    minscore = minpair = nothing
+
+    for (curscore, curpair) in results
         if isnothing(minscore) || curscore < minscore
             minscore, minpair = curscore, curpair
         end

@@ -2901,3 +2901,40 @@ end
         @assert M / P ≈ M / Matrix(P)
     end
 end
+
+@testset "parallel orderings" begin
+    # with more than one thread, batches, best-of tuples, and imbalance sweeps
+    # are ordered in parallel; the results must be those of the serial loops
+    graphs = [Graphs.grid([40, 40]), random_regular_graph(600, 3; rng = Xoshiro(1))]
+    weights = [rand(Xoshiro(i), (1.0, log2(3.0), 2.0), nv(g)) for (i, g) in enumerate(graphs)]
+    bw = BestWidth(MF(), MF(; strategy = 1), AMF(), MMD())
+    nds = ntuple(s -> ND(bw, METISND(; seed = s); width = 16, level = 8, scale = 100), 3)
+
+    serial = map((w, g) -> first(permutation(w, g, bw)), weights, graphs)
+    @test batch_permutation(weights, graphs, bw) == serial
+
+    for (w, g) in zip(weights, graphs)
+        pairs = map(alg -> permutation(w, g, alg), nds)
+        widths = map(pair -> treewidth(w, g, pair), pairs)
+        @test permutation(w, g, BestWidth(nds...)) == pairs[argmin(widths)]
+
+        imbalances = 100:150:400
+        pairs = map(i -> permutation(w, g, ND(bw, METISND(); width = 16, level = 8, scale = 100, imbalance = i)), imbalances)
+        scores = map(pair -> (treewidth(w, g, pair), treefill(w, g, pair)), pairs)
+        @test permutation(w, g, NDS(bw, METISND(); width = 16, level = 8, scale = 100, imbalances)) == pairs[argmin(scores)]
+    end
+
+    # an ordering must not modify its input, even for a moment: AMD used to
+    # shift the arrays of an Int32 graph in place while other orderings of a
+    # tuple read them
+    g = BipartiteGraph{Int32, Int32}(first(graphs)); w = first(weights)
+    alg = BestWidth(MF(), MMD(), CliqueTrees.AMD(), MF(; strategy = 1))
+    pair = permutation(w, g, alg)
+    @test all(==(pair), fetch.([Threads.@spawn(permutation(w, g, alg)) for _ in 1:8]))
+
+    # orderings that run concurrently get the same separators from METIS
+    w, g = first(weights), first(graphs)
+    alg = ND(bw, METISND(); width = 16, level = 8, scale = 100)
+    order = first(permutation(w, g, alg))
+    @test all(==(order), fetch.([Threads.@spawn(first(permutation(w, g, alg))) for _ in 1:4]))
+end

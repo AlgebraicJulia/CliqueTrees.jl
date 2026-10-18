@@ -3,7 +3,7 @@ module MetisExt
 using Base: oneto
 using Base.Order
 using CliqueTrees
-using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, simplegraph, compresstwins, popelements!, realize!, segmentsplit!, classify!, applymerges!, rollback!, mergesorted!, writeresidual!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!
+using CliqueTrees: EliminationAlgorithm, Parent, UnionFind, simplegraph, compresstwins, popelements!, realize!, segmentsplit!, classify!, applymerges!, rollback!, mergesorted!, writeresidual!, sympermute!_impl!, compositerotations_impl!, bestfill_impl!, bestwidth_impl!, isparallel, fetchunwrap, MINPARALLEL
 using CliqueTrees.Utilities
 using Graphs
 
@@ -21,6 +21,10 @@ const OPTION_COMPRESS = Metis.METIS_OPTION_COMPRESS + one(INT)
 const OPTION_CCORDER = Metis.METIS_OPTION_CCORDER + one(INT)
 const OPTION_PFACTOR = Metis.METIS_OPTION_PFACTOR + one(INT)
 const OPTION_UFACTOR = Metis.METIS_OPTION_UFACTOR + one(INT)
+
+# METIS keeps its random number generator in global state, so concurrent calls
+# give different results than the same calls made one at a time
+const LOCK = ReentrantLock()
 
 function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::METIS; verbose::Bool = false) where {V}
     simple = simplegraph(INT, INT, graph)
@@ -60,7 +64,7 @@ function metis(weights::Vector{INT}, graph::BipartiteGraph{INT, INT}, alg::METIS
     order = Vector{INT}(undef, n)
     index = Vector{INT}(undef, n)
 
-    Metis.@check Metis.METIS_NodeND(
+    @lock LOCK Metis.@check Metis.METIS_NodeND(
         Ref{INT}(n),
         xadj,
         adjncy,
@@ -71,6 +75,22 @@ function metis(weights::Vector{INT}, graph::BipartiteGraph{INT, INT}, alg::METIS
     )
 
     return order, index
+end
+
+# Order the graph of a branch with `alg` on another thread. The graph and its
+# weights live in arrays that the dissection reuses (`separator!` shifts them
+# in place right away), so they are copied here, before the task starts. A
+# branch is realized as the same graph when it is split and when its children
+# have returned, so the result is the one the serial code computes at the join.
+function spawngreedy(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, alg::EliminationAlgorithm)
+    weights = collect(view(weights, oneto(nv(graph))))
+    graph = copygraph(graph)
+    return Threads.@spawn permutation(weights, graph, alg)
+end
+
+function copygraph(graph::BipartiteGraph{INT, INT})
+    n = nv(graph); m = ne(graph)
+    return BipartiteGraph(n, n, m, pointers(graph)[oneto(n + one(INT))], targets(graph)[oneto(m)])
 end
 
 function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, part::AbstractVector{INT}, weights::AbstractVector{INT}, graph::BipartiteGraph{INT, INT}, imbalance::INT, alg::METISND)
@@ -97,7 +117,7 @@ function separator!(options::AbstractVector{INT}, sepsize::AbstractScalar{INT}, 
     end
 
     # construct separator
-    Metis.@check Metis.METIS_ComputeVertexSeparator(
+    @lock LOCK Metis.@check Metis.METIS_ComputeVertexSeparator(
         Ref{INT}(n),
         xadj,
         adjncy,
@@ -222,6 +242,11 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
     work15 = FVector{INT}(undef, n)
     work16 = FVector{INT}(undef, n)
 
+    # the greedy ordering of a branch, started when the branch is split (see
+    # `spawngreedy`) and compared with its dissection when its children have
+    # returned
+    greedy = Vector{Union{Nothing, Task}}(nothing, nl)
+
     level = zero(INT); nw = n; t = 0; nmrg = zero(INT); nlog = zero(INT)
     @inbounds base[begin] = one(INT)
     descend = true
@@ -288,6 +313,10 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
         isleaf = descend
 
         if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
+            if (isone(S) || istwo(S)) && m >= MINPARALLEL && isparallel(alg.alg, false)
+                greedy[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
+            end
+
             part = FVector{INT}(undef, n)
             separator!(work03, work00, part, cmpweights, cmpgraph, imbalance, alg.dis)
 
@@ -359,7 +388,12 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
 
                 if isone(S) || istwo(S)
                     sets = UnionFind(n, work03, work04, work05)
-                    grdorder, grdindex = permutation(cmpweights, cmpgraph, alg.alg)
+
+                    if isnothing(greedy[l])
+                        grdorder, grdindex = permutation(cmpweights, cmpgraph, alg.alg)
+                    else
+                        grdorder, grdindex = fetchunwrap(greedy[l]); greedy[l] = nothing
+                    end
 
                     if isone(S)
                         best = bestwidth_impl!(lower, upper, tree, sets, work07,

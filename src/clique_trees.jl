@@ -707,9 +707,7 @@ end
 function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}; verbose::Bool = false) where {W, V}
     E = etype(graph); m = de(graph); n = nv(graph)
 
-    pairs = map(algs) do alg
-        return permutation(weights, graph, alg; verbose)
-    end
+    pairs = permutations(weights, graph, algs; verbose)
 
     indices = map(pairs) do (order, index)
         return index
@@ -896,9 +894,7 @@ end
 function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTuple{<:Any, PermutationOrAlgorithm}; verbose::Bool = false) where {W, V}
     E = etype(graph); m = de(graph); n = nv(graph)
 
-    pairs = map(algs) do alg
-        return permutation(weights, graph, alg; verbose)
-    end
+    pairs = permutations(weights, graph, algs; verbose)
 
     indices = map(pairs) do (order, index)
         return index
