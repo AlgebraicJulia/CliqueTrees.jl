@@ -238,6 +238,95 @@ function hbt_add!(ctx::NamedTuple, sol::NamedTuple, X::AbstractVector{Int}, cmin
 
     push!(sol.pwgt, xw)
 
+    # Components with the same separator have the same inner components (those
+    # whose separator is not inside it, the component's own separator aside)
+    # and the same superblock, so these are found once per separator: in time
+    # about d^2 |S| + d t for d distinct separators, not t^2 |S|. (A PMC can
+    # have thousands of components, most with one of a few separators.) The
+    # lists and sums are made in the same order as one component at a time.
+    dist = Int[]; gid = Vector{Int}(undef, t); gof = Dict{Int, Int}()
+
+    @inbounds for j in oneto(t)
+        g = get!(gof, csep[j]) do
+            push!(dist, csep[j]); length(dist)
+        end
+
+        gid[j] = g
+    end
+
+    d = length(dist); isin = falses(d)
+    gptr = Vector{Int}(undef, d + 1); gtgt = Int[]
+    gm = Vector{Int}(undef, d); gsz = Vector{Int}(undef, d); gw = Vector{W}(undef, d)
+
+    @inbounds for g in oneto(d)
+        s = hbt_stp!(ctx)
+
+        for v in bt_tab_seq(seps, dist[g])
+            mark[v] = s
+        end
+
+        m = typemax(Int); sz = 0; w = zero(W)
+
+        for x in X
+            if mark[x] != s
+                m = min(m, x); sz += 1; w += wgt[x]
+            end
+        end
+
+        for h in oneto(d)
+            isin[h] = false
+            h == g && continue
+
+            for v in bt_tab_seq(seps, dist[h])
+                if mark[v] != s
+                    isin[h] = true
+                    break
+                end
+            end
+        end
+
+        gptr[g] = length(gtgt) + 1
+
+        for i in oneto(t)
+            if isin[gid[i]]
+                push!(gtgt, i)
+                m = min(m, cmin[i]); sz += csize[i]; w += cwgt[i]
+            end
+        end
+
+        gm[g] = m; gsz[g] = sz; gw[g] = w
+    end
+
+    gptr[d + 1] = length(gtgt) + 1
+
+    @inbounds for j in oneto(t)
+        g = gid[j]
+
+        for i in gptr[g]:gptr[g + 1] - 1
+            push!(sol.itgt, gtgt[i])
+        end
+
+        push!(sol.iptr, length(sol.itgt) + 1)
+        push!(sol.csub, hbt_blk!(ctx, cmin[j], csep[j], csize[j], cwgt[j]))
+        push!(sol.csup, hbt_blk!(ctx, gm[g], csep[j], gsz[g], gw[g]))
+    end
+
+    push!(sol.cfst, length(sol.csub) + 1)
+    return p
+end
+
+function hbt_add_ref!(ctx::NamedTuple, sol::NamedTuple, X::AbstractVector{Int}, cmin::AbstractVector{Int}, csize::AbstractVector{Int}, cwgt::AbstractVector, csep::AbstractVector{Int})
+    p, new = bt_tab_add!(sol.pmcs, X)
+    new || return p
+    mark = ctx.mark3; wgt = ctx.wgt; seps = ctx.seps; t = length(cmin)
+    W = eltype(wgt); xw = zero(W)
+
+    @inbounds for x in X
+        xw += wgt[x]
+    end
+
+    push!(sol.pwgt, xw)
+
     @inbounds for j in oneto(t)
         s = hbt_stp!(ctx)
 
@@ -1142,6 +1231,10 @@ function hbt_adc!(srh::NamedTuple, st::NamedTuple, L::NamedTuple, cptr::Vector{I
     ctx = srh.ctx; sol = st.sol; U = L.U; X = L.X
 
     for c in oneto(length(cptr) - 1)
+        # each PMC costs a search of the local graph, which can be most of the
+        # graph: stop at the deadline (a subset of the PMCs of a triangulation
+        # is still a set of PMCs, and the solution keeps its own)
+        hbt_expired(srh) && break
         K = view(ctgt, cptr[c]:cptr[c + 1] - 1)
 
         if !isnothing(side)
@@ -1237,8 +1330,9 @@ function hbt_tw(wgt::AbstractVector{W}, label::AbstractVector, tree) where {W}
 end
 
 # Add the maximal cliques of a minimal triangulation (its clique tree) to
-# a solution: they are PMCs.
-function hbt_cqs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
+# a solution: they are PMCs. (The reference version: one search of the whole
+# graph per clique, by hbt_add!. hbt_cqs! below gives the same solution.)
+function hbt_cqs_bfs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
     X = Int[]
 
     for clique in tree
@@ -1249,6 +1343,305 @@ function hbt_cqs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
         end
 
         hbt_add!(ctx, sol, sort!(X))
+    end
+
+    return
+end
+
+# A component of G - K, for a clique K of a clique tree: its smallest vertex m
+# and its size and weight (both over vertices of the graph), and its
+# separator N(C), as sorted positions in the elimination order.
+struct HBTComp{W}
+    m::Int
+    sz::Int
+    w::W
+    sep::Vector{Int}
+end
+
+@inline function hbt_find!(par::Vector{Int}, x::Int)
+    r = x
+
+    @inbounds while par[r] != r
+        r = par[r]
+    end
+
+    @inbounds while par[x] != r
+        y = par[x]; par[x] = r; x = y
+    end
+
+    return r
+end
+
+# Add the maximal cliques of a minimal triangulation (its clique tree) to
+# a solution: they are PMCs. hbt_add! would search the whole graph once per
+# clique to find the components of G - K; here they are found for all the
+# cliques together, in time about linear in the size of the graph and the
+# tree plus that of the output.
+#
+# Write U(j) for the vertices eliminated in the subtree of node j (a range of
+# positions, the tree being in postorder) and S(j) for its separator. Every
+# component of G - K(j) lies in one branch of the tree at j (an edge of G
+# lies in some clique, and a vertex outside K(j) in the cliques of one
+# branch only), so the components are
+#
+#   - below each child c: the components of G[U(c)], found bottom-up by a
+#     union-find over the elimination order, each with its separator (the
+#     neighbours of a class that are not yet eliminated);
+#   - above j: the components of G[P(j)], P(j) = V - U(j) - S(j), found
+#     top-down: P(j) is the union of P(p) for the parent p, of U(c) for the
+#     other children c of p, and of K(p) - S(j), and the components of the
+#     first two are joined through the vertices of the third.
+#
+# The forest is made a tree by a virtual root with an empty clique. The
+# components are added in the order of their smallest vertices, as hbt_add!
+# finds them, so the solution is the same as hbt_cqs_bfs! gives (up to the
+# rounding of component weights, which are summed in another order).
+function hbt_cqs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
+    g = ctx.graph; n = nv(g); wgt = ctx.wgt; W = eltype(wgt); nc = length(tree)
+    pos = Vector{Int}(undef, n)
+
+    @inbounds for i in oneto(n)
+        pos[label[i]] = i
+    end
+
+    # ---- bottom-up: the components of G[U(j)], for every node j
+    par = collect(oneto(n)); cm = zeros(Int, n); cs = zeros(Int, n); cw = zeros(W, n)
+    up = Vector{Set{Int}}(undef, n); sid = zeros(Int, n); alive = falses(n)
+    stk = Int[]; lo = zeros(Int, nc)
+    B = Vector{Vector{HBTComp{W}}}(undef, nc)
+
+    @inbounds for j in oneto(nc)
+        R = residual(tree, j); l = isempty(R) ? n + 1 : first(R)
+
+        for c in childindices(tree, j)
+            l = min(l, lo[c])
+        end
+
+        lo[j] = l
+
+        for v in R
+            x = label[v]; S = Set{Int}()
+
+            for y in neighbors(g, x)
+                u = pos[y]; u > v && push!(S, u)
+            end
+
+            cm[v] = x; cs[v] = 1; cw[v] = wgt[x]; up[v] = S; sid[v] = v
+            alive[v] = true; push!(stk, v)
+
+            for y in neighbors(g, x)
+                u = pos[y]; u < v || continue
+                a = hbt_find!(par, u); b = hbt_find!(par, v)
+                a == b && continue
+
+                # the larger set survives
+                length(up[a]) < length(up[b]) && ((a, b) = (b, a))
+                par[b] = a; union!(up[a], up[b]); up[b] = Set{Int}()
+                cm[a] = min(cm[a], cm[b]); cs[a] += cs[b]; cw[a] += cw[b]
+
+                if sid[b] < sid[a]
+                    alive[sid[a]] = false; sid[a] = sid[b]
+                else
+                    alive[sid[b]] = false
+                end
+            end
+
+            delete!(up[hbt_find!(par, v)], v)
+        end
+
+        # the live classes inside U(j) are those with a stack id in it; the
+        # stack is sorted by id, and the dead ones are dropped
+        i0 = length(stk) + 1
+
+        while i0 > 1 && stk[i0 - 1] >= l
+            i0 -= 1
+        end
+
+        k = i0 - 1; comps = HBTComp{W}[]
+
+        for i in i0:length(stk)
+            t = stk[i]; alive[t] || continue
+            k += 1; stk[k] = t; r = hbt_find!(par, t)
+            push!(comps, HBTComp{W}(cm[r], cs[r], cw[r], sort!(collect(up[r]))))
+        end
+
+        resize!(stk, k); B[j] = comps
+    end
+
+    # ---- top-down: the components of G[P(j)], for every node j
+    A = Vector{Vector{HBTComp{W}}}(undef, nc)
+    roots = Int[]
+
+    for j in oneto(nc)
+        isnothing(parentindex(tree, j)) && push!(roots, j)
+    end
+
+    markS = zeros(Int, n); markY = zeros(Int, n); markK = zeros(Int, n); gmark = zeros(Int, n)
+    itemof = zeros(Int, n); stamp = 0; Y = Int[]; EK = Tuple{Int, Int}[]
+    upar = Int[]; nm = Int[]; nsz = Int[]; nw = W[]; nsep = Vector{Int}[]; touched = Bool[]
+
+    # the children of node p (p = 0: the virtual root) get their sides; the
+    # nodes in reverse postorder, a parent before its children
+    @inbounds for p in Iterators.flatten((0, nc:-1:1))
+        children = p == 0 ? roots : childindices(tree, p)
+        isempty(children) && continue
+        K = p == 0 ? Int[] : collect(tree[p])
+        stamp += 1; sk = stamp
+
+        @inbounds for v in K
+            markK[v] = sk
+        end
+
+        # the edges of G inside K(p)
+        empty!(EK)
+
+        @inbounds for v in K
+            for y in neighbors(g, label[v])
+                u = pos[y]
+                (u > v && markK[u] == sk) && push!(EK, (v, u))
+            end
+        end
+
+        above = p == 0 ? HBTComp{W}[] : A[p]
+
+        @inbounds for j in children
+            stamp += 1; ss = stamp
+
+            for v in separator(tree, j)
+                markS[v] = ss
+            end
+
+            stamp += 1; sy = stamp; empty!(Y)
+
+            for v in K
+                if markS[v] != ss
+                    push!(Y, v); markY[v] = sy; itemof[v] = length(Y)
+                end
+            end
+
+            ny = length(Y)
+
+            # items: the vertices Y, then the components of the other branches
+            comps = HBTComp{W}[]
+            append!(comps, above)
+
+            for c in children
+                c == j || append!(comps, B[c])
+            end
+
+            ni = ny + length(comps)
+            resize!(upar, ni)
+
+            for i in oneto(ni)
+                upar[i] = i
+            end
+
+            for (a, b) in EK
+                if markY[a] == sy && markY[b] == sy
+                    ra = hbt_find!(upar, itemof[a]); rb = hbt_find!(upar, itemof[b])
+                    ra == rb || (upar[rb] = ra)
+                end
+            end
+
+            resize!(touched, length(comps)); out = HBTComp{W}[]
+
+            for (q, C) in enumerate(comps)
+                touched[q] = false
+
+                for s in C.sep
+                    if markS[s] != ss
+                        # s is in K(p) - S(j)
+                        markY[s] == sy || error("hbt_cqs!: a separator leaves its clique")
+                        ra = hbt_find!(upar, itemof[s]); rb = hbt_find!(upar, ny + q)
+                        ra == rb || (upar[rb] = ra)
+                        touched[q] = true
+                    end
+                end
+
+                touched[q] || push!(out, C)
+            end
+
+            # the groups through Y: aggregates indexed by root item
+            resize!(nm, ni); resize!(nsz, ni); resize!(nw, ni); resize!(nsep, ni)
+
+            for i in oneto(ny)
+                r = hbt_find!(upar, i)
+
+                if r == i
+                    nm[r] = typemax(Int); nsz[r] = 0; nw[r] = zero(W); nsep[r] = Int[]
+                end
+            end
+
+            for i in oneto(ny)
+                r = hbt_find!(upar, i); x = label[Y[i]]
+                nm[r] = min(nm[r], x); nsz[r] += 1; nw[r] += wgt[x]
+            end
+
+            base = stamp; stamp += ni
+
+            for (a, b) in EK
+                # an edge from Y to S(j) puts its end in S(j) into the separator
+                if markY[a] == sy && markS[b] == ss
+                    r = hbt_find!(upar, itemof[a])
+                    gmark[b] == base + r || (gmark[b] = base + r; push!(nsep[r], b))
+                elseif markY[b] == sy && markS[a] == ss
+                    r = hbt_find!(upar, itemof[b])
+                    gmark[a] == base + r || (gmark[a] = base + r; push!(nsep[r], a))
+                end
+            end
+
+            for (q, C) in enumerate(comps)
+                touched[q] || continue
+                r = hbt_find!(upar, ny + q)
+                nm[r] = min(nm[r], C.m); nsz[r] += C.sz; nw[r] += C.w
+
+                for s in C.sep
+                    if markS[s] == ss
+                        gmark[s] == base + r || (gmark[s] = base + r; push!(nsep[r], s))
+                    end
+                end
+            end
+
+            for i in oneto(ny)
+                hbt_find!(upar, i) == i && push!(out, HBTComp{W}(nm[i], nsz[i], nw[i], sort!(nsep[i])))
+            end
+
+            A[j] = out
+        end
+    end
+
+    # ---- add the cliques, in the order of the tree, as hbt_cqs_bfs! does
+    X = Int[]; sep = Int[]; cmin = Int[]; csize = Int[]; cwgt = W[]; csep = Int[]
+
+    @inbounds for j in oneto(nc)
+        empty!(X)
+
+        for v in tree[j]
+            push!(X, label[v])
+        end
+
+        sort!(X)
+        ispositive(bt_tab_find(sol.pmcs, X)) && continue
+        comps = copy(A[j])
+
+        for c in childindices(tree, j)
+            append!(comps, B[c])
+        end
+
+        sort!(comps; by = C -> C.m)
+        empty!(cmin); empty!(csize); empty!(cwgt); empty!(csep)
+
+        for C in comps
+            empty!(sep)
+
+            for v in C.sep
+                push!(sep, label[v])
+            end
+
+            push!(cmin, C.m); push!(csize, C.sz); push!(cwgt, C.w); push!(csep, hbt_sep!(ctx, sort!(sep)))
+        end
+
+        hbt_add!(ctx, sol, X, cmin, csize, cwgt, csep)
     end
 
     return
@@ -1741,13 +2134,17 @@ function hbtnew(weights::AbstractVector, graph::AbstractGraph;
         ninit::Integer = 10, base::Integer = 60, ntry::Integer = 50, refined::Bool = true, merge::Bool = true,
         diversify::Bool = true, dsize::Integer = typemax(Int), nsep::Integer = 4, patience::Integer = 100,
         xtime::Real = 1.0, xmin::Real = 0.05, xstep::Integer = 8, near::Integer = 3, margin::Integer = 40,
-        pexact::Real = 0.5, init = nothing, verbose::Bool = false)
+        pexact::Real = 0.5, init = nothing, deadline::Real = Inf, verbose::Bool = false)
     bgraph, wgt = hbt_graph(weights, graph); W = eltype(wgt)
     par = (; alg, ninit = Int(ninit), base = Int(base), ntry = Int(ntry), refined, merge, diversify,
         dsize = Int(dsize), nsep = Int(nsep), patience = Int(patience), xtime = Float64(xtime),
         xmin = Float64(xmin), xstep = Int(xstep), near = Int(near), margin = Int(margin), pexact = Float64(pexact), init, verbose)
     srh = hbt_srh(hbt_ctx(bgraph, wgt), Xoshiro(seed), par)
+    # the deadline (of the caller's budget) cuts the greedy starts short; the
+    # first solution is always made
+    srh.deadline[] = deadline
     hbt_ini!(srh, 0)
+    srh.deadline[] = Inf
     lbw = iszero(nv(bgraph)) ? zero(W) : convert(W, lowerbound(wgt, bgraph, lb))
     verbose && println("hbt: n = $(nv(bgraph)), initial width $(hbt_str(srh.sols[1].width[][1])) at $(round(time() - srh.t0[]; digits = 2)) s")
     return (; srh, lb = lbw)
@@ -1852,8 +2249,10 @@ function batch_permutation(weights::AbstractVector{<:AbstractVector{W}}, graphs:
             widths[i] = treewidth(weight, graph, order)
         end
 
-        for _ in oneto(ninit)
+        for k in oneto(ninit)
             widths[i] <= lowers[i] && break
+            # every graph gets one greedy ordering, the others only in time
+            k > 1 && isassigned(orders, i) && time() > dl && break
             order = hbt_grd(grd, weight, graph)
             width = treewidth(weight, graph, order)
 
@@ -1895,7 +2294,7 @@ function batch_permutation(weights::AbstractVector{<:AbstractVector{W}}, graphs:
             end
         else
             if isnothing(searches[i])
-                searches[i] = hbt_new(weight, graph, alg; lb = lowers[i], init = inits[i])
+                searches[i] = hbt_new(weight, graph, alg; lb = lowers[i], init = inits[i], deadline = dl)
             end
 
             order, _, width = hbtrun!(searches[i]; mt = dl - time(), nt = alg.threads, lb, ub)
@@ -1910,8 +2309,8 @@ function batch_permutation(weights::AbstractVector{<:AbstractVector{W}}, graphs:
 end
 
 # An anytime search with the parameters of alg.
-function hbt_new(weights::AbstractVector, graph::AbstractGraph, alg::HBT; seed::Integer = alg.seed, lb = alg.lb, init = alg.init)
-    return hbtnew(weights, graph; seed, alg = alg.alg, lb, ninit = alg.ninit,
+function hbt_new(weights::AbstractVector, graph::AbstractGraph, alg::HBT; seed::Integer = alg.seed, lb = alg.lb, init = alg.init, deadline::Real = Inf)
+    return hbtnew(weights, graph; seed, alg = alg.alg, lb, ninit = alg.ninit, deadline,
         base = alg.base, ntry = alg.ntry, refined = alg.refined, merge = alg.merge, diversify = alg.diversify,
         dsize = alg.dsize, nsep = alg.nsep, patience = alg.patience, xtime = alg.xtime, xmin = alg.xmin,
         xstep = alg.xstep, near = alg.near, margin = alg.margin, pexact = alg.pexact, init, verbose = alg.verbose)

@@ -32,6 +32,9 @@ function flowcutter(graph::AbstractGraph{V}, time::Int, seed::Int) where {V}
 
         sleep(time)
         kill(process)
+        # the solver writes its best decomposition when it is terminated: wait for it to
+        # finish writing before reading the file
+        wait(process)
         return open(io -> readeo(io, V), output)
     end
 

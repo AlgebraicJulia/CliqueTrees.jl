@@ -1,19 +1,18 @@
-function writegr(io::IO, graph::AbstractGraph)
-    m = 0
+function writegr(io::IO, graph::AbstractGraph{V}) where {V}
+    # each edge once, whether the graph stores it as one arc or as two
+    edges = Set{Tuple{V, V}}()
 
     for v in vertices(graph), w in neighbors(graph, v)
-        if v != w && (!is_directed(graph) || v < w)
-            m += 1
+        if v != w
+            push!(edges, (min(v, w), max(v, w)))
         end
     end
 
-    n = nv(graph)
+    n = nv(graph); m = length(edges)
     println(io, "p tw $n $m")
 
-    for v in vertices(graph), w in neighbors(graph, v)
-        if v != w && (!is_directed(graph) || v < w)
-            println(io, "$v $w")
-        end
+    for (v, w) in sort!(collect(edges))
+        println(io, "$v $w")
     end
 
     return
@@ -24,7 +23,7 @@ function readgr(io::IO)
 
     # remove comments
     filter!(lines) do line
-        !startswith(line, "c")
+        !startswith(line, "c") && !isempty(strip(line))
     end
 
     # parse statistics
@@ -47,8 +46,9 @@ function readgr(io::IO)
         p += 1; I[p] = j; J[p] = i
     end
     
-    V = ones(Int, 2ne)
-    return BipartiteGraph(sparse(I, J, V))
+    V = ones(Int, p)
+    # give the size explicitly: vertices numbered above the last edge may be isolated
+    return BipartiteGraph(sparse(view(I, 1:p), view(J, 1:p), V, nv, nv))
 end
 
 
