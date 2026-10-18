@@ -851,6 +851,10 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
         pool = UInt64[], lmark = zeros(Int, nu), lcomp = zeros(Int, nu),
         cmin = Int[], csize = Int[], cwgt = W[], qptr = Int[1], qtgt = Int[], csep = Int[],
         X = Int[], sep = Int[], queue = Int[],
+
+        # the components of the cliques of its triangulations, if they are
+        # found for all the cliques at once (see hbt_lfc!)
+        fast = hbt_isfast(nwrd, wgt, U, bwgt), fcl = Int[], fptr = Int[1], fmin = Int[], fsize = Int[], fwgt = W[], fsptr = Int[1], fstgt = Int[],
     )
 end
 
@@ -862,8 +866,9 @@ hbt_isnbr(L::NamedTuple, K::AbstractVector{Int}) = ispositive(bt_tab_find(L.nbrs
 # G - U[K] are the components Q of H - K, each joined with the components
 # B of G - U with ∅ ≠ N(B) - K ⊆ Q, and the components B of G - U with
 # N(B) ⊆ K. The separator of the former is N_H(Q) ∩ K = N_H(Q). Linear in
-# the size of the local graph.
-function hbt_lft!(ctx::NamedTuple, sol::NamedTuple, L::NamedTuple, K::AbstractVector{Int})
+# the size of the local graph, unless the components were found for all the
+# cliques of its triangulation at once (K is the c-th, see hbt_cls!).
+function hbt_lft!(ctx::NamedTuple, sol::NamedTuple, L::NamedTuple, c::Int, K::AbstractVector{Int})
     U = L.U; X = L.X; empty!(X)
 
     @inbounds for k in K
@@ -876,34 +881,45 @@ function hbt_lft!(ctx::NamedTuple, sol::NamedTuple, L::NamedTuple, K::AbstractVe
     lmark = L.lmark; lcomp = L.lcomp; cmin = L.cmin; csize = L.csize; cwgt = L.cwgt
     qptr = L.qptr; qtgt = L.qtgt; csep = L.csep
     empty!(cmin); empty!(csize); empty!(cwgt); resize!(qptr, 1); empty!(qtgt); empty!(csep)
-    sk = hbt_stp!(ctx)
 
-    @inbounds for k in K
-        lmark[k] = sk
-    end
+    if L.fast && ispositive(L.fcl[c])
+        # found for all the cliques at once (hbt_lfc!)
+        f = L.fcl[c]
 
-    if ispositive(L.nwrd)
-        hbt_cpb!(ctx, L, K)
+        @inbounds for i in L.fptr[f]:L.fptr[f + 1] - 1
+            push!(cmin, L.fmin[i]); push!(csize, L.fsize[i]); push!(cwgt, L.fwgt[i])
+            append!(qtgt, view(L.fstgt, L.fsptr[i]:L.fsptr[i + 1] - 1)); push!(qptr, length(qtgt) + 1)
+        end
     else
-        hbt_cpl!(ctx, L, sk)
-    end
+        sk = hbt_stp!(ctx)
 
-    # the components of G - U
-    @inbounds for b in eachindex(L.bmin)
-        nb = bt_tab_seq(L.nbrs, L.nidx[b]); q = 0
-
-        for v in nb
-            if lmark[v] != sk
-                q = lcomp[v]
-                break
-            end
+        @inbounds for k in K
+            lmark[k] = sk
         end
 
-        if iszero(q)
-            push!(cmin, L.bmin[b]); push!(csize, L.bsize[b]); push!(cwgt, L.bwgt[b])
-            append!(qtgt, nb); push!(qptr, length(qtgt) + 1)
+        if ispositive(L.nwrd)
+            hbt_cpb!(ctx, L, K)
         else
-            cmin[q] = min(cmin[q], L.bmin[b]); csize[q] += L.bsize[b]; cwgt[q] += L.bwgt[b]
+            hbt_cpl!(ctx, L, sk)
+        end
+
+        # the components of G - U
+        @inbounds for b in eachindex(L.bmin)
+            nb = bt_tab_seq(L.nbrs, L.nidx[b]); q = 0
+
+            for v in nb
+                if lmark[v] != sk
+                    q = lcomp[v]
+                    break
+                end
+            end
+
+            if iszero(q)
+                push!(cmin, L.bmin[b]); push!(csize, L.bsize[b]); push!(cwgt, L.bwgt[b])
+                append!(qtgt, nb); push!(qptr, length(qtgt) + 1)
+            else
+                cmin[q] = min(cmin[q], L.bmin[b]); csize[q] += L.bsize[b]; cwgt[q] += L.bwgt[b]
+            end
         end
     end
 
@@ -1233,9 +1249,9 @@ end
 # G - U. Returns the weight of the heaviest clique.
 function hbt_cls!(cptr::Vector{Int}, ctgt::Vector{Int}, srh::NamedTuple, L::NamedTuple, HS::AbstractGraph, order::AbstractVector, k)
     weights = L.wgt; W = eltype(weights); srh.nlocal[] += 1
-    label, tree = cliquetree(weights, HS, order); width = zero(W)
+    label, tree = cliquetree(weights, HS, order); width = zero(W); js = Int[]
 
-    for clique in tree
+    for (j, clique) in enumerate(tree)
         w = zero(W)
 
         for v in clique
@@ -1255,7 +1271,20 @@ function hbt_cls!(cptr::Vector{Int}, ctgt::Vector{Int}, srh::NamedTuple, L::Name
         if hbt_isnbr(L, K)
             resize!(ctgt, lo - 1)
         else
-            push!(cptr, length(ctgt) + 1)
+            push!(cptr, length(ctgt) + 1); push!(js, j)
+        end
+    end
+
+    # (the components of a few cliques are found faster one at a time)
+    if L.fast && length(js) >= HBT_LFC
+        for i in eachindex(js)
+            push!(L.fcl, length(L.fptr) + i - 1)
+        end
+
+        hbt_lfc!(L, label, tree, js)
+    else
+        for _ in js
+            push!(L.fcl, 0)
         end
     end
 
@@ -1288,7 +1317,7 @@ function hbt_adc!(srh::NamedTuple, st::NamedTuple, L::NamedTuple, cptr::Vector{I
             end
         end
 
-        hbt_lft!(ctx, sol, L, K)
+        hbt_lft!(ctx, sol, L, c, K)
     end
 
     return
@@ -1328,7 +1357,7 @@ function hbt_lif(srh::NamedTuple, L::NamedTuple, cptr::Vector{Int}, ctgt::Vector
 
     for c in oneto(length(cptr) - 1)
         hbt_expired(srh) && break
-        hbt_lft!(ctx, sol, L, view(ctgt, cptr[c]:cptr[c + 1] - 1))
+        hbt_lft!(ctx, sol, L, c, view(ctgt, cptr[c]:cptr[c + 1] - 1))
     end
 
     return (; sol, ctx.seps, ctx.bmin, ctx.bsep, ctx.bsize, ctx.bwgt)
@@ -1758,6 +1787,419 @@ function hbt_cqs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
         end
 
         hbt_add!(ctx, sol, X, cmin, csize, cwgt, csep)
+    end
+
+    return
+end
+
+# ---------------------------------------------------------------------------
+# Lifting all the cliques of a triangulation of a local graph at once
+# ---------------------------------------------------------------------------
+
+# A component of H⁺ - K (see hbt_lfc!): its smallest local vertex mu
+# (typemax(Int) if it has none, as the component B of G - U numbered b), its
+# smallest vertex mg in G, its size and weight in G, and its separator, as
+# sorted positions in the elimination order.
+struct HBTLComp{W}
+    mu::Int
+    mg::Int
+    b::Int
+    sz::Int
+    w::W
+    sep::Vector{Int}
+end
+
+# the fewest cliques of a triangulation whose components hbt_lfc! finds
+const HBT_LFC = 32
+
+# Whether hbt_lfc! can lift the cliques of triangulations of a local graph
+# (on U, with nwrd and the weights of the components of G - U): it is given as lists (a large one, where a search for each clique costs
+# most), and the sums of its weights do not depend on their order.
+function hbt_isfast(nwrd::Int, wgt::AbstractVector, U::AbstractVector{Int}, bwgt::AbstractVector)
+    iszero(nwrd) || return false
+    t = zero(eltype(wgt))
+
+    @inbounds for v in U
+        hbt_isexact(wgt[v]) || return false
+        t += wgt[v]
+    end
+
+    @inbounds for w in bwgt
+        hbt_isexact(w) || return false
+        t += w
+    end
+
+    return hbt_isexact(t)
+end
+
+hbt_isexact(w::Integer) = true
+hbt_isexact(w::AbstractFloat) = isinteger(w) && abs(w) < maxintfloat(typeof(w)) / 4
+hbt_isexact(w) = false
+
+# The component B of G - U numbered b, as a component of H⁺ - K for a clique
+# K that contains N(B) (hbt_lfc!).
+function hbt_lfb(L::NamedTuple, pos::Vector{Int}, b::Int)
+    W = eltype(L.bwgt); sep = [pos[x] for x in bt_tab_seq(L.nbrs, L.nidx[b])]
+    return HBTLComp{W}(typemax(Int), L.bmin[b], b, L.bsize[b], L.bwgt[b], sort!(sep; alg = QuickSort))
+end
+
+# Join the classes of the items i and v (hbt_lfc!).
+function hbt_lfj!(par::Vector{Int}, up::Vector{Set{Int}}, cmu::Vector{Int}, cmg::Vector{Int}, cb::Vector{Int}, cs::Vector{Int}, cw::Vector, tid::Vector{Int}, alive::BitVector, i::Int, v::Int)
+    a = hbt_find!(par, i); r = hbt_find!(par, v)
+    a == r && return
+
+    # the larger set survives
+    @inbounds begin
+        length(up[a]) < length(up[r]) && ((a, r) = (r, a))
+        par[r] = a; union!(up[a], up[r]); up[r] = Set{Int}()
+        cmu[a] = min(cmu[a], cmu[r]); cmg[a] = min(cmg[a], cmg[r]); cb[a] = min(cb[a], cb[r])
+        cs[a] += cs[r]; cw[a] += cw[r]
+
+        if tid[r] < tid[a]
+            alive[tid[a]] = false; tid[a] = tid[r]
+        else
+            alive[tid[r]] = false
+        end
+    end
+
+    return
+end
+
+# The components of G - U[K] for the cliques K = tree[j] (j in js) of a
+# triangulation of the local graph L, as hbt_lft! finds them one clique at a
+# time (the components Q of H - K, each joined with the components B of G - U
+# whose neighborhoods meet it, ordered by their smallest vertices, then the
+# components B with N(B) ⊆ K, in order), appended to the lists of L (fptr,
+# fmin, fsize, fwgt, fsptr, fstgt: the separators local and sorted).
+#
+# They are the components of H⁺ - K, where H⁺ is H with a vertex for every
+# component B of G - U, adjacent to N(B), and they are found for all the
+# cliques together as hbt_cqs! finds the components of G - K: B is a leaf of
+# the tree below the node where the first vertex of N(B) is eliminated (that
+# node's clique contains the clique N(B)), and is taken before the node's own
+# vertices. The weights are summed in another order than by hbt_lft!, so they
+# must sum exactly (hbt_isfast).
+function hbt_lfc!(L::NamedTuple, label::AbstractVector, tree, js::Vector{Int})
+    H = L.graph; nu = nv(H); U = L.U; wgt = L.wgt; W = eltype(wgt); nc = length(tree)
+    nb = length(L.bmin); ni = nu + nb
+    pos = Vector{Int}(undef, nu); node = Vector{Int}(undef, nu)
+
+    @inbounds for i in oneto(nu)
+        pos[label[i]] = i
+    end
+
+    @inbounds for j in oneto(nc), p in residual(tree, j)
+        node[p] = j
+    end
+
+    # the components B of G - U attached to each node (aptr, atgt), and the
+    # components whose neighborhoods contain each vertex (xptr, xtgt)
+    aptr = zeros(Int, nc + 1); xptr = zeros(Int, nu + 1); bnode = Vector{Int}(undef, nb)
+
+    # (a component with no neighbors, of a graph that is not connected, is a
+    # component of G - U[K] for every clique K, and is not attached)
+    free = Int[]
+
+    @inbounds for b in oneto(nb)
+        nbr = bt_tab_seq(L.nbrs, L.nidx[b]); p = nu + 1
+
+        for x in nbr
+            p = min(p, pos[x]); xptr[x + 1] += 1
+        end
+
+        if p > nu
+            bnode[b] = 0; push!(free, b)
+        else
+            bnode[b] = node[p]; aptr[node[p] + 1] += 1
+        end
+    end
+
+    aptr[1] = 1; xptr[1] = 1
+
+    @inbounds for j in oneto(nc)
+        aptr[j + 1] += aptr[j]
+    end
+
+    @inbounds for x in oneto(nu)
+        xptr[x + 1] += xptr[x]
+    end
+
+    atgt = Vector{Int}(undef, nb); xtgt = Vector{Int}(undef, xptr[nu + 1] - 1)
+    an = aptr[1:nc]; xn = xptr[1:nu]
+
+    @inbounds for b in oneto(nb)
+        iszero(bnode[b]) && continue
+        atgt[an[bnode[b]]] = b; an[bnode[b]] += 1
+
+        for x in bt_tab_seq(L.nbrs, L.nidx[b])
+            xtgt[xn[x]] = b; xn[x] += 1
+        end
+    end
+
+    # ---- bottom-up: the components of H⁺[U(j)], for every node j. The items
+    # are the positions 1:nu and the components nu + b; tid is the order in
+    # which they are taken (stack ids)
+    par = collect(oneto(ni)); cmu = zeros(Int, ni); cmg = zeros(Int, ni); cb = zeros(Int, ni)
+    cs = zeros(Int, ni); cw = zeros(W, ni); up = Vector{Set{Int}}(undef, ni)
+    tid = zeros(Int, ni); itm = zeros(Int, ni); alive = falses(ni)
+    stk = Int[]; lo = zeros(Int, nc); t = 0
+    B = Vector{Vector{HBTLComp{W}}}(undef, nc)
+
+    @inbounds for j in oneto(nc)
+        l = t + 1
+
+        for c in childindices(tree, j)
+            l = min(l, lo[c])
+        end
+
+        lo[j] = l
+
+        # the components attached to j: no neighbor is taken before them
+        for a in aptr[j]:aptr[j + 1] - 1
+            b = atgt[a]; i = nu + b; t += 1; tid[i] = t; itm[t] = i
+            cmu[i] = typemax(Int); cmg[i] = L.bmin[b]; cb[i] = b; cs[i] = L.bsize[b]; cw[i] = L.bwgt[b]
+            up[i] = Set{Int}(pos[x] for x in bt_tab_seq(L.nbrs, L.nidx[b]))
+            alive[t] = true; push!(stk, t)
+        end
+
+        for v in residual(tree, j)
+            x = label[v]; S = Set{Int}(); t += 1; tid[v] = t; itm[t] = v
+
+            for y in neighbors(H, x)
+                u = pos[y]; u > v && push!(S, u)
+            end
+
+            cmu[v] = x; cmg[v] = U[x]; cb[v] = typemax(Int); cs[v] = 1; cw[v] = wgt[x]; up[v] = S
+            alive[t] = true; push!(stk, t)
+
+            # the neighbors taken before v: those eliminated before it, and
+            # the components whose neighborhoods contain it
+            for y in neighbors(H, x)
+                u = pos[y]; u < v && hbt_lfj!(par, up, cmu, cmg, cb, cs, cw, tid, alive, u, v)
+            end
+
+            for k in xptr[x]:xptr[x + 1] - 1
+                hbt_lfj!(par, up, cmu, cmg, cb, cs, cw, tid, alive, nu + xtgt[k], v)
+            end
+
+            delete!(up[hbt_find!(par, v)], v)
+        end
+
+        # the live classes inside U(j) are those with a stack id in it
+        i0 = length(stk) + 1
+
+        while i0 > 1 && stk[i0 - 1] >= l
+            i0 -= 1
+        end
+
+        k = i0 - 1; comps = HBTLComp{W}[]
+
+        for i in i0:length(stk)
+            s = stk[i]; alive[s] || continue
+            k += 1; stk[k] = s; r = hbt_find!(par, itm[s])
+            push!(comps, HBTLComp{W}(cmu[r], cmg[r], cb[r], cs[r], cw[r], sort!(collect(up[r]); alg = QuickSort)))
+        end
+
+        resize!(stk, k); B[j] = comps
+    end
+
+    # ---- top-down: the components of H⁺[P(j)], P(j) = V - U(j) - S(j), for
+    # every node j: from those of its parent p, of the other branches at p,
+    # the vertices of K(p) - S(j), and the components attached to p
+    A = Vector{Vector{HBTLComp{W}}}(undef, nc); roots = Int[]
+
+    for j in oneto(nc)
+        isnothing(parentindex(tree, j)) && push!(roots, j)
+    end
+
+    markS = zeros(Int, nu); markY = zeros(Int, nu); markK = zeros(Int, nu); gmark = zeros(Int, nu)
+    itemof = zeros(Int, nu); stamp = 0; Y = Int[]; EK = Tuple{Int, Int}[]
+    upar = Int[]; nmu = Int[]; nmg = Int[]; nbb = Int[]; nsz = Int[]; nw = W[]; nsep = Vector{Int}[]
+    touched = Bool[]; isroot = Bool[]
+
+    @inbounds for p in Iterators.flatten((0, nc:-1:1))
+        children = p == 0 ? roots : childindices(tree, p)
+        isempty(children) && continue
+        K = p == 0 ? Int[] : collect(tree[p]); stamp += 1; sk = stamp
+        na = p == 0 ? 0 : aptr[p + 1] - aptr[p]
+
+        for v in K
+            markK[v] = sk
+        end
+
+        # the edges of H inside K(p)
+        empty!(EK)
+
+        for v in K, y in neighbors(H, label[v])
+            u = pos[y]
+            (u > v && markK[u] == sk) && push!(EK, (v, u))
+        end
+
+        above = p == 0 ? HBTLComp{W}[] : A[p]
+
+        for j in children
+            stamp += 1; ss = stamp
+
+            for v in separator(tree, j)
+                markS[v] = ss
+            end
+
+            stamp += 1; sy = stamp; empty!(Y)
+
+            for v in K
+                if markS[v] != ss
+                    push!(Y, v); markY[v] = sy; itemof[v] = length(Y)
+                end
+            end
+
+            # the items: the vertices Y, the components attached to p, then the
+            # components of the other branches
+            ny = length(Y); comps = HBTLComp{W}[]; append!(comps, above)
+
+            for c in children
+                c == j || append!(comps, B[c])
+            end
+
+            ni2 = ny + na + length(comps); resize!(upar, ni2)
+
+            for i in oneto(ni2)
+                upar[i] = i
+            end
+
+            for (a, b) in EK
+                if markY[a] == sy && markY[b] == sy
+                    ra = hbt_find!(upar, itemof[a]); rb = hbt_find!(upar, itemof[b])
+                    ra == rb || (upar[rb] = ra)
+                end
+            end
+
+            for e in oneto(na), x in bt_tab_seq(L.nbrs, L.nidx[atgt[aptr[p] + e - 1]])
+                s = pos[x]
+
+                if markY[s] == sy
+                    ra = hbt_find!(upar, itemof[s]); rb = hbt_find!(upar, ny + e)
+                    ra == rb || (upar[rb] = ra)
+                end
+            end
+
+            resize!(touched, length(comps)); out = HBTLComp{W}[]
+
+            for (q, C) in enumerate(comps)
+                touched[q] = false
+
+                for s in C.sep
+                    if markS[s] != ss
+                        # s is in K(p) - S(j)
+                        markY[s] == sy || error("hbt_lfc!: a separator leaves its clique")
+                        ra = hbt_find!(upar, itemof[s]); rb = hbt_find!(upar, ny + na + q)
+                        ra == rb || (upar[rb] = ra)
+                        touched[q] = true
+                    end
+                end
+
+                touched[q] || push!(out, C)
+            end
+
+            # the groups of the vertices Y and the attached components:
+            # aggregates indexed by root item
+            nyb = ny + na
+            resize!(nmu, nyb); resize!(nmg, nyb); resize!(nbb, nyb); resize!(nsz, nyb); resize!(nw, nyb)
+            resize!(nsep, nyb); resize!(isroot, nyb)
+
+            for i in oneto(nyb)
+                r = hbt_find!(upar, i)
+                r <= nyb || error("hbt_lfc!: a group without a root item")
+                isroot[i] = r == i
+
+                if r == i
+                    nmu[r] = typemax(Int); nmg[r] = typemax(Int); nbb[r] = typemax(Int); nsz[r] = 0; nw[r] = zero(W); nsep[r] = Int[]
+                end
+            end
+
+            for i in oneto(ny)
+                r = hbt_find!(upar, i); x = label[Y[i]]
+                nmu[r] = min(nmu[r], x); nmg[r] = min(nmg[r], U[x]); nsz[r] += 1; nw[r] += wgt[x]
+            end
+
+            base = stamp; stamp += nyb
+
+            for e in oneto(na)
+                b = atgt[aptr[p] + e - 1]; r = hbt_find!(upar, ny + e)
+                nmg[r] = min(nmg[r], L.bmin[b]); nbb[r] = min(nbb[r], b); nsz[r] += L.bsize[b]; nw[r] += L.bwgt[b]
+
+                for x in bt_tab_seq(L.nbrs, L.nidx[b])
+                    s = pos[x]
+
+                    if markS[s] == ss
+                        gmark[s] == base + r || (gmark[s] = base + r; push!(nsep[r], s))
+                    end
+                end
+            end
+
+            for (a, b) in EK
+                # an edge from Y to S(j) puts its end in S(j) into the separator
+                if markY[a] == sy && markS[b] == ss
+                    r = hbt_find!(upar, itemof[a])
+                    gmark[b] == base + r || (gmark[b] = base + r; push!(nsep[r], b))
+                elseif markY[b] == sy && markS[a] == ss
+                    r = hbt_find!(upar, itemof[b])
+                    gmark[a] == base + r || (gmark[a] = base + r; push!(nsep[r], a))
+                end
+            end
+
+            for (q, C) in enumerate(comps)
+                touched[q] || continue
+                r = hbt_find!(upar, ny + na + q)
+                nmu[r] = min(nmu[r], C.mu); nmg[r] = min(nmg[r], C.mg); nbb[r] = min(nbb[r], C.b)
+                nsz[r] += C.sz; nw[r] += C.w
+
+                for s in C.sep
+                    if markS[s] == ss
+                        gmark[s] == base + r || (gmark[s] = base + r; push!(nsep[r], s))
+                    end
+                end
+            end
+
+            for i in oneto(nyb)
+                isroot[i] && push!(out, HBTLComp{W}(nmu[i], nmg[i], nbb[i], nsz[i], nw[i], sort!(nsep[i]; alg = QuickSort)))
+            end
+
+            A[j] = out
+        end
+    end
+
+    # ---- the components of the cliques js, in the order of hbt_lft!
+    sep = Int[]
+
+    @inbounds for j in js
+        comps = copy(A[j])
+
+        for c in childindices(tree, j)
+            append!(comps, B[c])
+        end
+
+        for a in aptr[j]:aptr[j + 1] - 1
+            push!(comps, hbt_lfb(L, pos, atgt[a]))
+        end
+
+        for b in free
+            push!(comps, hbt_lfb(L, pos, b))
+        end
+
+        sort!(comps; by = C -> (C.mu, C.b))
+
+        for C in comps
+            empty!(sep)
+
+            for s in C.sep
+                push!(sep, label[s])
+            end
+
+            append!(L.fstgt, sort!(sep; alg = QuickSort)); push!(L.fsptr, length(L.fstgt) + 1)
+            push!(L.fmin, C.mg); push!(L.fsize, C.sz); push!(L.fwgt, C.w)
+        end
+
+        push!(L.fptr, length(L.fmin) + 1)
     end
 
     return
