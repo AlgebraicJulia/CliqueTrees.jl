@@ -20,7 +20,7 @@ export eltypedegree, de
 export MAX_ITEMS_PRINTED, printiterator
 
 # work arrays
-export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, spawnwork
+export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, worklist, spawnwork
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
@@ -196,6 +196,7 @@ end
 #   - 71 to 82: the lower bound MMW
 #   - 91 to 109: MCS-ETree (`MinimalChordal`)
 #   - 111 to 119: `cliquetree`
+#   - 121 to 155: the separator dynamic program (`sepdp`)
 #
 # A task does not see the workspace of the task that spawned it; tasks spawned
 # with `spawnwork` get workspaces of their own, from a pool shared by every
@@ -311,6 +312,25 @@ function workvector(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int, n::Integer
     end
 
     return view(mem::Memory{T}, oneto(n))
+end
+
+# an empty vector, to be grown: slot `i` of the workspace (with the room of its
+# last use), or a new vector if there is no workspace
+function worklist(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int) where {T}
+    isnothing(ws) && return T[]
+    slots = ws.slots
+
+    while length(slots) < i
+        push!(slots, nothing)
+    end
+
+    list = slots[i]
+
+    if !(list isa Vector{T})
+        list = slots[i] = T[]
+    end
+
+    return empty!(list::Vector{T})
 end
 
 # Spawn a task that runs `f()`, an ordering of `graph`, with a workspace from
