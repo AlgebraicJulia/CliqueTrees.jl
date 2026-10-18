@@ -96,16 +96,26 @@ can be divided into two categories: exact and approximate.
 
 ### Exact Algorithms
 
-Exact algorithms construct optimal clique trees. CliqueTrees.jl exports two exact algorithms.
+Exact algorithms construct optimal clique trees. CliqueTrees.jl exports three exact algorithms.
 
 - `BT`: Bouchite-Toudinca
 - `PIDBT`: positive-instance driven Bouchitte-Toudinca
+- `RTW`: contraction-recursive (Tamaki)
 
 Beware! These algorithms are solving an NP-Hard problem. Users are advised to wrap them in the
 pre-processing algorithms `SafeSeparators` and `SafeRules`.
 
 ```julia-repl
 julia> alg = SafeRules(SafeSeparators(PIDBT()));
+```
+
+Of the last two, `RTW` is usually the faster. It begins with a short run of the exhaustive search of `PIDBT`,
+which settles many graphs at once; otherwise, it improves a heuristic decomposition by recursing on contractions
+of the graph, and runs an exhaustive search only on a small contraction that certifies the optimal width. It is
+anytime: with a time limit, it returns the lightest decomposition found.
+
+```julia-repl
+julia> alg = SafeRules(SafeSeparators(RTW(; time=600.0)));
 ```
 
 If a graph is [chordal](https://en.wikipedia.org/wiki/Chordal_graph), then an optimal clique tree can be computed in

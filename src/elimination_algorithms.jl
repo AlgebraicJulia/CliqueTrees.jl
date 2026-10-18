@@ -66,9 +66,10 @@ These algorithms improve a tree decomposition for as long as they are allowed to
 
 # Exact Treewidth Algorithms
 
-| type          | name              | time  | space | package                                                                 |
-|:--------------|:------------------|:------|:------| :---------------------------------------------------------------------- |
-| [`BT`](@ref)  | Bouchitte-Todinca |       |       | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl) |
+| type          | name                  | time  | space | package                                                                 |
+|:--------------|:----------------------|:------|:------| :---------------------------------------------------------------------- |
+| [`BT`](@ref)  | Bouchitte-Todinca     |       |       | [TreeWidthSolver.jl](https://github.com/ArrogantGao/TreeWidthSolver.jl) |
+| [`RTW`](@ref) | contraction-recursive |       |       |                                                                         |
 
 The orderings computed by these algorithms induce minimum-width tree decompositions.
 
@@ -679,6 +680,76 @@ julia> treewidth(graph; alg=HBT(; time=1.0))
 end
 
 """
+    RTW{A, H, L} <: EliminationAlgorithm
+
+    RTW(; time=Inf, alg=MF(; strategy=1), hbt=HBT(; time=2.0), ticks=100, lb=MMW(), verbose=false)
+
+The contraction-recursive algorithm: an exact algorithm for treewidth that certifies its answer.
+
+Starting from a heuristic decomposition, the algorithm asks, again and again, whether the graph has a
+lighter decomposition. It answers by recursing on contractions of the graph by its edges. A contraction
+with no decomposition of the given width shows that the graph has none; otherwise, the decompositions
+of the contraction are mapped back onto the graph, where they help to build a lighter one. Only when
+every edge has been tried is a question settled by an exact search ([`PIDBT`](@ref)), on a contraction.
+
+Before the recursion, the graph gets that exact search for a tenth of the time (at most ten seconds).
+It solves many graphs at once; otherwise, the widths it rules out are a lower bound, and the recursion
+stops when it meets it.
+
+The upper bounds come from two heuristic searches. The first, [`HBT`](@ref), runs on the graph for its
+`time` to give the first decomposition, and for longer while it keeps improving, up to half the time; it
+then goes on in the background, with a quarter of the time, and the recursion moves on whenever it finds
+a lighter decomposition. The second, Tamaki's heuristic positive-instance driven search,
+runs on the contractions whose children did not give a light enough decomposition, for `ticks` steps
+for each child.
+
+A contracted vertex weighs as little as the lightest of its vertices, so that no contraction is wider
+than the graph. Vertex weights need not be integers. The algorithm is anytime: when `time` runs out, it
+returns the lightest decomposition it has found.
+
+### Parameters
+
+  - `time`: time limit in seconds (the pieces of [`SafeSeparators`](@ref) or [`ConnectedComponents`](@ref) share it)
+  - `alg`: elimination algorithm for the greedy decomposition that seeds the search (made minimal with [`MinimalChordal`](@ref))
+  - `hbt`: parameters of the first heuristic search ([`HBT`](@ref)), or `nothing` for none
+  - `ticks`: steps of heuristic search for each child of a contraction
+  - `lb`: lower bound algorithm or lower bound (the search stops when the width reaches it)
+  - `verbose`: print progress
+
+### Example
+
+```julia-repl
+julia> using CliqueTrees
+
+julia> graph = [
+           0 1 0 0 0 0 0 0
+           1 0 1 0 0 1 0 0
+           0 1 0 1 0 1 1 1
+           0 0 1 0 0 0 0 0
+           0 0 0 0 0 1 1 0
+           0 1 1 0 1 0 0 0
+           0 0 1 0 1 0 0 1
+           0 0 1 0 0 0 1 0
+       ];
+
+julia> treewidth(graph; alg=RTW(; time=1.0))
+2
+```
+
+### References
+
+  - Tamaki, Hisao. "A contraction-recursive algorithm for treewidth." *18th International Symposium on Parameterized and Exact Computation (IPEC 2023)*. 2023.
+"""
+@kwdef struct RTW{A <: PermutationOrAlgorithm, H <: Union{Nothing, HBT}, L <: WidthOrAlgorithm} <: EliminationAlgorithm
+    time::Float64 = Inf
+    alg::A = MF(; strategy = 1)
+    hbt::H = HBT(; time = 2.0)
+    ticks::Int = 100
+    lb::L = DEFAULT_LOWER_BOUND_ALGORITHM
+    verbose::Bool = false
+end
+
+"""
     MinimalChordal{A} <: EliminationAlgorithm
 
     MinimalChordal(alg::PermutationOrAlgorithm)
@@ -1140,6 +1211,73 @@ function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT;
     hbt = hbt_new(weights, graph, alg)
     order, invp, _ = hbtrun!(hbt; mt = alg.time - (time() - t0), nt = alg.threads)
     return convert(Vector{V}, order), convert(Vector{V}, invp)
+end
+
+function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::RTW; verbose::Bool = false) where {V}
+    order = only(rtw_batch([weights], [graph], alg, time() + alg.time))
+    return order, invperm(order)
+end
+
+function batch_permutation(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph}, alg::RTW; verbose::Bool = false)
+    return rtw_batch(weights, graphs, alg, time() + alg.time)
+end
+
+# A batch of graphs (see batch_permutation) is one problem whose width is
+# that of its widest graph: RTW spends one time budget, to the deadline
+# dl, on all of it. The graphs are taken by their greedy widths, widest
+# first, each with the target of the largest lower bound so far: a lower
+# bound of any graph, or the width of a graph shown optimal. A graph no
+# wider than the batch then stops at its first decomposition that meets
+# the target. The recursion works on connected graphs: a disconnected one
+# is split by ConnectedComponents, with the time that is left.
+#
+# Each graph is first given an exact search (rtw_probe, as septw) for a
+# short time (the share probe of the time left, at most RTW_PROBE_MAX
+# seconds; none if probe is zero): it solves many graphs at once that
+# the recursion takes longer to prove, and when it runs out of time, the
+# widths it ruled out raise the lower bound, and so the target of the
+# recursion, which then need not prove its last width optimal.
+function rtw_batch(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph{V}}, alg::RTW, dl::Float64, probe::Real = RTW_PROBE) where {V}
+    ngraph = length(graphs); orders = Vector{Vector{V}}(undef, ngraph)
+    iszero(ngraph) && return orders
+    items = map(i -> hbt_graph(weights[i], graphs[i]), oneto(ngraph))
+    W = mapreduce(item -> eltype(last(item)), promote_type, items)
+    lowers = W[convert(W, lowerbound(wgt, bgraph, alg.lb)) for (bgraph, wgt) in items]
+    greedy = W[treewidth(wgt, bgraph; alg = alg.alg) for (bgraph, wgt) in items]
+    lb = maximum(lowers); nt = isnothing(alg.hbt) ? 1 : alg.hbt.threads
+    par = (; alg = alg.alg, hbt = alg.hbt, ticks = alg.ticks, alg.verbose)
+
+    for i in sortperm(greedy; rev = true)
+        bgraph, wgt = items[i]
+
+        if rtw_connected(bgraph)
+            if ispositive(probe)
+                now = time(); pdl = min(dl, now + min(probe * max(zero(dl), dl - now), RTW_PROBE_MAX))
+                perm, _, k, status = rtw_probe(wgt, bgraph, lb, pdl, nt)
+                alg.verbose && println("rtw: exact search $(status == BT_FOUND ? "found width" : "lower bound") $(hbt_str(k)) in $(round(time() - now; digits = 2)) s")
+
+                if status == BT_FOUND
+                    # k is the width of the graph, or at most lb
+                    orders[i] = convert(Vector{V}, perm); lb = max(lb, k)
+                    continue
+                end
+
+                # every ordering of the graph has width at least k
+                status == BT_TIMEOUT && (lb = max(lb, k))
+            end
+
+            perm, _, k, status, _ = rtw(wgt, bgraph, lb, typemax(W), dl, nt, par)
+            orders[i] = convert(Vector{V}, perm)
+
+            # k is the width of the graph
+            status == BT_FOUND && k > lb && (lb = k)
+        else
+            left = RTW(; time = max(zero(dl), dl - time()), alg.alg, alg.hbt, alg.ticks, lb = lb, alg.verbose)
+            orders[i] = convert(Vector{V}, first(permutation(weights[i], graphs[i], ConnectedComponents(left))))
+        end
+    end
+
+    return orders
 end
 
 """
@@ -2615,6 +2753,17 @@ function Base.show(io::IO, ::MIME"text/plain", alg::HBT{A, L, I}) where {A, L, I
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
     show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     alg.init isa EliminationAlgorithm && show(IOContext(io, :indent => indent + 4), "text/plain", alg.init)
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::RTW{A, H, L}) where {A, H, L}
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "RTW{$A, $H, $L}:")
+    println(io, " "^indent * "    time: $(alg.time)")
+    println(io, " "^indent * "    ticks: $(alg.ticks)")
+    alg.alg isa EliminationAlgorithm && show(IOContext(io, :indent => indent + 4), "text/plain", alg.alg)
+    isnothing(alg.hbt) || show(IOContext(io, :indent => indent + 4), "text/plain", alg.hbt)
+    show(IOContext(io, :indent => indent + 4), "text/plain", alg.lb)
     return
 end
 

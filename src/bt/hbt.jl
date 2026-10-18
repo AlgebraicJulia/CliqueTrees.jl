@@ -41,6 +41,10 @@ end
 bt_tab_len(tab::NamedTuple) = length(tab.ptr) - 1
 bt_tab_seq(tab::NamedTuple, i::Integer) = view(tab.tgt, tab.ptr[i]:tab.ptr[i + 1] - 1)
 
+# FNV over the integers, then the finalizer of MurmurHash3 (fmix64), so
+# that every bit of the integers reaches the low bits that pick a slot:
+# multiplication carries bits only upward, and the integers can be words
+# of packed sets, whose high bits are vertices too.
 function bt_tab_hsh(x::AbstractVector{Int})
     h = 0xcbf29ce484222325
 
@@ -48,7 +52,9 @@ function bt_tab_hsh(x::AbstractVector{Int})
         h = (h ⊻ (v % UInt64)) * 0x00000100000001b3
     end
 
-    return h ⊻ (h >> 29)
+    h ⊻= h >> 33; h *= 0xff51afd7ed558ccd
+    h ⊻= h >> 33; h *= 0xc4ceb9fe1a85ec53
+    return h ⊻ (h >> 33)
 end
 
 function bt_tab_eq(tab::NamedTuple, i::Int, x::AbstractVector{Int})
@@ -1396,8 +1402,27 @@ end
 # components are added in the order of their smallest vertices, as hbt_add!
 # finds them, so the solution is the same as hbt_cqs_bfs! gives (up to the
 # rounding of component weights, which are summed in another order).
+#
+# The pass finds the components of every clique, and costs about as much
+# as a search per clique (hbt_add!): when most cliques are PMCs of the
+# solution already, as when RTW maps decompositions between contractions,
+# the new ones are added one by one, and with none, nothing is done.
 function hbt_cqs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
     g = ctx.graph; n = nv(g); wgt = ctx.wgt; W = eltype(wgt); nc = length(tree)
+    nnew = 0; X = Int[]
+
+    @inbounds for clique in tree
+        empty!(X)
+
+        for v in clique
+            push!(X, label[v])
+        end
+
+        ispositive(bt_tab_find(sol.pmcs, sort!(X))) || (nnew += 1)
+    end
+
+    iszero(nnew) && return
+    2nnew <= nc && return hbt_cqs_bfs!(ctx, sol, label, tree)
     pos = Vector{Int}(undef, n)
 
     @inbounds for i in oneto(n)
