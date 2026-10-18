@@ -392,7 +392,7 @@ function sepdp_rel(
     nvtx = nv(graph); nwrd = convert(V, bt_nwd(adj))
     wgt = FVector{W}(undef, nvtx)
     nbr = bt_mat(adj, nvtx); fill!(nbr, zero(UInt64))
-    ptr = V[one(V)]; tgt = V[]
+    ptr = V[one(V)]; tgt = V[]; sizehint!(ptr, nvtx + 1); sizehint!(tgt, de(graph))
 
     @inbounds for v in oneto(nvtx)
         u = new2old[v]; wgt[v] = weights[u]
@@ -414,7 +414,7 @@ function sepdp_rel(
     end
 
     gph = BipartiteGraph{V, V}(convert(V, nvtx), convert(V, nvtx), length(tgt), ptr, tgt)
-    sptr = V[one(V)]; stgt = V[]
+    sptr = V[one(V)]; stgt = V[]; sizehint!(sptr, nv(sep) + 1); sizehint!(stgt, pointers(sep)[nv(sep) + 1] - 1)
 
     @inbounds for s in vertices(sep)
         for x in neighbors(sep, s)

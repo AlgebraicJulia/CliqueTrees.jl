@@ -74,8 +74,14 @@ function bt_adj!(adj::AbstractMatrix{UInt64}, graph::AbstractGraph)
 end
 
 function bt_out(out::Vector{UInt64}, nvtx::V, nwrd::V) where {V}
-    nlst = convert(V, length(out) ÷ max(nwrd, one(V)))
-    lstptr = V[one(V)]; lsttgt = V[]
+    nlst = convert(V, length(out) ÷ max(nwrd, one(V))); m = 0
+
+    @inbounds for word in view(out, oneto(nlst * nwrd))
+        m += count_ones(word)
+    end
+
+    # (the lists sized in advance)
+    lstptr = Vector{V}(undef, nlst + one(V)); lsttgt = Vector{V}(undef, m); lstptr[1] = one(V); k = 0
 
     @inbounds for f in oneto(nlst)
         p = (f - one(V)) * nwrd
@@ -84,11 +90,11 @@ function bt_out(out::Vector{UInt64}, nvtx::V, nwrd::V) where {V}
             word = out[p + i]
 
             while !iszero(word)
-                push!(lsttgt, bt_vtx(V, i, word)); word &= word - one(UInt64)
+                k += 1; lsttgt[k] = bt_vtx(V, i, word); word &= word - one(UInt64)
             end
         end
 
-        push!(lstptr, convert(V, length(lsttgt)) + one(V))
+        lstptr[f + one(V)] = convert(V, k) + one(V)
     end
 
     return BipartiteGraph{V, V}(nvtx, nlst, length(lsttgt), lstptr, lsttgt)
