@@ -177,8 +177,9 @@ function hbt_ctx(graph::BipartiteGraph{Int, Int}, wgt::Vector{W}) where {W}
         gdst = Int[], gid = Int[], gsmk = Int[], gsof = Int[], gin = Bool[], gptr = Int[], gtgt = Int[],
         gm = Int[], gsz = Int[], gw = W[],
 
-        # the graphs H + S of a diversification (hbt_div)
-        hsp = Int[], hst = Int[],
+        # the graphs H + S of a diversification (hbt_div), and the relabeled
+        # graphs of the greedy triangulations (hbt_grd)
+        hsp = Int[], hst = Int[], rprm = Int[], rinv = Int[], rptr = Int[], rtgt = Int[], rwgt = W[],
     )
 end
 
@@ -1105,8 +1106,13 @@ hbt_str(k) = string(k)
 # A greedy minimal triangulation: alg on a random relabeling of the graph
 # (greedy algorithms break ties by label), then made minimal.
 function hbt_grd(srh::NamedTuple, weights::AbstractVector, graph::AbstractGraph)
-    n = nv(graph); perm = randperm(srh.rng, n); invp = invperm(perm)
-    ptr = Vector{Int}(undef, n + 1); tgt = Vector{Int}(undef, de(graph)); ptr[1] = 1
+    n = nv(graph); buf = hbt_rbuf(srh, weights)
+    perm = randperm!(srh.rng, resize!(buf.rprm, n)); invp = resize!(buf.rinv, n); pweights = resize!(buf.rwgt, n)
+    ptr = resize!(buf.rptr, n + 1); tgt = resize!(buf.rtgt, de(graph)); ptr[1] = 1
+
+    @inbounds for i in oneto(n)
+        invp[perm[i]] = i; pweights[i] = weights[perm[i]]
+    end
 
     @inbounds for i in oneto(n)
         k = ptr[i]
@@ -1119,10 +1125,13 @@ function hbt_grd(srh::NamedTuple, weights::AbstractVector, graph::AbstractGraph)
     end
 
     pgraph = BipartiteGraph{Int, Int}(n, n, ptr[n + 1] - 1, ptr, tgt)
-    order, _ = permutation(weights[perm], pgraph, srh.par.alg)
+    order, _ = permutation(pweights, pgraph, srh.par.alg)
     order, _ = permutation(weights, graph, MinimalChordal(perm[order]))
     return order
 end
+
+# The arrays of the relabeled graph: those of the context, if there is one.
+hbt_rbuf(srh::NamedTuple, weights::AbstractVector) = haskey(srh, :ctx) && eltype(srh.ctx.rwgt) === eltype(weights) ? srh.ctx : (; rprm = Int[], rinv = Int[], rptr = Int[], rtgt = Int[], rwgt = Vector{eltype(weights)}())
 
 # the reduction rules applied to local graphs (see hbt_exa)
 const HBT_RULES = 5
