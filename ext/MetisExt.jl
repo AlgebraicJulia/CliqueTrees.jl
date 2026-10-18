@@ -333,6 +333,8 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
         if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
             if (isone(S) || istwo(S)) && m >= MINPARALLEL && isparallel(alg.alg, false)
                 greedy[l], greedyws[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
+            else
+                greedy[l] = nothing; greedyws[l] = nothing
             end
 
             separator!(work03, work00, part, cmpweights, cmpgraph, imbalance, alg.dis)
@@ -366,9 +368,6 @@ function dissectsimple(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, 
             tree = Parent(n, work06)
             upper = BipartiteGraph(n, n, half(m), work09, work01)
             lower = BipartiteGraph(n, n, half(m), work10, work02)
-
-            # the type of a task's result is not inferred
-            local order::Vector{INT}, index::Vector{INT}
 
             if isleaf # leaf
                 order, index = permutation(cmpweights, cmpgraph, alg.alg)

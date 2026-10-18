@@ -644,20 +644,10 @@ function treewidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::Per
     E = etype(graph); m = half(de(graph)); n = nv(graph)
     order, index = permutation(weights, graph, alg)
 
-    lower = BipartiteGraph{V, E}(n, n, m)
-    upper = BipartiteGraph{V, E}(n, n, m)
-    tree = Parent{V}(n)
-    sets = UnionFind{V}(n)
-    
-    wwork0 = FVector{W}(undef, n)
-    wwork1 = FVector{W}(undef, n)
-    vwork0 = FVector{V}(undef, n)
-    vwork1 = FVector{V}(undef, n)
-    vwork2 = FVector{V}(undef, n)
-    vwork3 = FVector{V}(undef, n)
-    vwork4 = FVector{V}(undef, n)
-    vwork5 = FVector{V}(undef, n)
-    
+    # the work arrays are taken once the ordering is done
+    lower, upper, tree, sets, wwork0, wwork1, vwork0, vwork1, vwork2, vwork3,
+        vwork4, vwork5 = bestwork(W, V, E, n, m)
+
     width = treewidth_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
         vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, index)
 
@@ -704,8 +694,9 @@ function treewidth_impl!(
     return width
 end
 
-# the work arrays of `bestwidth` and `bestfill`, taken from slots 2, 3, and 51
-# to 66 of the workspace once the orderings are done
+# the work arrays of `treewidth`, `treefill`, `bestwidth`, and `bestfill`,
+# taken from slots 2, 3, and 51 to 66 of the workspace once the orderings are
+# done
 function bestwork(::Type{W}, ::Type{V}, ::Type{E}, n::Integer, m::Integer) where {W, V, E}
     ws = workspace(); nn = n + one(n)
     lower = BipartiteGraph{V, E}(n, n, m, workvector(ws, E, 51, nn), workvector(ws, V, 2, m))
@@ -728,7 +719,8 @@ function bestwidth(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NT
 
     # the orderings and the comparison share one workspace
     return withworkspace() do
-        pairs = permutations(weights, graph, algs; verbose)
+        isparallel(graph, algs, verbose) && return bestof(treewidth, weights, graph, algs)
+        pairs = map(alg -> permutation(weights, graph, alg; verbose), algs)
 
         indices = map(pairs) do (order, index)
             return index
@@ -841,21 +833,11 @@ end
 function treefill(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::PermutationOrAlgorithm) where {W, V}
     E = etype(graph); m = de(graph); n = nv(graph)
     order, index = permutation(weights, graph, alg)
-    
-    lower = BipartiteGraph{V, E}(n, n, m)
-    upper = BipartiteGraph{V, E}(n, n, m)
-    tree = Parent{V}(n)
-    sets = UnionFind{V}(n)
-    
-    wwork0 = FVector{W}(undef, n)
-    wwork1 = FVector{W}(undef, n)
-    vwork0 = FVector{V}(undef, n)
-    vwork1 = FVector{V}(undef, n)
-    vwork2 = FVector{V}(undef, n)
-    vwork3 = FVector{V}(undef, n)
-    vwork4 = FVector{V}(undef, n)
-    vwork5 = FVector{V}(undef, n)
-    
+
+    # the work arrays are taken once the ordering is done
+    lower, upper, tree, sets, wwork0, wwork1, vwork0, vwork1, vwork2, vwork3,
+        vwork4, vwork5 = bestwork(W, V, E, n, m)
+
     fill = treefill_impl!(lower, upper, tree, sets, wwork0, wwork1, vwork0,
         vwork1, vwork2, vwork3, vwork4, vwork5, weights, graph, index)
 
@@ -907,7 +889,8 @@ function bestfill(weights::AbstractVector{W}, graph::AbstractGraph{V}, algs::NTu
 
     # the orderings and the comparison share one workspace
     return withworkspace() do
-        pairs = permutations(weights, graph, algs; verbose)
+        isparallel(graph, algs, verbose) && return bestof(treefill, weights, graph, algs)
+        pairs = map(alg -> permutation(weights, graph, alg; verbose), algs)
 
         indices = map(pairs) do (order, index)
             return index

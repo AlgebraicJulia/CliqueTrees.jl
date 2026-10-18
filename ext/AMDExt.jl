@@ -23,7 +23,7 @@ end
 # `amd!` shifts the arrays of its graph to zero-based indices in place, and
 # back. Converting a graph whose arrays already have the right type does not
 # copy them, so a copy is made then: the caller's graph may be read by other
-# tasks in the meantime (see `permutations`).
+# tasks in the meantime (see `bestof`).
 function amd(graph::AbstractGraph{V}, alg::Union{AMD, SymAMD}) where {V}
     new = unalias(graph, BipartiteGraph{Cint, Cint}(graph))
     order = convert(Vector{V}, amd!(new, alg))
