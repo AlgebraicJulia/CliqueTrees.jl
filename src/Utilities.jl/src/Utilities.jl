@@ -20,7 +20,7 @@ export eltypedegree, de
 export MAX_ITEMS_PRINTED, printiterator
 
 # work arrays
-export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, checkout, spawnwork, giveback!
+export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, spawnwork
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
@@ -195,15 +195,22 @@ end
 #   - 51 to 66: `bestwidth` and `bestfill`
 #
 # A task does not see the workspace of the task that spawned it; tasks spawned
-# with `spawnwork` get workspaces of their own, which are kept for later tasks.
+# with `spawnwork` get workspaces of their own, from a pool shared by every
+# workspace descended from the same root (see `withworkspace`).
 struct Workspace
     slots::Vector{Any}
     hints::Vector{Int}
+    lock::ReentrantLock
     idle::Vector{Workspace}
 end
 
 function Workspace()
-    return Workspace(Any[], Int[], Workspace[])
+    return Workspace(Any[], Int[], ReentrantLock(), Workspace[])
+end
+
+# a workspace sharing the pool of `root`
+function Workspace(root::Workspace)
+    return Workspace(Any[], Int[], root.lock, root.idle)
 end
 
 const WORKSPACE = :CliqueTreesWorkspace
@@ -303,38 +310,28 @@ function workvector(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int, n::Integer
     return view(mem::Memory{T}, oneto(n))
 end
 
-# A workspace for a task that orders `graph`, taken from the idle workspaces
-# of the current task, or nothing if the current task has no workspace. The
-# current task gives it back with `giveback!` once that task is done.
-function checkout(weights::AbstractVector, graph::AbstractGraph)
-    ws = workspace()
-    isnothing(ws) && return nothing
-    child = isempty(ws.idle) ? Workspace() : pop!(ws.idle)
-    reserve!(child, weights, graph)
-    return child
-end
-
-# Spawn a task that runs `f()` with the workspace `child`.
-function spawnwork(f, child::Union{Nothing, Workspace})
-    isnothing(child) && return Threads.@spawn f()
-    return Threads.@spawn task_local_storage(f, WORKSPACE, child)
-end
-
 # Spawn a task that runs `f()`, an ordering of `graph`, with a workspace from
-# `checkout`.
+# the pool of the workspace of the current task, or with none if the current
+# task has none. The task takes the workspace when it starts and puts it back
+# when it is done, so a pool holds about as many workspaces as there were
+# tasks running at once.
 function spawnwork(f, weights::AbstractVector, graph::AbstractGraph)
-    child = checkout(weights, graph)
-    return spawnwork(f, child), child
-end
-
-function giveback!(child::Union{Nothing, Workspace})
     ws = workspace()
+    isnothing(ws) && return Threads.@spawn f()
 
-    if !isnothing(ws) && !isnothing(child)
-        push!(ws.idle, child)
+    return Threads.@spawn begin
+        child = @lock ws.lock begin
+            isempty(ws.idle) ? Workspace(ws) : pop!(ws.idle)
+        end
+
+        reserve!(child, weights, graph)
+
+        try
+            task_local_storage(f, WORKSPACE, child)
+        finally
+            @lock ws.lock push!(ws.idle, child)
+        end
     end
-
-    return
 end
 
 end

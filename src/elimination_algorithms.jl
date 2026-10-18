@@ -1253,29 +1253,30 @@ end
 # in serial: the external partitioners whose random number generators are
 # global (METIS, KaHyPar) reseed them on every call and run one at a time (see
 # ext/MetisExt.jl and ext/KaHyParExt.jl). Each task has a workspace of its
-# own (see `spawnwork`).
+# own, from one pool (see `spawnwork`).
 function bestof(score::Function, weights::AbstractVector, graph::AbstractGraph, algs::Tuple)
     P = Union{map(alg -> Base.promote_op(permutation, typeof(weights), typeof(graph), typeof(alg)), algs)...}
     S = Base.promote_op(score, typeof(weights), typeof(graph), P)
 
-    pairs = map(algs) do alg
-        return spawnwork(weights, graph) do
-            pair = permutation(weights, graph, alg)
-            score(weights, graph, pair), pair
+    results = withworkspace() do
+        tasks = map(algs) do alg
+            return spawnwork(weights, graph) do
+                pair = permutation(weights, graph, alg)
+                score(weights, graph, pair), pair
+            end
         end
+
+        return fetchall(tasks)
     end
 
     minscore = minpair = nothing
 
-    for (curscore, curpair) in fetchall(map(first, pairs))
+    for (curscore, curpair) in results
         if isnothing(minscore) || curscore < minscore
             minscore, minpair = curscore, curpair
         end
     end
 
-    # give the workspaces back in reverse, so that each algorithm gets the
-    # same one next time
-    foreach(pair -> giveback!(last(pair)), reverse(pairs))
     return minpair::P
 end
 
@@ -2078,10 +2079,8 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
         end
 
         R = Base.promote_op(score, Int)
-        pairs = map(imbalance -> spawnwork(() -> score(imbalance), weights, graph), imbalances)
-        results = map(result -> result::R, fetchall(map(first, pairs)))
-        foreach(pair -> giveback!(last(pair)), reverse(pairs))
-        return results
+        tasks = map(imbalance -> spawnwork(() -> score(imbalance), weights, graph), imbalances)
+        return map(result -> result::R, fetchall(tasks))
     end
 
     minscore = minpair = nothing

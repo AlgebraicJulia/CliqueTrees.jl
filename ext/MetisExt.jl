@@ -286,7 +286,6 @@ function dissectnode(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, IN
     # `spawngreedy`) and compared with its dissection when its children have
     # returned
     greedy = Vector{Union{Nothing, Task}}(nothing, nl)
-    greedyws = Vector{Union{Nothing, Workspace}}(nothing, nl)
 
     # the partition and dissection ordering of the current node, and scratch
     # space for sorting
@@ -372,9 +371,9 @@ function dissectnode(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, IN
 
         if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
             if (isone(S) || istwo(S)) && m >= MINPARALLEL && isparallel(alg.alg, false)
-                greedy[l], greedyws[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
+                greedy[l] = spawngreedy(cmpweights, cmpgraph, alg.alg)
             else
-                greedy[l] = nothing; greedyws[l] = nothing
+                greedy[l] = nothing
             end
 
             separator!(work03, work00, part, cmpweights, cmpgraph, imbalance, alg.dis)
@@ -465,7 +464,6 @@ function dissectnode(weights::AbstractVector{INT}, graph::BipartiteGraph{INT, IN
                         grdorder, grdindex = permutation(cmpweights, cmpgraph, alg.alg)
                     else
                         grdorder, grdindex = fetchunwrap(greedy[l]); greedy[l] = nothing
-                        giveback!(greedyws[l]); greedyws[l] = nothing
                     end
 
                     if isone(S)
@@ -595,7 +593,7 @@ function spawnsubtree(tag::AbstractScalar{Int}, stamp::AbstractVector{Int}, newi
         subelmptr[l + one(INT)] = q
     end
 
-    return Threads.@spawn begin
+    return spawnwork(subweights, subgraph) do
         segment, nres = dissectnode(subweights, subgraph, subufp, subnelm,
             subelmptr, subpinvtx, subpinlvl, subpinnext, subpinhead, level, alg)
 
@@ -605,7 +603,7 @@ function spawnsubtree(tag::AbstractScalar{Int}, stamp::AbstractVector{Int}, newi
             residual[i] = set[segment[i]]
         end
 
-        residual
+        return residual
     end
 end
 
