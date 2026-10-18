@@ -128,10 +128,16 @@ function buildtables!(
 
             if bit < b
                 tab[x + 1, j] = tab[prev, j] + wloc[bit + 1]
-                iszero(shift) && (etab[x + 1, j] = etab[prev, j] * ploc[bit + 1])
+
+                if iszero(shift)
+                    etab[x + 1, j] = etab[prev, j] * ploc[bit + 1]
+                end
             else
                 tab[x + 1, j] = tab[prev, j]
-                iszero(shift) && (etab[x + 1, j] = etab[prev, j])
+
+                if iszero(shift)
+                    etab[x + 1, j] = etab[prev, j]
+                end
             end
         end
     end
@@ -266,9 +272,18 @@ function width_dp!(
             c = max(bw[A + 1], bw[(T ⊻ A) + 1])
 
             # a step above the tc cap (given as a flops threshold) is not allowed
-            (tcf < Inf && c < best && mflopsor(tab, etab, nbytes, shift, L, A + 1, L, (T ⊻ A) + 1) > tcf) && (c = Inf)
-            c < best && (best = c)
-            (best <= wt || sub == 0) && break      # cannot get below the node itself
+            if tcf < Inf && c < best && mflopsor(tab, etab, nbytes, shift, L, A + 1, L, (T ⊻ A) + 1) > tcf
+                c = Inf
+            end
+
+            if c < best
+                best = c
+            end
+
+            if best <= wt || sub == 0      # cannot get below the node itself
+                break
+            end
+
             sub = (sub - 1) & rest
         end
 
@@ -337,7 +352,10 @@ function flops_dp!(
                 end
             end
 
-            sub == 0 && break
+            if sub == 0
+                break
+            end
+
             sub = (sub - 1) & rest
         end
 
@@ -485,7 +503,7 @@ end
 end
 
 # agglomerative binarization: repeatedly merge the best-scoring pair (P, Q hold the pair
-# scores at [c, a] and are sized to the largest merge)
+# scores at [c, a] and are sized to the largest merge). Returns the merge's tree tuple.
 function greedy_tree(
         ::Type{S},
         tab::AbstractMatrix{Float64},
@@ -536,7 +554,14 @@ function greedy_tree(
 
     @inbounds for j in 0:b - 1
         c = cnt[j + 1]
-        c >= 2 && msetbit!(G, 1, j); c >= 3 && msetbit!(G, 2, j)
+
+        if c >= 2
+            msetbit!(G, 1, j)
+        end
+
+        if c >= 3
+            msetbit!(G, 2, j)
+        end
     end
 
     @inbounds for i in oneto(k)
@@ -551,10 +576,15 @@ function greedy_tree(
         ba = 0; bc = 0; bp = Inf; bq = Inf
 
         for a in oneto(k)
-            alive[a] || continue
+            if !alive[a]
+                continue
+            end
 
             for c in a + 1:k
-                alive[c] || continue
+                if !alive[c]
+                    continue
+                end
+
                 p = P[c, a]; q = Q[c, a]
 
                 if ba == 0 || p < bp || (p == bp && q < bq)
@@ -571,7 +601,14 @@ function greedy_tree(
             while x != 0
                 j = 64 * (w - 1) + trailing_zeros(x); x &= x - 1
                 cnt[j + 1] -= 1; cj = cnt[j + 1]
-                cj < 3 && mclearbit!(G, 2, j); cj < 2 && mclearbit!(G, 1, j)
+
+                if cj < 3
+                    mclearbit!(G, 2, j)
+                end
+
+                if cj < 2
+                    mclearbit!(G, 1, j)
+                end
             end
         end
 
@@ -580,7 +617,10 @@ function greedy_tree(
         x = k + step; left[x] = node[ba]; right[x] = node[bc]; node[ba] = x
 
         for c in oneto(k)
-            (alive[c] && c != ba) || continue
+            if !(alive[c] && c != ba)
+                continue
+            end
+
             a1, c1 = minmax(ba, c)
             P[c1, a1], Q[c1, a1] = pairscore(tab, etab, nbytes, shift, G, UA, LG, ew, a1, c1, E, e, W, capped)
         end
@@ -670,16 +710,25 @@ function reconfigure!(
                 for (j, p) in enumerate(pieces)
                     if p > k
                         v = mwt(tab, nbytes, L, p)
-                        v > bv && (bv = v; best = j)
+
+                        if v > bv
+                            bv = v; best = j
+                        end
                     end
                 end
 
-                best == 0 && break
+                if best == 0
+                    break
+                end
+
                 p = pieces[best]; pieces[best] = left[p]; push!(pieces, right[p]); push!(win, p)
             end
 
             np = length(pieces)
-            np <= 2 && continue
+
+            if np <= 2
+                continue
+            end
 
             if solved[x] > 0
                 newest = 0
@@ -692,7 +741,9 @@ function reconfigure!(
                     newest = max(newest, stamp[y])
                 end
 
-                newest < solved[x] && continue          # unchanged since found optimal
+                if newest < solved[x]      # unchanged since found optimal
+                    continue
+                end
             end
 
             for (j, p) in enumerate(pieces)
@@ -739,7 +790,9 @@ function reconfigure!(
             improved = true
         end
 
-        improved || break
+        if !improved
+            break
+        end
     end
 
     return t
@@ -770,12 +823,10 @@ end
 # Legs of the items of clique i, with occurrence counts in acc and the distinct vertices in
 # touched; returns the number of items. Items: the children with a result (legs
 # rv[rs[c]:re[c]-1], counts rc) and the assigned hyperedges (their vertices held by another
-# hyperedge too, count 1).
+# hyperedge too, count 1). chg maps a clique to its children, asg to its tensors.
 function gather!(
-        chptr::AbstractVector{Int},
-        ch::AbstractVector{Int},
-        asptr::AbstractVector{Int},
-        as::AbstractVector{Int},
+        chg::BipartiteGraph,
+        asg::BipartiteGraph,
         i::Int,
         H::BipartiteGraph,
         rs::AbstractVector{Int},
@@ -790,9 +841,11 @@ function gather!(
     )
     empty!(touched); k = 0
 
-    @inbounds for p in chptr[i]:chptr[i + 1] - 1
-        c = ch[p]
-        rs[c] == 0 && continue
+    @inbounds for c in neighbors(chg, i)
+        if rs[c] == 0
+            continue
+        end
+
         k += 1
 
         for q in rs[c]:re[c] - 1
@@ -806,11 +859,13 @@ function gather!(
         end
     end
 
-    @inbounds for p in asptr[i]:asptr[i + 1] - 1
+    @inbounds for e in neighbors(asg, i)
         k += 1
 
-        for v in neighbors(H, as[p])
-            deg[v] == 1 && continue          # summed inside the tensor (cotengra: preprocessing)
+        for v in neighbors(H, e)
+            if deg[v] == 1         # summed inside the tensor (cotengra: preprocessing)
+                continue
+            end
 
             if stamp[v] != tk
                 stamp[v] = tk; acc[v] = 0; push!(touched, v)
@@ -840,10 +895,8 @@ end
 # (1 column), the global ids of the items, and the byte tables of the local weights
 function localmasks(
         ::Type{S},
-        chptr::AbstractVector{Int},
-        ch::AbstractVector{Int},
-        asptr::AbstractVector{Int},
-        as::AbstractVector{Int},
+        chg::BipartiteGraph,
+        asg::BipartiteGraph,
         i::Int,
         k::Int,
         H::BipartiteGraph,
@@ -874,9 +927,11 @@ function localmasks(
     ids = FVector{Int}(undef, k)
     j   = 0
 
-    @inbounds for p in chptr[i]:chptr[i + 1] - 1
-        c = ch[p]
-        rs[c] == 0 && continue
+    @inbounds for c in neighbors(chg, i)
+        if rs[c] == 0
+            continue
+        end
+
         j += 1
 
         for q in rs[c]:re[c] - 1
@@ -886,18 +941,22 @@ function localmasks(
         ids[j] = resnode[c]
     end
 
-    @inbounds for p in asptr[i]:asptr[i + 1] - 1
-        e = as[p]; j += 1
+    @inbounds for e in neighbors(asg, i)
+        j += 1
 
         for v in neighbors(H, e)
-            deg[v] == 1 || msetbit!(M, j, localid[v])
+            if deg[v] != 1
+                msetbit!(M, j, localid[v])
+            end
         end
 
         ids[j] = e
     end
 
     @inbounds for v in touched
-        acc[v] < deg[v] && msetbit!(E, 1, localid[v])
+        if acc[v] < deg[v]
+            msetbit!(E, 1, localid[v])
+        end
     end
 
     return M, E, ids, b, nbytes, shift
@@ -929,10 +988,8 @@ end
 # pass 1: the smallest width of clique i's merge (large merges keep their tree in cache)
 function clique_width(
         ::Type{S},
-        chptr::AbstractVector{Int},
-        ch::AbstractVector{Int},
-        asptr::AbstractVector{Int},
-        as::AbstractVector{Int},
+        chg::BipartiteGraph,
+        asg::BipartiteGraph,
         i::Int,
         k::Int,
         kexact::Int,
@@ -961,7 +1018,7 @@ function clique_width(
         P::AbstractMatrix{Float64},
         Q::AbstractMatrix{Float64},
     ) where {S <: Store}
-    M, E, ids, b, nbytes, shift = localmasks(S, chptr, ch, asptr, as, i, k, H, rs, re, rv, resnode, localid, touched, wv, acc, deg, wloc, ploc, tab, etab)
+    M, E, ids, b, nbytes, shift = localmasks(S, chg, asg, i, k, H, rs, re, rv, resnode, localid, touched, wv, acc, deg, wloc, ploc, tab, etab)
 
     if k <= kexact
         if S === FVector{UInt64}
@@ -984,10 +1041,8 @@ end
 # pass 2: the cheapest binarization of clique i's merge within width W
 function clique_build(
         ::Type{S},
-        chptr::AbstractVector{Int},
-        ch::AbstractVector{Int},
-        asptr::AbstractVector{Int},
-        as::AbstractVector{Int},
+        chg::BipartiteGraph,
+        asg::BipartiteGraph,
         i::Int,
         k::Int,
         kexact::Int,
@@ -1019,7 +1074,7 @@ function clique_build(
         P::AbstractMatrix{Float64},
         Q::AbstractMatrix{Float64},
     ) where {S <: Store}
-    M, E, ids, b, nbytes, shift = localmasks(S, chptr, ch, asptr, as, i, k, H, rs, re, rv, resnode, localid, touched, wv, acc, deg, wloc, ploc, tab, etab)
+    M, E, ids, b, nbytes, shift = localmasks(S, chg, asg, i, k, H, rs, re, rv, resnode, localid, touched, wv, acc, deg, wloc, ploc, tab, etab)
 
     if k <= kexact
         if S === FVector{UInt64}
@@ -1064,16 +1119,18 @@ end
 # global refinement: subtree reconfiguration across cliques, within width and tc caps
 # ----------------------------------------------------------------------------------------
 
-# A stoppable solver over a whole contraction tree. The tree is (par, left, right, legs,
-# root); the caps Wcap, TCcap bound every intermediate's width and every step's tc; the DP
-# scratch is reused across windows. branchrefine_step! runs one sweep, branchrefine_solve!
-# runs sweeps to a fixed point.
+# A stoppable solver over a whole contraction tree. The tree is (par, left, right), its
+# per-node legs are a mutable node->legs BipartiteGraph kept in a flat arena (legtgt
+# values, legcnt counts, legptr/leglen rows, legwt row weights) compacted each sweep; the
+# caps Wcap, TCcap bound every intermediate's width and every step's tc; the DP scratch is
+# reused across windows. branchrefine_step! runs one sweep, branchrefine_solve! runs
+# sweeps to a fixed point.
 mutable struct BranchSolver
-    # tree
+    # hypergraph and tree
+    H       ::FBipartiteGraph{Int, Int}
     par     ::FVector{Int}
     left    ::FVector{Int}
     right   ::FVector{Int}
-    legs    ::Vector{Vector{Int}}
     root    ::Int
     m       ::Int
     point   ::Int
@@ -1084,9 +1141,16 @@ mutable struct BranchSolver
     Wcap    ::Float64
     TCcap   ::Float64
     window  ::Int
+    # leg arena
+    legtgt  ::Vector{Int}      # flat index values
+    legcnt  ::Vector{Int}      # parallel occurrence counts (valid only within compactlegs!)
+    legptr  ::FVector{Int}     # row start                  (length nn)
+    leglen  ::FVector{Int}     # row length                 (length nn)
+    legwt   ::FVector{Float64} # row weight                 (length nn)
+    acc     ::FVector{Int}     # occurrence accumulator (leg rebuild)
     # sweep bookkeeping
-    nstamp  ::FVector{Int}      # when a node last changed
-    solved  ::FVector{Int}      # when the window at a node was last found optimal
+    nstamp  ::FVector{Int}     # when a node last changed
+    solved  ::FVector{Int}     # when the window at a node was last found optimal
     clock   ::Int
     # DP scratch
     wid     ::FVector{Float64}
@@ -1100,9 +1164,106 @@ mutable struct BranchSolver
     wloc    ::FVector{Float64}
     ploc    ::FVector{Float64}
     localid ::FVector{Int}
-    vstamp  ::FVector{Int}      # dedup the vertices of a window's pieces
+    vstamp  ::FVector{Int}     # dedup the vertices of a window's pieces / a leg merge
     touched ::Vector{Int}
     tick    ::Int
+end
+
+legrange(s::BranchSolver, x::Int) = s.legptr[x]:(s.legptr[x] + s.leglen[x] - 1)
+
+# leaf x's legs: the hyperedge's indices with deg > 1, counts 1
+function leafrow!(s::BranchSolver, x::Int)
+    start = length(s.legtgt) + 1
+    wt = 0.0
+
+    @inbounds for v in neighbors(s.H, x)
+        if s.deg[v] > 1
+            push!(s.legtgt, v); push!(s.legcnt, 1); wt += s.wv[v]
+        end
+    end
+
+    s.legptr[x] = start
+    s.leglen[x] = length(s.legtgt) - start + 1
+    s.legwt[x] = wt
+    return
+end
+
+# internal x's legs: merge children l, r; keep indices still open (acc < deg)
+function mergerow!(s::BranchSolver, x::Int, l::Int, r::Int)
+    s.tick += 1; tk = s.tick
+    empty!(s.touched)
+
+    @inbounds for c in (l, r), i in legrange(s, c)
+        v = s.legtgt[i]
+
+        if s.vstamp[v] != tk
+            s.vstamp[v] = tk; s.acc[v] = 0; push!(s.touched, v)
+        end
+
+        s.acc[v] += s.legcnt[i]
+    end
+
+    start = length(s.legtgt) + 1
+    wt = 0.0
+
+    @inbounds for v in s.touched
+        if s.acc[v] < s.deg[v]
+            push!(s.legtgt, v); push!(s.legcnt, s.acc[v]); wt += s.wv[v]
+        end
+    end
+
+    s.legptr[x] = start
+    s.leglen[x] = length(s.legtgt) - start + 1
+    s.legwt[x] = wt
+    return
+end
+
+# rebuild the whole arena bottom-up from the current tree (initial build + compaction)
+function compactlegs!(s::BranchSolver)
+    empty!(s.legtgt); empty!(s.legcnt)
+
+    # preorder, then reverse for children-before-parents
+    pre = Int[]; stack = Int[]
+    push!(stack, s.root)
+
+    while !isempty(stack)
+        x = pop!(stack); push!(pre, x)
+
+        if x > s.m
+            push!(stack, s.left[x]); push!(stack, s.right[x])
+        end
+    end
+
+    @inbounds for x in Iterators.reverse(pre)
+        if x <= s.m
+            leafrow!(s, x)
+        else
+            mergerow!(s, x, s.left[x], s.right[x])
+        end
+    end
+
+    return
+end
+
+# window rewrite: node y's legs read out of the DP result mask L (column col); append.
+# legcnt is not maintained here (recomputed by the next compactlegs!)
+function setrow!(s::BranchSolver, y::Int, L::Store, col::Int, nw::Int)
+    start = length(s.legtgt) + 1
+    wt = 0.0
+
+    @inbounds for i in oneto(nw)
+        word = bt_get(L, i, col)
+
+        while word != 0
+            v = s.touched[64 * (i - 1) + trailing_zeros(word) + 1]
+            push!(s.legtgt, v); wt += s.wv[v]; word &= word - 1
+        end
+    end
+
+    s.legptr[y] = start
+    s.leglen[y] = length(s.legtgt) - start + 1
+    s.legwt[y] = wt
+    return
 end
 
 function BranchSolver(
@@ -1136,7 +1297,10 @@ function BranchSolver(
 
     @inbounds for x in oneto(nn)
         p = par[x]
-        p == 0 && continue
+
+        if p == 0
+            continue
+        end
 
         if p == point
             root = x
@@ -1147,100 +1311,67 @@ function BranchSolver(
         end
     end
 
-    # legs of every node, bottom-up (contractions are numbered after their children)
-    legs = Vector{Vector{Int}}(undef, nn)
-    cnts = Vector{Vector{Int}}(undef, nn)
-    acc  = fill!(FVector{Int}(undef, n), 0)
-    st   = fill!(FVector{Int}(undef, n), 0)
-
-    @inbounds for e in oneto(m)
-        legs[e] = [v for v in neighbors(H, e) if deg[v] > 1]
-        cnts[e] = ones(Int, length(legs[e]))
-    end
-
-    @inbounds for x in m + 1:nn
-        touched = Int[]
-
-        for c in (left[x], right[x]), (v, kk) in zip(legs[c], cnts[c])
-            if st[v] != x
-                st[v] = x; acc[v] = 0; push!(touched, v)
-            end
-
-            acc[v] += kk
-        end
-
-        l = Int[]; lc = Int[]
-
-        for v in touched
-            if acc[v] < deg[v]
-                push!(l, v); push!(lc, acc[v])
-            end
-        end
-
-        legs[x] = l; cnts[x] = lc
-    end
-
     wv = FVector{Float64}(undef, n)
 
     @inbounds for v in oneto(n)
         wv[v] = weights[v]
     end
 
-    function wleg(x)
-        return sum((wv[v] for v in legs[x]); init = 0.0)
-    end
+    s = 1 << window; ncol = max(cld(n, 8), 1)
 
+    sol = BranchSolver(
+        H, par, left, right, root, m, Int(point), nn,
+        wv, deg, 0.0, 0.0, window,
+        Int[], Int[], FVector{Int}(undef, nn), FVector{Int}(undef, nn), FVector{Float64}(undef, nn),
+        fill!(FVector{Int}(undef, n), 0),
+        fill!(FVector{Int}(undef, nn), 0), fill!(FVector{Int}(undef, nn), 0), 0,
+        FVector{Float64}(undef, s), FVector{Float64}(undef, s), FVector{Float64}(undef, s), FVector{Int}(undef, s),
+        FVector{UInt64}(undef, s), FVector{UInt64}(undef, s),
+        FMatrix{Float64}(undef, 256, ncol), FMatrix{Float64}(undef, 256, ncol),
+        FVector{Float64}(undef, n), FVector{Float64}(undef, n),
+        fill!(FVector{Int}(undef, n), 0), fill!(FVector{Int}(undef, n), 0), Int[], 0,
+    )
+
+    compactlegs!(sol)      # initial legs
+
+    # caps (default: the tree's own width / tc, so neither can grow)
     if W === nothing
-        Wcap = maximum(wleg(x) for x in m + 1:nn if x != point)
+        Wcap = maximum(sol.legwt[x] for x in m + 1:nn if x != point)
     else
         Wcap = Float64(W)
     end
 
-    # tc of a contraction: the total weight of the vertices of its two children's legs
-    function tcof(x)
-        s = 0.0; tick = -x
-
-        for c in (left[x], right[x]), v in legs[c]
-            if st[v] != tick
-                st[v] = tick; s += wv[v]
-            end
-        end
-
-        return s
-    end
+    sol.Wcap = Wcap
 
     if TC === nothing
-        TCcap = maximum(tcof(x) for x in m + 1:nn if x != point)
+        tcmax = 0.0
+
+        for x in m + 1:nn
+            if x == point
+                continue
+            end
+
+            sol.tick += 1; tk = sol.tick; tcx = 0.0
+
+            for c in (left[x], right[x]), i in legrange(sol, c)
+                v = sol.legtgt[i]
+
+                if sol.vstamp[v] != tk
+                    sol.vstamp[v] = tk; tcx += wv[v]
+                end
+            end
+
+            tcmax = max(tcmax, tcx)
+        end
+
+        TCcap = tcmax
     else
         TCcap = Float64(TC)
     end
 
-    s = 1 << window; ncol = max(cld(n, 8), 1)
+    sol.TCcap = TCcap
 
-    nstamp  = fill!(FVector{Int}(undef, nn), 0)
-    solved  = fill!(FVector{Int}(undef, nn), 0)
-    clock   = 0
-    wid     = FVector{Float64}(undef, s)
-    bw      = FVector{Float64}(undef, s)
-    fl      = FVector{Float64}(undef, s)
-    split   = FVector{Int}(undef, s)
-    u1      = FVector{UInt64}(undef, s)
-    l1      = FVector{UInt64}(undef, s)
-    tab     = FMatrix{Float64}(undef, 256, ncol)
-    etab    = FMatrix{Float64}(undef, 256, ncol)
-    wloc    = FVector{Float64}(undef, n)
-    ploc    = FVector{Float64}(undef, n)
-    localid = fill!(FVector{Int}(undef, n), 0)
-    vstamp  = fill!(FVector{Int}(undef, n), 0)
-    touched = Int[]
-    tick    = 0
-
-    return BranchSolver(
-        par, left, right, legs, root, m, Int(point), nn,
-        wv, deg, Wcap, TCcap, window,
-        nstamp, solved, clock,
-        wid, bw, fl, split, u1, l1, tab, etab, wloc, ploc, localid, vstamp, touched, tick,
-    )
+    return sol
 end
 
 # one top-down sweep; returns whether any window improved
@@ -1272,17 +1403,26 @@ function branchrefine_step!(s::BranchSolver, mode::Symbol)
 
             for (j, p) in enumerate(pieces)
                 if p > m
-                    v = sum((s.wv[u] for u in s.legs[p]); init = 0.0)
-                    v > bv && (bv = v; best = j)
+                    v = s.legwt[p]
+
+                    if v > bv
+                        bv = v; best = j
+                    end
                 end
             end
 
-            best == 0 && break
+            if best == 0
+                break
+            end
+
             p = pieces[best]; pieces[best] = s.left[p]; push!(pieces, s.right[p]); push!(win, p)
         end
 
         np = length(pieces)
-        np <= 2 && continue
+
+        if np <= 2
+            continue
+        end
 
         if s.solved[x] > 0
             newest = 0
@@ -1291,13 +1431,17 @@ function branchrefine_step!(s::BranchSolver, mode::Symbol)
                 newest = max(newest, s.nstamp[y])
             end
 
-            newest < s.solved[x] && continue
+            if newest < s.solved[x]
+                continue
+            end
         end
 
         # local bits: the vertices of the pieces' legs
         s.tick += 1; tk = s.tick; touched = s.touched; empty!(touched)
 
-        for p in pieces, v in s.legs[p]
+        for p in pieces, i in legrange(s, p)
+            v = s.legtgt[i]
+
             if s.vstamp[v] != tk
                 s.vstamp[v] = tk; push!(touched, v)
             end
@@ -1319,12 +1463,16 @@ function branchrefine_step!(s::BranchSolver, mode::Symbol)
     return improved
 end
 
-# sweeps of one mode to a fixed point (or `maxsweeps`)
+# sweeps of one mode to a fixed point (or `maxsweeps`); the arena is compacted each sweep
 function branchrefine_solve!(s::BranchSolver, mode::Symbol; maxsweeps::Integer = 8)
     fill!(s.solved, 0)
 
     for _ in 1:maxsweeps
-        branchrefine_step!(s, mode) || break
+        compactlegs!(s)
+
+        if !branchrefine_step!(s, mode)
+            break
+        end
     end
 
     return s
@@ -1355,8 +1503,8 @@ function solve_window!(s::BranchSolver, ::Type{S}, x::Int, pieces::Vector{Int}, 
     end
 
     for (j, y) in enumerate(Iterators.flatten((pieces, win)))
-        for v in s.legs[y]
-            msetbit!(X, j, s.localid[v])
+        for i in legrange(s, y)
+            msetbit!(X, j, s.localid[s.legtgt[i]])
         end
     end
 
@@ -1378,10 +1526,16 @@ function solve_window!(s::BranchSolver, ::Type{S}, x::Int, pieces::Vector{Int}, 
         end
 
         bwin = width_dp!(s.wid, s.bw, U, L, s.tab, s.etab, nbytes, shift, X, X, X, np + 1, np; tcf)     # E = legs of x (column np + 1)
-        bwin < oldw - EPS || return false
+
+        if !(bwin < oldw - EPS)
+            return false
+        end
 
         c = flops_dp!(s.wid, s.fl, s.split, U, L, s.tab, s.etab, nbytes, shift, X, X, X, np + 1, np, bwin; tcf)
-        c < Inf || return false
+
+        if !(c < Inf)
+            return false
+        end
     else
         oldc = 0.0
 
@@ -1390,7 +1544,10 @@ function solve_window!(s::BranchSolver, ::Type{S}, x::Int, pieces::Vector{Int}, 
         end
 
         c = flops_dp!(s.wid, s.fl, s.split, U, L, s.tab, s.etab, nbytes, shift, X, X, X, np + 1, np, s.Wcap; tcf)
-        c < oldc * (1 - 1e-12) || return false
+
+        if !(c < oldc * (1 - 1e-12))
+            return false
+        end
     end
 
     # rebuild: x stays on top, the other window nodes are reused; legs from the DP's masks
@@ -1414,24 +1571,13 @@ function solve_window!(s::BranchSolver, ::Type{S}, x::Int, pieces::Vector{Int}, 
         s.left[y] = l; s.right[y] = r; s.par[l] = y; s.par[r] = y
 
         if y != x
-            lg = Int[]
-
-            for i in oneto(nw)
-                word = bt_get(L, i, T + 1)
-
-                while word != 0
-                    push!(lg, touched[64 * (i - 1) + trailing_zeros(word) + 1]); word &= word - 1
-                end
-            end
-
-            s.legs[y] = lg
+            setrow!(s, y, L, T + 1, nw)
         end
 
         return y
     end
 
     build(full)
-
     return true
 end
 
@@ -1458,7 +1604,10 @@ function branchrefine_parent(s::BranchSolver)
     out = fill!(FVector{Int}(undef, nn), 0)
 
     @inbounds for x in oneto(nn)
-        x == point && continue
+        if x == point
+            continue
+        end
+
         p = s.par[x]
 
         if p == point
@@ -1504,7 +1653,8 @@ function branchrefine(
 
     if widthfirst
         branchrefine_solve!(s, :width; maxsweeps)
-        s.Wcap = maximum(sum((s.wv[v] for v in s.legs[x]); init = 0.0) for x in s.m + 1:s.nn if x != s.point)
+        compactlegs!(s)
+        s.Wcap = maximum(s.legwt[x] for x in s.m + 1:s.nn if x != s.point)
     end
 
     branchrefine_solve!(s, :flops; maxsweeps)
@@ -1548,17 +1698,46 @@ function branchtree(
     @assert length(weights) == n
     @assert all(>=(0), weights) "weights must be nonnegative"
 
-    if any(iszero, weights)       # drop dimension-1 indices (they cost nothing)
-        keep = findall(!iszero, weights)
-        new = fill!(FVector{Int}(undef, n), 0)
+    anyzero = false
 
-        for (j, v) in enumerate(keep)
-            new[v] = j
+    @inbounds for v in oneto(n)
+        if iszero(weights[v])
+            anyzero = true
+        end
+    end
+
+    if anyzero       # drop dimension-1 indices (they cost nothing)
+        new = fill!(FVector{Int}(undef, n), 0)
+        nkeep = 0
+
+        @inbounds for v in oneto(n)
+            if !iszero(weights[v])
+                nkeep += 1; new[v] = nkeep
+            end
         end
 
-        H = restrict(H, new, length(keep))
-        weights = weights[keep]
-        alg isa AbstractVector && (alg = [new[v] for v in alg if new[v] > 0])
+        keptw = FVector{Float64}(undef, nkeep)
+
+        @inbounds for v in oneto(n)
+            if !iszero(new[v])
+                keptw[new[v]] = weights[v]
+            end
+        end
+
+        H = restrict(H, new, nkeep)
+        weights = keptw
+
+        if alg isa AbstractVector
+            keptalg = Int[]
+
+            for v in alg
+                if new[v] > 0
+                    push!(keptalg, new[v])
+                end
+            end
+
+            alg = keptalg
+        end
     end
 
     if iszero(nov(H))
@@ -1609,7 +1788,7 @@ function branchtree(
         label = label[perm]
     end
 
-    nc, root, chptr, ch, asptr, as, scalarroots, free = cliques(tree, label, H, Hr, point, n, m)
+    nc, root, chg, asg, scalarroots, free = cliques(tree, label, H, Hr, point, n, m)
 
     # per-vertex scratch and the output
     acc     = fill!(FVector{Int}(undef, n), 0)
@@ -1641,9 +1820,13 @@ function branchtree(
 
     @inbounds for i in oneto(nc)
         tick += 1
-        k = gather!(chptr, ch, asptr, as, i, H, rs, re, rv, rc, acc, stamp, deg, touched, tick)
+        k = gather!(chg, asg, i, H, rs, re, rv, rc, acc, stamp, deg, touched, tick)
         nitems[i] = k; bmax = max(bmax, length(touched)); kmax = max(kmax, k)
-        k == 0 && continue
+
+        if k == 0
+            continue
+        end
+
         rs[i] = length(rv) + 1; sacc = 0.0
 
         for v in touched
@@ -1654,7 +1837,11 @@ function branchtree(
         end
 
         re[i] = length(rv) + 1
-        k >= 2 && (W = max(W, sacc))
+
+        if k >= 2
+            W = max(W, sacc)
+        end
+
         tw[i] = touchedweight(wv, touched)
     end
 
@@ -1679,10 +1866,13 @@ function branchtree(
     sort!(big; by = i -> tw[i], rev = true)
 
     @inbounds for i in big
-        tw[i] <= W + EPS && break
+        if tw[i] <= W + EPS
+            break
+        end
+
         tick += 1
-        gather!(chptr, ch, asptr, as, i, H, rs, re, rv, rc, acc, stamp, deg, touched, tick)
-        wi = clique_width(storetype(touched), chptr, ch, asptr, as, i, nitems[i], kexact, window, H, rs, re, rv, resnode, cache,
+        gather!(chg, asg, i, H, rs, re, rv, rc, acc, stamp, deg, touched, tick)
+        wi = clique_width(storetype(touched), chg, asg, i, nitems[i], kexact, window, H, rs, re, rv, resnode, cache,
             localid, touched, wv, acc, deg, wloc, ploc, tab, etab, wid, bw, fl, split, u1, l1, P, Q)
         W = max(W, wi)
     end
@@ -1690,17 +1880,21 @@ function branchtree(
     # pass 2, bottom-up: the cheapest binarization of each clique within W
     @inbounds for i in oneto(nc)
         k = nitems[i]
-        k == 0 && continue
+
+        if k == 0
+            continue
+        end
+
         tick += 1
-        gather!(chptr, ch, asptr, as, i, H, rs, re, rv, rc, acc, stamp, deg, touched, tick)
+        gather!(chg, asg, i, H, rs, re, rv, rc, acc, stamp, deg, touched, tick)
 
         if k == 1
-            resnode[i] = firstitem(chptr, ch, asptr, as, i, rs, resnode)
+            resnode[i] = firstitem(chg, asg, i, rs, resnode)
         elseif k == 2
-            a, c = twoitems(chptr, ch, asptr, as, i, rs, resnode)
+            a, c = twoitems(chg, asg, i, rs, resnode)
             x = next; next += 1; parent[a] = x; parent[c] = x; resnode[i] = x
         else
-            resnode[i], next = clique_build(storetype(touched), chptr, ch, asptr, as, i, k, kexact, window, W, H, rs, re, rv, resnode, cache, parent, next,
+            resnode[i], next = clique_build(storetype(touched), chg, asg, i, k, kexact, window, W, H, rs, re, rv, resnode, cache, parent, next,
                 localid, touched, wv, acc, deg, wloc, ploc, tab, etab, wid, bw, fl, split, u1, l1, P, Q)
         end
     end
@@ -1744,7 +1938,9 @@ function scalartree(m::Int, point::Int)
     next = m + 1; s = 0
 
     for e in oneto(m)
-        e == point && continue
+        if e == point
+            continue
+        end
 
         if s == 0
             s = e
@@ -1758,40 +1954,23 @@ function scalartree(m::Int, point::Int)
     return parent
 end
 
-function firstitem(
-        chptr::AbstractVector{Int},
-        ch::AbstractVector{Int},
-        asptr::AbstractVector{Int},
-        as::AbstractVector{Int},
-        i::Int,
-        rs::AbstractVector{Int},
-        resnode::AbstractVector{Int},
-    )
-    @inbounds for p in chptr[i]:chptr[i + 1] - 1
-        c = ch[p]
-
+function firstitem(chg::BipartiteGraph, asg::BipartiteGraph, i::Int, rs::AbstractVector{Int}, resnode::AbstractVector{Int})
+    @inbounds for c in neighbors(chg, i)
         if rs[c] != 0
             return resnode[c]
         end
     end
 
-    return @inbounds as[asptr[i]]
+    return @inbounds first(neighbors(asg, i))
 end
 
-function twoitems(
-        chptr::AbstractVector{Int},
-        ch::AbstractVector{Int},
-        asptr::AbstractVector{Int},
-        as::AbstractVector{Int},
-        i::Int,
-        rs::AbstractVector{Int},
-        resnode::AbstractVector{Int},
-    )
+function twoitems(chg::BipartiteGraph, asg::BipartiteGraph, i::Int, rs::AbstractVector{Int}, resnode::AbstractVector{Int})
     a = 0
 
-    @inbounds for p in chptr[i]:chptr[i + 1] - 1
-        c = ch[p]
-        rs[c] == 0 && continue
+    @inbounds for c in neighbors(chg, i)
+        if rs[c] == 0
+            continue
+        end
 
         if a == 0
             a = resnode[c]
@@ -1800,9 +1979,7 @@ function twoitems(
         end
     end
 
-    @inbounds for p in asptr[i]:asptr[i + 1] - 1
-        e = as[p]
-
+    @inbounds for e in neighbors(asg, i)
         if a == 0
             a = e
         else
@@ -1813,10 +1990,11 @@ function twoitems(
     error("clique $i has fewer than two items")
 end
 
-# Children and assigned hyperedges of each clique, as CSRs (chptr/ch, asptr/as). The roots
-# of the other components of a forest (their results are scalars) and the hyperedges
-# without vertices are multiplied in at the end, outside the root's merge. The point is
-# assigned nowhere: the root's merge is the output.
+# Children and assigned hyperedges of each clique, as two BipartiteGraphs (chg maps a
+# clique to its children, asg to its tensors). The roots of the other components of a
+# forest (their results are scalars) and the hyperedges without vertices are multiplied in
+# at the end, outside the root's merge. The point is assigned nowhere: the root's merge
+# is the output.
 function cliques(tree::CliqueTree, label::Vector{Int}, H::BipartiteGraph, Hr::BipartiteGraph, point::Int, n::Int, m::Int)
     nc = length(tree)
 
@@ -1849,28 +2027,26 @@ function cliques(tree::CliqueTree, label::Vector{Int}, H::BipartiteGraph, Hr::Bi
     @assert prnt[root] == 0 "the point's clique is not a root"
     @assert root == nc "the root clique must come last in postorder"
 
+    # the other roots (scalar components): overallocated to nc, filled with a cursor
+    scalarroots = FVector{Int}(undef, nc)
     nscalar = 0
 
     @inbounds for i in oneto(nc)
-        (prnt[i] == 0 && i != root) && (nscalar += 1)
-    end
-
-    scalarroots = FVector{Int}(undef, nscalar)
-    j = 0
-
-    @inbounds for i in oneto(nc)
         if prnt[i] == 0 && i != root
-            j += 1; scalarroots[j] = i
+            nscalar += 1; scalarroots[nscalar] = i
         end
 
-        prnt[i] == 0 || @assert prnt[i] > i "the clique tree is not in postorder"
+        if prnt[i] != 0
+            @assert prnt[i] > i "the clique tree is not in postorder"
+        end
     end
 
-    chptr = fill!(FVector{Int}(undef, nc + 1), 0)
-    chptr[1] = 1
+    chptr = fill!(FVector{Int}(undef, nc + 1), 0); chptr[1] = 1
 
     @inbounds for i in oneto(nc)
-        prnt[i] != 0 && (chptr[prnt[i] + 1] += 1)
+        if prnt[i] != 0
+            chptr[prnt[i] + 1] += 1
+        end
     end
 
     @inbounds for i in oneto(nc)
@@ -1895,30 +2071,28 @@ function cliques(tree::CliqueTree, label::Vector{Int}, H::BipartiteGraph, Hr::Bi
         v = label[q]
 
         for e in neighbors(Hr, v)
-            (e != point && owner[e] == 0) && (owner[e] = i)
+            if e != point && owner[e] == 0
+                owner[e] = i
+            end
         end
     end
 
+    # the free hyperedges (no vertices): overallocated to m, filled with a cursor
+    free = FVector{Int}(undef, m)
     nfree = 0
 
     @inbounds for e in oneto(m)
-        (e != point && owner[e] == 0) && (nfree += 1)
-    end
-
-    free = FVector{Int}(undef, nfree)
-    j = 0
-
-    @inbounds for e in oneto(m)
         if e != point && owner[e] == 0
-            j += 1; free[j] = e
+            nfree += 1; free[nfree] = e
         end
     end
 
-    asptr = fill!(FVector{Int}(undef, nc + 1), 0)
-    asptr[1] = 1
+    asptr = fill!(FVector{Int}(undef, nc + 1), 0); asptr[1] = 1
 
     @inbounds for e in oneto(m)
-        owner[e] != 0 && (asptr[owner[e] + 1] += 1)
+        if owner[e] != 0
+            asptr[owner[e] + 1] += 1
+        end
     end
 
     @inbounds for i in oneto(nc)
@@ -1936,7 +2110,12 @@ function cliques(tree::CliqueTree, label::Vector{Int}, H::BipartiteGraph, Hr::Bi
         end
     end
 
-    return nc, root, chptr, ch, asptr, as, scalarroots, free
+    # the two CSRs as graphs: chg clique -> children, asg clique -> tensors
+    chg = BipartiteGraph{Int, Int}(nc, nc, chptr[nc + 1] - 1, chptr, ch)
+    asg = BipartiteGraph{Int, Int}(m, nc, asptr[nc + 1] - 1, asptr, as)
+
+    # the scalar/free lists are returned as views of their overallocated buffers
+    return nc, root, chg, asg, view(scalarroots, oneto(nscalar)), view(free, oneto(nfree))
 end
 
 # a copy of the hypergraph without repeated vertices in a hyperedge
@@ -1986,7 +2165,9 @@ function restrict(H::BipartiteGraph, new::AbstractVector{Int}, n2::Int)
         c = 0
 
         for v in neighbors(H, e)
-            ispositive(new[v]) && (c += 1)
+            if ispositive(new[v])
+                c += 1
+            end
         end
 
         ptr[e + 1] = ptr[e] + c
@@ -2015,12 +2196,16 @@ end
     branchstats(weights, hypergraph, point, parent) -> (; width, peak, cost)
 
 Width, contraction complexity and log2 of the total cost of any contraction tree given as
-a parent vector (see the module docstring for the definitions).
+a parent vector (see the module docstring for the definitions). Computed in one pass by
+the Gilbert-Ng-Peyton column-count scheme (union-find for the LCAs), with no leg sets:
+`cross[x] = w(legs[x])` from deltas (+w(v) at each occurrence, -w(v) at each
+consecutive-pair LCA, -w(v) at L(v) = LCA of v's occurrences), and
+`tc[x] = cross[x] + closedwt[x]` where `closedwt[x] = w(indices whose LCA is x)`.
 """
 function branchstats(weights::AbstractVector, hypergraph::BipartiteGraph, point::Integer, parent::AbstractVector{<:Integer})
     H = simplehypergraph(hypergraph)
-    m = nv(H); n = nov(H)
-    nn = length(parent); @assert nn == 2m - 2
+    m = nv(H); n = nov(H); nn = length(parent)
+    @assert nn == 2m - 2
 
     deg = fill!(FVector{Int}(undef, n), 0)
 
@@ -2028,61 +2213,138 @@ function branchstats(weights::AbstractVector, hypergraph::BipartiteGraph, point:
         deg[t] += 1
     end
 
-    kids = [Int[] for _ in 1:nn]
+    par   = FVector{Int}(undef, nn)
+    left  = fill!(FVector{Int}(undef, nn), 0)
+    right = fill!(FVector{Int}(undef, nn), 0)
 
     @inbounds for x in oneto(nn)
-        parent[x] == 0 || push!(kids[parent[x]], x)
+        par[x] = parent[x]
     end
 
-    @assert parent[point] == 0 && length(kids[point]) == 1
+    @inbounds for x in oneto(nn)
+        p = par[x]
 
-    legs = Vector{Vector{Int}}(undef, nn)
-    cnts = Vector{Vector{Int}}(undef, nn)
+        if p == 0
+            continue
+        end
 
-    @inbounds for e in oneto(m)
-        legs[e] = [v for v in neighbors(H, e) if deg[v] > 1]
-        cnts[e] = ones(Int, length(legs[e]))
+        if left[p] == 0
+            left[p] = x
+        else
+            right[p] = x
+        end
     end
 
-    acc   = fill!(FVector{Int}(undef, n), 0)
-    stamp = fill!(FVector{Int}(undef, n), 0)
-    width = 0.0; tc = 0.0; costs = Float64[]
+    @assert par[point] == 0 && left[point] != 0 && right[point] == 0 "the point must have exactly one child"
+
+    # preorder from the point; preidx[x] = preorder position (ancestors come earlier)
+    pre = FVector{Int}(undef, nn)
+    preidx = fill!(FVector{Int}(undef, nn), 0)
+    stack = fill!(FVector{Int}(undef, nn), 0)
+    npre = 0; sp = 1; stack[1] = point
+
+    @inbounds while sp > 0
+        x = stack[sp]; sp -= 1
+        npre += 1; pre[npre] = x; preidx[x] = npre
+
+        if left[x] != 0
+            sp += 1; stack[sp] = left[x]
+        end
+
+        if right[x] != 0
+            sp += 1; stack[sp] = right[x]
+        end
+    end
+
+    # union-find (each node under its parent as it finishes, so find gives the LCA node)
+    uf = FVector{Int}(undef, nn)
+
+    @inbounds for x in oneto(nn)
+        uf[x] = x
+    end
+
+    function find(x)
+        @inbounds while uf[x] != x
+            uf[x] = uf[uf[x]]; x = uf[x]
+        end
+
+        return x
+    end
+
+    prev     = fill!(FVector{Int}(undef, n), 0)
+    Lv       = fill!(FVector{Int}(undef, n), 0)
+    delta    = fill!(FVector{Float64}(undef, nn), 0.0)
+    closedwt = fill!(FVector{Float64}(undef, nn), 0.0)
+
+    # single pass in children-before-parents order (reverse of preorder)
+    @inbounds for p in nn:-1:1
+        x = pre[p]
+
+        if x <= m
+            for v in neighbors(H, x)
+                if deg[v] <= 1
+                    continue
+                end
+
+                delta[x] += weights[v]
+
+                if prev[v] != 0
+                    q = find(prev[v])
+                    delta[q] -= weights[v]
+
+                    if Lv[v] == 0 || preidx[q] < preidx[Lv[v]]
+                        Lv[v] = q
+                    end
+                end
+
+                prev[v] = x
+            end
+        end
+
+        if par[x] != 0
+            uf[x] = par[x]
+        end
+    end
+
+    @inbounds for v in oneto(n)
+        if deg[v] > 1 && prev[v] != 0
+            delta[Lv[v]] -= weights[v]
+            closedwt[Lv[v]] += weights[v]
+        end
+    end
+
+    # cross[x] = subtree sum of delta (children before parents = reverse preorder)
+    cross = delta
+
+    @inbounds for p in nn:-1:1
+        x = pre[p]
+
+        if par[x] != 0
+            cross[par[x]] += cross[x]
+        end
+    end
+
+    width = 0.0; peak = 0.0; mx = -Inf
 
     @inbounds for x in m + 1:nn
-        @assert length(kids[x]) == 2 "node $x is not binary"
-        touched = Int[]
-
-        for c in kids[x], (v, k) in zip(legs[c], cnts[c])
-            if stamp[v] != x
-                stamp[v] = x; acc[v] = 0; push!(touched, v)
-            end
-
-            acc[v] += k
-        end
-
-        l = Int[]; lc = Int[]
-
-        for v in touched
-            if acc[v] < deg[v]
-                push!(l, v); push!(lc, acc[v])
-            end
-        end
-
-        legs[x] = l; cnts[x] = lc
-        involved = sum(weights[v] for v in touched; init = 0.0)
-        width = max(width, sum(weights[v] for v in l; init = 0.0))
-        tc = max(tc, involved); push!(costs, involved)
+        @assert left[x] != 0 && right[x] != 0 "node $x is not binary"
+        tc = cross[x] + closedwt[x]
+        width = max(width, cross[x])
+        peak = max(peak, tc)
+        mx = max(mx, tc)
     end
 
-    if isempty(costs)
-        mx = 0.0
-        log2cost = -Inf
-    else
-        mx = maximum(costs)
-        log2cost = mx + log2(sum(exp2(c - mx) for c in costs))
+    if isinf(mx)
+        return (; width, peak, cost = -Inf)
     end
 
-    return (; width, peak = tc, cost = log2cost)
+    total = 0.0
+
+    @inbounds for x in m + 1:nn
+        total += exp2((cross[x] + closedwt[x]) - mx)
+    end
+
+    return (; width, peak, cost = mx + log2(total))
 end
 
 """
@@ -2098,7 +2360,10 @@ function branchssa(parent::AbstractVector{<:Integer}, point::Integer)
     t = 0
 
     for e in oneto(m)
-        e == point && continue
+        if e == point
+            continue
+        end
+
         id[e] = t; t += 1
     end
 
@@ -2106,16 +2371,27 @@ function branchssa(parent::AbstractVector{<:Integer}, point::Integer)
         id[x] = t; t += 1
     end
 
-    kids = [Int[] for _ in 1:nn]
+    left = fill!(FVector{Int}(undef, nn), 0)
+    right = fill!(FVector{Int}(undef, nn), 0)
 
     for x in oneto(nn)
-        (parent[x] == 0 || parent[x] == point) || push!(kids[parent[x]], x)
+        p = parent[x]
+
+        if p == 0 || p == point
+            continue
+        end
+
+        if left[p] == 0
+            left[p] = x
+        else
+            right[p] = x
+        end
     end
 
-    return [(id[kids[x][1]], id[kids[x][2]]) for x in m + 1:nn]
+    return [(id[left[x]], id[right[x]]) for x in m + 1:nn]
 end
 
-# thin accessors over branchstats (one bottom-up pass each)
+# thin accessors over branchstats (one pass each)
 function branchwidth(weights, hypergraph, point, parent)
     return branchstats(weights, hypergraph, point, parent).width
 end
