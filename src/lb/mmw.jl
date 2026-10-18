@@ -38,21 +38,21 @@ end
 function mmw(::Type{V}, ::Type{E}, totdeg::Integer, weights::AbstractVector, graph::AbstractGraph, strategy::Val) where {V, E}
     n = convert(V, nv(graph)); m = convert(E, de(graph)); nn = n + one(V)
     cap = convert(E, mmwcapacity(n, m)); totdeg = convert(V, totdeg)
-    weight = mmwweights(V, weights, n)
+    ws = workspace(); weight = mmwweights(ws, V, weights, n)
 
-    marker = FVector{V}(undef, n)
-    hubmark = FVector{V}(undef, n)
+    marker = workvector(ws, V, 71, n)
+    hubmark = workvector(ws, V, 72, n)
 
-    degree = FVector{V}(undef, n)
-    target = FVector{V}(undef, cap)
-    invptr = FVector{E}(undef, cap)
-    begptr = FVector{E}(undef, nn)
-    endptr = FVector{E}(undef, n)
-    limptr = FVector{E}(undef, n)
+    degree = workvector(ws, V, 73, n)
+    target = workvector(ws, V, 74, cap)
+    invptr = workvector(ws, E, 75, cap)
+    begptr = workvector(ws, E, 76, nn)
+    endptr = workvector(ws, E, 77, n)
+    limptr = workvector(ws, E, 78, n)
 
-    head = FVector{V}(undef, totdeg + one(V))
-    prev = FVector{V}(undef, n)
-    next = FVector{V}(undef, n)
+    head = workvector(ws, V, 79, totdeg + one(V))
+    prev = workvector(ws, V, 80, n)
+    next = workvector(ws, V, 81, n)
 
     width = mmw_impl!(marker, hubmark, degree, target, invptr, begptr,
         endptr, limptr, head, prev, next, cap, totdeg, weight, graph,
@@ -73,12 +73,16 @@ function mmwslack(len::I) where {I <: Integer}
     return len ÷ two(I)
 end
 
-function mmwweights(::Type{V}, weights::Ones, n::V) where {V}
+function mmwweights(::Type{V}, weights::AbstractVector, n::V) where {V}
+    return mmwweights(nothing, V, weights, n)
+end
+
+function mmwweights(ws::Union{Nothing, Workspace}, ::Type{V}, weights::Ones, n::V) where {V}
     return Ones{V}(n)
 end
 
-function mmwweights(::Type{V}, weights::AbstractVector, n::V) where {V}
-    weight = FVector{V}(undef, n)
+function mmwweights(ws::Union{Nothing, Workspace}, ::Type{V}, weights::AbstractVector, n::V) where {V}
+    weight = workvector(ws, V, 82, n)
 
     @inbounds for v in oneto(n)
         weight[v] = trunc(V, weights[v])

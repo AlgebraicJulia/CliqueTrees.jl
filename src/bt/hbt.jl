@@ -176,6 +176,9 @@ function hbt_ctx(graph::BipartiteGraph{Int, Int}, wgt::Vector{W}) where {W}
         # the groups of the components of a PMC (hbt_add!)
         gdst = Int[], gid = Int[], gsmk = Int[], gsof = Int[], gin = Bool[], gptr = Int[], gtgt = Int[],
         gm = Int[], gsz = Int[], gw = W[],
+
+        # the graphs H + S of a diversification (hbt_div)
+        hsp = Int[], hst = Int[],
     )
 end
 
@@ -2100,9 +2103,9 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
     # neighborhood of the component of H - N[a] containing b
     tried = bt_tab()
 
-    # H + S, made in the same arrays for every S (it is done with when the
-    # next is made)
-    ptr = Vector{Int}(undef, nu + 1); tgt = Int[]
+    # H + S, made in the same arrays of the context for every S (it is done
+    # with when the next is made)
+    ptr = resize!(ctx.hsp, nu + 1); tgt = ctx.hst
 
     for _ in oneto(par.nsep)
         hbt_expired(srh) && break
