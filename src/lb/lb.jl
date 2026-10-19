@@ -8,6 +8,7 @@ An algorithm for computing a lower bound to the treewidth of a graph. The option
 | [`MMW`](@ref) | minor-min-width |      | O(m + n) |
 | [`LBN`](@ref) | LBN+            |      | O(m + n) |
 | [`LBP`](@ref) | LBP+            |      | O(m + n) |
+| [`MTW`](@ref) | minor-treewidth |      |          |
 """
 abstract type LowerBoundAlgorithm end
 
@@ -109,6 +110,7 @@ end
 include("mmw.jl")
 include("lbn.jl")
 include("lbp.jl")
+include("mtw.jl")
 
 """
     DEFAULT_LOWER_BOUND_ALGORITHM = MMW()

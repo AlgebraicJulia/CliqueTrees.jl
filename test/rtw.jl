@@ -181,6 +181,28 @@ using Test
         @test found > 0
     end
 
+    @testset "the minor-treewidth lower bound (MTW)" begin
+        # at most the width; with no budget, the search goes up to the graph
+        # itself, and the bound is the width
+        rng = MersenneTwister(9)
+
+        for _ in 1:150
+            n = rand(rng, 1:14); graph = erdos_renyi(n, rand(rng, (0.2, 0.3, 0.5, 0.8)); rng)
+            bgraph = bipartite(graph)
+
+            for weights in (ones(Int, n), rand(rng, 1:5, n), rand(rng, n) .+ 1.0)
+                W = eltype(weights); tw = n > 0 ? exact(weights, bgraph) : zero(W)
+                lb = lowerbound(weights, bgraph, MTW())
+                @test lb isa W && (lb <= tw || same(lb, tw))
+                @test lb >= lowerbound(weights, bgraph, MMW())
+                @test same(lowerbound(weights, bgraph, MTW(; lb = 0, budget = typemax(Int), time = Inf)), tw)
+
+                # out of time at once: the bound it starts from
+                @test lowerbound(weights, bgraph, MTW(; lb = 0, time = 0.0)) == CliqueTrees.bt_bas(weights, bgraph)
+            end
+        end
+    end
+
     @testset "a deep recursion" begin
         # the recursion can be as deep as the graph has vertices, so it
         # runs on a task with a stack to match: a million calls do not fit
@@ -231,7 +253,7 @@ using Test
             # wide as the graph
             subs = [induced_subgraph(graph, c) for c in connected_components(graph)]
             parts = first.(subs); pweights = [weights[last(s)] for s in subs]
-            orders = CliqueTrees.rtw_batch(pweights, parts, RTW(), Inf, 0)
+            orders = CliqueTrees.rtw_batch(pweights, parts, RTW(; lb = 0), Inf, 0)
             @test maximum(treewidth(pweights[i], parts[i]; alg = orders[i]) for i in eachindex(parts)) == tw
         end
     end

@@ -217,16 +217,24 @@ const RTW_SLICE = 0.25
 # in the background (rtw_bkg!).
 const RTW_BKG = 0.25
 
+# The lower bound of each graph of a batch (MTW) gets at most this share
+# of the time left (rtw_batch).
+const RTW_LB = 0.5
+
 # The exact search (septw) that each graph of a batch gets first: this
 # share of the time left, but at most RTW_PROBE_MAX seconds (rtw_batch).
+# After one round, the next is taken to be RTW_PROBE_GROWTH times as long.
 const RTW_PROBE = 0.1
-const RTW_PROBE_MAX = 10.0
+const RTW_PROBE_MAX = 5.0
+const RTW_PROBE_GROWTH = 10.0
 
 # The exact search that each graph of a batch gets first (rtw_batch):
-# septw (bt_tw with the rounds of septw_run), except that a round is not
-# started when it would not end before the deadline, judged by the
-# growth of the last two rounds. A round that runs out of time adds
-# nothing to the lower bound, and the rounds grow fast.
+# septw (bt_tw with the rounds of septw_run), from the lower bound,
+# except that a round is not started when it would not end before the
+# deadline, judged by the growth of the last two rounds. A round that
+# runs out of time adds nothing to the lower bound, and the rounds grow
+# fast: the first, at a bound from MTW, often decides the graph, or
+# proves it wider by one.
 function rtw_probe(weights::AbstractVector{W}, graph::AbstractGraph, lo, dl::Real, nt::Integer) where {W}
     return bt_tw(rtw_probe_run, weights, graph, convert(W, lo), typemax(W), dl, nt)
 end
@@ -239,7 +247,7 @@ function rtw_probe_run(weights::AbstractVector{W}, graph::AbstractGraph{V}, k::W
         k >= hk && return hord, hk, hk <= hi ? BT_FOUND : BT_ABOVE
         k > hi && return hord, k, BT_ABOVE
         ts = time()
-        ispositive(t1) && ts + max(2.0, ispositive(t0) ? t1 / t0 : 2.0) * t1 > dl && return hord, lb, BT_TIMEOUT
+        ispositive(t1) && ts + (ispositive(t0) ? max(2.0, t1 / t0) : RTW_PROBE_GROWTH) * t1 > dl && return hord, lb, BT_TIMEOUT
         sep, status = sepenum(weights, graph, k, dl, nt)
         status == BT_TIMEOUT && return hord, lb, BT_TIMEOUT
         perm, _, mink, status = sepdp(weights, graph, sep, k, dl, nt)
@@ -521,6 +529,14 @@ end
 # so that the contraction is likely to keep the width. With keep, only
 # the edges in keep.
 function rtw_edges(graph::BipartiteGraph{Int, Int}, keep::Union{Nothing, Set{Tuple{Int, Int}}} = nothing)
+    vals, edges = rtw_vals(graph, keep)
+    return edges[sortperm(vals; lt = rtw_vlt)]
+end
+
+# The edges {u, v} (u < v), with keep only those in keep, and their
+# values: the halves (mu, du) and (mv, dv), the better first, where mu
+# is the number of missing edges of N(u) - v and du is the degree of u.
+function rtw_vals(graph::BipartiteGraph{Int, Int}, keep::Union{Nothing, Set{Tuple{Int, Int}}} = nothing)
     n = nv(graph); mark = zeros(Int, n)
     deg = [length(neighbors(graph, v)) for v in oneto(n)]
 
@@ -548,7 +564,7 @@ function rtw_edges(graph::BipartiteGraph{Int, Int}, keep::Union{Nothing, Set{Tup
         miss[u] = (deg[u] * (deg[u] - 1) - total) ÷ 2
     end
 
-    keys = Tuple{Rational{Int}, Int, Rational{Int}, Int}[]; edges = Tuple{Int, Int}[]
+    vals = NTuple{4, Int}[]; edges = Tuple{Int, Int}[]
 
     @inbounds for u in oneto(n)
         for (j, v) in enumerate(neighbors(graph, u))
@@ -557,13 +573,27 @@ function rtw_edges(graph::BipartiteGraph{Int, Int}, keep::Union{Nothing, Set{Tup
             c = common[ptr[u] + j - 1]
 
             # the missing edges of N(u) - v, and of N(v) - u
-            mu = miss[u] - (deg[u] - 1 - c); mv = miss[v] - (deg[v] - 1 - c)
-            a = (mu // deg[u], deg[u]); b = (mv // deg[v], deg[v])
-            push!(keys, a <= b ? (a..., b...) : (b..., a...)); push!(edges, (u, v))
+            a = (miss[u] - (deg[u] - 1 - c), deg[u]); b = (miss[v] - (deg[v] - 1 - c), deg[v])
+            push!(vals, rtw_hlt(b, a) ? (b..., a...) : (a..., b...)); push!(edges, (u, v))
         end
     end
 
-    return edges[sortperm(keys)]
+    return vals, edges
+end
+
+# Tamaki's comparisons: a half (m, d) is better if it has fewer missing
+# edges for its degree, or as few and a lower degree; a value is better
+# if its better half is, or the same and its other half is.
+@inline function rtw_hlt(a::NTuple{2, Int}, b::NTuple{2, Int})
+    x = a[1] * b[2]; y = b[1] * a[2]
+    return x == y ? a[2] < b[2] : x < y
+end
+
+@inline function rtw_vlt(x::NTuple{4, Int}, y::NTuple{4, Int})
+    a = (x[1], x[2]); b = (y[1], y[2])
+    rtw_hlt(a, b) && return true
+    rtw_hlt(b, a) && return false
+    return rtw_hlt((x[3], x[4]), (y[3], y[4]))
 end
 
 # ---------------------------------------------------------------------------

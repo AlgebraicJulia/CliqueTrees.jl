@@ -707,6 +707,10 @@ function acsd_minor(weights::AbstractVector, graph::AbstractGraph{V}, order::Abs
     ms = ACSDMinor{V}(n)
     fs = ACSDFlow(weights, graph, length(tree))
     comps = Tuple{V, V}[]; ancs = V[]; fills = V[]
+    # the unit-minor test (acsd_unit.jl) is needed only with unequal weights
+    minwgt, maxwgt = extrema(view(weights, oneto(n)))
+    W = eltype(weights)
+    us = UNIT_MINOR[] && maxwgt >= minwgt + tolerance(W) ? ACSDUnit{V, W}(n) : nothing
 
     for j in oneto(convert(V, length(tree)))
         S = separator(tree, j)
@@ -720,6 +724,9 @@ function acsd_minor(weights::AbstractVector, graph::AbstractGraph{V}, order::Abs
         if acsd_flowsafe!(fs, at, index, weights, order, S) ||
                 (length(S) > 2 && acsd_minorsafe!(ms, at, comps, index, graph, rank, order, tree))
             push!(fills, j)
+        elseif !isnothing(us) && acsd_unitsafe!(us, at, comps, index, weights, graph, order, tree)
+            push!(fills, j); UNIT_COUNT[] += 1
+            isnothing(UNIT_LOG[]) || push!(UNIT_LOG[], (collect(weights[1:n]), sparse(graph), V[order[i] for i in S]))
         end
     end
 

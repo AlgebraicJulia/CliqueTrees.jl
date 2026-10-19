@@ -10,6 +10,7 @@ LowerBoundAlgorithm
 MMW
 LBN
 LBP
+MTW
 lowerbound
 DEFAULT_LOWER_BOUND_ALGORITHM
 ```

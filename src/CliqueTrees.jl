@@ -34,7 +34,7 @@ const View{T, I} = SubArray{T, 1, Vector{T}, Tuple{UnitRange{I}}, true}
 export BipartiteGraph, FBipartiteGraph, BipartiteEdgeIter, pointers, targets
 
 # Lower Bound Algorithms
-export MMW, LBN, LBP, lowerbound
+export MMW, LBN, LBP, MTW, lowerbound
 
 # Dissection Algorithms
 export METISND, KaHyParND

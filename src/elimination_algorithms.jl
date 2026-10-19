@@ -682,7 +682,7 @@ end
 """
     RTW{A, H, L} <: EliminationAlgorithm
 
-    RTW(; time=Inf, alg=MF(; strategy=1), hbt=HBT(; time=2.0), ticks=100, lb=MMW(), verbose=false)
+    RTW(; time=Inf, alg=MF(; strategy=1), hbt=HBT(; time=2.0), ticks=100, lb=MTW(), verbose=false)
 
 The contraction-recursive algorithm: an exact algorithm for treewidth that certifies its answer.
 
@@ -692,9 +692,10 @@ with no decomposition of the given width shows that the graph has none; otherwis
 of the contraction are mapped back onto the graph, where they help to build a lighter one. Only when
 every edge has been tried is a question settled by an exact search ([`PIDBT`](@ref)), on a contraction.
 
-Before the recursion, the graph gets that exact search for a tenth of the time (at most ten seconds).
-It solves many graphs at once; otherwise, the widths it rules out are a lower bound, and the recursion
-stops when it meets it.
+The recursion stops when the width meets the lower bound `lb`. The default, [`MTW`](@ref), solves
+minors of the graph exactly along the same contractions, and is often within one or two of the width.
+Before the recursion, the graph gets that exact search from the lower bound for a few seconds. It
+solves many graphs at once; otherwise, it often raises the bound.
 
 The upper bounds come from two heuristic searches. The first, [`HBT`](@ref), runs on the graph for its
 `time` to give the first decomposition, and for longer while it keeps improving, up to half the time; it
@@ -713,7 +714,8 @@ returns the lightest decomposition it has found.
   - `alg`: elimination algorithm for the greedy decomposition that seeds the search (made minimal with [`MinimalChordal`](@ref))
   - `hbt`: parameters of the first heuristic search ([`HBT`](@ref)), or `nothing` for none
   - `ticks`: steps of heuristic search for each child of a contraction
-  - `lb`: lower bound algorithm or lower bound (the search stops when the width reaches it)
+  - `lb`: lower bound algorithm or lower bound (the search stops when the width reaches it; the time of
+    [`MTW`](@ref) is capped by `time`)
   - `verbose`: print progress
 
 ### Example
@@ -745,7 +747,7 @@ julia> treewidth(graph; alg=RTW(; time=1.0))
     alg::A = MF(; strategy = 1)
     hbt::H = HBT(; time = 2.0)
     ticks::Int = 100
-    lb::L = DEFAULT_LOWER_BOUND_ALGORITHM
+    lb::L = MTW()
     verbose::Bool = false
 end
 
@@ -898,9 +900,9 @@ end
 """
     SafeSeparators{A, M} <: EliminationAlgorithm
 
-    SafeSeparators(alg::EliminationAlgorithm, min::MinimalAlgorithm; maxmissing=0)
+    SafeSeparators(alg::EliminationAlgorithm, min::MinimalAlgorithm; maxmissing=0, tryunit=true)
 
-    SafeSeparators(alg::EliminationAlgorithm, mins::Tuple; maxmissing=0)
+    SafeSeparators(alg::EliminationAlgorithm, mins::Tuple; maxmissing=0, tryunit=true)
 
 Apply an elimination algorithm to the atoms of a safe separator decomposition. The decomposition is
 computed from minimal triangulations: the algorithm `min` (or each algorithm in `mins`, in turn) computes
@@ -919,8 +921,14 @@ A minimal separator ``S`` is used if it is
         ``w(S - K)`` in ``G - C - K``, with vertex capacities ``w``.
       - the minor test of Bodlaender and Koster: for every component ``C`` of ``G - S``, contracting
         parts of ``G - C`` turns ``N(C)`` into a clique. It is a greedy search.
+      - with unequal weights, the same test on the *blow-up* (every vertex a clique of ``w(v)``
+        twins), where the twins of one vertex may be contracted into different parts and a vertex
+        may lend its twins to several parts. It is a greedy search too.
 
-With several algorithms in `mins`, more separators are found.
+With several algorithms in `mins`, more separators are found. With `tryunit`, each algorithm also
+runs with unit weights, when the weights are not all equal: the separators of that triangulation are
+tested with the true weights. Weighted triangulations tend to avoid heavy separators, and miss safe
+ones.
 
 !!! warning
     The algorithm `min` must compute a *minimimal* ordering. This property is guaranteed by the following
@@ -934,6 +942,7 @@ With several algorithms in `mins`, more separators are found.
   - `alg`: elimination algorithm
   - `min`: minimal elimination algorithm (or a tuple `mins` of them)
   - `maxmissing`: the largest number of missing edges in a separator given to the connectivity and minor tests (`0`: neither)
+  - `tryunit`: also take the separators of triangulations made with unit weights
 
 ### References
 
@@ -945,23 +954,24 @@ struct SafeSeparators{A <: EliminationAlgorithm, M <: Tuple} <: EliminationAlgor
     alg::A
     min::M
     maxmissing::Int
+    tryunit::Bool
 
-    function SafeSeparators{A, M}(alg::A, min::M, maxmissing::Integer) where {A <: EliminationAlgorithm, M <: Tuple}
+    function SafeSeparators{A, M}(alg::A, min::M, maxmissing::Integer, tryunit::Bool = true) where {A <: EliminationAlgorithm, M <: Tuple}
         @assert !isnegative(maxmissing)
-        return new{A, M}(alg, min, maxmissing)
+        return new{A, M}(alg, min, maxmissing, tryunit)
     end
 end
 
-function SafeSeparators(alg::A, mins::M, maxmissing::Integer) where {A <: EliminationAlgorithm, M <: Tuple}
-    return SafeSeparators{A, M}(alg, mins, maxmissing)
+function SafeSeparators(alg::A, mins::M, maxmissing::Integer, tryunit::Bool = true) where {A <: EliminationAlgorithm, M <: Tuple}
+    return SafeSeparators{A, M}(alg, mins, maxmissing, tryunit)
 end
 
-function SafeSeparators(alg::EliminationAlgorithm, mins::Tuple; maxmissing::Integer = 0)
-    return SafeSeparators(alg, mins, maxmissing)
+function SafeSeparators(alg::EliminationAlgorithm, mins::Tuple; maxmissing::Integer = 0, tryunit::Bool = true)
+    return SafeSeparators(alg, mins, maxmissing, tryunit)
 end
 
-function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, min::MinimalAlgorithm=DEFAULT_MINIMAL_ALGORITHM; maxmissing::Integer = 0)
-    return SafeSeparators(alg, (min,), maxmissing)
+function SafeSeparators(alg::EliminationAlgorithm=DEFAULT_ELIMINATION_ALGORITHM, min::MinimalAlgorithm=DEFAULT_MINIMAL_ALGORITHM; maxmissing::Integer = 0, tryunit::Bool = true)
+    return SafeSeparators(alg, (min,), maxmissing, tryunit)
 end
 
 """
@@ -1229,20 +1239,21 @@ end
 # bound of any graph, or the width of a graph shown optimal. A graph no
 # wider than the batch then stops at its first decomposition that meets
 # the target. The recursion works on connected graphs: a disconnected one
-# is split by ConnectedComponents, with the time that is left.
+# is split by ConnectedComponents, with the time that is left. The lower
+# bound MTW of each graph gets at most RTW_LB of the time left (rtw_lb).
 #
-# Each graph is first given an exact search (rtw_probe, as septw) for a
-# short time (the share probe of the time left, at most RTW_PROBE_MAX
-# seconds; none if probe is zero): it solves many graphs at once that
-# the recursion takes longer to prove, and when it runs out of time, the
-# widths it ruled out raise the lower bound, and so the target of the
-# recursion, which then need not prove its last width optimal.
+# Each graph is then given an exact search (rtw_probe, as septw) from its
+# lower bound, for a short time (the share probe of the time left, at
+# most RTW_PROBE_MAX seconds; none if probe is zero): it solves many
+# graphs at once whose optimal width the recursion takes longer to
+# prove, and when it runs out of time, the widths it ruled out raise the
+# lower bound, and so the target of the recursion.
 function rtw_batch(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph{V}}, alg::RTW, dl::Float64, probe::Real = RTW_PROBE) where {V}
     ngraph = length(graphs); orders = Vector{Vector{V}}(undef, ngraph)
     iszero(ngraph) && return orders
     items = map(i -> hbt_graph(weights[i], graphs[i]), oneto(ngraph))
     W = mapreduce(item -> eltype(last(item)), promote_type, items)
-    lowers = W[convert(W, lowerbound(wgt, bgraph, alg.lb)) for (bgraph, wgt) in items]
+    lowers = W[convert(W, lowerbound(wgt, bgraph, rtw_lb(alg.lb, dl))) for (bgraph, wgt) in items]
     greedy = W[treewidth(wgt, bgraph; alg = alg.alg) for (bgraph, wgt) in items]
     lb = maximum(lowers); nt = isnothing(alg.hbt) ? 1 : alg.hbt.threads
     par = (; alg = alg.alg, hbt = alg.hbt, ticks = alg.ticks, alg.verbose)
@@ -1254,7 +1265,7 @@ function rtw_batch(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVe
             if ispositive(probe)
                 now = time(); pdl = min(dl, now + min(probe * max(zero(dl), dl - now), RTW_PROBE_MAX))
                 perm, _, k, status = rtw_probe(wgt, bgraph, lb, pdl, nt)
-                alg.verbose && println("rtw: exact search $(status == BT_FOUND ? "found width" : "lower bound") $(hbt_str(k)) in $(round(time() - now; digits = 2)) s")
+                alg.verbose && println("rtw: exact search $(status == BT_FOUND ? "found width" : "lower bound") $(hbt_str(max(lb, k))) in $(round(time() - now; digits = 2)) s")
 
                 if status == BT_FOUND
                     # k is the width of the graph, or at most lb
@@ -1278,6 +1289,12 @@ function rtw_batch(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVe
     end
 
     return orders
+end
+
+rtw_lb(lb::WidthOrAlgorithm, dl::Float64) = lb
+
+function rtw_lb(lb::MTW, dl::Float64)
+    return MTW(lb.lb, lb.budget, min(lb.time, RTW_LB * max(0.0, dl - time())))
 end
 
 """
@@ -1335,7 +1352,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::Simplic
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::SafeSeparators; verbose::Bool = false)
-    return safeseparators(weights, graph, alg.alg, alg.min, alg.maxmissing; verbose)
+    return safeseparators(weights, graph, alg.alg, alg.min, alg.maxmissing; verbose, tryunit = alg.tryunit)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::ConnectedComponents{N}; verbose::Bool = false) where {N}
@@ -2817,6 +2834,7 @@ function Base.show(io::IO, ::MIME"text/plain", alg::SafeSeparators{A, M}) where 
     end
 
     println(io, " "^indent * "    maxmissing: $(alg.maxmissing)")
+    println(io, " "^indent * "    tryunit: $(alg.tryunit)")
     return
 end
 

@@ -139,10 +139,11 @@ pre-processing algorithms `SafeSeparators` and `SafeRules`.
 julia> alg = SafeRules(SafeSeparators(PIDBT()));
 ```
 
-Of the last two, `RTW` is usually the faster. It begins with a short run of the exhaustive search of `PIDBT`,
-which settles many graphs at once; otherwise, it improves a heuristic decomposition by recursing on contractions
-of the graph, and runs an exhaustive search only on a small contraction that certifies the optimal width. It is
-anytime: with a time limit, it returns the lightest decomposition found.
+Of the last two, `RTW` is usually the faster. It improves a heuristic decomposition by recursing on contractions
+of the graph, and runs an exhaustive search only on a small contraction that certifies the optimal width. Its
+lower bound, `MTW`, solves small minors of the graph exactly, and a short run of the exhaustive search of `PIDBT`
+from that bound settles many graphs at once. It is anytime: with a time limit, it returns the lightest
+decomposition found.
 
 ```julia-repl
 julia> alg = SafeRules(SafeSeparators(RTW(; time=600.0)));

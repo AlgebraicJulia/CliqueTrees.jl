@@ -60,6 +60,7 @@ mutable struct SafeSolver{W <: Number, V <: Integer, E <: Integer, M <: Tuple}
     weights00  ::FVector{W}
     mins       ::M
     maxmissing ::Int
+    tryunit    ::Bool
     fsrc       ::Vector{V}
     ftgt       ::Vector{V}
     fnext      ::Vector{Int}
@@ -127,7 +128,7 @@ struct SafeResult{W <: Number, V <: Integer}
     n       ::V
 end
 
-function SafeSolver(weights::AbstractVector{W}, graph::AbstractGraph{V}, mins::Tuple, maxmissing::Integer) where {W <: Number, V <: Integer}
+function SafeSolver(weights::AbstractVector{W}, graph::AbstractGraph{V}, mins::Tuple, maxmissing::Integer, tryunit::Bool = true) where {W <: Number, V <: Integer}
     E = etype(graph); n = nv(graph); m = de(graph); nn = n + one(V)
 
     ptr00 = FVector{E}(undef, nn)
@@ -155,7 +156,7 @@ function SafeSolver(weights::AbstractVector{W}, graph::AbstractGraph{V}, mins::T
     wtgt = collect(oneto(n))
 
     return SafeSolver{W, V, E, typeof(mins)}(
-        graph00, weights00, mins, convert(Int, maxmissing),
+        graph00, weights00, mins, convert(Int, maxmissing), tryunit,
         V[], V[], Int[], fhead, 0,
         ufp, V[], 0,
         Int[1, n + 1], wtgt, Int[1, 1], V[],
@@ -178,8 +179,8 @@ end
 
 # Split a graph into the leaves of its safe completion: returns the weights
 # and graphs of the leaves that are not cliques, and the result.
-function safesolve(weights::AbstractVector, graph::AbstractGraph, mins::Tuple, maxmissing::Integer; verbose::Bool = false)
-    return safe_solve!(SafeSolver(weights, graph, mins, maxmissing); verbose)
+function safesolve(weights::AbstractVector, graph::AbstractGraph, mins::Tuple, maxmissing::Integer; verbose::Bool = false, tryunit::Bool = true)
+    return safe_solve!(SafeSolver(weights, graph, mins, maxmissing, tryunit); verbose)
 end
 
 function safe_solve!(s::SafeSolver; verbose::Bool = false)
@@ -224,7 +225,7 @@ function safe_step!(s::SafeSolver)
 
     if n20 > one(n20)
         weights20 = view(s.weights20, oneto(n20))
-        graph22, order, tree = acsd(weights20, graph20, s.mins, s.maxmissing)
+        graph22, order, tree = acsd(weights20, graph20, s.mins, s.maxmissing, s.tryunit)
         order, tree = atomtree!(order, tree, graph22)
 
         if length(tree) > 1
@@ -774,9 +775,9 @@ function safe_pull(result::SafeResult{W, V}, graphs::AbstractVector{<:BipartiteG
     return order
 end
 
-function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int; verbose::Bool = false) where {V}
+function safeseparators(weights::AbstractVector, graph::AbstractGraph{V}, alg::EliminationAlgorithm, mins::Tuple, maxmissing::Int; verbose::Bool = false, tryunit::Bool = true) where {V}
     nv(graph) > one(V) || return permutation(weights, graph, alg; verbose)
-    weights30, graphs30, result = safesolve(weights, graph, mins, maxmissing; verbose)
+    weights30, graphs30, result = safesolve(weights, graph, mins, maxmissing; verbose, tryunit)
     orders = batch_permutation(weights30, graphs30, alg; verbose)
     order = safe_pull(result, graphs30, orders)
     return order, invperm(order)
@@ -785,3 +786,11 @@ end
 include("acsd.jl")
 include("acsd_minor.jl")
 include("acsd_flow.jl")
+include("acsd_unit.jl")
+
+# for experiments and tests: a switch for the twin-split minor test
+# (acsd_unit.jl), a count of the separators it fills, and (if not nothing) a
+# log of them: (weights, graph, separator) for each
+const UNIT_MINOR = Ref(true)
+const UNIT_COUNT = Ref(0)
+const UNIT_LOG = Ref{Any}(nothing)

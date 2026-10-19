@@ -406,10 +406,12 @@ function acsd_complete!(
     return BipartiteGraph(n, n, m, pointer, target)
 end
 
-function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalAlgorithm) where {W, V}
+# With `unweighted = true`, the minimal triangulation is made with unit
+# weights (its separators are still tested with the true weights).
+function acsd(weights::AbstractVector{W}, graph::AbstractGraph{V}, alg::MinimalAlgorithm; unweighted::Bool = false) where {W, V}
     E = etype(graph); n = nv(graph)
 
-    order, tree = cliquetree(weights, graph, alg)
+    order, tree = unweighted ? cliquetree(ones(W, n), graph, alg) : cliquetree(weights, graph, alg)
     t = length(tree)
 
     head = FVector{V}(undef, n)
@@ -477,6 +479,21 @@ function acsd(weights::AbstractVector, graph::AbstractGraph, alg::MinimalAlgorit
     return graph, order, tree
 end
 
+# Are the weights all equal? (Then a triangulation with unit weights is the
+# same as the weighted one.)
+function acsd_uniform(weights::AbstractVector, n::Integer)
+    minwgt, maxwgt = extrema(view(weights, oneto(n)))
+    return maxwgt < minwgt + tolerance(eltype(weights))
+end
+
+# With `tryunit`, also take the separators of the triangulation made with unit
+# weights; the returned triangulation is then that one.
+function acsd_both(weights::AbstractVector, graph::AbstractGraph, alg::MinimalAlgorithm, tryunit::Bool)
+    graph, order, tree = acsd(weights, graph, alg)
+    (tryunit && !acsd_uniform(weights, nv(graph))) || return graph, order, tree
+    return acsd(weights, graph, alg; unweighted = true)
+end
+
 # Apply the minimal algorithms in `mins` in turn, filling the almost-clique
 # separators of each triangulation. If `maxmissing` is positive, then also
 # fill the separators of each triangulation that have at most `maxmissing`
@@ -484,25 +501,41 @@ end
 # acsd_flow.jl) or the clique-minor test of Bodlaender and Koster (see
 # acsd_minor.jl), and repeat until a round fills nothing; the returned
 # triangulation is then one of the returned graph.
-function acsd(weights::AbstractVector, graph::AbstractGraph, mins::Tuple, maxmissing::Int)
-    ispositive(maxmissing) || return acsd(weights, graph, mins...)
+function acsd(weights::AbstractVector, graph::AbstractGraph, mins::Tuple, maxmissing::Int, tryunit::Bool = true)
+    if !ispositive(maxmissing)
+        graph, order, tree = acsd_both(weights, graph, first(mins), tryunit)
+
+        for other in Base.tail(mins)
+            graph, order, tree = acsd_both(weights, graph, other, tryunit)
+        end
+
+        return graph, order, tree
+    end
 
     while true
-        graph, order, tree, changed = acsd_round(weights, graph, maxmissing, false, mins...)
+        graph, order, tree, changed = acsd_round(weights, graph, maxmissing, tryunit, false, mins...)
         changed || return graph, order, tree
     end
 end
 
-function acsd_round(weights::AbstractVector, graph::AbstractGraph, maxmissing::Int, changed::Bool, alg::MinimalAlgorithm, rest::MinimalAlgorithm...)
+function acsd_round(weights::AbstractVector, graph::AbstractGraph, maxmissing::Int, tryunit::Bool, changed::Bool, alg::MinimalAlgorithm, rest::MinimalAlgorithm...)
     graph, order, tree = acsd(weights, graph, alg)
     graph, filled = acsd_minor(weights, graph, order, tree, maxmissing)
     changed = changed || filled
+
+    # with `tryunit`, also take the separators of a triangulation made with
+    # unit weights (unless the weights are all equal: then it is the same)
+    if tryunit && !acsd_uniform(weights, nv(graph))
+        graph, order, tree = acsd(weights, graph, alg; unweighted = true)
+        graph, filled = acsd_minor(weights, graph, order, tree, maxmissing)
+        changed = changed || filled
+    end
 
     if isempty(rest)
         return graph, order, tree, changed
     end
 
-    return acsd_round(weights, graph, maxmissing, changed, rest...)
+    return acsd_round(weights, graph, maxmissing, tryunit, changed, rest...)
 end
 
 function acsd_ranks(weights::AbstractVector{<:Integer}, n::Integer)

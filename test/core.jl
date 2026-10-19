@@ -564,6 +564,7 @@ end
             LBP{1}(),
             LBP{2}(),
             LBP{3}(),
+            MTW(),
         )
         @test isone(-lowerbound(graph; alg))
         @test iszero(lowerbound(weights, graph; alg))
@@ -644,6 +645,7 @@ end
             LBP{1}(),
             LBP{2}(),
             LBP{3}(),
+            MTW(),
         )
         @test iszero(lowerbound(graph; alg))
         @test istwo(lowerbound(weights, graph; alg))
@@ -1007,6 +1009,7 @@ end
                         LBP{1}(),
                         LBP{2}(),
                         LBP{3}(),
+                        MTW(),
                     )
                     @test lowerbound(graph; alg) <= uwidth
                     @test lowerbound(weights, graph; alg) <= wwidth
@@ -1542,6 +1545,8 @@ end
         LBP{1}(),
         LBP{2}(),
         LBP{3}(),
+        MTW(),
+        MTW(; lb = 0, budget = 10),
     )
 
     tw_algs = (
@@ -2363,6 +2368,108 @@ end
             end
 
             @test treewidth(weights, filled; alg = PIDBT()) == width
+        end
+    end
+end
+
+@testset "safe separators: unit-minor test" begin
+    # The line graph of a ladder of rank-3 tensors, as in an MPS expectation
+    # value <psi|H|psi>: at site i, the tensors {k[i-1], k[i], p[i]} (ket),
+    # {b[i-1], b[i], q[i]} (bra), {m[i-1], p[i], s[i]} and {s[i], q[i], m[i]}
+    # (the two halves of an MPO tensor). Bonds k, b weigh 3, MPO bonds m and
+    # s weigh 2, physical indices p, q weigh 1. The cut S = {k[i], m[i], b[i]}
+    # is independent, and the vertices of weight >= 2 form three disjoint
+    # paths, so no minor of the minor test exists; outside either side, the
+    # neighbors of m[i] weigh 1 + 2 = 3, less than any requirement w(S - K) >= 5
+    # of the connectivity test.
+    # In the blow-up, each unit of a bond reaches the other rails through its
+    # own physical index, at a different site.
+    function ladder(L)
+        id = Dict{Tuple{Symbol, Int}, Int}(); wts = Int[]
+        vid(t, i, w) = get!(() -> (push!(wts, w); length(wts)), id, (t, i))
+        tensors = Vector{Int}[]
+
+        for i in 1:L
+            k = [vid(:k, i - 1, 3), vid(:k, i, 3)]; b = [vid(:b, i - 1, 3), vid(:b, i, 3)]
+            m = [vid(:m, i - 1, 2), vid(:m, i, 2)]
+            p = vid(:p, i, 1); q = vid(:q, i, 1); s = vid(:s, i, 2)
+            # the chain is open: drop the bonds beyond the ends
+            push!(tensors, [k[1], k[2], p], [b[1], b[2], q], [m[1], p, s], [s, q, m[2]])
+        end
+
+        n = length(wts); graph = Graph(n)
+        ends = Set(x for x in (id[(:k, 0)], id[(:b, 0)], id[(:m, 0)], id[(:k, L)], id[(:b, L)], id[(:m, L)]))
+
+        for t in tensors, a in t, c in t
+            (a < c && !(a in ends) && !(c in ends)) && add_edge!(graph, a, c)
+        end
+
+        keep = [v for v in 1:n if !(v in ends)]
+        graph, _ = induced_subgraph(graph, keep)
+        idx = Dict(v => i for (i, v) in enumerate(keep))
+        return graph, wts[keep], (t, i) -> idx[id[(t, i)]]
+    end
+
+    L = 16; graph, weights, at = ladder(L)
+    n = nv(graph); bgraph = BipartiteGraph(graph)
+    us = CliqueTrees.ACSDUnit{Int, Int}(n)
+    width = treewidth(weights, graph; alg = PIDBT())
+
+    # (the greedy needs five sites on each side: three rungs for the units of
+    # one bond, and two more for the MPO bond)
+    for i in 5:L - 5
+        S = [at(:k, i), at(:m, i), at(:b, i)]
+        @test CliqueTrees.acsd_unitsafe!(us, weights, bgraph, S)
+        filled = copy(graph)
+
+        for a in S, c in S
+            a < c && add_edge!(filled, a, c)
+        end
+
+        @test treewidth(weights, filled; alg = PIDBT()) == width
+    end
+
+    # the safe completion splits the ladder
+    _, leaves, _ = CliqueTrees.safesolve(weights, bgraph, (MinimalChordal(MF()),), 50)
+    @test maximum(CliqueTrees.nv, leaves; init = 0) < n ÷ 2
+
+    # every separator that passes the test is safe
+    rng = Xoshiro(23)
+
+    for trial in 1:300
+        if isodd(trial)
+            # the line graph of a random network of rank-3 tensors
+            t = rand(rng, 6:14); half = shuffle(rng, repeat(1:t, 3))
+            idx = [(half[2j - 1], half[2j]) for j in 1:length(half) ÷ 2]
+            graph = Graph(length(idx))
+
+            for a in eachindex(idx), c in a + 1:length(idx)
+                isempty(intersect(idx[a], idx[c])) || add_edge!(graph, a, c)
+            end
+        else
+            graph = erdos_renyi(rand(rng, 8:14), rand(rng, (0.2, 0.3)); rng)
+        end
+
+        n = nv(graph); weights = rand(rng, 1:4, n)
+        bgraph = BipartiteGraph(graph)
+        us = CliqueTrees.ACSDUnit{Int, Int}(n)
+        width = treewidth(weights, graph; alg = PIDBT())
+
+        for unitw in (false, true)
+            order, tree = cliquetree(unitw ? ones(Int, n) : weights, bgraph, CliqueTrees.DEFAULT_MINIMAL_ALGORITHM)
+
+            for bag in tree
+                S = order[separator(bag)]
+                length(S) < 2 && continue
+                CliqueTrees.acsd_unitsafe!(us, weights, bgraph, S) || continue
+                filled = copy(graph)
+
+                for a in S, c in S
+                    a < c && add_edge!(filled, a, c)
+                end
+
+                @test treewidth(weights, filled; alg = PIDBT()) == width
+            end
         end
     end
 end
