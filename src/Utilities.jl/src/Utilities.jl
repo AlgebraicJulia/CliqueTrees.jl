@@ -14,7 +14,7 @@ export AbstractScalar, Scalar, FScalar, FVector, FMatrix, FArray
 export tolerance, twice, half, two, three, four, five, six, eight, ispositive, isnegative, istwo, isthree, isfour
 
 # graphs
-export eltypedegree, de
+export eltypedegree, de, coverincidence!, coverdegree!
 
 # printing
 export MAX_ITEMS_PRINTED, printiterator
@@ -151,6 +151,130 @@ end
 function printiterator(io::IO, iterator::T, ::Any) where {T}
     print(io, "$T:")
     printelements(io, iterator)
+    return
+end
+
+# The incidence graph of a clique cover: the vertices 1:n and the cliques
+# n + 1:n + m, where the members of the clique c are
+# ctgt[cptr[c]:cptr[c + 1] - 1]. The neighbors of the node i are
+# iw[pe[i]:pe[i] + len[i] - 1]: the cliques containing a vertex, or the
+# members of a clique. Repeated members are dropped, and a clique with fewer
+# than two members is left empty. Returns one past the last entry of `iw`.
+function coverincidence!(
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        iw::AbstractVector{V},
+        marker::AbstractVector{V},
+        n::V,
+        m::V,
+        cptr::AbstractVector{E},
+        ctgt::AbstractVector{V},
+    ) where {V, E}
+    nnode = n + m
+
+    @inbounds for i in oneto(nnode)
+        len[i] = zero(V)
+    end
+
+    @inbounds for v in oneto(n)
+        marker[v] = zero(V)
+    end
+
+    # `len[n + c]` is the number of distinct members of the clique `c`,
+    # or zero if it is less than two
+    @inbounds for c in oneto(m)
+        k = zero(V)
+
+        for p in cptr[c]:cptr[c + one(V)] - one(E)
+            v = ctgt[p]
+
+            if marker[v] != c
+                marker[v] = c; k += one(V)
+            end
+        end
+
+        if k < two(V)
+            k = zero(V)
+        end
+
+        len[n + c] = k
+    end
+
+    # `len[v]` is the number of nonempty cliques containing the vertex `v`
+    @inbounds for c in oneto(m)
+        if ispositive(len[n + c])
+            for p in cptr[c]:cptr[c + one(V)] - one(E)
+                v = ctgt[p]
+
+                if marker[v] != m + c
+                    marker[v] = m + c; len[v] += one(V)
+                end
+            end
+        end
+    end
+
+    # `pe[i + 1]` is the tail of the list of `i`: on return, it is
+    # the head of the list of `i + 1`
+    @inbounds pe[begin] = pfree = one(E)
+
+    @inbounds for i in oneto(nnode)
+        pe[i + one(V)] = pfree; pfree += convert(E, len[i])
+    end
+
+    @inbounds for c in oneto(m)
+        e = n + c
+
+        if ispositive(len[e])
+            for p in cptr[c]:cptr[c + one(V)] - one(E)
+                v = ctgt[p]
+
+                if marker[v] != twice(m) + c
+                    marker[v] = twice(m) + c
+                    iw[pe[e + one(V)]] = v; pe[e + one(V)] += one(E)
+                    iw[pe[v + one(V)]] = e; pe[v + one(V)] += one(E)
+                end
+            end
+        end
+    end
+
+    return pfree
+end
+
+# The external degree of each vertex of the graph covered by the cliques of
+# the incidence graph (`pe`, `len`, `iw`) (see `coverincidence!`): the weight
+# `nv` of the union of its cliques, less its own. The vertices of the
+# cliques are marked, in O(Σ |C|²) time and O(n) space.
+function coverdegree!(
+        degree::AbstractVector{V},
+        marker::AbstractVector{V},
+        nv::AbstractVector{V},
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        iw::AbstractVector{V},
+        n::V,
+    ) where {V, E}
+    @inbounds for v in oneto(n)
+        marker[v] = zero(V)
+    end
+
+    @inbounds for v in oneto(n)
+        marker[v] = v; deg = zero(V)
+
+        for p in pe[v]:pe[v] + convert(E, len[v]) - one(E)
+            e = iw[p]
+
+            for q in pe[e]:pe[e] + convert(E, len[e]) - one(E)
+                u = iw[q]
+
+                if marker[u] != v
+                    marker[u] = v; deg += nv[u]
+                end
+            end
+        end
+
+        degree[v] = deg
+    end
+
     return
 end
 

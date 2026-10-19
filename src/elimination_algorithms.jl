@@ -52,6 +52,7 @@ algorithms, but have worse results.
 | [`METIS`](@ref)  | nested dissection |        |       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl) |
 | [`SCOTCH`](@ref) | nested dissection |        |       | [Scotch.jl](https://github.com/Keluaa/Scotch.jl)    |
 | [`ND`](@ref)     | nested dissection |        |       |                                                     |
+| [`FND`](@ref)    | nested dissection |        |       |                                                     |
 
 These algorithms recursively partition a graph, then call a local algorithm on the leaves.
 These are slower than the local algorithms, but have better results.
@@ -420,12 +421,13 @@ by the nested dissection algorithm, and the worse of the two is discarded.
   - `2`: minimize fill (slow)
   - `3`: no strategy (fast)
 
-CliqueTrees currently has two vertex separator algorithms, both of which require loading an external package.
+CliqueTrees currently has three vertex separator algorithms, two of which require loading an external package.
 
 | type                | name                               | package                                              |
 |:--------------------|:-----------------------------------|:-----------------------------------------------------|
 | [`METISND`](@ref)   | multilevel vertex separation       | [Metis.jl](https://github.com/JuliaSparse/Metis.jl)  |
 | [`KaHyParND`](@ref) | multilevel hypergraph partitioning | [KayHyPar.jl](https://github.com/kahypar/KaHyPar.jl) |
+| [`FlowND`](@ref)    | flow-based vertex separation       |                                                      |
 
 The algorithm `KaHyParND` computes a vertex separator indirectly, by partitioning a quasi-clique-cover of the original graph.
 The parameters `width` and `level` control the recursion depth of the algorithm, and the parameter `imbalance` controls the
@@ -470,6 +472,39 @@ end
 
 function ND(args...; kwargs...)
     return ND{1}(args...; kwargs...)
+end
+
+"""
+    FND <: EliminationAlgorithm
+
+    FND(; width=120, level=60, tries=3, balance=0.3, boundary=0.25, scale=1, seed=0)
+
+Nested dissection in fixed memory. As in [`ND`](@ref), each separator becomes a clique in both children,
+and the leaves are ordered by an elimination algorithm, here [`AMF`](@ref). Unlike `ND`, no clique is
+ever formed: the graph of a node is kept as a quotient graph, whose elements are the separators of its
+ancestors. The separators are computed by maximum flows on this graph (see [`FlowND`](@ref)), with a
+hub for each element, the leaves are ordered by AMF on it, and the orderings are rotated on it. So the
+algorithm uses O(m + n) memory, where m and n are the numbers of edges and vertices of the graph.
+
+### Parameters
+
+  - `width`: a node with at most `width` interior twin classes (not in the separator of an ancestor) is a leaf
+  - `level`: maximum level (less than 64)
+  - `tries`: number of source-sink pairs of each separator
+  - `balance`: minimum weight of the lighter part of each separator, as a fraction of the total weight
+  - `boundary`: relative weight, when a separator is computed, of the classes that lie in the separator of an
+    ancestor: these are ordered with that separator, so cutting them adds little fill. Zero makes them free to cut.
+  - `scale`: scale of the weights, if they are floating-point numbers
+  - `seed`: random seed
+"""
+@kwdef struct FND <: EliminationAlgorithm
+    width::Int = 120
+    level::Int = 60
+    tries::Int = 3
+    balance::Float64 = 0.3
+    boundary::Float64 = 0.25
+    scale::Int = 1
+    seed::Int = 0
 end
 
 struct NDS{S, A <: EliminationAlgorithm, D <: DissectionAlgorithm} <: EliminationAlgorithm
@@ -2104,6 +2139,303 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
     return minpair
 end
 
+function dissect(::Type{V}, weights::AbstractVector{W}, graph::AbstractGraph, alg::ND) where {V, W}
+    n = nv(graph)
+    scale = convert(W, alg.scale)
+    intweights = FVector{V}(undef, n)
+
+    @inbounds for v in oneto(n)
+        w = weights[v]
+
+        if W <: AbstractFloat
+            w *= scale
+        end
+
+        intweights[v] = trunc(V, w)
+    end
+
+    return dissect(intweights, graph, alg)
+end
+
+function dissect(weights::FVector{V}, graph::AbstractGraph{I}, alg::ND) where {V, I <: Integer}
+    simple = simplegraph(V, V, graph)
+
+    # merge twins up front: every graph in the dissection is then twin-free
+    cmpgraph, cmpweights, project = compresstwins(weights, simple)
+
+    order = convert(Vector{I}, dissectsimple(cmpweights, cmpgraph, project, alg))
+    return order
+end
+
+# Nested dissection on one global quotient graph, without a node stack (see
+# dissection_algorithms.jl). The state is the twin-free graph, the separators
+# of the ancestors of the current node, one array of working orderings, a
+# union-find holding the twin classes of the path, and a few scalars per
+# level. The graph G'[W] of a node is realized, compressed, when the node is
+# split and again when its children have returned; at most one realized graph
+# is alive at a time.
+function dissectsimple(weights::AbstractVector{V}, graph::BipartiteGraph{V, V}, label::BipartiteGraph{V, V}, alg::ND{S}) where {V, S}
+    n = nv(graph); m = ne(graph); nn = n + one(V); ng = n
+    maxlevel = convert(V, alg.level)
+    minwidth = convert(V, alg.width)
+    imbalance = convert(V, alg.imbalance)
+    nl = maxlevel + one(V)
+
+    # the separators of the ancestors of the current node (a stack)
+    nelm = FScalar{V}(undef); nelm[] = zero(V)
+    elmptr = FVector{V}(undef, maxlevel + two(V)); elmptr[begin] = one(V)
+    pinvtx = Vector{V}(undef, n)
+    pinlvl = Vector{V}(undef, n)
+    pinnext = Vector{V}(undef, n)
+    pinhead = FVector{V}(undef, n)
+
+    # the realization of the current node
+    tag = FScalar{Int}(undef); tag[] = 0
+    stamp = FVector{Int}(undef, n)
+    vclass = FVector{V}(undef, n)
+    marker = FVector{V}(undef, max(n, maxlevel + two(V)))
+    mask = FVector{UInt64}(undef, n)
+    clsptr = FVector{V}(undef, maxlevel + two(V))
+    clstgt = Vector{V}(undef, n)
+    lblptr = FVector{V}(undef, nn)
+    lbltgt = FVector{V}(undef, n)
+    pointer = FVector{V}(undef, nn)
+    target = Vector{V}(undef, max(m, one(V)))
+
+    # the working orderings and the classes of the path (see `segmentsplit!`)
+    segment = FVector{V}(undef, n)
+    vertexset = FVector{V}(undef, n)
+    cls = FVector{V}(undef, n)
+    ufp = FVector{V}(undef, n)
+    rmark = FVector{Int}(undef, n)
+    rid = FVector{V}(undef, n)
+    mrg = Vector{V}(undef, n)
+    mlog = Vector{V}(undef, n)
+    base = FVector{V}(undef, nl)
+    na = FVector{V}(undef, nl)
+    nb = FVector{V}(undef, nl)
+    side = FVector{V}(undef, nl)
+    logstart = FVector{V}(undef, nl)
+    mrgbase = FVector{V}(undef, nl)
+    mrgstart = FVector{V}(undef, nl)
+    mrgstop = FVector{V}(undef, nl)
+
+    @inbounds for v in oneto(n)
+        pinhead[v] = zero(V); stamp[v] = 0; rmark[v] = 0
+        ufp[v] = vertexset[v] = v
+    end
+
+    work00 = FScalar{V}(undef)
+    work01 = Vector{V}(undef, half(m))
+    work02 = Vector{V}(undef, half(m))
+    work03 = FVector{V}(undef, n)
+    work04 = FVector{V}(undef, n)
+    work05 = FVector{V}(undef, n)
+    work06 = FVector{V}(undef, n)
+    work07 = FVector{V}(undef, n)
+    work08 = FVector{V}(undef, n)
+    work09 = FVector{V}(undef, nn)
+    work10 = FVector{V}(undef, nn)
+    work11 = FVector{V}(undef, n)
+    work12 = FVector{V}(undef, n)
+    work13 = FVector{V}(undef, n)
+    work14 = FVector{V}(undef, n)
+    work15 = FVector{V}(undef, n)
+    work16 = FVector{V}(undef, n)
+
+    level = zero(V); nw = n; t = 0; nmrg = zero(V); nlog = zero(V)
+    @inbounds base[begin] = one(V)
+    descend = true
+
+    @inbounds while true
+        l = level + one(V)
+
+        if descend
+            # the node at `level`, with vertex set vertexset[1:nw]
+            t += 1; nc = classify!(cls, rmark, rid, ufp, vertexset, nw, t)
+            set = view(vertexset, oneto(nw)); setcls = view(cls, oneto(nw))
+        else
+            # the node at `level` has returned; its residual starts at base[l]
+            iszero(level) && break
+            level -= one(V); l = level + one(V)
+            p = base[l]; sstart = elmptr[l]; sstop = elmptr[l + one(V)] - one(V)
+
+            if isone(side[l]) # child 1 has returned: start child 0 (A ∪ S)
+                nlog = rollback!(ufp, mlog, nlog, logstart[l])
+                nlog = applymerges!(ufp, mlog, nlog, mrg, mrgstart[l], mrgstop[l])
+                nw = mergesorted!(vertexset, segment, p, p + na[l] - one(V), pinvtx, sstart, sstop)
+
+                # move the residual of child 1 down, to base[l]
+                copyto!(segment, p, segment, p + na[l], nb[l])
+
+                side[l] = zero(V); level += one(V)
+                base[level + one(V)] = p + nb[l]
+                descend = true
+                continue
+            end
+
+            # child 0 has returned: join the node at `level`
+            nlog = rollback!(ufp, mlog, nlog, logstart[l]); nmrg = mrgbase[l]
+            nw = zero(V)
+
+            for q in p:(p + na[l] + nb[l] - one(V))
+                nw += one(V); vertexset[nw] = segment[q]
+            end
+
+            for q in sstart:sstop
+                nw += one(V); vertexset[nw] = pinvtx[q]
+            end
+
+            sort!(view(vertexset, oneto(nw)))
+            popelements!(nelm, elmptr, pinvtx, pinnext, pinhead, level)
+            t += 1; nc = classify!(cls, rmark, rid, ufp, vertexset, nw, t)
+            set = view(vertexset, oneto(nw)); setcls = view(cls, oneto(nw))
+        end
+
+        cmpgraph, cmpweights, cmplabel, clique = realize!(tag, stamp, vclass, marker,
+            mask, clsptr, clstgt, lblptr, lbltgt, pointer, target, nelm, elmptr,
+            pinvtx, pinlvl, pinnext, pinhead, weights, set, setcls, nc, level,
+            graph)
+
+        n = nv(cmpgraph); m = ne(cmpgraph); k = convert(V, length(clique))
+        iscomplete = m == n * (n - one(V))
+
+        if half(m) > length(work01)
+            resize!(work01, half(m))
+            resize!(work02, half(m))
+        end
+
+        # a leaf is processed as soon as it is reached
+        isleaf = descend
+
+        if descend && !(n <= minwidth || level >= maxlevel || iscomplete) # branch
+            part = FVector{V}(undef, n)
+            separator!(work00, part, cmpweights, cmpgraph, imbalance, alg.dis)
+
+            p = base[l]; mrgbase[l] = nmrg
+
+            nap, nbp, stop1, stop0 = segmentsplit!(work04, work05, work06, work07,
+                work08, work11, work12, work13, work14, marker, segment, p, mrg, nmrg,
+                ufp, lblptr, lbltgt, nelm, elmptr, pinvtx, pinlvl, pinnext, pinhead,
+                set, setcls, part, nc, level, cmpgraph)
+
+            na[l] = nap; nb[l] = nbp; side[l] = one(V)
+            mrgstart[l] = stop1 + one(V); mrgstop[l] = nmrg = stop0
+
+            # start child 1 (B ∪ S)
+            logstart[l] = nlog + one(V)
+            nlog = applymerges!(ufp, mlog, nlog, mrg, mrgbase[l] + one(V), stop1)
+            sstart = elmptr[l]; sstop = elmptr[l + one(V)] - one(V)
+            nw = mergesorted!(vertexset, segment, p + nap, p + nap + nbp - one(V), pinvtx, sstart, sstop)
+
+            level += one(V)
+            base[level + one(V)] = p + nap
+            continue
+        end
+
+        if iscomplete # complete graph
+            for v in oneto(n)
+                work03[v] = v
+            end
+        else
+            tree = Parent(n, work06)
+            upper = BipartiteGraph(n, n, half(m), work09, work01)
+            lower = BipartiteGraph(n, n, half(m), work10, work02)
+
+            if isleaf # leaf
+                order, index = permutation(cmpweights, cmpgraph, alg.alg)
+            else      # branch: child 0, then child 1, then the separator
+                p = base[l]
+                ndsorder = Vector{V}(undef, n)
+                ndsindex = Vector{V}(undef, n)
+                i = zero(V)
+
+                # the residuals list vertices of the quotient
+                # graph: read each class at its first vertex
+                seen = marker
+
+                for c in oneto(n)
+                    seen[c] = zero(V)
+                end
+
+                for (qstart, qstop) in ((p + nb[l], p + nb[l] + na[l] - one(V)), (p, p + nb[l] - one(V)))
+                    for q in qstart:qstop
+                        c = vclass[segment[q]]
+
+                        if iszero(seen[c])
+                            seen[c] = one(V)
+                            ndsindex[c] = i += one(V)
+                            ndsorder[i] = c
+                        end
+                    end
+                end
+
+                # the classes of the separator, in increasing order
+                for c in oneto(n)
+                    if iszero(seen[c])
+                        ndsindex[c] = i += one(V)
+                        ndsorder[i] = c
+                    end
+                end
+
+                if isone(S) || istwo(S)
+                    sets = UnionFind(n, work03, work04, work05)
+                    grdorder, grdindex = permutation(cmpweights, cmpgraph, alg.alg)
+
+                    if isone(S)
+                        best = bestwidth_impl!(lower, upper, tree, sets, work07,
+                            work08, work11, work12, work13, work14, work15,
+                            work16, cmpweights, cmpgraph, (ndsindex, grdindex))
+                    else
+                        best = bestfill_impl!(lower, upper, tree, sets, work07,
+                            work08, work11, work12, work13, work14, work15,
+                            work16, cmpweights, cmpgraph, (ndsindex, grdindex))
+                    end
+
+                    order = (ndsorder, grdorder)[best]
+                    index = (ndsindex, grdindex)[best]
+                else
+                    order, index = ndsorder, ndsindex
+                end
+            end
+
+            sympermute!_impl!(upper, cmpgraph, index, Forward)
+
+            for i in oneto(k)
+                clique[i] = index[clique[i]]
+            end
+
+            compositerotations_impl!(index, work03, work04,
+                work05, lower, tree, upper, clique)
+
+            for v in oneto(n)
+                i = index[v]; work03[i] = order[v]
+            end
+        end
+
+        # the residual: the ordering, minus the separator of the parent
+        t += 1
+
+        if ispositive(level)
+            for q in elmptr[level]:(elmptr[l] - one(V))
+                rmark[pinvtx[q]] = t
+            end
+        end
+
+        writeresidual!(segment, base[l], work03, n, cmplabel, rmark, t)
+        descend = false
+    end
+
+    # expand the vertices of the twin-free graph
+    j = zero(V); result = FVector{V}(undef, ne(label))
+
+    @inbounds for i in oneto(ng), w in neighbors(label, segment[i])
+        j += one(V); result[j] = w
+    end
+
+    return result
+end
+
 function twins(graph::AbstractGraph{V}, ::Val{S}) where {V, S}
     n = nov(graph); nn = n + one(V)
     new = FScalar{V}(undef)
@@ -2744,6 +3076,19 @@ function Base.show(io::IO, ::MIME"text/plain", alg::ND{S, A, D}) where {S, A, D}
     println(io, " "^indent * "    level: $(alg.level)")
     println(io, " "^indent * "    imbalance: $(alg.imbalance)")
     println(io, " "^indent * "    scale: $(alg.scale)")
+    return
+end
+
+function Base.show(io::IO, ::MIME"text/plain", alg::FND)
+    indent = get(io, :indent, 0)
+    println(io, " "^indent * "FND:")
+    println(io, " "^indent * "    width: $(alg.width)")
+    println(io, " "^indent * "    level: $(alg.level)")
+    println(io, " "^indent * "    tries: $(alg.tries)")
+    println(io, " "^indent * "    balance: $(alg.balance)")
+    println(io, " "^indent * "    boundary: $(alg.boundary)")
+    println(io, " "^indent * "    scale: $(alg.scale)")
+    println(io, " "^indent * "    seed: $(alg.seed)")
     return
 end
 

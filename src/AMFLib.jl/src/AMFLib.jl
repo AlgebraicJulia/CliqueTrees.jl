@@ -46,7 +46,7 @@ using FillArrays
 using ..Utilities
 using ..CliqueTrees
 
-export amf
+export amf, camf
 
 const FLOAT = Float64
 
@@ -195,6 +195,137 @@ function amf_impl!(
     end
 
     return elen, last
+end
+
+function camf(n::V, m::V, cptr::AbstractVector{E}, ctgt::AbstractVector{V}) where {V, E}
+    vwght = Ones{V}(n)
+    return camf(n, vwght, m, cptr, ctgt)
+end
+
+# Approximate minimum fill ordering of the graph G on the vertices 1:n whose
+# edges are covered by the cliques 1:m, where the members of the clique c are
+# ctgt[cptr[c]:cptr[c + 1] - 1]. G is never formed (see `camf_impl!`).
+function camf(n::V, vwght::AbstractVector, m::V, cptr::AbstractVector{E}, ctgt::AbstractVector{V}) where {V, E}
+    @assert n <= length(vwght)
+    @assert m < length(cptr)
+    @inbounds nnode = n + m; nnz = cptr[m + one(V)] - one(E)
+
+    norig = m
+    iwlen = twice(nnz) + convert(E, 4nnode) + one(E)
+
+    @inbounds for i in oneto(n)
+        norig += trunc(V, vwght[i])
+    end
+
+    nbbuck = twice(norig)
+
+    len = FVector{V}(undef, nnode)
+    pe = FVector{E}(undef, nnode + one(V))
+    iw = FVector{V}(undef, iwlen)
+    nv = FVector{V}(undef, nnode)
+    elen = FVector{V}(undef, nnode)
+    last = FVector{V}(undef, nnode)
+    degree = FVector{V}(undef, nnode)
+    wf = FVector{E}(undef, nnode)
+    next = FVector{V}(undef, nnode)
+    w = FVector{Int}(undef, nnode)
+    head = FVector{V}(undef, nbbuck + two(V))
+    marker = FVector{V}(undef, n)
+
+    perm, invp = camf_impl!(norig, n, m, nbbuck, iwlen, pe, len, iw, nv,
+        elen, last, degree, wf, next, w, head, marker, vwght, cptr, ctgt)
+
+    return convert(Vector{V}, perm), convert(Vector{V}, invp)
+end
+
+# A clique cover is a quotient graph partway through elimination: join one
+# node to the members of each clique, and eliminate the clique nodes. They
+# are pairwise nonadjacent, so they create no fill among themselves, and what
+# remains is G. So the cliques are passed to `hamf_impl!` as elements, which
+# it treats as already eliminated, and the storage is Σ |C| rather than
+# Σ |C|². The nodes are the vertices 1:n and the cliques n + 1:n + m, and the
+# external degree of each vertex in G is computed by `coverdegree!`.
+#
+# Returns the permutation and its inverse, as views of `elen` and `last`.
+function camf_impl!(
+        norig::V,
+        n::V,
+        m::V,
+        nbbuck::V,
+        iwlen::E,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        iw::AbstractVector{V},
+        nv::AbstractVector{V},
+        elen::AbstractVector{V},
+        last::AbstractVector{V},
+        degree::AbstractVector{V},
+        wf::AbstractVector{E},
+        next::AbstractVector{V},
+        w::AbstractVector,
+        head::AbstractVector{V},
+        marker::AbstractVector{V},
+        vwght::AbstractVector,
+        cptr::AbstractVector{E},
+        ctgt::AbstractVector{V},
+    ) where {V, E}
+    nnode = n + m
+
+    # the incidence graph of the cover
+    pfree = coverincidence!(pe, len, iw, marker, n, m, cptr, ctgt)
+
+    # the vertices have their weights, and the elements weigh one
+    @inbounds for v in oneto(n)
+        nv[v] = trunc(V, vwght[v])
+    end
+
+    @inbounds for e in (n + one(V)):nnode
+        nv[e] = one(V)
+    end
+
+    # the external degrees of the vertices, and the element markers
+    coverdegree!(degree, marker, nv, pe, len, iw, n)
+
+    @inbounds for v in oneto(n)
+        elen[v] = degree[v]
+    end
+
+    # an empty list has no head for `hamf_impl!` to mark when it compresses
+    # `iw`, so empty cliques are given a null pointer, as eliminated
+    # vertices are
+    @inbounds for e in (n + one(V)):nnode
+        elen[e] = -nnode - one(V)
+
+        if iszero(len[e])
+            pe[e] = zero(E)
+        end
+    end
+
+    hamf_impl!(norig, nnode, m, nbbuck, iwlen, pe, pfree, len, iw, nv, elen,
+        last, degree, wf, next, w, head, nothing)
+
+    # `abs(elen[i])` is the position of the node `i`: the elements
+    # come first, and are left out of the permutation
+    @inbounds for j in oneto(norig)
+        head[j] = zero(V)
+    end
+
+    @inbounds for v in oneto(n)
+        head[abs(elen[v])] = v
+    end
+
+    k = zero(V)
+
+    @inbounds for j in oneto(norig)
+        v = head[j]
+
+        if ispositive(v)
+            last[v] = k += one(V)
+            elen[k] = v
+        end
+    end
+
+    return view(elen, oneto(n)), view(last, oneto(n))
 end
 
 #  -- translated by f2c (version 19970219).
@@ -778,7 +909,10 @@ function hamf_impl!(
     @assert nbbuck + two(V) <= length(head)
 
     @inbounds for i in oneto(n)
-        elen[i] = zero(V)
+        if iszero(nbelts)                     # `elen` is input if the graph has elements
+            elen[i] = zero(V)
+        end
+
         last[i] = zero(V)
         degree[i] = zero(V)
         wf[i] = zero(E)
@@ -928,6 +1062,7 @@ function hamf_impl!(
             else                              # non-halo vertex or element
                 if isnegative(elen[i])        # if `i` ∈ Ve
                     nel += nv[i]
+                    totel += nv[i]            # elements are numbered first, so they count toward `totel`
                     elen[i] = -nel
 
                     if n == norig

@@ -494,6 +494,8 @@ end
             ND{2}(MMD(), KaHyParND(); width = 5),
             ND{1}(MCS(), METISND(); width = 5),
             ND{2}(MCS(), KaHyParND(); width = 5),
+            ND{1}(MMD(), FlowND(); width = 5),
+            FND(),
             FlowCutter(; time = 1),
             BT(),
             PIDBT(),
@@ -591,6 +593,10 @@ end
             NDS{1}(MCS(), METISND(); width = 5),
             NDS{2}(MCS(), METIS_OR_KAHYPAR(); width = 5),
             NDS{1}(MMD(), METIS_OR_KAHYPAR(); width = 5, imbalances = 100:50:200, scale = 100),
+            ND{1}(MMD(), FlowND(); width = 5),
+            ND{2}(MCS(), FlowND(); width = 5),
+            FND(),
+            FND(; width = 1, balance = 0.1),
             SafeFlowCutter(; time = 1),
             BT(),
             PIDBT(),
@@ -673,6 +679,10 @@ end
             NDS{1}(MCS(), METISND(); width = 5),
             NDS{2}(MCS(), METIS_OR_KAHYPAR(); width = 5),
             NDS{1}(MMD(), METIS_OR_KAHYPAR(); width = 5, imbalances = 100:50:200, scale = 100),
+            ND{1}(MMD(), FlowND(); width = 5),
+            ND{2}(MCS(), FlowND(); width = 5),
+            FND(),
+            FND(; width = 1, balance = 0.1),
             SafeFlowCutter(; time = 1),
             BT(),
             PIDBT(),
@@ -1037,6 +1047,10 @@ end
                         SimplicialRule(NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
                         NDS{1}(MCS(), METISND(); width = 5),
                         SimplicialRule(NDS{2}(MCS(), METIS_OR_KAHYPAR(); width = 5)),
+                        ND{1}(MMD(), FlowND(); width = 5),
+                        ND{3}(MCS(), FlowND(; tries = 1); width = 5),
+                        FND(; width = 5),
+                        FND(; width = 2, tries = 1, balance = 0.1),
                         SafeFlowCutter(; time = 1),
                         BT(),
                         PIDBT(),
@@ -2934,6 +2948,155 @@ end
         end
 
         @test length(covered) == ne(graph)
+    end
+end
+
+@testset "flow dissection" begin
+    # the separators are valid: no edge joins the two parts, and the
+    # reported weight is the weight of the separator
+    rng = Xoshiro(1)
+
+    for trial in 1:500
+        n = rand(rng, 3:40)
+        graph = erdos_renyi(n, rand(rng) * 0.4; rng)
+        ne(graph) == n * (n - 1) ÷ 2 && continue
+        bipartite = BipartiteGraph{Int, Int}(graph)
+        weights = rand(rng, 1:5, n); part = zeros(Int, n); sepsize = FScalar{Int}(undef)
+        alg = FlowND(; tries = rand(rng, 1:3), balance = rand(rng, (0.05, 0.1, 0.3)), seed = trial)
+        CliqueTrees.separator!(sepsize, part, weights, bipartite, 130, alg)
+        @test all(in((0, 1, 2)), part)
+        @test any(iszero, part) && any(isone, part)
+        @test sepsize[] == sum(weights[v] for v in 1:n if istwo(part[v]); init = 0)
+        @test all(e -> abs(part[src(e)] - part[dst(e)]) != 1 || istwo(part[src(e)]) || istwo(part[dst(e)]), edges(graph))
+    end
+
+    # disconnected graphs, weights, and graphs with little to cut
+    graphs = (
+        SimpleGraph(0),
+        SimpleGraph(1),
+        SimpleGraph(200),
+        reduce(blockdiag, [complete_graph(3) for _ in 1:50]),
+        complete_bipartite_graph(40, 40),
+        star_graph(100),
+        Graphs.grid([20, 20]),
+    )
+
+    for graph in graphs, alg in (ND{1}(MF(), FlowND(); width = 4, level = 12), ND{3}(MMD(), FlowND(; balance = 0.3)))
+        order, index = permutation(graph; alg)
+        @test isperm(order)
+        @test index == invperm(order)
+
+        weights = rand(rng, nv(graph)) .+ 0.5
+        order, index = permutation(weights, graph; alg = ND{1}(MF(), FlowND(); width = 4, scale = 10))
+        @test isperm(order)
+        @test index == invperm(order)
+    end
+end
+
+@testset "AMF on clique covers" begin
+    # `camf` orders the graph covered by the cliques without forming it
+    rng = Xoshiro(1)
+
+    for trial in 1:300
+        n = rand(rng, 1:30); m = rand(rng, 0:2n)
+        cliques = [rand(rng, 1:n, rand(rng, 0:min(8, n))) for _ in 1:m]
+        cptr = cumsum([1; length.(cliques)]); ctgt = reduce(vcat, cliques; init = Int[])
+        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:5, n)
+        perm, invp = CliqueTrees.AMFLib.camf(n, weights, m, cptr, ctgt)
+        @test isperm(perm)
+        @test invp == invperm(perm)
+
+        # the smallest workspace, so that `iw` is compressed often: the
+        # incidence graph, and room for one new element
+        nnode = n + m; norig = m + sum(weights; init = 0)
+        iwlen = 1 + nnode + sum(clique -> (k = length(unique(clique))) < 2 ? 0 : 2k, cliques; init = 0)
+
+        perm, invp = CliqueTrees.AMFLib.camf_impl!(norig, n, m, 2norig, iwlen,
+            zeros(Int, nnode + 1), zeros(Int, nnode), zeros(Int, iwlen), zeros(Int, nnode),
+            zeros(Int, nnode), zeros(Int, nnode), zeros(Int, nnode), zeros(Int, nnode),
+            zeros(Int, nnode), zeros(Int, nnode), zeros(Int, 2norig + 2), zeros(Int, n),
+            weights, cptr, ctgt)
+
+        @test isperm(perm)
+        @test invp == invperm(perm)
+    end
+end
+
+@testset "rotations on quotient graphs" begin
+    # `fnd_rotations!` agrees with `compositerotations` on the realized graph
+    rng = Xoshiro(1)
+
+    for trial in 1:300
+        n = rand(rng, 2:30)
+        graph = erdos_renyi(n, rand(rng) * 0.3; rng)
+        cliques = [unique(rand(rng, 1:n, rand(rng, 2:max(2, n ÷ 2)))) for _ in 1:rand(rng, 0:4)]
+        filter!(clique -> length(clique) >= 2, cliques)
+        realized = copy(graph)
+
+        for clique in cliques, a in clique, b in clique
+            a < b && add_edge!(realized, a, b)
+        end
+
+        index = randperm(rng, n)
+        clique = isempty(cliques) ? [rand(rng, 1:n)] : cliques[rand(rng, 1:length(cliques))]
+        upper = CliqueTrees.sympermute(BipartiteGraph(realized), index, Forward)
+        reference = CliqueTrees.compositerotations(upper, sort(index[clique]))
+
+        arcs = [Int[] for _ in 1:n]
+
+        for e in edges(graph)
+            push!(arcs[index[src(e)]], index[dst(e)]); push!(arcs[index[dst(e)]], index[src(e)])
+        end
+
+        gptr = cumsum([1; length.(arcs)]); gtgt = reduce(vcat, arcs; init = Int[])
+        members = [index[clique] for clique in cliques]
+        eptr = cumsum([1; length.(members)]); etgt = reduce(vcat, members; init = Int[])
+        nel = length(cliques); nnz = length(etgt)
+        alpha = zeros(Int, n)
+
+        CliqueTrees.fnd_rotations!(alpha, zeros(Int, n), zeros(Int, n), zeros(Int, n),
+            zeros(Int, n), zeros(Int, max(nel, 1)), zeros(Int, n + 1),
+            zeros(Int, length(gtgt) + nnz), zeros(Int, n + 1), zeros(Int, nnz),
+            Parent{Int}(n), gptr, gtgt, eptr, etgt, sort(index[clique]), n, nel)
+
+        @test alpha == reference
+    end
+end
+
+@testset "fixed-memory nested dissection" begin
+    rng = Xoshiro(1)
+
+    graphs = (
+        SimpleGraph(0),
+        SimpleGraph(1),
+        SimpleGraph(200),
+        complete_graph(30),
+        reduce(blockdiag, [complete_graph(3) for _ in 1:50]),
+        complete_bipartite_graph(40, 40),
+        star_graph(100),
+        Graphs.grid([30, 30]),
+        Graphs.grid([8, 8, 8]),
+    )
+
+    for graph in graphs, alg in (FND(), FND(; width = 4, balance = 0.1, boundary = 0), FND(; width = 1, level = 3, tries = 1, boundary = 1, seed = 2))
+        order, index = permutation(graph; alg)
+        @test isperm(order)
+        @test index == invperm(order)
+
+        weights = rand(rng, nv(graph)) .+ 0.5
+        order, index = permutation(weights, graph; alg = FND(; width = 4, scale = 10))
+        @test isperm(order)
+        @test index == invperm(order)
+    end
+
+    for trial in 1:100
+        n = rand(rng, 1:150)
+        graph = erdos_renyi(n, rand(rng) * 0.15; rng)
+        weights = rand(rng, 1:5, n)
+        alg = FND(; width = rand(rng, 1:20), level = rand(rng, 0:63), balance = rand(rng, (0.05, 0.2, 0.4)), boundary = rand(rng, (0.0, 0.3, 1.0)), seed = trial)
+        order, index = permutation(weights, graph; alg)
+        @test isperm(order)
+        @test index == invperm(order)
     end
 end
 

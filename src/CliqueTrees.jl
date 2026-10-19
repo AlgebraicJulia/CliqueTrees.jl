@@ -37,7 +37,7 @@ export BipartiteGraph, FBipartiteGraph, BipartiteEdgeIter, pointers, targets
 export MMW, LBN, LBP, MTW, lowerbound
 
 # Dissection Algorithms
-export METISND, KaHyParND
+export METISND, KaHyParND, FlowND
 
 # Elimination Algorithms
 export BFS,
@@ -57,6 +57,7 @@ export BFS,
     METIS,
     SCOTCH,
     ND,
+    FND,
     NDS,
     FlowCutter,
     BT,
@@ -110,7 +111,9 @@ include("bipartite_edge_iter.jl")
 include("lb/lb.jl")
 include("dissection_algorithms.jl")
 include("elimination_algorithms.jl")
+include("flownd.jl")
 include("parent.jl")
+include("fnd.jl")
 include("trees.jl")
 include("supernode_types.jl")
 include("supernode_trees.jl")
