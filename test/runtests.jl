@@ -27,6 +27,10 @@ end
     include("septw.jl")
 end
 
+@testset "Contraction-recursive treewidth" begin
+    include("rtw.jl")
+end
+
 @testset "Multifrontal" begin
     include("multifrontal.jl")
 end
