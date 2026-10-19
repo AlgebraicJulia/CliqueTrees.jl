@@ -62,6 +62,7 @@ export BFS,
     BT,
     PIDBT,
     HBT,
+    RTW,
     MinimalChordal,
     CompositeRotations,
     Compression,
@@ -88,6 +89,9 @@ export Clique, separator, residual
 
 # Clique Trees
 export CliqueTree, cliquetree, treewidth, treefill, separatorwidth, separators
+
+# Branch Decompositions (Contraction Trees)
+export branchtree, branchstats, branchwidth, branchpeak, branchcost, branchrefine, branchssa
 
 # Supernode Reordering (Partition Refinement)
 
@@ -126,6 +130,7 @@ include("safe/tutte.jl")
 include("safe/components.jl")
 include("rule/rule.jl")
 include("bt/bt.jl")
+include("branch.jl")
 include("io.jl")
 
 # Submodules
