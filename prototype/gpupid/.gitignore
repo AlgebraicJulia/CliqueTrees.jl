@@ -1,0 +1,7 @@
+atoms/
+dump_*.jls
+results/
+logs_*.txt
+*.jls
+env/Manifest.toml
+papers/
