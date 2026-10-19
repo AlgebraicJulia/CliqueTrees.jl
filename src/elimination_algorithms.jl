@@ -1305,7 +1305,8 @@ Construct a fill-reducing permutation of each graph in a batch, with the vertex 
 
 The graphs of a batch are independent parts of one problem, such as the components of a graph
 ([`ConnectedComponents`](@ref)) or the leaves of a safe separator decomposition
-([`SafeSeparators`](@ref)). By default, each graph is ordered by `alg` in turn, but an algorithm
+([`SafeSeparators`](@ref)). By default, each graph is ordered by `alg`, in parallel if Julia
+has more than one thread (the result does not depend on the number of threads), but an algorithm
 can order a batch as a whole: [`HBT`](@ref) spends one time budget on it.
 
 ```julia-repl
@@ -1324,8 +1325,130 @@ julia> map(length, orders)
 ```
 """
 function batch_permutation(weights::AbstractVector{<:AbstractVector}, graphs::AbstractVector{<:AbstractGraph}, alg::EliminationAlgorithm; verbose::Bool = false)
-    # TODO: order the graphs in parallel
-    return map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs))
+    if !isparallel(alg, verbose) || length(graphs) < 2 || sum(de, graphs) < MINPARALLEL
+        # the orderings share one workspace
+        return withworkspace(() -> map(i -> first(permutation(weights[i], graphs[i], alg; verbose)), eachindex(graphs)))
+    end
+
+    # the graphs are ordered by worker tasks, largest first, each worker taking
+    # the next graph when it is done with the last; the orders do not depend on
+    # the schedule. The orderings of a worker share one workspace.
+    indices = collect(eachindex(graphs)); n = length(indices)
+    queue = sort!(collect(oneto(n)); by = k -> de(graphs[indices[k]]), rev = true)
+    P = Base.promote_op(permutation, eltype(weights), eltype(graphs), typeof(alg))
+    T = isconcretetype(P) && P <: Tuple{Any, Any} ? fieldtype(P, 1) : Any
+    orders = Vector{T}(undef, n)
+    next = Threads.Atomic{Int}(1)
+    failed = Threads.Atomic{Bool}(false)
+
+    tasks = map(oneto(min(Threads.nthreads(), n))) do _
+        return Threads.@spawn withworkspace() do
+            while !failed[]
+                j = Threads.atomic_add!(next, 1)
+                j > n && break
+                k = queue[j]; i = indices[k]
+
+                try
+                    orders[k] = first(permutation(weights[i], graphs[i], alg))
+                catch
+                    failed[] = true
+                    rethrow()
+                end
+            end
+        end
+    end
+
+    fetchall(tasks)
+    return T === Any ? map(identity, orders) : orders
+end
+
+# Graphs with fewer edges than this are ordered on the calling task: below
+# this size, spawning a task costs about as much as the ordering itself.
+const MINPARALLEL = 4096
+
+# Orderings run in parallel when Julia has more than one thread, unless they
+# print or one of the algorithms they are made of cannot share the machine
+# (see `isconcurrent`).
+function isparallel(alg, verbose::Bool)
+    return Threads.nthreads() > 1 && !verbose && allconcurrent(alg)
+end
+
+# Orderings of a graph by the algorithms of a tuple run in parallel if the
+# graph is large.
+function isparallel(graph::AbstractGraph, algs::Tuple, verbose::Bool)
+    return length(algs) > 1 && de(graph) >= MINPARALLEL && all(alg -> isparallel(alg, verbose), algs)
+end
+
+# Whether an algorithm can run concurrently with other orderings without
+# changing its result: Log prints, HBT and FlowCutter run on a time budget,
+# and Scotch draws from a random stream that carries over between calls.
+isconcurrent(alg) = true
+isconcurrent(alg::Union{Log, HBT, FlowCutter, SCOTCH}) = false
+
+# Whether an algorithm and the algorithms it is made of are all concurrent.
+function allconcurrent(alg)
+    isconcurrent(alg) || return false
+
+    for name in fieldnames(typeof(alg))
+        x = getfield(alg, name)
+
+        if x isa EliminationAlgorithm
+            allconcurrent(x) || return false
+        elseif x isa Tuple
+            all(allconcurrent, x) || return false
+        end
+    end
+
+    return true
+end
+
+# Order a graph by each algorithm of a tuple, in parallel, and return the
+# ordering of least score, the first one on ties, as `bestwidth` and `bestfill`
+# do in serial. Each task scores its own ordering. The results are the same as
+# in serial: the external partitioners whose random number generators are
+# global (METIS, KaHyPar) reseed them on every call and run one at a time (see
+# ext/MetisExt.jl and ext/KaHyParExt.jl). Each task has a workspace of its
+# own, from one pool (see `spawnwork`).
+function bestof(score::Function, weights::AbstractVector, graph::AbstractGraph, algs::Tuple)
+    P = Union{map(alg -> Base.promote_op(permutation, typeof(weights), typeof(graph), typeof(alg)), algs)...}
+    S = Base.promote_op(score, typeof(weights), typeof(graph), P)
+
+    results = withworkspace() do
+        tasks = map(algs) do alg
+            return spawnwork(weights, graph) do
+                pair = permutation(weights, graph, alg)
+                score(weights, graph, pair), pair
+            end
+        end
+
+        return fetchall(tasks)
+    end
+
+    minscore = minpair = nothing
+
+    for (curscore, curpair) in results
+        if isnothing(minscore) || curscore < minscore
+            minscore, minpair = curscore, curpair
+        end
+    end
+
+    return minpair::P
+end
+
+# Wait for all tasks, then return their results or rethrow the first exception,
+# as it was thrown: no task is left running.
+function fetchall(tasks)
+    foreach(task -> try wait(task) catch end, tasks)
+    return map(fetchunwrap, tasks)
+end
+
+function fetchunwrap(task::Task)
+    try
+        return fetch(task)
+    catch e
+        e isa TaskFailedException && throw(task.exception)
+        rethrow()
+    end
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MinimalChordal; verbose::Bool = false)
@@ -2036,7 +2159,12 @@ function mcsm(graph::AbstractGraph{V}, clique::AbstractVector{V} = oneto(zero(V)
     return alpha
 end
 
+# AMF and MMD do not modify their input
 function AMFLib.amf(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    if issimplegraph(graph)
+        return amf(nv(graph), weights, pointers(graph), targets(graph); kwargs...)
+    end
+
     simple = simplegraph(graph)
     return amf(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
@@ -2050,7 +2178,7 @@ function mlf(strategy::Integer, weights::AbstractVector, graph::AbstractGraph; k
 end
 
 function mlf(score::MLFScore, weights::AbstractVector{W}, graph::AbstractGraph; kwargs...) where {W <: Union{Int8, Int16, Int32}}
-    intweights = FVector{Int}(undef, nv(graph))
+    intweights = workvector(workspace(), Int, 43, nv(graph))
 
     @inbounds for v in vertices(graph)
         intweights[v] = convert(Int, weights[v])
@@ -2063,13 +2191,18 @@ function mlf(score::MLFScore, weights::AbstractVector, graph::AbstractGraph{V}; 
     E = etype(graph)
     n = nv(graph)
     m = de(graph)
-    ptr = FVector{E}(undef, n + 1)
-    tgt = FVector{V}(undef, m + 2n)
+    ws = workspace()
+    ptr = workvector(ws, E, 41, n + 1)
+    tgt = workvector(ws, V, 2, m + 2n)
     simple = simplegraph!(ptr, tgt, graph)
     return mlf!(score, nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
 
 function MMDLib.mmd(weights::AbstractVector, graph::AbstractGraph; kwargs...)
+    if issimplegraph(graph)
+        return mmd(nv(graph), weights, pointers(graph), targets(graph); kwargs...)
+    end
+
     simple = simplegraph(graph)
     return mmd(nv(simple), weights, pointers(simple), targets(simple); kwargs...)
 end
@@ -2080,9 +2213,7 @@ function MDLib.md(weights::AbstractVector, graph::AbstractGraph; kwargs...)
 end
 
 function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::EliminationAlgorithm, dis::DissectionAlgorithm, width::Integer, level::Integer, imbalances::AbstractRange, scale::Integer, ::Val{S}) where {S}
-    minscore = minpair = nothing
-
-    for imbalance in imbalances
+    function score(imbalance)
         curalg = ND{S}(alg, dis; width, level, imbalance, scale)
         curpair = permutation(weights, graph, curalg)
 
@@ -2092,6 +2223,24 @@ function dissectsearch(weights::AbstractVector, graph::AbstractGraph, alg::Elimi
             curscore = (treefill(weights, graph, curpair), treewidth(weights, graph, curpair))
         end
 
+        return curscore, curpair
+    end
+
+    # the imbalances are tried in parallel, each task with a workspace of its
+    # own, and the results compared in order
+    results = withworkspace() do
+        if length(imbalances) < 2 || de(graph) < MINPARALLEL || !isparallel(alg, false)
+            return map(score, imbalances)
+        end
+
+        R = Base.promote_op(score, Int)
+        tasks = map(imbalance -> spawnwork(() -> score(imbalance), weights, graph), imbalances)
+        return map(result -> result::R, fetchall(tasks))
+    end
+
+    minscore = minpair = nothing
+
+    for (curscore, curpair) in results
         if isnothing(minscore) || curscore < minscore
             minscore, minpair = curscore, curpair
         end

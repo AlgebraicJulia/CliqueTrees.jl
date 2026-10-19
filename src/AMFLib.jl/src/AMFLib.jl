@@ -74,17 +74,20 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
 
     nbbuck = twice(norig)
 
-    len = FVector{V}(undef, n)
-    pe = FVector{E}(undef, nn)
-    iw = FVector{V}(undef, iwlen)
-    nv = FVector{V}(undef, n)
-    elen = FVector{V}(undef, n)
-    last = FVector{V}(undef, n)
-    degree = FVector{V}(undef, n)
-    wf = FVector{E}(undef, n)
-    next = FVector{V}(undef, n)
-    w = FVector{Int}(undef, n)
-    head = FVector{V}(undef, nbbuck + two(V))
+    # the work arrays are in slots 1 to 11 of the workspace (see Utilities);
+    # the bucket array and the adjacency array share slots with MMDLib
+    ws = workspace()
+    head = workvector(ws, V, BUCKETS, nbbuck + two(V))
+    iw = workvector(ws, V, 2, iwlen)
+    len = workvector(ws, V, 3, n)
+    pe = workvector(ws, E, 4, nn)
+    nv = workvector(ws, V, 5, n)
+    elen = workvector(ws, V, 6, n)
+    last = workvector(ws, V, 7, n)
+    degree = workvector(ws, V, 8, n)
+    wf = workvector(ws, E, 9, n)
+    next = workvector(ws, V, 10, n)
+    w = workvector(ws, Int, 11, n)
 
     perm, invp = amf_impl!(norig, n, nbbuck, iwlen, pe,
         len, iw, nv, elen, last, degree, wf, next, w, head,

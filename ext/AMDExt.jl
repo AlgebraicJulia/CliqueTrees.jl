@@ -20,18 +20,34 @@ function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, 
     return order, invperm(order)
 end
 
+# `amd!` shifts the arrays of its graph to zero-based indices in place, and
+# back. Converting a graph whose arrays already have the right type does not
+# copy them, so a copy is made then: the caller's graph may be read by other
+# tasks in the meantime (see `bestof`).
 function amd(graph::AbstractGraph{V}, alg::Union{AMD, SymAMD}) where {V}
-    new = BipartiteGraph{Cint, Cint}(graph)
-    order = convert(Vector{V}, amd(new, alg))
+    new = unalias(graph, BipartiteGraph{Cint, Cint}(graph))
+    order = convert(Vector{V}, amd!(new, alg))
     return order
 end
 
 function amd(graph::AbstractGraph{Int64}, alg::Union{AMD, SymAMD})
-    new = BipartiteGraph{Int64, Int64}(graph)
-    return amd(new, alg)
+    new = unalias(graph, BipartiteGraph{Int64, Int64}(graph))
+    return amd!(new, alg)
 end
 
-function amd(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, alg::AMD)
+function unalias(graph::AbstractGraph, new::BipartiteGraph)
+    return new
+end
+
+function unalias(graph::BipartiteGraph, new::BipartiteGraph)
+    if pointers(new) === pointers(graph) || targets(new) === targets(graph)
+        new = copy(new)
+    end
+
+    return new
+end
+
+function amd!(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, alg::AMD)
     n = nv(graph); m = ne(graph); nn = n + one(Cint)
 
     # set parameters
@@ -69,7 +85,7 @@ function amd(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, 
 end
 
 
-function amd(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64}}, alg::AMD)
+function amd!(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64}}, alg::AMD)
     n = nv(graph); m = ne(graph); nn = n + one(Int64)
 
     # set parameters
@@ -106,7 +122,7 @@ function amd(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64
     return order
 end
 
-function amd(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, alg::SymAMD)
+function amd!(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, alg::SymAMD)
     n = nv(graph); m = ne(graph); nn = n + one(Cint)
 
     # set parameters
@@ -145,7 +161,7 @@ function amd(graph::BipartiteGraph{Cint, Cint, <:VECTOR{Cint}, <:VECTOR{Cint}}, 
     return resize!(order, n)
 end
 
-function amd(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64}}, alg::SymAMD)
+function amd!(graph::BipartiteGraph{Int64, Int64, <:VECTOR{Int64}, <:VECTOR{Int64}}, alg::SymAMD)
     n = nv(graph); m = ne(graph); nn = n + one(Int64)
 
     # set parameters

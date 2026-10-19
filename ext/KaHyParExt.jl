@@ -16,6 +16,10 @@ const VINT2 = KaHyPar.kahypar_hyperedge_id_t
 const EINT = KaHyPar.Csize_t
 const PINT = KaHyPar.kahypar_partition_id_t
 
+# KaHyPar keeps its random number generator in global state, so concurrent
+# calls give different results than the same calls made one at a time
+const LOCK = ReentrantLock()
+
 function CliqueTrees.permutation(weights::AbstractVector, graph::AbstractGraph, alg::ND{<:Any, <:EliminationAlgorithm, <:KaHyParND}; verbose::Bool = false)
     order = dissect(weights, graph, alg)
     return order, invperm(order)
@@ -56,24 +60,26 @@ function separator!(sepsize::AbstractScalar{WINT2}, part::AbstractVector{PINT}, 
 
     imbalance -= convert(PINT, 100)
 
-    context = KaHyPar.kahypar_context_new()
-    KaHyPar.kahypar_configure_context_from_file(context, joinpath(@__DIR__, "config/cut_kKaHyPar_sea20.ini"))
+    @lock LOCK begin
+        context = KaHyPar.kahypar_context_new()
+        KaHyPar.kahypar_configure_context_from_file(context, joinpath(@__DIR__, "config/cut_kKaHyPar_sea20.ini"))
 
-    KaHyPar.kahypar_partition(
-        convert(VINT1, nov(graph)),
-        nv(graph),
-        convert(Cdouble, imbalance) / convert(Cdouble, 1000),
-        two(PINT),
-        vwght,
-        ewght,
-        pointers(graph),
-        targets(graph),
-        sepsize,
-        context,
-        part,
-    )
+        KaHyPar.kahypar_partition(
+            convert(VINT1, nov(graph)),
+            nv(graph),
+            convert(Cdouble, imbalance) / convert(Cdouble, 1000),
+            two(PINT),
+            vwght,
+            ewght,
+            pointers(graph),
+            targets(graph),
+            sepsize,
+            context,
+            part,
+        )
 
-    KaHyPar.kahypar_context_free(context)
+        KaHyPar.kahypar_context_free(context)
+    end
 
     @inbounds for v in oneto(nn)
         pointers(graph)[v] += one(EINT)
@@ -111,7 +117,8 @@ function dissect(weights::FVector{WINT2}, graph::AbstractGraph{V}, alg::ND) wher
     cmpgraph, cmpweights, project = compresstwins(weights, simple)
 
     cover = qcc(VINT2, EINT, cmpgraph, alg.dis.beta, alg.dis.order)
-    order = convert(Vector{V}, dissectsimple(cmpweights, reverse(cover), cmpgraph, project, alg))
+    # the orderings at the nodes share one workspace
+    order = convert(Vector{V}, withworkspace(() -> dissectsimple(cmpweights, reverse(cover), cmpgraph, project, alg)))
     return order
 end
 

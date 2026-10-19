@@ -23,7 +23,7 @@ end
 
 function mmd(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
     @assert neqns <= length(vwght)
-    newvwght = FVector{V}(undef, neqns)
+    newvwght = workvector(workspace(), V, 12, neqns)
 
     @inbounds for node in oneto(neqns)
         newvwght[node] = trunc(V, vwght[node])
@@ -42,15 +42,19 @@ function mmd(neqns::V, vwght::AbstractVector{V}, xadj::AbstractVector{E}, adjncy
         total += vwght[node]
     end
 
-    marker = FVector{Int}(undef, neqns)
-    needsupdate = FVector{V}(undef, neqns)
-    supersize = FVector{V}(undef, neqns)
-    superwght = FVector{V}(undef, neqns)
-    elimnext = FVector{V}(undef, neqns)
-    deghead = FVector{V}(undef, total)
-    degnext = FVector{V}(undef, neqns)
-    degprev = FVector{V}(undef, neqns)
-    newadjncy = FVector{V}(undef, nnz)
+    # the work arrays are in slots 1 to 11 of the workspace (see Utilities),
+    # of the same types as in AMFLib, which runs on the same graphs; slot 12
+    # may hold the weights
+    ws = workspace()
+    deghead = workvector(ws, V, BUCKETS, total)
+    newadjncy = workvector(ws, V, 2, nnz)
+    needsupdate = workvector(ws, V, 3, neqns)
+    supersize = workvector(ws, V, 5, neqns)
+    superwght = workvector(ws, V, 6, neqns)
+    elimnext = workvector(ws, V, 7, neqns)
+    degnext = workvector(ws, V, 8, neqns)
+    degprev = workvector(ws, V, 10, neqns)
+    marker = workvector(ws, Int, 11, neqns)
 
     mmd_impl!(marker, needsupdate, supersize,
         superwght, elimnext, deghead, degnext, degprev, newadjncy,

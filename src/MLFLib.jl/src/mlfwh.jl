@@ -75,8 +75,8 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     #       -------------------
     #       LOCAL VARIABLES ...
     #       -------------------
-    perm = FVector{V}(undef, n)
-    invp = FVector{V}(undef, n)
+    perm = Vector{V}(undef, n)
+    invp = Vector{V}(undef, n)
 
     @inbounds for i in oneto(n)
         perm[i] = i
@@ -91,25 +91,27 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     #       --------------------
     #       ALLOCATE WORK SPACE.
     #       --------------------
-    changed = FVector{Bool}(undef, n)
-    degree  = FVector{W}(undef, n)
-    ecforw  = FVector{V}(undef, n)
-    ecliq   = FVector{V}(undef, n)
-    heapinv = FVector{V}(undef, n)
-    len2    = FVector{V}(undef, n)
-    marker  = FVector{Int}(undef, n)
-    nvtxs   = FVector{V}(undef, n)
-    qsize   = FVector{W}(undef, n)
-    qnmbr   = FVector{V}(undef, n)
-    umark   = FVector{Int}(undef, n)
-    work    = FVector{V}(undef, n)
-    work1   = FVector{Int}(undef, n)
-    work2   = FVector{W}(undef, n)
-    xadj2   = FVector{E}(undef, n)
-    adj2    = FVector{V}(undef, adjlen2)
+    #       (SLOTS 3 AND 21 TO 38 OF THE WORKSPACE; SEE UTILITIES.)
+    ws      = workspace()
+    changed = workvector(ws, Bool, 21, n)
+    degree  = workvector(ws, W, 22, n)
+    ecforw  = workvector(ws, V, 23, n)
+    ecliq   = workvector(ws, V, 24, n)
+    heapinv = workvector(ws, V, 25, n)
+    len2    = workvector(ws, V, 26, n)
+    marker  = workvector(ws, Int, 27, n)
+    nvtxs   = workvector(ws, V, 28, n)
+    qsize   = workvector(ws, W, 29, n)
+    qnmbr   = workvector(ws, V, 30, n)
+    umark   = workvector(ws, Int, 31, n)
+    work    = workvector(ws, V, 32, n)
+    work1   = workvector(ws, Int, 33, n)
+    work2   = workvector(ws, W, 34, n)
+    xadj2   = workvector(ws, E, 35, n)
+    adj2    = workvector(ws, V, 3, adjlen2)
 
-    defncy  = FVector{W}(undef, n)
-    heap    = FVector{SCORE}(undef, twice(n))
+    defncy  = workvector(ws, W, 37, n)
+    heap    = workvector(ws, SCORE, 38, twice(n))
 
     #       ------------------------------------------------------------
     #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
