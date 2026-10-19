@@ -49,30 +49,29 @@ using ..CliqueTrees
 export amf, camf
 
 const FLOAT = Float64
-
-function anint(::Type{I}, x::F) where {I, F}
-    return floor(I, x + convert(F, 0.5))
-end
+const AMF_SCOREMAX = 2.0^52   # largest rounded score; integers up to here are exact in a `FLOAT`
 
 function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; kwargs...) where {V, E}
     vwght = Ones{V}(n)
     return amf(n, vwght, xadj, adjncy; kwargs...)
 end
 
+# The vertex weights may be any finite positive numbers. A vertex of weight `w`
+# stands for a class of true twins of total weight `w`, and the ordering does
+# not depend on the unit in which the weights are measured.
+#
 # If `exact` is true, then the initial score of each variable is computed from
 # its exact fill-in, as for every later score, rather than from its degree.
 function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; exact::Bool = false) where {V, E}
     @assert n <= length(vwght)
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
-    norig = zero(V)
+    wt = FVector{FLOAT}(undef, n)
+    wsum = amf_weights!(wt, vwght, n)
+    wunit = one(FLOAT)
+    nfine = amf_nfine(wsum, n)
+    nbbuck = twice(nfine)
     iwlen = twice(m) + convert(E, 4n) + one(E)
-
-    @inbounds for i in oneto(n)
-        norig += trunc(V, vwght[i])
-    end
-
-    nbbuck = twice(norig)
 
     len = FVector{V}(undef, n)
     pe = FVector{E}(undef, nn)
@@ -80,17 +79,53 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
     nv = FVector{V}(undef, n)
     elen = FVector{V}(undef, n)
     last = FVector{V}(undef, n)
-    degree = FVector{V}(undef, n)
-    wf = FVector{E}(undef, n)
+    degree = FVector{FLOAT}(undef, n)
+    wf = FVector{FLOAT}(undef, n)
     next = FVector{V}(undef, n)
     w = FVector{Int}(undef, n)
     head = FVector{V}(undef, nbbuck + two(V))
 
-    perm, invp = amf_impl!(norig, n, nbbuck, iwlen, pe,
+    perm, invp = amf_impl!(n, nfine, nbbuck, iwlen, pe,
         len, iw, nv, elen, last, degree, wf, next, w, head,
-        vwght, xadj, adjncy, exact)
+        wt, wunit, vwght, xadj, adjncy, exact)
 
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
+end
+
+# Check that the weights `vwght[1:n]` are finite and positive, and store them in
+# `wt[1:n]` in units of the smallest one. The ordering does not depend on the
+# unit of the weights, and in these units the squared areas neither underflow
+# nor overflow unless the weights span more than about 150 decades. Scores are
+# then rounded to whole units. Returns the total weight.
+function amf_weights!(wt::AbstractVector{F}, vwght::AbstractVector, n::Integer) where {F}
+    wmin = convert(F, Inf); wsum = zero(F)
+
+    @inbounds for i in oneto(n)
+        wi = convert(F, vwght[i])
+
+        if !(isfinite(wi) && wi > zero(F))
+            throw(ArgumentError("vertex weights must be finite and positive, but weight $i is $(vwght[i])"))
+        end
+
+        wmin = min(wmin, wi)
+    end
+
+    @inbounds for i in oneto(n)
+        wt[i] = convert(F, vwght[i]) / wmin
+        wsum += wt[i]
+    end
+
+    return wsum
+end
+
+# Each of the first `nfine` rounded scores gets its own bucket, and larger
+# scores share buckets; `nfine` only affects speed.
+function amf_nfine(wsum::F, n::V) where {F, V}
+    if iszero(n)
+        return zero(V)
+    else
+        return convert(V, round(Int, clamp(wsum, convert(F, n), convert(F, max(16 * Int(n), 1 << 16)))))
+    end
 end
 
 # The weighted fill-in of each variable: the sum of `weights[a] * weights[b]`
@@ -98,8 +133,8 @@ end
 # Wing-Huang updates in O(m√m) time.
 function amf_fillin(n::V, weights::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
     @inbounds m = xadj[n + one(V)] - one(E)
-    vfill = FVector{Int}(undef, n)
-    wdegree = FVector{Int}(undef, n)
+    vfill = FVector{FLOAT}(undef, n)
+    wdegree = FVector{FLOAT}(undef, n)
     marker = FVector{V}(undef, n)
     order = FVector{V}(undef, n)
     tail = FVector{E}(undef, n)
@@ -116,19 +151,18 @@ function amf_fillin(n::V, weights::AbstractVector, xadj::AbstractVector{E}, adjn
     return vfill
 end
 
-# the weights used for the fill-in: `nv[i]` is `trunc(vwght[i])`, so unit
-# weights stay a `Ones`, which `fillin!` handles without the weight lookups
-function amf_fillweights(vwght::Ones, nv::AbstractVector{V}, n::V) where {V}
-    return Ones{V}(n)
+# unit weights stay a `Ones`, which `fillin!` handles without the weight lookups
+function amf_fillweights(vwght::Ones, wt::AbstractVector, n::V) where {V}
+    return Ones{FLOAT}(n)
 end
 
-function amf_fillweights(vwght::AbstractVector, nv::AbstractVector{V}, n::V) where {V}
-    return view(nv, oneto(n))
+function amf_fillweights(vwght::AbstractVector, wt::AbstractVector, n::V) where {V}
+    return view(wt, oneto(n))
 end
 
 function amf_impl!(
-        norig::V,
         n::V,
+        nfine::V,
         nbbuck::V,
         iwlen::E,
         pe::AbstractVector{E},
@@ -137,16 +171,18 @@ function amf_impl!(
         nv::AbstractVector{V},
         elen::AbstractVector{V},
         last::AbstractVector{V},
-        degree::AbstractVector{V},
-        wf::AbstractVector{E},
+        degree::AbstractVector{F},
+        wf::AbstractVector{F},
         next::AbstractVector{V},
         w::AbstractVector,
         head::AbstractVector{V},
+        wt::AbstractVector{F},
+        wunit::F,
         vwght::AbstractVector,
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
         exact::Bool,
-    ) where {V, E}
+    ) where {V, E, F}
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
     nbelts = zero(V)
@@ -160,21 +196,21 @@ function amf_impl!(
 
     @inbounds for i in oneto(n)
         pp = pe[i + one(E)] = xadj[i + one(E)]
-        nv[i] = trunc(V, vwght[i])
+        nv[i] = one(V)
         len[i] = convert(V, pp - p)
         p = pp
     end
 
     if exact
-        vfill = amf_fillin(n, amf_fillweights(vwght, nv, n), xadj, adjncy)
+        vfill = amf_fillin(n, amf_fillweights(vwght, wt, n), xadj, adjncy)
     else
         vfill = nothing
     end
 
-    ncmpa = hamf_impl!(norig, n, nbelts, nbbuck, iwlen, pe,
-        pfree, len, iw, nv, elen, last, degree, wf, next, w, head, vfill)
+    ncmpa = hamf_impl!(n, n, nbelts, nfine, nbbuck, iwlen, pe,
+        pfree, len, iw, nv, elen, last, degree, wf, next, w, head, wt, wunit, vfill)
 
-    @inbounds for j in oneto(norig)
+    @inbounds for j in oneto(n)
         head[j] = zero(V)
     end
 
@@ -185,7 +221,7 @@ function amf_impl!(
 
     k = zero(V)
 
-    @inbounds for j in oneto(norig)
+    @inbounds for j in oneto(n)
         i = head[j]
 
         if ispositive(i)
@@ -204,20 +240,19 @@ end
 
 # Approximate minimum fill ordering of the graph G on the vertices 1:n whose
 # edges are covered by the cliques 1:m, where the members of the clique c are
-# ctgt[cptr[c]:cptr[c + 1] - 1]. G is never formed (see `camf_impl!`).
+# ctgt[cptr[c]:cptr[c + 1] - 1]. G is never formed (see `camf_impl!`). The
+# vertex weights are as for `amf`.
 function camf(n::V, vwght::AbstractVector, m::V, cptr::AbstractVector{E}, ctgt::AbstractVector{V}) where {V, E}
     @assert n <= length(vwght)
     @assert m < length(cptr)
     @inbounds nnode = n + m; nnz = cptr[m + one(V)] - one(E)
 
-    norig = m
+    wt = FVector{FLOAT}(undef, nnode)
+    wsum = amf_weights!(wt, vwght, n)
+    nfine = amf_nfine(wsum, n)
+    nbbuck = twice(nfine)
+    norig = nnode                             # positions: the cliques, numbered first, and the vertices
     iwlen = twice(nnz) + convert(E, 4nnode) + one(E)
-
-    @inbounds for i in oneto(n)
-        norig += trunc(V, vwght[i])
-    end
-
-    nbbuck = twice(norig)
 
     len = FVector{V}(undef, nnode)
     pe = FVector{E}(undef, nnode + one(V))
@@ -225,15 +260,15 @@ function camf(n::V, vwght::AbstractVector, m::V, cptr::AbstractVector{E}, ctgt::
     nv = FVector{V}(undef, nnode)
     elen = FVector{V}(undef, nnode)
     last = FVector{V}(undef, nnode)
-    degree = FVector{V}(undef, nnode)
-    wf = FVector{E}(undef, nnode)
+    degree = FVector{FLOAT}(undef, nnode)
+    wf = FVector{FLOAT}(undef, nnode)
     next = FVector{V}(undef, nnode)
     w = FVector{Int}(undef, nnode)
-    head = FVector{V}(undef, nbbuck + two(V))
+    head = FVector{V}(undef, max(nbbuck + two(V), norig))
     marker = FVector{V}(undef, n)
 
-    perm, invp = camf_impl!(norig, n, m, nbbuck, iwlen, pe, len, iw, nv,
-        elen, last, degree, wf, next, w, head, marker, vwght, cptr, ctgt)
+    perm, invp = camf_impl!(norig, n, m, nfine, nbbuck, iwlen, pe, len, iw, nv,
+        elen, last, degree, wf, next, w, head, marker, wt, cptr, ctgt)
 
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
 end
@@ -244,13 +279,14 @@ end
 # remains is G. So the cliques are passed to `hamf_impl!` as elements, which
 # it treats as already eliminated, and the storage is Σ |C| rather than
 # Σ |C|². The nodes are the vertices 1:n and the cliques n + 1:n + m, and the
-# external degree of each vertex in G is computed by `coverdegree!`.
+# weighted external degree of each vertex in G is computed by `coverdegree!`.
 #
 # Returns the permutation and its inverse, as views of `elen` and `last`.
 function camf_impl!(
         norig::V,
         n::V,
         m::V,
+        nfine::V,
         nbbuck::V,
         iwlen::E,
         pe::AbstractVector{E},
@@ -259,40 +295,36 @@ function camf_impl!(
         nv::AbstractVector{V},
         elen::AbstractVector{V},
         last::AbstractVector{V},
-        degree::AbstractVector{V},
-        wf::AbstractVector{E},
+        degree::AbstractVector{F},
+        wf::AbstractVector{F},
         next::AbstractVector{V},
         w::AbstractVector,
         head::AbstractVector{V},
         marker::AbstractVector{V},
-        vwght::AbstractVector,
+        wt::AbstractVector{F},
         cptr::AbstractVector{E},
         ctgt::AbstractVector{V},
-    ) where {V, E}
+    ) where {V, E, F}
     nnode = n + m
 
     # the incidence graph of the cover
     pfree = coverincidence!(pe, len, iw, marker, n, m, cptr, ctgt)
 
-    # the vertices have their weights, and the elements weigh one
-    @inbounds for v in oneto(n)
-        nv[v] = trunc(V, vwght[v])
+    # every node is one position: a vertex, or a clique
+    @inbounds for i in oneto(nnode)
+        nv[i] = one(V)
     end
 
-    @inbounds for e in (n + one(V)):nnode
-        nv[e] = one(V)
-    end
-
-    # the external degrees of the vertices, and the element markers
-    coverdegree!(degree, marker, nv, pe, len, iw, n)
+    # the weighted external degrees of the vertices
+    coverdegree!(degree, marker, wt, pe, len, iw, n)
 
     @inbounds for v in oneto(n)
-        elen[v] = degree[v]
+        elen[v] = zero(V)
     end
 
-    # an empty list has no head for `hamf_impl!` to mark when it compresses
-    # `iw`, so empty cliques are given a null pointer, as eliminated
-    # vertices are
+    # the element markers; an empty list has no head for `hamf_impl!` to
+    # mark when it compresses `iw`, so empty cliques are given a null
+    # pointer, as eliminated vertices are
     @inbounds for e in (n + one(V)):nnode
         elen[e] = -nnode - one(V)
 
@@ -301,8 +333,8 @@ function camf_impl!(
         end
     end
 
-    hamf_impl!(norig, nnode, m, nbbuck, iwlen, pe, pfree, len, iw, nv, elen,
-        last, degree, wf, next, w, head, nothing)
+    hamf_impl!(norig, nnode, m, nfine, nbbuck, iwlen, pe, pfree, len, iw, nv, elen,
+        last, degree, wf, next, w, head, wt, one(F), nothing)
 
     # `abs(elen[i])` is the position of the node `i`: the elements
     # come first, and are left out of the permutation
@@ -326,6 +358,32 @@ function camf_impl!(
     end
 
     return view(elen, oneto(n)), view(last, oneto(n))
+end
+
+# round a score to a whole number of units, as an integer-valued float
+function amf_round(rmf::F, n::Integer) where {F}
+    if rmf < AMF_SCOREMAX
+        q = floor(rmf + convert(F, 0.5))
+    elseif rmf / convert(F, n) < AMF_SCOREMAX
+        q = floor(rmf / convert(F, n) + convert(F, 0.5))
+    else
+        q = convert(F, AMF_SCOREMAX)
+    end
+
+    return max(q, one(F))
+end
+
+# the bucket of a rounded score: one bucket for each of the first `nfine`
+# scores, then one for each `pas` scores, up to `nbbuck`. Only the buckets
+# above `nfine` hold more than one score, and they are searched for the best
+# one, so which variable is selected does not depend on `nfine`. (In HAMF4,
+# the scores just above `nfine` shared bucket `nfine`, which was not searched.)
+function amf_bucket(q::F, nfine::V, pas::V, nbbuck::V) where {F, V}
+    if q > convert(F, nfine)
+        return convert(V, min(div(convert(Int, q) - Int(nfine) - 1, Int(pas)) + Int(nfine) + 1, Int(nbbuck)))
+    else
+        return convert(V, q)
+    end
 end
 
 #  -- translated by f2c (version 19970219).
@@ -365,12 +423,6 @@ end
 #     degree but an approximation of the fill-in.
 #     In this approximation
 #     all cliques of elements adjacent to the variable are deducted.
-#     MUMPS_HAMF4 also enables to take into account a halo in the graph.
-#     The graph is composed is partitioned in two types of nodes
-#     the so called internal nodes and the so called halo nodes.
-#     Halo nodes cannot be selected the both the initial degrees
-#     and updated degrees of internal node should be taken
-#     into account.
 #     Written by Patrick Amestoy between 1999 and 2019.
 #     and used by F. Pellegrini in SCOTCH since 2000.
 #
@@ -383,23 +435,47 @@ end
 #       Ge a graph with both variables and elements
 #
 #     Let V be the set of nodes in the graph
-#         V = Ve + V0 + V1
-#             V0 = Set of variable nodes (not in halo)
-#             V1 = Set of variable nodes (in halo)
+#         V = Ve + V0
+#             V0 = Set of variable nodes
 #             Ve = Set of element nodes |Ve|=nbelts
 #
-#     All 3 sets are disjoint, Ve and V1 can be empty
-#     If nbelts>0 then a bipartite graph bewteen
-#        (V0 U V1) and Ve is provided on entry.
+#     The two sets are disjoint, and Ve can be empty.
+#     If nbelts>0 then a bipartite graph between
+#        V0 and Ve is provided on entry.
 #
 #     A graph of elements and variables is a bipartite
-#     graph between the set of variables (that may
-#     include halo variables) and the set of elements.
+#     graph between the set of variables and the set of elements.
 #     Thus variables are only adjacent to elements and
 #     in the element list we only have variables.
 #     Elements are "considered" as already eliminated and
 #     are provided here only to describe the adjacency between
 #     variables. Only variables in V0 need to be eliminated.
+#
+#     (CliqueTrees) The HAMF4 halo (the set V1 of variables that are
+#     never ordered) has been removed.
+#
+#     (CliqueTrees) Weights. Each variable carries a weight wt(i), any
+#     finite positive number; a variable of weight w stands for a class
+#     of true twins of total weight w. The structural bookkeeping (nv,
+#     the counts in w, positions in the ordering) counts vertices, and
+#     a separate weight layer (wt, degree, wf) computes the scores. All
+#     areas are squares of weights, so that the score does not depend
+#     on a unit. After pivot me is eliminated, each variable i in Lme
+#     gets the score
+#
+#       ( d (d + 2 W(Lme)) - sum_e x_e (2 W(Le) - x_e)
+#                          - 2 wt(i) a - sum_j wt(j)^2 ) / wt(i)
+#
+#     where x_e = W(Le \ Lme) for each element e adjacent to i,
+#     j runs over the variables adjacent to i outside Lme, a = sum_j wt(j),
+#     and d = sum_e x_e + a bounds W(N(i) \ Lme). The numerator estimates
+#     twice the weighted fill of eliminating i, counted as squares of
+#     weights: all of N[i], minus the cliques Lme, Le and {j} it is
+#     covered by. If d + W(Lme) exceeds the remaining weight r, the
+#     numerator is the minimum of the above and
+#     (r - wt(i))^2 - (W(Lme) - wt(i))^2. Scores are rounded to multiples
+#     of wunit, the smallest weight. The initial score is the weighted
+#     degree, or 2 F(i) / wt(i) for the exact fill-in F(i).
 #
 #     Comments relative to 64/32 bits integer representation:
 #     This is [based on] a restrictive integer 64 bit variant:
@@ -410,15 +486,17 @@ end
 #
 #   Parameters
 #      Input only, not modified on output :
-#        N : number of nodes in the complete graph including halo
-#            N = size of V0 U V1
-#        NBBUCK : should be greater than norig
-#                 advised value is 2*norig
+#        N : number of nodes, N = size of V0 U Ve
+#        NFINE : each of the first NFINE rounded scores has its own
+#                bucket; larger scores share buckets
+#        NBBUCK : number of buckets, at least NFINE
+#                 advised value is 2*NFINE
 #        IWLEN : Should be uint64_t # Patch FP: used Gnum as well #
+#        WUNIT : scores are rounded to multiples of WUNIT
 #      Input, undefined on output:
 #        LEN(1..N)
 #        IW(1..IWLEN)
-#        NV(N) : also meaningful as input to encode compressed graphs
+#        WT(N) : vertex weights
 #      Output only :
 #        NCMPA
 #        not ELEN(N)  # Patch FP: always initialized before call #
@@ -427,18 +505,19 @@ end
 #        ELEN(N)  # Patch PA+FP #
 #        PFREE
 #        PE(N) : Should be uint64_t # Patch FP: used Gnum as well #
+#        NV(N)
+#        DEGREE(N) : input only in element mode (nbelts>0)
 #      Internal workspace only
 #        Min fill approximation one extra array of size NBBUCK+2
 #         is also needed
 #        NEXT(N)
-#        DEGREE(N)
 #        W(N)
 #        HEAD(0:NBBUCK+1)
 #        WF(N)
 #
 #    Comments on the OUTPUT :
 #    ------------------------
-#    Let V= V0 U V1 the nodes of the initial graph (|V|=n).
+#    Let V0 be the variables of the initial graph (|V0|=n).
 #    The assembly tree corresponds to the tree
 #      of the supernodes (or supervariables). Each node of the
 #      assembly tree is then composed of one principal variable
@@ -453,8 +532,7 @@ end
 #     1/ Description of array nv(N) (on OUTPUT)
 #      nv(i)=0 i is a secondary variable
 #      nv(i) >0 i is a principal variable, nv(i) holds the number of
-#        elements in column i of L (true degree of i)
-#      nv(i) can be greater than N since degree can be as large as NORIG.
+#        vertices in its element, not counting its own block
 #
 #     2/ Description of array PE(N) (on OUTPUT)
 #         Note that on
@@ -482,110 +560,6 @@ end
 #          PE(Is1)=PE(Is2)= -Is  ( Is is the principal variable)
 #
 #
-#    Comments on the OUTPUT:
-#    ----------------------
-#    Let V= V0 U V1 the nodes of the initial graph (|V|=n).
-#    The assembly tree corresponds to the tree
-#      of the supernodes (or supervariables). Each node of the
-#      assembly tree is then composed of one principal variable
-#      and a list of secondary variables. The list of
-#      variable of a node (principal + secondary variables) then
-#      describes the structure of the diagonal block of the
-#      supernode.
-#    The elimination tree denotes the tree of all the variables(=node)
-#      and is therefore of order n.
-#
-#    The arrays NV(N) and PE(N) give a description of the
-#    assembly tree.
-#
-#     1/ Description of array nv(N) (on OUTPUT)
-#      nv(i)=0 i is a secondary variable
-#      nv(i) >0 i is a principal variable, nv(i) holds the number of
-#        elements in column i of L (true degree of i)
-#      with compressed graph (nv(1).ne.-1 on input), nv(i) can be
-#      greater than N since degree can be as large as NORIG.
-#
-#     2/ Description of array PE(N) (on OUTPUT)
-#         Note that on
-#         pe(i) = -(father of variable/node i) in the elimination tree:
-#         If nv (i) .gt. 0, then i represents a node in the assembly
-#         tree, and the parent of i is -pe (i), or zero if i is a root.
-#         If nv (i) = 0, then (i,-pe (i)) represents an edge in a
-#         subtree, the root of which is a node in the assembly tree.
-#
-#     3/ Example:
-#        Let If be a root node father of Is in the assembly tree.
-#        If is the principal
-#        variable of the node If and let If1, If2, If3 be the secondary
-#        variables of node If.
-#        Is is the principal
-#        variable of the node Is and let Is1, Is2 be the secondary
-#        variables of node Is.
-#
-#        THEN:
-#          NV(If1)=NV(If2)=NV(If3) = 0  (secondary variables)
-#          NV(Is1)=NV(Is2) = 0  (secondary variables)
-#          NV(If) > 0  ( principal variable)
-#          NV(Is) > 0  ( principal variable)
-#          PE(If)  = 0 (root node)
-#          PE(Is)  = -If (If is the father of Is in the assembly tree)
-#          PE(If1)=PE(If2)=PE(If3)= -If  ( If is the principal variable)
-#          PE(Is1)=PE(Is2)= -Is  ( Is is the principal variable)
-#
-#
-#
-#   HALOAMD_V1: (September 1997)
-#   **********
-#   Initial version designed to experiment the numerical (fill-in)
-#   impact of taking into account the halo. This code should be able
-#   to experiment no-halo, partial halo, complete halo.
-#   DATE: September 17th 1997
-#
-#   HALOAMD is designed to process a gragh composed of two types
-#              of nodes, V0 and V1, extracted from a larger gragh.
-#              V0^V1 = {},
-#
-#              We used Min. degree heuristic to order only
-#              nodes in V0, but the adjacency to nodes
-#              in V1 is taken into account during ordering.
-#              Nodes in V1 are odered at last.
-#              Adjacency between nodes of V1 need not be provided,
-#              however |len(i)| must always corresponds to the number
-#              of edges effectively provided in the adjacency list of i.
-#            On input :
-#            ********
-#              Nodes INODE in V1 are flagged with len(INODE) = -degree
-#                             if len(i) =0 and i ∈ V1 then
-#                             len(i) must be set on input to -NORIG-1
-#            ERROR return (negative values in ncmpa)
-#            ************
-#              negative value in ncmpa indicates an error detected
-#                 by HALOAMD.
-#
-#              The graph provided MUST follow the rule:
-#               if (i,j) is an edge in the gragh then
-#               j must be in the adjacency list of i AND
-#               i must be in the adjacency list of j.
-#      REMARKS
-#      -------
-#
-#          1/  Providing edges between nodes of V1 should not
-#              affect the final ordering, only the amount of edges
-#              of the halo should effectively affect the solution.
-#              This code should work in the following cases:
-#                1/ halo not provided
-#                2/ halo partially provided
-#                3/ complete halo
-#                4/ complete halo+interconnection between nodes of V1.
-#
-#                1/ should run and provide identical results (w.r.t to
-#                   current implementation of AMD in SCOTCH).
-#                3/ and 4/ should provide identical results.
-#
-#          2/ All modifications of the AMD initial code are indicated
-#             with begin HALO .. end HALO
-#
-#
 #     Given a representation of the nonzero pattern of a symmetric
 #         matrix A, (excluding the diagonal) perform an approximate
 #         minimum fill-in heuristic. Aggresive absorption is
@@ -595,21 +569,30 @@ end
 #  ---------------------------------------------------------------------
 #   INPUT ARGUMENTS (unaltered):
 #  ---------------------------------------------------------------------
-#   n:    number of nodes in the complete graph including halo
-#         n = size of V0 U V1 U Ve
-#         Restriction:  n .ge. 1
+#   n:    number of nodes in the graph
+#         n = size of V0 U Ve
 #
-#   norig   if compressed graph (nv(1).ne.-1) then
-#              norig is the sum(nv(i)) for i \in [1:n]
-#              and could be larger than n
-#           else norig = n
+#   norig   number of positions in the ordering: the variables,
+#           plus the elements of Ve, which are numbered first
 #
 #   nbelts number of elements (size of Ve)
 #              =0 if Gv (graph of variables)
 #              >0 if Ge
 #           nbelts > 0 extends/changes the meaning of
-#                     len/elen on entry (see below)
+#                     len/elen/degree on entry (see below)
 #
+#   wt:   the weight of each variable (finite and positive); the
+#         entries of elements are unused on input. During execution,
+#         wt (i) is the weight of the principal supervariable i, and
+#         for an element e, wt (e) is the weight of Le \ Lme.
+#
+#   wunit: scores are rounded to multiples of wunit.
+#
+#   nfine, nbbuck: the rounded score q of a variable selects bucket q
+#         if q .le. nfine, and nfine + (q - nfine) / pas, at most
+#         nbbuck, otherwise, where pas = max(nfine / 8, 1). The
+#         buckets above nfine are searched for their best score. These
+#         parameters only affect the running time.
 #
 #   iwlen:        The length of iw (1..iwlen).  On input, the matrix is
 #         stored in iw (1..pfree-1).  However, iw (1..iwlen) should be
@@ -678,26 +661,18 @@ end
 #         Otherwise, pfree (on output) is greater than iwlen, and all
 #         the memory in iw was used.
 #
-#   nv:   On input, encoding of compressed graph:
-#         During execution, abs (nv (i)) is equal to the number of rows
-#         that are represented by the principal supervariable i.  If i
-#         is a nonprincipal variable, then nv (i) = 0.  Initially,
-#         nv (i) = 1 for all i.  nv (i) .lt. 0 signifies that i is a
-#         principal variable in the pattern Lme of the current pivot
-#         element me.  On output, nv (e) holds the true degree of
-#         element e at the time it was created (including the diagonal
-#         part).
-#   begin HALO
-#         On output, nv(I) can be used to find node in set V1.
-#         Not true anymore : ( nv(I) = N+1 characterizes nodes in V1.
-#                   instead nodes in V1 are considered as a dense root
-#                   node)
-#   end HALO
+#   nv:   On input, nv (i) = 1 for every variable i; for an element e,
+#         nv (e) is its number of positions in the ordering.
+#         During execution, abs (nv (i)) is equal to the number of
+#         vertices that are represented by the principal supervariable i.
+#         If i is a nonprincipal variable, then nv (i) = 0.  nv (i) .lt. 0
+#         signifies that i is a principal variable in the pattern Lme of
+#         the current pivot element me.  For an element e, nv (e) = |Le|,
+#         the number of vertices in Le when e was created.
 #  ---------------------------------------------------------------------
 #   INPUT/MODIFIED (undefined on output):
 #  ---------------------------------------------------------------------
 #   len:  On input, len (i)
-#             positive or null (>=0) : i ∈ V0 U Ve and
 #                     if (nbelts==0) then (graph of variables)
 #                       len(i) holds the number of entries in row i of
 #                       the matrix, excluding the diagonal.
@@ -707,24 +682,15 @@ end
 #                       if i ∈ Ve then len(i) = nb of variables
 #                           adjacent to i
 #                     endif
-#             negative (<0) : i ∈ V1, and
-#                     if (nbelts==0) then (graph of variables)
-#                       -len(i) hold the number of entries in row i of
-#                        the matrix, excluding the diagonal.
-#                        len(i) = - | Adj(i) | if i ∈ V1
-#                                or -N -1 if | Adj(i) | = 0 and i ∈ V1
-#                     else  (graph of elements+variables)
-#                       -len(i) nb of elements adjacent to i
-#                     endif
 #         The content of len (1..n) is undefined on output.
 #
 #   elen: defined on input only if nbelts>0
 #         if e ∈ Ve then elen (e) = -N-1
-#         if v ∈ V0 then elen (v) = External degree of v
-#                                   that should thus be provided
-#                                   on entry to initialize degree
+#         if v ∈ V0 then elen (v) = 0
 #
-#         if v ∈ V1 then elen (v) = 0
+#   degree: defined on input only if nbelts>0
+#         if v ∈ V0 then degree (v) = weighted external degree of v,
+#                                    the sum of wt (j) over its neighbours
 #
 #   iw:   On input, iw (1..pfree-1) holds the description of each row i
 #         in the matrix.  The matrix must be symmetric, and both upper
@@ -805,33 +771,22 @@ end
 #         obtained when ncmpa is returned as zero.  If iwlen is set to
 #         the value returned by pfree on *output*, then no compressions
 #         will occur.
-#   begin HALO
-#          on output ncmpa <0 --> error detected during HALO_AMD:
-#             error 1: ncmpa = -NORIG , ordering was stopped.
-#   end HALO
 #
 #  ---------------------------------------------------------------------
 #   LOCAL (not input or output - used only during execution):
 #  ---------------------------------------------------------------------
 #   degree:       If i is a supervariable, then degree (i) holds the
-#         current approximation of the external degree of row i (an
-#         upper bound).  The external degree is the number of nonzeros
-#         minus abs (nv (i)) (the diagonal part).  The bound is equal to
-#         in row i, the external degree if elen (i) is less than or
-#         equal to two.
+#         current approximation of the weighted external degree of row i
+#         (an upper bound): the weight of the neighbours of i, not
+#         counting i itself.  The bound is equal to the external degree
+#         if elen (i) is less than or equal to two.
 #         We also use the term "external degree" for elements e to refer
 #         to |Le \ Lme|.  If e is an element, then degree (e) holds
-#         |Le|, which is the degree of the off-diagonal part of the
-#         element e (not including the diagonal part).
-#   begin HALO
-#         degree(I) = n+1 indicates that i belongs to V1
-#   end HALO
+#         the weight of Le (not including the diagonal part).
 #
-#   head: head is used for degree lists.  head (deg) is the first
-#         supervariable in a degree list (all supervariables i in a
-#         degree list deg have the same approximate degree, namely,
-#         deg = degree (i)).  If the list deg is empty then
-#         head (deg) = 0.
+#   head: head is used for degree lists.  head (b) is the first
+#         supervariable in the list of bucket b (see nfine above).  If
+#         the list b is empty then head (b) = 0.
 #
 #         During supervariable detection head (hash) also serves as a
 #         pointer to a hash bucket.
@@ -854,10 +809,11 @@ end
 #         for elements:
 #            if w (e) = 0, then the element e is absorbed
 #            if w (e) .ge. wflg, then w (e) - wflg is the size of
-#                 the set |Le \ Lme|, in terms of nonzeros (the
+#                 the set |Le \ Lme|, in terms of vertices (the
 #                 sum of abs (nv (i)) for each principal variable i that
 #                 is both in the pattern of element e and NOT in the
-#                 pattern of the current pivot element, me).
+#                 pattern of the current pivot element, me), and
+#                 wt (e) is its weight.
 #            if wflg .gt. w (e) .gt. 0, then e is not absorbed and has
 #                 not yet been seen in the scan of the element lists in
 #                 the computation of |Le\Lme| in loop 150 below.
@@ -871,32 +827,35 @@ end
 #         too large (to ensure that wflg+n does not cause integer
 #         overflow).
 #
-#   wf : integer array  used to store the already filled area of
-#        the variables adajcent to current pivot.
-#        wf is then used to update the score of variable i.
+#   wf :  for a variable i, its rounded score; while i is in Lme, the
+#         area to subtract in its next score. For an element e, the area
+#         x_e (2 W(Le) - x_e) of its part outside Lme.
 function hamf_impl!(
-        norig::V,                  # uncompressed matrix order
-        n::V,                      # current matrix order
+        norig::V,                  # number of positions: the variables, plus the elements of Ve
+        n::V,                      # number of nodes (variables and elements)
         nbelts::V,                 # number of elements
+        nfine::V,                  # each of the first `nfine` rounded scores has its own bucket
         nbbuck::V,                 # number of buckets
         iwlen::E,                  # length of array `iw`
         pe::AbstractVector{E},     # array of indices in `iw` of start of row `i`
         pfree::E,                  # useful size in `iw`
         len::AbstractVector{V},    # array of lengths of adjacency lists
         iw::AbstractVector{V},     # adjacency list array
-        nv::AbstractVector{V},     # array of element degrees (weights)
+        nv::AbstractVector{V},     # supervariable sizes (vertex counts); |Le| for an element
         elen::AbstractVector{V},   # array that holds the inverse permutation
         last::AbstractVector{V},   # array that holds the permutation
-        degree::AbstractVector{V}, # array that holds degree data
-        wf::AbstractVector{E},     # flag array
+        degree::AbstractVector{F}, # weighted degree bound of a variable; weight of Le for an element
+        wf::AbstractVector{F},     # score of a variable; area of an element
         next::AbstractVector{V},   # linked list structure
         w::AbstractVector{I},      # flag array
         head::AbstractVector{V},   # linked list structure
+        wt::AbstractVector{F},     # weight of a supervariable; weight of Le \ Lme for an element
+        wunit::F,                  # scores are rounded to multiples of `wunit`
         vfill::Union{Nothing, AbstractVector}, # exact initial fill-in (optional)
-    ) where {I, V, E}
+    ) where {I, V, E, F}
     @assert nbelts <= n
     @assert pfree <= iwlen <= length(iw)
-    @assert norig <= nbbuck
+    @assert nfine <= nbbuck
     @assert n < length(pe)
     @assert n <= length(len)
     @assert n <= length(nv)
@@ -906,6 +865,7 @@ function hamf_impl!(
     @assert n <= length(wf)
     @assert n <= length(next)
     @assert n <= length(w)
+    @assert n <= length(wt)
     @assert nbbuck + two(V) <= length(head)
 
     @inbounds for i in oneto(n)
@@ -914,10 +874,13 @@ function hamf_impl!(
         end
 
         last[i] = zero(V)
-        degree[i] = zero(V)
-        wf[i] = zero(E)
+        wf[i] = zero(F)
         next[i] = zero(V)
         w[i] = zero(I)
+
+        if iszero(nbelts)                     # in element mode, `degree` holds the external degrees of the variables on input
+            degree[i] = zero(F)
+        end
     end
 
     @inbounds for i in oneto(nbbuck + two(V))
@@ -927,7 +890,8 @@ function hamf_impl!(
     #=====================================================================#
     #
     # deg :       the degree of a variable or element
-    # degme :     size, |Lme|, of the current element, me (= degree (me))
+    # degme :     size, |Lme|, of the current element, me
+    # wdegme :    weight of Lme
     # dext :      external degree, |Le \ Lme|, of some element e
     # dmax :      largest |Le| seen so far
     # e :         an element
@@ -953,10 +917,10 @@ function hamf_impl!(
     #                     current element created by eliminating that
     #                     supervariable
     # mem :       memory in use assuming no compressions have occurred
-    # mindeg :    current minimum degree
+    # mindeg :    current minimum bucket
     # nel :       number of pivots selected so far
     # newmem :    amount of new memory needed for current pivot element
-    # nleft :     n - nel, the number of nonpivotal rows/columns remaining
+    # wleft :     weight of the nonpivotal variables
     # nvi :       the number of variables in a supervariable i (= nv (i))
     # nvj :       the number of variables in a supervariable j (= nv (j))
     # nvpiv :     number of pivots in current element
@@ -965,14 +929,9 @@ function hamf_impl!(
     # wflg :      used for flagging the w array.  See description of iw.
     # wnvi :      wflg - nv (i)
     # x :         either a supervariable or an element
-    # wf3 :       off diagoanl block area
-    # wf4 :       diagonal block area
-    # mf :        minimum fill
-    # nbflag :    number of flagged entries in the initial gragh.
-    # nreal :     number of entries on which ordering must be perfomed
-    #             (nreal = n - nbflag)
-    # nelme :     number of pivots selected when reaching the root
-    # lastd :     index of the last row in the list of dense rows
+    # wf3 :       weight of the variable neighbours outside Lme
+    # wf4 :       areas of the elements outside Lme
+    # wf5 :       areas of the variable neighbours outside Lme
     #
     #=====================================================================#
 
@@ -998,96 +957,60 @@ function hamf_impl!(
     #
     #=====================================================================#
 
-    idummy = typemax(E) - one(E)
-    dummy = convert(FLOAT, idummy)
-    n2 = -one(V) - nbbuck                   # variable with degree `n2` are in halo; ; bucket `nbbuck + 1` used for halo variables
-    pas = max(div(norig, eight(V)), one(V)) # distance between elements of the `n`, ..., `nbbuck` entries of `head`
+    pas = max(div(nfine, eight(V)), one(V)) # width of the buckets above `nfine`
     wflg = two(I)
     maxint_n = typemax(I) - convert(I, norig)
     ncmpa = zero(I)
     nel = zero(V)
     totel = zero(V)
-    hmod = max(one(E), nbbuck - one(E))
+    wnel = zero(F)
+    wtotel = zero(F)
+    hmod = max(one(E), convert(E, nbbuck) - one(E))
     dmax = zero(V)
     mem = pfree - one(E)
     maxmem = mem
     mindeg = zero(V)
-    nbflag = zero(V)
-    lastd = zero(V)
 
     if iszero(nbelts)                         # if graph has no elements and only variables
         @inbounds for i in oneto(n)
             w[i] = one(I)
+            totel += nv[i]
+            wtotel += wt[i]
+            deg = zero(F)
 
-            if isnegative(len[i])
-                degree[i] = n2
-                nbflag += one(V)
-
-                if len[i] == -one(V) - norig  # variable in V1 with empty adj. list
-                    len[i] = zero(V)          # because of compress, we force skipping this entry (which is anyway empty)
-                    pe[i] = zero(E)
-                else
-                    len[i] = -len[i]
-                end
-            else
-                totel += nv[i]
-
-                if n == norig                 # if graph not compressed
-                    degree[i] = len[i]
-                else
-                    degree[i] = zero(V)
-
-                    for p in pe[i]:(pe[i] + convert(E, len[i]) - one(E))
-                        degree[i] += nv[iw[p]]
-                    end
-                end
+            for p in pe[i]:(pe[i] + convert(E, len[i]) - one(E))
+                deg += wt[iw[p]]
             end
+
+            degree[i] = deg
         end
     else                                      # graph has elements
         @inbounds for i in oneto(n)
             w[i] = one(I)
 
-            if isnegative(len[i])
-                degree[i] = n2
-                nbflag += one(V)
+            if isnegative(elen[i])            # if `i` ∈ Ve
+                nel += nv[i]
+                totel += nv[i]                # elements are numbered first, so they count toward `totel`
+                elen[i] = -nel
+                deg = zero(F)
 
-                if len[i] == -one(V) - norig
-                    len[i] = zero(V)          # because of compress, we force skipping this entry (which is anyway empty)
-                    pe[i] = zero(E)
-                    elen[i] = zero(V)         # already done before calling
-                else
-                    len[i] = -len[i]
-                    elen[i] = len[i]
+                for p in pe[i]:(pe[i] + convert(E, len[i]) - one(E))
+                    deg += wt[iw[p]]
                 end
-            else                              # non-halo vertex or element
-                if isnegative(elen[i])        # if `i` ∈ Ve
-                    nel += nv[i]
-                    totel += nv[i]            # elements are numbered first, so they count toward `totel`
-                    elen[i] = -nel
 
-                    if n == norig
-                        degree[i] = len[i]
-                    else
-                        degree[i] = zero(V)
+                degree[i] = deg               # the weight of Le
+                nv[i] = len[i]                # from now on, `nv[i]` is |Le|
 
-                        for p in pe[i]:(pe[i] + convert(E, len[i]) - one(E))
-                            degree[i] += nv[iw[p]]
-                        end
-                    end
-
-                    if degree[i] > dmax
-                        dmax = degree[i]
-                    end
-                else                          # `i` ∈ V0
-                    totel += nv[i]
-                    degree[i] = elen[i]
-                    elen[i] = len[i]
+                if len[i] > dmax
+                    dmax = len[i]
                 end
+            else                              # `i` ∈ V0; `degree[i]` holds its weighted external degree
+                totel += nv[i]
+                wtotel += wt[i]
+                elen[i] = len[i]
             end
         end
     end
-
-    nreal = n - nbflag                        # number of entries to be ordered
 
     @inbounds for i in oneto(n)               # initialize degree lists and eliminate rows with no off-diag. nz.
         if isnegative(elen[i])                # skip element vertices (Ve)
@@ -1096,66 +1019,31 @@ function hamf_impl!(
 
         deg = degree[i]
 
-        if deg == n2                          # V1 variables (`deg == n2`): flagged variables stored in degree list of `nbbuck + 1`
-            deg = nbbuck + one(V)
-
-            if iszero(lastd)                  # degree list is empty
-                lastd = i
-                head[deg + one(V)] = i
-                next[i] = zero(V)
-                last[i] = zero(V)
-            else
-                next[lastd] = i
-                last[i] = lastd
-                lastd = i
-                next[i] = zero(V)
-            end
-        elseif ispositive(deg)
-            if isnothing(vfill)
-                wf[i] = convert(I, deg)           # version 1
-
-                if deg > norig
-                    deg = min(div(deg - norig, pas) + norig, nbbuck)  # note the if `deg == 0`, no fill-in will occur but one variable adjacent to i
-                end
-            else                                  # score from the exact fill-in, as in the score update below
-                rmf = twice(convert(FLOAT, vfill[i])) / convert(FLOAT, nv[i] + one(V))
-
-                if rmf < dummy
-                    wf[i] = anint(E, rmf)
-                elseif rmf / convert(FLOAT, n) < dummy
-                    wf[i] = anint(E, rmf / convert(FLOAT, n))
-                else
-                    wf[i] = idummy
-                end
-
-                if !ispositive(wf[i])
-                    wf[i] = one(E)
-                end
-
-                if wf[i] > norig
-                    deg = convert(V, min(div(wf[i] - norig, pas) + norig, nbbuck))
-                else
-                    deg = convert(V, wf[i])
-                end
+        if ispositive(deg)
+            if isnothing(vfill)               # the initial score is the weighted degree
+                q = amf_round(deg / wunit, n)
+            else                              # score from the exact fill-in, as in the score update below
+                q = amf_round(twice(convert(F, vfill[i])) / wt[i] / wunit, n)
             end
 
-            inext = head[deg + one(V)]
+            wf[i] = q
+            b = amf_bucket(q, nfine, pas, nbbuck)
+            inext = head[b + one(V)]
 
             if !iszero(inext)
                 last[inext] = i
             end
 
             next[i] = inext
-            head[deg + one(V)] = i
+            head[b + one(V)] = i
         else                                  # variable can be eliminated at once because no off-diagonal non-zero in its row
             nel += nv[i]
+            wnel += wt[i]
             elen[i] = -nel
             pe[i] = zero(E)
             w[i] = zero(I)
         end
     end
-
-    nleft = totel - nel                       # if elements provided (`nbelts > 0`), they are eliminated
 
     @inbounds while nel < totel
         deg = mindeg - one(V); me = zero(V)
@@ -1170,7 +1058,7 @@ function hamf_impl!(
             error()
         end
 
-        if deg > norig                        # linear search to find variable with best score in the list
+        if deg > nfine                        # linear search to find variable with best score in the list
             j = next[me]
             k = wf[me]
 
@@ -1209,8 +1097,10 @@ function hamf_impl!(
         elen[me] = -one(V) - nel              # place `me` itself as the first in this set. it will be moved
         nvpiv = nv[me]                        # to the `nel + nv[me]` position when the permutation vectors are
         nel += nvpiv                          # computed
+        wnel += wt[me]
         nv[me] = -nvpiv                       # at this point, `me` is the pivotal supervariable
         degme = zero(V)                       # it will be converted into the current element
+        wdegme = zero(F)
 
         if iszero(elenme)                     # construct the new element in place
             pme1 = pe[me]
@@ -1222,29 +1112,21 @@ function hamf_impl!(
 
                 if ispositive(nvi)            # `i` is a principal variable not yet placed in Lme
                     degme += nvi              # store `i` in new list
+                    wdegme += wt[i]
                     nv[i] = -nvi              # flag `i` as being in Lme by negating `nv[i]`
                     pme2 += one(E)
                     iw[pme2] = i
+                    ilast = last[i]           # remove variable `i` from degree list
+                    inext = next[i]
 
-                    if degree[i] != n2        # remove variable `i` from degree list. (only if `i` ∈ V0)
-                        ilast = last[i]
-                        inext = next[i]
+                    if !iszero(inext)
+                        last[inext] = ilast
+                    end
 
-                        if !iszero(inext)
-                            last[inext] = ilast
-                        end
-
-                        if !iszero(ilast)
-                            next[ilast] = inext
-                        else
-                            if wf[i] > norig
-                                deg = min(div(wf[i] - norig, pas) + norig, nbbuck)
-                            else
-                                deg = wf[i]
-                            end
-
-                            head[deg + one(V)] = inext
-                        end
+                    if !iszero(ilast)
+                        next[ilast] = inext
+                    else
+                        head[amf_bucket(wf[i], nfine, pas, nbbuck) + one(V)] = inext
                     end
                 end
             end                               # L60:
@@ -1341,28 +1223,20 @@ function hamf_impl!(
                         end
 
                         degme += nvi          # `i` is a principal variable not yet placed in Lme; store `i` in new list
+                        wdegme += wt[i]
                         nv[i] = -nvi
                         iw[pfree] = i; pfree += one(E)
+                        ilast = last[i]       # remove variable `i` from degree link list
+                        inext = next[i]
 
-                        if degree[i] != n2    # remove variable `i` from degree link list (only if `i` in V0)
-                            ilast = last[i]
-                            inext = next[i]
+                        if !iszero(inext)
+                            last[inext] = ilast
+                        end
 
-                            if !iszero(inext)
-                                last[inext] = ilast
-                            end
-
-                            if !iszero(ilast)
-                                next[ilast] = inext
-                            else
-                                if wf[i] > norig
-                                    deg = min(div(wf[i] - norig, pas) + norig, nbbuck)
-                                else
-                                    deg = wf[i]
-                                end
-
-                                head[deg + one(V)] = inext
-                            end
+                        if !iszero(ilast)
+                            next[ilast] = inext
+                        else
+                            head[amf_bucket(wf[i], nfine, pas, nbbuck) + one(V)] = inext
                         end
                     end
                 end                           # L110:
@@ -1379,8 +1253,8 @@ function hamf_impl!(
             maxmem = max(maxmem, mem)
         end
 
-        degree[me] = degme                    # `me` has now been converted into an element in `iw[pme1...pme2]`
-        pe[me] = pme1                         # `degme` holds the external degree of new element
+        degree[me] = wdegme                   # `me` has now been converted into an element in `iw[pme1...pme2]`
+        pe[me] = pme1
         len[me] = convert(V, pme2 - pme1 + one(E))
 
         if wflg > maxint_n                    # make sure that `wflg` is not too large; `wflg + n` must not cause integer overflow
@@ -1393,13 +1267,14 @@ function hamf_impl!(
             wflg = two(I)                     # L130:
         end
 
-        for pme in pme1:pme2                  # compute `w[e] - wflg` = |Le\Lme| for all elements
+        for pme in pme1:pme2                  # compute `w[e] - wflg` = |Le\Lme| and `wt[e]` = its weight for all elements
             i = iw[pme]
             eln = elen[i]
 
             if ispositive(eln)                # note that `nv[i]` has been negated to denote `i` in Lme
                 nvi = -nv[i]
                 wnvi = wflg - convert(I, nvi)
+                wi = wt[i]
 
                 # L140:
                 for p in pe[i]:(pe[i] + convert(E, eln) - one(E))
@@ -1408,9 +1283,11 @@ function hamf_impl!(
 
                     if we >= wflg             # unabsorbed element `e` has been seen in this loop
                         we -= convert(I, nvi)
+                        wt[e] -= wi
                     elseif !iszero(we)        # `e` is an unabsorbed element; this is the first time we have seen `e` in all of scan 1
-                        we = convert(I, degree[e]) + wnvi
-                        wf[e] = zero(E)
+                        we = convert(I, nv[e]) + wnvi
+                        wt[e] = degree[e] - wi
+                        wf[e] = zero(F)
                     end
 
                     w[e] = we
@@ -1425,21 +1302,24 @@ function hamf_impl!(
             pn = p1
             hash = zero(E)
             deg = zero(V)
-            wf3 = zero(E)
-            wf4 = zero(E)
-            nvi = -nv[i]
+            wdeg = zero(F)
+            wf3 = zero(F)
+            wf4 = zero(F)
+            wf5 = zero(F)
 
             for p in p1:p2                    # scan the element list associated with supervariable `i`
                 e = iw[p]
                 dext = convert(V, w[e] - wflg) # `dext` = |Le\Lme|
 
                 if ispositive(dext)
-                    if iszero(wf[e])          # first time we meet `e`: compute `wf[e]` which is the surface associated to element `e`
-                        wf[e] = convert(E, dext) * convert(E, twice(degree[e]) - dext - one(V))
+                    if iszero(wf[e])          # first time we meet `e`: compute `wf[e]`, the area of `e` outside Lme
+                        xw = wt[e]
+                        wf[e] = xw * (twice(degree[e]) - xw)
                     end
 
                     wf4 += wf[e]
                     deg += dext
+                    wdeg += wt[e]
                     iw[pn] = e; pn += one(E)
                     hash += convert(E, e)
                 elseif iszero(dext)           # aggressive absorption: `e` is not adjacent to `me`, but |Le\Lme| is 0, so absorb it into `me`
@@ -1456,65 +1336,62 @@ function hamf_impl!(
                 nvj = nv[j]
 
                 if ispositive(nvj)            # `j` is unabsorbed, and not in Lme; add to degree and add to new list
+                    wj = wt[j]
                     deg += nvj
-                    wf3 += nvj
+                    wdeg += wj
+                    wf3 += wj
+                    wf5 += wj * wj
                     iw[pn] = j; pn += one(E)
                     hash += convert(E, j)
                 end
-            end
-
-            if degree[i] == n2
-                deg = n2
             end
 
             if iszero(deg)                    # mass elimination
                 pe[i] = convert(E, -me)
                 nvi = -nv[i]
                 degme -= nvi
+                wdegme -= wt[i]
                 nvpiv += nvi
                 nel += nvi
+                wnel += wt[i]
                 nv[i] = zero(V)
                 elen[i] = zero(V)
             else                              # update the upper-bound degree of `i`
-                if degree[i] != n2            # `i` does not belong to halo
-                    if degree[i] < deg        # our approx degree is loose; we cannot subtract `wf[i]`
-                        wf4 = zero(E)
-                        wf3 = zero(E)
-                    else
-                        degree[i] = deg
-                    end
+                if degree[i] < wdeg           # our approx degree is loose; we cannot subtract the areas
+                    wf3 = zero(F)
+                    wf4 = zero(F)
+                    wf5 = zero(F)
+                else
+                    degree[i] = wdeg
                 end
 
-                wf[i] = wf4 + convert(E, twice(nvi)) * wf3
+                wf[i] = wf4 + twice(wt[i]) * wf3 + wf5
                 iw[pn] = iw[p3]               # add `me` to the list for `i`
                 iw[p3] = iw[p1]
                 iw[p1] = me                   # add new element to front of list
                 len[i] = convert(V, pn - p1) + one(V) # store the new length of the list in `len[i]`
+                hash = (hash % hmod) + one(E) # place in hash bucket; save hash key of `i` in `last[i]`
+                j = head[hash + one(E)]
 
-                if deg != n2                  # place in hash bucket; save hash key of `i` in `last[i]`
-                    hash = (hash % hmod) + one(E)
-                    j = head[hash + one(E)]
-
-                    if !ispositive(j)         # the degree list is empty; hash head is `-j`
-                        next[i] = -j
-                        head[hash + one(E)] = -i
-                    else                     # degree list is not empty; use `last[head[hash + 1]]` as hash head
-                        next[i] = last[j]
-                        last[j] = i
-                    end
-
-                    last[i] = hash
+                if !ispositive(j)             # the degree list is empty; hash head is `-j`
+                    next[i] = -j
+                    head[hash + one(E)] = -i
+                else                          # degree list is not empty; use `last[head[hash + 1]]` as hash head
+                    next[i] = last[j]
+                    last[j] = i
                 end
+
+                last[i] = hash
             end
         end                                  # L180:
 
-        degree[me] = degme
+        degree[me] = wdegme
 
         if degme > dmax                      # clear the counter array `w` by incrementing `wflg`
             dmax = degme
         end
 
-        wflg += dmax
+        wflg += convert(I, dmax)
 
         if wflg > maxint_n                   # make sure that `wflg + n` does not cause integer overflow
             for x in oneto(n)
@@ -1529,7 +1406,7 @@ function hamf_impl!(
         for pme in pme1:pme2                 # supervariable detection
             i = iw[pme]
 
-            if isnegative(nv[i]) && (degree[i] != n2) # `i` is a principal variable in Lme
+            if isnegative(nv[i])             # `i` is a principal variable in Lme
                 hash = last[i]
                 j = head[hash + one(E)]
 
@@ -1579,6 +1456,7 @@ function hamf_impl!(
                             end
 
                             nv[i] += nv[j]   # both `nv[i]` and `nv[j]` are negated since they are in Lme
+                            wt[i] += wt[j]
                             nv[j] = zero(V)
                             elen[j] = zero(V)
                             j = next[j]      # delete `j` from hash bucket
@@ -1593,7 +1471,7 @@ function hamf_impl!(
         end
 
         p = pme1                             # restore degree lists and remove nonprincipal supervariable from element
-        nleft = totel - nel
+        wleft = wtotel - wnel
 
         for pme in pme1:pme2
             i = iw[pme]
@@ -1601,61 +1479,42 @@ function hamf_impl!(
 
             if ispositive(nvi)               # `i` is a principal variable in Lme; restore `nv[i]` to signify that `i` is principal
                 nv[i] = nvi
+                wi = wt[i]                   # compute the external degree (add size of current elem)
+                dg = degree[i]
 
-                if degree[i] != n2           # compute the external degree (add size of current elem)
-                    deg = degree[i]
+                if dg + wdegme > wleft
+                    rmf1 = dg * (dg + twice(wdegme)) - wf[i]
+                    degree[i] = wleft - wi
+                    dg = degree[i]
+                    rmf = dg * dg - (wdegme - wi) * (wdegme - wi)
+                    rmf = min(rmf, rmf1)
+                else
+                    degree[i] += wdegme - wi
+                    rmf = dg * (dg + twice(wdegme)) - wf[i]
+                end
 
-                    if degree[i] + degme > nleft
-                        rmf1 = convert(FLOAT, deg) * convert(FLOAT, deg - one(V) + twice(degme)) - convert(FLOAT, wf[i])
-                        degree[i] = nleft - nvi
-                        deg = degree[i]
-                        rmf = convert(FLOAT, deg) * convert(FLOAT, deg - one(V)) - convert(FLOAT, degme - nvi) * convert(FLOAT, degme - nvi - one(V))
-                        rmf = min(rmf, rmf1)
-                    else
-                        degree[i] += degme - nvi
-                        rmf = convert(FLOAT, deg) * convert(FLOAT, deg - one(V) + twice(degme)) - convert(FLOAT, wf[i])
-                    end
+                q = amf_round(rmf / wi / wunit, n)
+                wf[i] = q
+                b = amf_bucket(q, nfine, pas, nbbuck)
+                inext = head[b + one(V)]
 
-                    rmf /= convert(FLOAT, nvi + one(V))
+                if !iszero(inext)
+                    last[inext] = i
+                end
 
-                    if rmf < dummy
-                        wf[i] = anint(E, rmf)
-                    elseif rmf / convert(FLOAT, n) < dummy
-                        wf[i] = anint(E, rmf / convert(FLOAT, n))
-                    else
-                        wf[i] = idummy
-                    end
+                next[i] = inext
+                last[i] = zero(V)
+                head[b + one(V)] = i
 
-                    if !ispositive(wf[i])
-                        wf[i] = one(E)
-                    end
-
-                    deg = wf[i]
-
-                    if deg > norig
-                        deg = min(div(deg - norig, pas) + norig, nbbuck)
-                    end
-
-                    inext = head[deg + one(V)]
-
-                    if !iszero(inext)
-                        last[inext] = i
-                    end
-
-                    next[i] = inext
-                    last[i] = zero(V)
-                    head[deg + one(V)] = i
-
-                    if mindeg > deg          # save the new degree, and find the minimum degree
-                        mindeg = deg
-                    end
+                if mindeg > b                # save the new score, and find the minimum bucket
+                    mindeg = b
                 end
 
                 iw[p] = i; p += one(E)       # place the supervariable in the element pattern
             end
         end # L260:
 
-        nv[me] = nvpiv + degme               # finalize the new element
+        nv[me] = degme                       # finalize the new element: from now on, `nv[me]` is |Le|
         len[me] = convert(V, p - pme1)
 
         if iszero(len[me])                   # there is nothing left of the current pivot element
@@ -1668,32 +1527,6 @@ function hamf_impl!(
             mem = mem - newmem + len[me]
         end
     end                                      # end while (selecting pivots)
-
-    if ispositive(nbflag)                    # begin halo v2
-        deg = mindeg - one(V); me = zero(V)
-
-        @inbounds while deg < nbbuck + one(V) && !ispositive(me)
-            deg += one(V); me = head[deg + one(V)]
-        end
-
-        mindeg = deg
-        nelme = -one(V) - nel
-
-        @inbounds for x in oneto(n)
-            if ispositive(pe[x]) && isnegative(elen[x]) # `x` is an unabsorbed element
-                pe[x] = convert(E, -me)
-            elseif degree[x] == n2          # `x` is a dense row, absorb it in ME (mass elimination)
-                nel += nv[x]
-                pe[x] = convert(E, -me)
-                elen[x] = zero(V)
-                nv[x] = zero(V)             # patch 12/12/98 <PA+FP> (old: `n + 1`)
-            end
-        end
-
-        @inbounds elen[me] = nelme          # `me` is the root node
-        @inbounds nv[me] = n - nreal        # correct value of `nv` is principal variable = `nbflag`
-        @inbounds pe[me] = zero(E)
-    end
 
     @inbounds for i in oneto(n)
         if iszero(elen[i])

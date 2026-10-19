@@ -220,6 +220,10 @@ struct MCSM <: MinimalAlgorithm end
 
 The approximate minimum fill algorithm.
 
+The vertex weights may be any finite positive numbers. A vertex of weight `w` stands for a class
+of true twins of total weight `w`, and the ordering does not depend on the unit in which the weights
+are measured: multiplying every weight by the same constant leaves it unchanged, up to rounding.
+
 ### Parameters
 
   - `exact`: compute the initial score of each vertex from its exact fill-in, rather than its degree

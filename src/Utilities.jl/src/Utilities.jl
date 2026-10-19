@@ -241,24 +241,24 @@ function coverincidence!(
 end
 
 # The external degree of each vertex of the graph covered by the cliques of
-# the incidence graph (`pe`, `len`, `iw`) (see `coverincidence!`): the weight
-# `nv` of the union of its cliques, less its own. The vertices of the
-# cliques are marked, in O(Σ |C|²) time and O(n) space.
+# the incidence graph (`pe`, `len`, `iw`) (see `coverincidence!`): the total
+# of the `weights` of the union of its cliques, less its own. The vertices of
+# the cliques are marked, in O(Σ |C|²) time and O(n) space.
 function coverdegree!(
-        degree::AbstractVector{V},
+        degree::AbstractVector{W},
         marker::AbstractVector{V},
-        nv::AbstractVector{V},
+        weights::AbstractVector,
         pe::AbstractVector{E},
         len::AbstractVector{V},
         iw::AbstractVector{V},
         n::V,
-    ) where {V, E}
+    ) where {W, V, E}
     @inbounds for v in oneto(n)
         marker[v] = zero(V)
     end
 
     @inbounds for v in oneto(n)
-        marker[v] = v; deg = zero(V)
+        marker[v] = v; deg = zero(W)
 
         for p in pe[v]:pe[v] + convert(E, len[v]) - one(E)
             e = iw[p]
@@ -267,7 +267,7 @@ function coverdegree!(
                 u = iw[q]
 
                 if marker[u] != v
-                    marker[u] = v; deg += nv[u]
+                    marker[u] = v; deg += weights[u]
                 end
             end
         end
