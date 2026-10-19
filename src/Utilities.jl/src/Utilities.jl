@@ -14,7 +14,7 @@ export AbstractScalar, Scalar, FScalar, FVector, FMatrix, FArray
 export tolerance, twice, half, two, three, four, five, six, eight, ispositive, isnegative, istwo, isthree, isfour
 
 # graphs
-export eltypedegree, de, coverincidence!, coverdegree!
+export eltypedegree, de, quotientlists!, quotientdegree!
 
 # printing
 export MAX_ITEMS_PRINTED, printiterator
@@ -154,21 +154,25 @@ function printiterator(io::IO, iterator::T, ::Any) where {T}
     return
 end
 
-# The incidence graph of a clique cover: the vertices 1:n and the cliques
-# n + 1:n + m, where the members of the clique c are
-# ctgt[cptr[c]:cptr[c + 1] - 1]. The neighbors of the node i are
-# iw[pe[i]:pe[i] + len[i] - 1]: the cliques containing a vertex, or the
-# members of a clique. Repeated members are dropped, and a clique with fewer
-# than two members is left empty. Returns one past the last entry of `iw`.
-function coverincidence!(
+# The lists of a quotient graph, as `hamf_impl!` takes them: the variables 1:n,
+# joined by the edges (`xadj`, `adjncy`), and the elements n + 1:n + m, where
+# the members of the element e are etgt[eptr[e]:eptr[e + 1] - 1]. The list of
+# the node i is iw[pe[i]:pe[i] + len[i] - 1]: for a variable, the `elen[i]`
+# elements that contain it, and then its neighbors; for an element, its
+# members. Repeated members are dropped, and an element with fewer than two
+# members is left empty. Returns one past the last entry of `iw`.
+function quotientlists!(
         pe::AbstractVector{E},
         len::AbstractVector{V},
+        elen::AbstractVector{V},
         iw::AbstractVector{V},
         marker::AbstractVector{V},
         n::V,
         m::V,
-        cptr::AbstractVector{E},
-        ctgt::AbstractVector{V},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        eptr::AbstractVector{E},
+        etgt::AbstractVector{V},
     ) where {V, E}
     nnode = n + m
 
@@ -177,19 +181,19 @@ function coverincidence!(
     end
 
     @inbounds for v in oneto(n)
-        marker[v] = zero(V)
+        marker[v] = zero(V); elen[v] = zero(V)
     end
 
-    # `len[n + c]` is the number of distinct members of the clique `c`,
+    # `len[n + e]` is the number of distinct members of the element `e`,
     # or zero if it is less than two
-    @inbounds for c in oneto(m)
+    @inbounds for e in oneto(m)
         k = zero(V)
 
-        for p in cptr[c]:cptr[c + one(V)] - one(E)
-            v = ctgt[p]
+        for p in eptr[e]:eptr[e + one(V)] - one(E)
+            v = etgt[p]
 
-            if marker[v] != c
-                marker[v] = c; k += one(V)
+            if marker[v] != e
+                marker[v] = e; k += one(V)
             end
         end
 
@@ -197,20 +201,25 @@ function coverincidence!(
             k = zero(V)
         end
 
-        len[n + c] = k
+        len[n + e] = k
     end
 
-    # `len[v]` is the number of nonempty cliques containing the vertex `v`
-    @inbounds for c in oneto(m)
-        if ispositive(len[n + c])
-            for p in cptr[c]:cptr[c + one(V)] - one(E)
-                v = ctgt[p]
+    # `elen[v]` is the number of nonempty elements containing the variable
+    # `v`, and `len[v]` adds the number of its neighbors
+    @inbounds for e in oneto(m)
+        if ispositive(len[n + e])
+            for p in eptr[e]:eptr[e + one(V)] - one(E)
+                v = etgt[p]
 
-                if marker[v] != m + c
-                    marker[v] = m + c; len[v] += one(V)
+                if marker[v] != m + e
+                    marker[v] = m + e; elen[v] += one(V)
                 end
             end
         end
+    end
+
+    @inbounds for v in oneto(n)
+        len[v] = elen[v] + convert(V, xadj[v + one(V)] - xadj[v])
     end
 
     # `pe[i + 1]` is the tail of the list of `i`: on return, it is
@@ -221,35 +230,44 @@ function coverincidence!(
         pe[i + one(V)] = pfree; pfree += convert(E, len[i])
     end
 
-    @inbounds for c in oneto(m)
-        e = n + c
+    # the elements come first in the list of each variable
+    @inbounds for e in oneto(m)
+        x = n + e
 
-        if ispositive(len[e])
-            for p in cptr[c]:cptr[c + one(V)] - one(E)
-                v = ctgt[p]
+        if ispositive(len[x])
+            for p in eptr[e]:eptr[e + one(V)] - one(E)
+                v = etgt[p]
 
-                if marker[v] != twice(m) + c
-                    marker[v] = twice(m) + c
-                    iw[pe[e + one(V)]] = v; pe[e + one(V)] += one(E)
-                    iw[pe[v + one(V)]] = e; pe[v + one(V)] += one(E)
+                if marker[v] != twice(m) + e
+                    marker[v] = twice(m) + e
+                    iw[pe[x + one(V)]] = v; pe[x + one(V)] += one(E)
+                    iw[pe[v + one(V)]] = x; pe[v + one(V)] += one(E)
                 end
             end
+        end
+    end
+
+    # and then its neighbors
+    @inbounds for v in oneto(n)
+        for p in xadj[v]:xadj[v + one(V)] - one(E)
+            iw[pe[v + one(V)]] = adjncy[p]; pe[v + one(V)] += one(E)
         end
     end
 
     return pfree
 end
 
-# The external degree of each vertex of the graph covered by the cliques of
-# the incidence graph (`pe`, `len`, `iw`) (see `coverincidence!`): the total
-# of the `weights` of the union of its cliques, less its own. The vertices of
-# the cliques are marked, in O(Σ |C|²) time and O(n) space.
-function coverdegree!(
+# The external degree of each variable of the quotient graph (`pe`, `len`,
+# `elen`, `iw`) (see `quotientlists!`): the total of the `weights` of its
+# neighbors and of the members of its elements, less its own. The members
+# of the elements are marked, in O(Σ len + Σ |C|²) time and O(n) space.
+function quotientdegree!(
         degree::AbstractVector{W},
         marker::AbstractVector{V},
         weights::AbstractVector,
         pe::AbstractVector{E},
         len::AbstractVector{V},
+        elen::AbstractVector{V},
         iw::AbstractVector{V},
         n::V,
     ) where {W, V, E}
@@ -259,8 +277,10 @@ function coverdegree!(
 
     @inbounds for v in oneto(n)
         marker[v] = v; deg = zero(W)
+        p1 = pe[v]; p2 = p1 + convert(E, elen[v]) - one(E); p3 = p1 + convert(E, len[v]) - one(E)
 
-        for p in pe[v]:pe[v] + convert(E, len[v]) - one(E)
+        # the members of its elements
+        for p in p1:p2
             e = iw[p]
 
             for q in pe[e]:pe[e] + convert(E, len[e]) - one(E)
@@ -269,6 +289,15 @@ function coverdegree!(
                 if marker[u] != v
                     marker[u] = v; deg += weights[u]
                 end
+            end
+        end
+
+        # its neighbors
+        for p in (p2 + one(E)):p3
+            u = iw[p]
+
+            if marker[u] != v
+                marker[u] = v; deg += weights[u]
             end
         end
 

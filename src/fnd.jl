@@ -718,9 +718,9 @@ function fnd_separator(
     return part
 end
 
-# Order the leaf with AMF, given the cliques that cover G'[W]: an edge for
-# each arc of the quotient graph, and the separators on the stack (see
-# `camf`). Returns the ordering of the classes and its inverse.
+# Order the leaf with AMF on its quotient graph: the classes, joined by the
+# arcs (`qptr`, `qtgt`), and the separators on the stack as elements (see
+# `qamf`). Returns the ordering of the classes and its inverse.
 function fnd_leaf(
         weights::AbstractVector{V},
         qptr::AbstractVector{V},
@@ -730,48 +730,8 @@ function fnd_leaf(
         nc::V,
         level::V,
     ) where {V}
-    # `ncl` is the number of cliques, and `nnz` is the number
-    # of their members
-    ncl = zero(V); nnz = zero(V)
-
-    @inbounds for c in oneto(nc), p in qptr[c]:(qptr[c + one(V)] - one(V))
-        if c < qtgt[p]
-            ncl += one(V); nnz += two(V)
-        end
-    end
-
-    # the separators on the stack that meet the node in fewer than
-    # two classes add no edges
-    @inbounds for l in oneto(level)
-        if clsptr[l + one(V)] - clsptr[l] > one(V)
-            ncl += one(V); nnz += clsptr[l + one(V)] - clsptr[l]
-        end
-    end
-
-    cptr = FVector{V}(undef, ncl + one(V))
-    ctgt = FVector{V}(undef, nnz)
-    @inbounds cptr[begin] = q = one(V); k = zero(V)
-
-    @inbounds for c in oneto(nc), p in qptr[c]:(qptr[c + one(V)] - one(V))
-        u = qtgt[p]
-
-        if c < u
-            ctgt[q] = c; ctgt[q + one(V)] = u; q += two(V)
-            k += one(V); cptr[k + one(V)] = q
-        end
-    end
-
-    @inbounds for l in oneto(level)
-        if clsptr[l + one(V)] - clsptr[l] > one(V)
-            for r in clsptr[l]:(clsptr[l + one(V)] - one(V))
-                ctgt[q] = clstgt[r]; q += one(V)
-            end
-
-            k += one(V); cptr[k + one(V)] = q
-        end
-    end
-
-    return camf(nc, view(weights, oneto(nc)), ncl, cptr, ctgt)
+    return qamf(nc, view(weights, oneto(nc)), view(qptr, oneto(nc + one(V))),
+        qtgt, level, view(clsptr, oneto(level + one(V))), clstgt)
 end
 
 # Rotate the ordering (`order`, `index`) of the classes so that the classes

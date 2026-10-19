@@ -46,7 +46,7 @@ using FillArrays
 using ..Utilities
 using ..CliqueTrees
 
-export amf, camf
+export amf, qamf
 
 const FLOAT = Float64
 const AMF_SCOREMAX = 2.0^52   # largest rounded score; integers up to here are exact in a `FLOAT`
@@ -233,25 +233,29 @@ function amf_impl!(
     return elen, last
 end
 
-function camf(n::V, m::V, cptr::AbstractVector{E}, ctgt::AbstractVector{V}) where {V, E}
+function qamf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, m::V, eptr::AbstractVector{E}, etgt::AbstractVector{V}) where {V, E}
     vwght = Ones{V}(n)
-    return camf(n, vwght, m, cptr, ctgt)
+    return qamf(n, vwght, xadj, adjncy, m, eptr, etgt)
 end
 
-# Approximate minimum fill ordering of the graph G on the vertices 1:n whose
-# edges are covered by the cliques 1:m, where the members of the clique c are
-# ctgt[cptr[c]:cptr[c + 1] - 1]. G is never formed (see `camf_impl!`). The
-# vertex weights are as for `amf`.
-function camf(n::V, vwght::AbstractVector, m::V, cptr::AbstractVector{E}, ctgt::AbstractVector{V}) where {V, E}
+# Approximate minimum fill ordering of the graph G given by a quotient graph:
+# the variables 1:n, joined by the edges (`xadj`, `adjncy`), and the elements
+# 1:m, which are cliques of G: the members of the element e are
+# etgt[eptr[e]:eptr[e + 1] - 1]. Two variables are adjacent in G if they are
+# joined by an edge or lie in a common element. G is never formed (see
+# `qamf_impl!`). The edges must be symmetric, without loops. The vertex
+# weights are as for `amf`. With no elements, the ordering is that of `amf`.
+function qamf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, m::V, eptr::AbstractVector{E}, etgt::AbstractVector{V}) where {V, E}
     @assert n <= length(vwght)
-    @assert m < length(cptr)
-    @inbounds nnode = n + m; nnz = cptr[m + one(V)] - one(E)
+    @assert n < length(xadj)
+    @assert m < length(eptr)
+    @inbounds nnode = n + m; nnz = xadj[n + one(V)] - one(E) + twice(eptr[m + one(V)] - one(E))
 
     wt = FVector{FLOAT}(undef, nnode)
     wsum = amf_weights!(wt, vwght, n)
     nfine = amf_nfine(wsum, n)
     nbbuck = twice(nfine)
-    norig = nnode                             # positions: the cliques, numbered first, and the vertices
+    norig = nnode                             # positions: the elements, numbered first, and the variables
     iwlen = twice(nnz) + convert(E, 4nnode) + one(E)
 
     len = FVector{V}(undef, nnode)
@@ -267,22 +271,24 @@ function camf(n::V, vwght::AbstractVector, m::V, cptr::AbstractVector{E}, ctgt::
     head = FVector{V}(undef, max(nbbuck + two(V), norig))
     marker = FVector{V}(undef, n)
 
-    perm, invp = camf_impl!(norig, n, m, nfine, nbbuck, iwlen, pe, len, iw, nv,
-        elen, last, degree, wf, next, w, head, marker, wt, cptr, ctgt)
+    perm, invp = qamf_impl!(norig, n, m, nfine, nbbuck, iwlen, pe, len, iw, nv,
+        elen, last, degree, wf, next, w, head, marker, wt, xadj, adjncy, eptr, etgt)
 
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
 end
 
-# A clique cover is a quotient graph partway through elimination: join one
-# node to the members of each clique, and eliminate the clique nodes. They
-# are pairwise nonadjacent, so they create no fill among themselves, and what
-# remains is G. So the cliques are passed to `hamf_impl!` as elements, which
-# it treats as already eliminated, and the storage is Σ |C| rather than
-# Σ |C|². The nodes are the vertices 1:n and the cliques n + 1:n + m, and the
-# weighted external degree of each vertex in G is computed by `coverdegree!`.
+# A quotient graph is a graph partway through elimination: each element is
+# the clique left by eliminating a node joined to its members, and the
+# elements are pairwise nonadjacent, so they create no fill among
+# themselves. So the elements are passed to `hamf_impl!`, which treats them
+# as already eliminated, and the storage is that of the edges plus Σ |C|,
+# rather than Σ |C|². The nodes are the variables 1:n and the elements
+# n + 1:n + m; each variable lists its elements and then its neighbors, as
+# during elimination (see `quotientlists!`), and the weighted external
+# degree of each variable is computed by `quotientdegree!`.
 #
 # Returns the permutation and its inverse, as views of `elen` and `last`.
-function camf_impl!(
+function qamf_impl!(
         norig::V,
         n::V,
         m::V,
@@ -302,29 +308,27 @@ function camf_impl!(
         head::AbstractVector{V},
         marker::AbstractVector{V},
         wt::AbstractVector{F},
-        cptr::AbstractVector{E},
-        ctgt::AbstractVector{V},
+        xadj::AbstractVector{E},
+        adjncy::AbstractVector{V},
+        eptr::AbstractVector{E},
+        etgt::AbstractVector{V},
     ) where {V, E, F}
     nnode = n + m
 
-    # the incidence graph of the cover
-    pfree = coverincidence!(pe, len, iw, marker, n, m, cptr, ctgt)
+    # the lists of the quotient graph
+    pfree = quotientlists!(pe, len, elen, iw, marker, n, m, xadj, adjncy, eptr, etgt)
 
-    # every node is one position: a vertex, or a clique
+    # every node is one position: a variable, or an element
     @inbounds for i in oneto(nnode)
         nv[i] = one(V)
     end
 
-    # the weighted external degrees of the vertices
-    coverdegree!(degree, marker, wt, pe, len, iw, n)
-
-    @inbounds for v in oneto(n)
-        elen[v] = zero(V)
-    end
+    # the weighted external degrees of the variables
+    quotientdegree!(degree, marker, wt, pe, len, elen, iw, n)
 
     # the element markers; an empty list has no head for `hamf_impl!` to
-    # mark when it compresses `iw`, so empty cliques are given a null
-    # pointer, as eliminated vertices are
+    # mark when it compresses `iw`, so empty elements are given a null
+    # pointer, as eliminated variables are
     @inbounds for e in (n + one(V)):nnode
         elen[e] = -nnode - one(V)
 
@@ -450,6 +454,10 @@ end
 #     Elements are "considered" as already eliminated and
 #     are provided here only to describe the adjacency between
 #     variables. Only variables in V0 need to be eliminated.
+#
+#     (CliqueTrees) A variable may also be adjacent to variables:
+#     its list holds its elements first, and then its variables, as
+#     it would during execution.
 #
 #     (CliqueTrees) The HAMF4 halo (the set V1 of variables that are
 #     never ordered) has been removed.
@@ -678,7 +686,7 @@ end
 #                       the matrix, excluding the diagonal.
 #                     else (graph of elements+variables)
 #                       if i ∈ V0 then len(i) = nb of elements adjacent
-#                           to i
+#                           to i, plus nb of variables adjacent to i
 #                       if i ∈ Ve then len(i) = nb of variables
 #                           adjacent to i
 #                     endif
@@ -686,11 +694,13 @@ end
 #
 #   elen: defined on input only if nbelts>0
 #         if e ∈ Ve then elen (e) = -N-1
-#         if v ∈ V0 then elen (v) = 0
+#         if v ∈ V0 then elen (v) = nb of elements adjacent to v,
+#                                  which come first in its list
 #
 #   degree: defined on input only if nbelts>0
 #         if v ∈ V0 then degree (v) = weighted external degree of v,
-#                                    the sum of wt (j) over its neighbours
+#                                    the sum of wt (j) over the variables
+#                                    adjacent to v or in its elements
 #
 #   iw:   On input, iw (1..pfree-1) holds the description of each row i
 #         in the matrix.  The matrix must be symmetric, and both upper
@@ -1004,10 +1014,9 @@ function hamf_impl!(
                 if len[i] > dmax
                     dmax = len[i]
                 end
-            else                              # `i` ∈ V0; `degree[i]` holds its weighted external degree
-                totel += nv[i]
+            else                              # `i` ∈ V0; `degree[i]` holds its weighted external degree, and its
+                totel += nv[i]                # list holds its `elen[i]` elements, then its variables
                 wtotel += wt[i]
-                elen[i] = len[i]
             end
         end
     end

@@ -2993,29 +2993,41 @@ end
     end
 end
 
-@testset "AMF on clique covers" begin
-    # `camf` orders the graph covered by the cliques without forming it
+@testset "AMF on quotient graphs" begin
+    # `qamf` orders the graph given by edges and cliques without forming it
     rng = Xoshiro(1)
 
     for trial in 1:300
-        n = rand(rng, 1:30); m = rand(rng, 0:2n)
+        n = rand(rng, 1:30); m = rand(rng, 0:n)
+        graph = erdos_renyi(n, rand(rng) * 0.3; rng)
+        arcs = [Int[] for _ in 1:n]
+
+        for e in edges(graph)
+            push!(arcs[src(e)], dst(e)); push!(arcs[dst(e)], src(e))
+        end
+
+        xadj = cumsum([1; length.(arcs)]); adjncy = reduce(vcat, arcs; init = Int[])
         cliques = [rand(rng, 1:n, rand(rng, 0:min(8, n))) for _ in 1:m]
-        cptr = cumsum([1; length.(cliques)]); ctgt = reduce(vcat, cliques; init = Int[])
-        weights = rand(rng, Bool) ? ones(Int, n) : rand(rng, 1:5, n)
-        perm, invp = CliqueTrees.AMFLib.camf(n, weights, m, cptr, ctgt)
+        eptr = cumsum([1; length.(cliques)]); etgt = reduce(vcat, cliques; init = Int[])
+        weights = rand(rng, (ones(Int, n), rand(rng, 1:5, n), rand(rng, n) .+ 0.1))
+        perm, invp = CliqueTrees.AMFLib.qamf(n, weights, xadj, adjncy, m, eptr, etgt)
         @test isperm(perm)
         @test invp == invperm(perm)
 
-        # the smallest workspace, so that `iw` is compressed often: the
-        # incidence graph, and room for one new element
-        nnode = n + m; norig = m + sum(weights; init = 0)
-        iwlen = 1 + nnode + sum(clique -> (k = length(unique(clique))) < 2 ? 0 : 2k, cliques; init = 0)
+        # without elements, it is AMF
+        @test CliqueTrees.AMFLib.qamf(n, weights, xadj, adjncy, 0, [1], Int[]) == CliqueTrees.AMFLib.amf(n, weights, xadj, adjncy)
 
-        perm, invp = CliqueTrees.AMFLib.camf_impl!(norig, n, m, 2norig, iwlen,
+        # the smallest workspace, so that `iw` is compressed often: the
+        # lists of the quotient graph, and room for one new element
+        nnode = n + m; norig = nnode
+        iwlen = 1 + nnode + length(adjncy) + sum(clique -> (k = length(unique(clique))) < 2 ? 0 : 2k, cliques; init = 0)
+        wt = [float.(weights); zeros(m)]
+
+        perm, invp = CliqueTrees.AMFLib.qamf_impl!(norig, n, m, norig, 2norig, iwlen,
             zeros(Int, nnode + 1), zeros(Int, nnode), zeros(Int, iwlen), zeros(Int, nnode),
-            zeros(Int, nnode), zeros(Int, nnode), zeros(Int, nnode), zeros(Int, nnode),
+            zeros(Int, nnode), zeros(Int, nnode), zeros(nnode), zeros(nnode),
             zeros(Int, nnode), zeros(Int, nnode), zeros(Int, 2norig + 2), zeros(Int, n),
-            weights, cptr, ctgt)
+            wt, xadj, adjncy, eptr, etgt)
 
         @test isperm(perm)
         @test invp == invperm(perm)
