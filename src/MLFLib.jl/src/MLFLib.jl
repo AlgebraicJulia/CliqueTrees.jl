@@ -10,6 +10,11 @@ function maxint(::Type{I}) where {I}
     return typemax(I) - convert(I, 100000)
 end
 
+# bit-mask type used by mfupd_def; the number of new clique members
+# marked at once (the group size) is its width
+const GMASK = UInt64
+const GROUPSIZE = 8 * sizeof(GMASK)
+
 include("mlfscore.jl")
 include("mlfwh.jl")
 include("genmf_wh.jl")

@@ -109,17 +109,29 @@
 #
 #**********************************************************************
 #
-# number of new clique members marked at once (bits in a UInt64)
-const GROUPSIZE = 64
 
-# sum of the (negative) supernode sizes gq(g) of the group members g in mask m
-@inline function grp_sum(m::UInt64, unit::Bool, gq::AbstractVector{W}) where {W}
-    unit && return -convert(W, count_ones(m))
+# sum of the (negative) supernode sizes gq(g) of the group members g in mask m;
+# heavy marks the members whose size is not one
+@inline function grp_sum(m::GMASK, heavy::GMASK, gq::AbstractVector{W}) where {W <: Integer}
+    # count every member as size one, then correct the few heavy ones
+    s = -convert(W, count_ones(m))
+    h = m & heavy
+
+    @inbounds while !iszero(h)
+        s += gq[trailing_zeros(h) + 1] + one(W)
+        h &= h - one(GMASK)
+    end
+
+    return s
+end
+
+@inline function grp_sum(m::GMASK, heavy::GMASK, gq::AbstractVector{W}) where {W}
+    iszero(m & heavy) && return -convert(W, count_ones(m))
     s = zero(W)
 
     @inbounds while !iszero(m)
         s += gq[trailing_zeros(m) + 1]
-        m &= m - one(UInt64)
+        m &= m - one(GMASK)
     end
 
     return s
@@ -143,7 +155,7 @@ function mfupd_def(
         marker::AbstractVector{I},
         changed::AbstractVector{Bool},
         deginc::AbstractVector{W},
-        umask::AbstractVector{UInt64},
+        umask::AbstractVector{GMASK},
         touch::AbstractVector{V},
         gq::AbstractVector{W},
         gucnt::AbstractVector{W},
@@ -171,8 +183,8 @@ function mfupd_def(
     @inbounds while j <= nnodes
         jhi = min(nnodes, j + convert(V, GROUPSIZE) - one(V))
         ng = Int(jhi - j) + 1
-        allbits = ng == 64 ? typemax(UInt64) : (one(UInt64) << ng) - one(UInt64)
-        unit = true
+        allbits = ng == GROUPSIZE ? typemax(GMASK) : (one(GMASK) << ng) - one(GMASK)
+        heavy = zero(GMASK)
         ntouch = 0
 
         #           -----------------------------------------
@@ -180,9 +192,9 @@ function mfupd_def(
         #           -----------------------------------------
         for g in 1:ng
             unode = ecliq[j + convert(V, g - 1)]
-            bit = one(UInt64) << (g - 1)
+            bit = one(GMASK) << (g - 1)
             gq[g] = qsize[unode]
-            unit &= qsize[unode] == -one(W)
+            qsize[unode] == -one(W) || (heavy |= bit)
             ucount = zero(W)
             istart = xadj[unode]
             istop = istart + convert(E, nvtxs[unode]) - one(E)
@@ -240,9 +252,9 @@ function mfupd_def(
             after = if g0 <= 1
                 allbits
             elseif g0 > ng
-                zero(UInt64)
+                zero(GMASK)
             else
-                allbits & ~((one(UInt64) << (g0 - 1)) - one(UInt64))
+                allbits & ~((one(GMASK) << (g0 - 1)) - one(GMASK))
             end
 
             wnode = ecliq[i]
@@ -250,7 +262,7 @@ function mfupd_def(
             iszero(pm) && continue
 
             qw = qsize[wnode]
-            sqpm = grp_sum(pm, unit, gq)
+            sqpm = grp_sum(pm, heavy, gq)
 
             #               DEGREE INCREMENTS DUE TO THE NEW FILL EDGES.
             deginc[wnode] -= sqpm
@@ -260,7 +272,7 @@ function mfupd_def(
                 g = trailing_zeros(bits) + 1
                 deginc[ecliq[j + convert(V, g - 1)]] -= qw
                 gpq[g] += qw
-                bits &= bits - one(UInt64)
+                bits &= bits - one(GMASK)
             end
 
             #               BUMP TAG (USED TO DEDUPLICATE WNODE'S NEIGHBORHOOD).
@@ -293,7 +305,7 @@ function mfupd_def(
                         qext += qx
 
                         if !iszero(m)
-                            sq = grp_sum(m, unit, gq)
+                            sq = grp_sum(m, heavy, gq)
                             defncy[xnode] -= qw * sq
                             bw += qx * sq
                             bits = m
@@ -301,7 +313,7 @@ function mfupd_def(
                             while !iszero(bits)
                                 g = trailing_zeros(bits) + 1
                                 gacc[g] += qw * qx
-                                bits &= bits - one(UInt64)
+                                bits &= bits - one(GMASK)
                             end
 
                             if !changed[xnode]
@@ -311,7 +323,7 @@ function mfupd_def(
                             end
                         end
                     elseif !iszero(m)
-                        defncy[xnode] -= qw * grp_sum(m, unit, gq)
+                        defncy[xnode] -= qw * grp_sum(m, heavy, gq)
                     end
                 end
             end
@@ -336,7 +348,7 @@ function mfupd_def(
                             qext += qx
 
                             if !iszero(m)
-                                sq = grp_sum(m, unit, gq)
+                                sq = grp_sum(m, heavy, gq)
                                 defncy[xnode] -= qw * sq
                                 bw += qx * sq
                                 bits = m
@@ -344,7 +356,7 @@ function mfupd_def(
                                 while !iszero(bits)
                                     g = trailing_zeros(bits) + 1
                                     gacc[g] += qw * qx
-                                    bits &= bits - one(UInt64)
+                                    bits &= bits - one(GMASK)
                                 end
 
                                 if !changed[xnode]
@@ -354,7 +366,7 @@ function mfupd_def(
                                 end
                             end
                         elseif !iszero(m)
-                            defncy[xnode] -= qw * grp_sum(m, unit, gq)
+                            defncy[xnode] -= qw * grp_sum(m, heavy, gq)
                         end
                     end
                 end
@@ -373,7 +385,7 @@ function mfupd_def(
         end
 
         for t in 1:ntouch
-            umask[touch[t]] = zero(UInt64)
+            umask[touch[t]] = zero(GMASK)
         end
 
         j = jhi + one(V)

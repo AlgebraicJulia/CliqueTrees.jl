@@ -101,7 +101,6 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     nvtxs   = FVector{V}(undef, n)
     qsize   = FVector{W}(undef, n)
     qnmbr   = FVector{V}(undef, n)
-    umark   = FVector{Int}(undef, n)
     work    = FVector{V}(undef, n)
     work1   = FVector{Int}(undef, n)
     work2   = FVector{W}(undef, n)
@@ -111,16 +110,11 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     defncy  = FVector{W}(undef, n)
     heap    = FVector{SCORE}(undef, twice(n))
 
-    umask   = FVector{UInt64}(undef, n)
-    touch   = FVector{V}(undef, n)
+    umask   = FVector{GMASK}(undef, n)
     gq      = FVector{W}(undef, GROUPSIZE)
     gucnt   = FVector{W}(undef, GROUPSIZE)
     gpq     = FVector{W}(undef, GROUPSIZE)
     gacc    = FVector{W}(undef, GROUPSIZE)
-
-    @inbounds for i in oneto(n)
-        umask[i] = zero(UInt64)
-    end
 
     #       ------------------------------------------------------------
     #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
@@ -142,9 +136,9 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
         adjncy, defflag, perm, invp,
         marker, nvtxs, work,
         qsize, qnmbr, ecforw, defncy, adj2, changed,
-        degree, umark, heap, heapinv, ecliq,
+        degree, heap, heapinv, ecliq,
         xadj2, len2, work1, work2,
-        umask, touch, gq, gucnt, gpq, gacc,
+        umask, gq, gucnt, gpq, gacc,
     )
 
     return perm, invp

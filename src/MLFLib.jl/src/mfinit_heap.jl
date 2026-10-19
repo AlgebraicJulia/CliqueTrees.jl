@@ -64,10 +64,6 @@
 #                     IS RECORDED AS NOT HAVING ITS DEFICIENCY
 #                     CURRENTLY CHANGED.
 #                       -1    FOR EACH REPRESENTATIVE NODE.
-#       UMARK(*)    - ARRAY OF LENGTH NEQNS, ARRAY FOR LATER
-#                     WING-HUANG MARKING PROCESSES; IT IS
-#                     INITIALIZED TO ZERO HERE.
-#                       0     FOR EACH REPRESENTATIVE NODE.
 #       INVP(*)     - ARRAY OF LENGTH NEQNS, INITIALLY ZERO FOR
 #                     EVERY REPRESENTATIVE VERTEX TO INDICATE THAT
 #                     IT HAS NOT BEEN ELIMINATED.
@@ -88,7 +84,6 @@ function mfinit_heap(
         work::AbstractVector{V},
         ecforw::AbstractVector{V},
         changed::AbstractVector{Bool},
-        umark::AbstractVector{I},
         invp::AbstractVector{V},
     ) where {V, E, I, W, S}
 
@@ -120,7 +115,6 @@ function mfinit_heap(
             #               ---------------------------
             ecforw[jnode] = -one(V)
             changed[jnode] = false
-            umark[jnode] = zero(I)
             work[jnode] = zero(V)
             invp[jnode] = zero(V)
             marker[jnode] = zero(I)

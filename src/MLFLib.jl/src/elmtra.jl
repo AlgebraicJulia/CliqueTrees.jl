@@ -101,10 +101,6 @@
 #                     ENODE'S ELIMINATION.  IT IS CORRECT ON
 #                     INPUT, AND IS MODIFIED BY ANY MASS
 #                     ELIMINATION.
-#       UMARK(*)    - ARRAY OF LENGTH NEQNS, USED FOR MARKING
-#                     DURING WING-HUANG MARKING PROCESSES.
-#                       NOT ABSORBED: <MAXINT.
-#                       ABSORBED:     MAXINT.
 #
 #     WORKING PARAMETERS:
 #       HHEADS      - ARRAY OF SIZE NEQNS.  HEADS OF THE LISTS
@@ -135,7 +131,6 @@ function elmtra(
         nxtloc::E,
         gbgcnt::I,
         clqsiz::W,
-        umark::AbstractVector{I},
         hheads::AbstractVector{V},
         hlink::AbstractVector{V},
     ) where {V, E, I, W}
@@ -312,7 +307,6 @@ function elmtra(
             qnmbr[enode] += qnmbr[jnode]
             nvtxs[jnode] = -one(V)
             marker[jnode] = maxint(I)
-            umark[jnode] = maxint(I)
             clqsiz += qsize[jnode]
             qsize[jnode] = zero(W)
             qnmbr[jnode] = zero(V)
@@ -417,7 +411,6 @@ function elmtra(
                     qnmbr[jnode] += qnmbr[inode]
                     nvtxs[inode] = -one(V)
                     marker[inode] = maxint(I)
-                    umark[inode] = maxint(I)
                     qsize[inode] = zero(W)
                     qnmbr[inode] = zero(V)
                     #                       -------------------
