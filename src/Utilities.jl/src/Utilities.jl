@@ -198,6 +198,7 @@ end
 #   - 111 to 119: `cliquetree`
 #   - 121 to 155: the separator dynamic program (`sepdp`)
 #   - 161 to 166: the enumeration of minimal separators (`sepenum`)
+#   - 171 to 200: the reduction rules of level 5 (`compressreduce`)
 #
 # A task does not see the workspace of the task that spawned it; tasks spawned
 # with `spawnwork` get workspaces of their own, from a pool shared by every
