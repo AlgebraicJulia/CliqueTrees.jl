@@ -1218,7 +1218,8 @@ function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBT;
         end
     end
 
-    hbt = hbt_new(weights, graph, alg)
+    # the greedy starts are cut short at the end of the budget, as for a batch
+    hbt = hbt_new(weights, graph, alg; deadline = t0 + alg.time)
     order, invp, _ = hbtrun!(hbt; mt = alg.time - (time() - t0), nt = alg.threads)
     return convert(Vector{V}, order), convert(Vector{V}, invp)
 end

@@ -78,14 +78,16 @@ const SEPENUM_MT = 20
 function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, deadline::Real = Inf) where {W, V}
     nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk); clk = bt_clk(deadline)
 
+    # the work arrays are slots 161 to 166 of the workspace
+    ws   = workspace()
     adj  = bt_mat(nwrd, nvtx)
-    excl = FVector{UInt64}(undef, nwrd)
-    pool = UInt64[]
-    out  = UInt64[]
+    excl = workvector(ws, UInt64, 161, nwrd)
+    pool = worklist(ws, UInt64, 162)
+    out  = worklist(ws, UInt64, 163)
 
-    order = FVector{V}(undef, nvtx)
-    key   = FVector{V}(undef, nvtx)
-    cnt   = FVector{V}(undef, nvtx)
+    order = workvector(ws, V, 164, nvtx)
+    key   = workvector(ws, V, 165, nvtx)
+    cnt   = workvector(ws, V, 166, nvtx)
 
     smax = sepenum_adj!(adj, order, key, cnt, weights, graph, maxk)
     sepenum_emp!(out, pool, adj, maxk, nvtx, nwrd)

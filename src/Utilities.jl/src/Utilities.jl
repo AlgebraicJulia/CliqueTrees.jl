@@ -20,7 +20,7 @@ export eltypedegree, de
 export MAX_ITEMS_PRINTED, printiterator
 
 # work arrays
-export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, spawnwork
+export Workspace, BUCKETS, withworkspace, workspace, reserve!, workvector, worklist, spawnwork
 
 const AbstractScalar{T} = AbstractArray{T, 0}
 const Scalar{T} = Array{T, 0}
@@ -193,6 +193,12 @@ end
 #   - 4 to 12: AMF and MMD
 #   - 21 to 43: MF
 #   - 51 to 66: `bestwidth` and `bestfill`
+#   - 71 to 82: the lower bound MMW
+#   - 91 to 109: MCS-ETree (`MinimalChordal`)
+#   - 111 to 119: `cliquetree`
+#   - 121 to 155: the separator dynamic program (`sepdp`)
+#   - 161 to 166: the enumeration of minimal separators (`sepenum`)
+#   - 171 to 200: the reduction rules of level 5 (`compressreduce`)
 #
 # A task does not see the workspace of the task that spawned it; tasks spawned
 # with `spawnwork` get workspaces of their own, from a pool shared by every
@@ -342,6 +348,25 @@ end
 
 function Base.elsize(::Type{WorkVector{T}}) where {T}
     return Base.elsize(Memory{T})
+end
+
+# an empty vector, to be grown: slot `i` of the workspace (with the room of its
+# last use), or a new vector if there is no workspace
+function worklist(ws::Union{Nothing, Workspace}, ::Type{T}, i::Int) where {T}
+    isnothing(ws) && return T[]
+    slots = ws.slots
+
+    while length(slots) < i
+        push!(slots, nothing)
+    end
+
+    list = slots[i]
+
+    if !(list isa Vector{T})
+        list = slots[i] = T[]
+    end
+
+    return empty!(list::Vector{T})
 end
 
 # Spawn a task that runs `f()`, an ordering of `graph`, with a workspace from

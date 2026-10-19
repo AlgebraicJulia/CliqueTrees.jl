@@ -96,8 +96,12 @@ function sepdp_run!(
         clk::NamedTuple,
     ) where {W, V}
     nvtx = nv(graph); nsep = nv(sep); nwrd = convert(V, bt_nwd(adj))
-    work1  = FVector{V}(undef, nvtx)
-    sepwgt = FVector{W}(undef, nsep)
+
+    # the work arrays are slots 121 to 155 of the workspace (see sepdp_blk!,
+    # sepdp_lab!, sepdp_tri, and sepdp_val!)
+    ws = workspace()
+    work1  = workvector(ws, V, 121, nvtx)
+    sepwgt = workvector(ws, W, 122, nsep)
 
     if nt <= 1 || nsep < SEPDP_MT
         lstmin, lstlen, lstwgt, lstsep, lstset = sepdp_blk!(
@@ -119,11 +123,11 @@ function sepdp_run!(
         weights, graph, sep, adj = sepdp_rel(weights, graph, sep, adj, new2old, old2new)
     end
 
-    blkmin = FVector{V}(undef, nblk)
-    blklen = FVector{V}(undef, nblk)
-    blkwgt = FVector{W}(undef, nblk)
-    blksep = FVector{V}(undef, nblk)
-    order  = FVector{V}(undef, nblk)
+    blkmin = workvector(ws, V, 123, nblk)
+    blklen = workvector(ws, V, 124, nblk)
+    blkwgt = workvector(ws, W, 125, nblk)
+    blksep = workvector(ws, V, 126, nblk)
+    order  = workvector(ws, V, 127, nblk)
 
     fst = sepdp_srt!(blkmin, blklen, blkwgt, blksep, order, work1,
         lstmin, lstlen, lstwgt, lstsep, nvtx)
@@ -131,8 +135,8 @@ function sepdp_run!(
     blkset, sepset = sepdp_set!(adj, sep, blksep, order, lstset, nvtx)
     trie = merge(sepdp_tri(fst, blklen, sepset, weights), (; clk))
 
-    valk   = FVector{W}(undef, nblk + 1)
-    capptr = FVector{V}(undef, nblk + 2)
+    valk   = workvector(ws, W, 128, nblk + 1)
+    capptr = workvector(ws, V, 129, nblk + 2)
 
     if nt <= 1 || nblk < SEPDP_MT
         cap = sepdp_val!(valk, capptr, adj, weights, sep, sepwgt,
@@ -147,9 +151,9 @@ function sepdp_run!(
 
     if mink <= maxk
         tag   = FScalar{V}(undef); tag[] = zero(V)
-        stack = FVector{V}(undef, nvtx + 1)
+        stack = workvector(ws, V, 130, nvtx + 1)
         queue = work1
-        insep = FVector{V}(undef, nvtx)
+        insep = workvector(ws, V, 131, nvtx)
 
         sepdp_ord!(perm, invp, stack, queue, insep, tag,
             graph, sep, fst, blklen, blksep, cap)
@@ -188,7 +192,9 @@ function sepdp_blk!(
     @assert nvtx <= bt_nst(adj)
     @assert nvtx <= length(weights)
 
-    lsts = (V[], V[], W[], V[], UInt64[]); pool = UInt64[]
+    ws = workspace()
+    lsts = (worklist(ws, V, 132), worklist(ws, V, 133), worklist(ws, W, 134), worklist(ws, V, 135), worklist(ws, UInt64, 136))
+    pool = worklist(ws, UInt64, 137)
 
     @inbounds for s in vertices(sep)
         bt_tck!(clk) && break
@@ -343,7 +349,8 @@ end
 # returns the old vertex of each new vertex, its inverse, and whether
 # any vertex moved.
 function sepdp_lab!(lstmin::AbstractVector{V}, lstset::AbstractVector{UInt64}, nvtx::V, nwrd::V) where {V}
-    nblk = convert(V, length(lstmin)); cnt = zeros(Int, nvtx); new = zeros(UInt64, nwrd)
+    ws = workspace(); nblk = convert(V, length(lstmin))
+    cnt = fill!(workvector(ws, Int, 141, nvtx), 0); new = fill!(workvector(ws, UInt64, 142, nwrd), zero(UInt64))
 
     @inbounds for p in zero(V):nwrd:nblk * nwrd - one(V), i in oneto(nwrd)
         word = lstset[p + i]
@@ -392,7 +399,7 @@ function sepdp_rel(
     nvtx = nv(graph); nwrd = convert(V, bt_nwd(adj))
     wgt = FVector{W}(undef, nvtx)
     nbr = bt_mat(adj, nvtx); fill!(nbr, zero(UInt64))
-    ptr = V[one(V)]; tgt = V[]
+    ws = workspace(); ptr = push!(worklist(ws, V, 152), one(V)); tgt = worklist(ws, V, 153)
 
     @inbounds for v in oneto(nvtx)
         u = new2old[v]; wgt[v] = weights[u]
@@ -414,7 +421,7 @@ function sepdp_rel(
     end
 
     gph = BipartiteGraph{V, V}(convert(V, nvtx), convert(V, nvtx), length(tgt), ptr, tgt)
-    sptr = V[one(V)]; stgt = V[]
+    sptr = push!(worklist(ws, V, 154), one(V)); stgt = worklist(ws, V, 155)
 
     @inbounds for s in vertices(sep)
         for x in neighbors(sep, s)
@@ -527,9 +534,10 @@ function sepdp_val!(
     @assert nblk <= length(blkwgt)
     @assert nblk <= length(blksep)
 
-    pool   = UInt64[]
-    captgt = V[]
-    bagset = FVector{UInt64}(undef, nwrd)
+    ws     = workspace()
+    pool   = worklist(ws, UInt64, 138)
+    captgt = worklist(ws, V, 139)
+    bagset = workvector(ws, UInt64, 140, nwrd)
 
     @inbounds for b in oneto(nblk)
         bt_tck!(trie.clk) && return nothing
@@ -1237,16 +1245,17 @@ const SEPDP_TRIE = 256
 function sepdp_tri(fst::BipartiteGraph{V}, blklen::AbstractVector{V}, sepset::AbstractVecOrMat{UInt64}, weights::AbstractVector{W}) where {W, V}
     nvtx = nv(fst); nwrd = convert(V, bt_nwd(sepset)); tgt = targets(fst); nblk = length(tgt)
 
-    tord   = Vector{V}(undef, nblk)
-    crit   = zeros(Int, nblk)
-    nodl   = zeros(Int, nblk)
-    nodr   = zeros(Int, nblk)
-    nodn   = zeros(Int, nblk)
-    nodw   = zeros(W, nblk)
+    ws     = workspace()
+    tord   = workvector(ws, V, 143, nblk)
+    crit   = fill!(workvector(ws, Int, 144, nblk), 0)
+    nodl   = fill!(workvector(ws, Int, 145, nblk), 0)
+    nodr   = fill!(workvector(ws, Int, 146, nblk), 0)
+    nodn   = fill!(workvector(ws, Int, 147, nblk), 0)
+    nodw   = fill!(workvector(ws, W, 148, nblk), zero(W))
     nodall = bt_mat(sepset, nblk); fill!(nodall, zero(UInt64))
     nodany = bt_mat(sepset, nblk); fill!(nodany, zero(UInt64))
-    head   = zeros(Int, nvtx)
-    stack  = Int[]
+    head   = fill!(workvector(ws, Int, 149, nvtx), 0)
+    stack  = worklist(ws, Int, 150)
 
     @inbounds for p in oneto(nblk)
         tord[p] = tgt[p]

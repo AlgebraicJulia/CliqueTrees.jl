@@ -68,9 +68,9 @@ function bt_tab_eq(tab::NamedTuple, i::Int, x::AbstractVector{Int})
     return true
 end
 
-# The index of the sequence x, or zero.
-function bt_tab_find(tab::NamedTuple, x::AbstractVector{Int})
-    slot = tab.slot; m = length(slot) - 1; s = (bt_tab_hsh(x) % Int) & m
+# The index of the sequence x (with hash h), or zero.
+function bt_tab_find(tab::NamedTuple, x::AbstractVector{Int}, h::UInt64 = bt_tab_hsh(x))
+    slot = tab.slot; m = length(slot) - 1; s = (h % Int) & m
 
     @inbounds while true
         i = slot[s + 1]
@@ -80,9 +80,9 @@ function bt_tab_find(tab::NamedTuple, x::AbstractVector{Int})
     end
 end
 
-# The index of the sequence x, added if it is new, and whether it is.
-function bt_tab_add!(tab::NamedTuple, x::AbstractVector{Int})
-    i = bt_tab_find(tab, x)
+# The index of the sequence x (with hash h), added if it is new, and whether it is.
+function bt_tab_add!(tab::NamedTuple, x::AbstractVector{Int}, h::UInt64 = bt_tab_hsh(x))
+    i = bt_tab_find(tab, x, h)
     ispositive(i) && return i, false
     append!(tab.tgt, x); push!(tab.ptr, length(tab.tgt) + 1)
     i = bt_tab_len(tab)
@@ -90,14 +90,14 @@ function bt_tab_add!(tab::NamedTuple, x::AbstractVector{Int})
     if 2i > length(tab.slot)
         bt_tab_rhs!(tab, 2length(tab.slot))
     else
-        bt_tab_slt!(tab, i)
+        bt_tab_slt!(tab, i, h)
     end
 
     return i, true
 end
 
-function bt_tab_slt!(tab::NamedTuple, i::Int)
-    slot = tab.slot; m = length(slot) - 1; s = (bt_tab_hsh(bt_tab_seq(tab, i)) % Int) & m
+function bt_tab_slt!(tab::NamedTuple, i::Int, h::UInt64 = bt_tab_hsh(bt_tab_seq(tab, i)))
+    slot = tab.slot; m = length(slot) - 1; s = (h % Int) & m
 
     @inbounds while ispositive(slot[s + 1])
         s = (s + 1) & m
@@ -178,6 +178,14 @@ function hbt_ctx(graph::BipartiteGraph{Int, Int}, wgt::Vector{W}) where {W}
         bstamp = Int[], bloc = Int[], bwid = Tuple{W, Int}[], bcapp = Int[], bcapj = Int[],
         active = Int[], cnt = Int[], sorted = Int[], cptr = Int[],
         capb = Int[], capp = Int[], capj = Int[], capp2 = Int[], capj2 = Int[],
+
+        # the groups of the components of a PMC (hbt_add!)
+        gdst = Int[], gid = Int[], gsmk = Int[], gsof = Int[], gin = Bool[], gptr = Int[], gtgt = Int[],
+        gm = Int[], gsz = Int[], gw = W[],
+
+        # the graphs H + S of a diversification (hbt_div), and the relabeled
+        # graphs of the greedy triangulations (hbt_grd)
+        hsp = Int[], hst = Int[], rprm = Int[], rinv = Int[], rptr = Int[], rtgt = Int[], rwgt = W[],
     )
 end
 
@@ -250,19 +258,29 @@ function hbt_add!(ctx::NamedTuple, sol::NamedTuple, X::AbstractVector{Int}, cmin
     # about d^2 |S| + d t for d distinct separators, not t^2 |S|. (A PMC can
     # have thousands of components, most with one of a few separators.) The
     # lists and sums are made in the same order as one component at a time.
-    dist = Int[]; gid = Vector{Int}(undef, t); gof = Dict{Int, Int}()
+    # (The arrays are kept in the context: the group of the separator s is
+    # gsof[s] if gsmk[s] is the stamp sg.)
+    dist = ctx.gdst; gid = ctx.gid; gsmk = ctx.gsmk; gsof = ctx.gsof
+    empty!(dist); resize!(gid, t); sg = hbt_stp!(ctx)
 
-    @inbounds for j in oneto(t)
-        g = get!(gof, csep[j]) do
-            push!(dist, csep[j]); length(dist)
-        end
-
-        gid[j] = g
+    if length(gsmk) < bt_tab_len(seps)
+        m = length(gsmk); resize!(gsmk, bt_tab_len(seps)); resize!(gsof, bt_tab_len(seps))
+        fill!(view(gsmk, m + 1:length(gsmk)), 0)
     end
 
-    d = length(dist); isin = falses(d)
-    gptr = Vector{Int}(undef, d + 1); gtgt = Int[]
-    gm = Vector{Int}(undef, d); gsz = Vector{Int}(undef, d); gw = Vector{W}(undef, d)
+    @inbounds for j in oneto(t)
+        c = csep[j]
+
+        if gsmk[c] != sg
+            gsmk[c] = sg; push!(dist, c); gsof[c] = length(dist)
+        end
+
+        gid[j] = gsof[c]
+    end
+
+    d = length(dist); isin = resize!(ctx.gin, d)
+    gptr = resize!(ctx.gptr, d + 1); gtgt = empty!(ctx.gtgt)
+    gm = resize!(ctx.gm, d); gsz = resize!(ctx.gsz, d); gw = resize!(ctx.gw, d)
 
     @inbounds for g in oneto(d)
         s = hbt_stp!(ctx)
@@ -409,7 +427,7 @@ function hbt_add!(ctx::NamedTuple, sol::NamedTuple, X::AbstractVector{Int})
             end
         end
 
-        sort!(sep)
+        sort!(sep; alg = QuickSort)
         push!(cmin, v0); push!(csize, sz); push!(cwgt, w); push!(csep, hbt_sep!(ctx, sep))
     end
 
@@ -635,7 +653,7 @@ function hbt_td(ctx::NamedTuple, sol::NamedTuple, root::Int)
             end
 
             lo = length(btgt) + 1; append!(btgt, queue); append!(btgt, sep)
-            sort!(view(btgt, lo:length(btgt))); push!(bptr, length(btgt) + 1); push!(parent, pn)
+            sort!(view(btgt, lo:length(btgt)); alg = QuickSort); push!(bptr, length(btgt) + 1); push!(parent, pn)
         else
             append!(btgt, hbt_pmc(sol, p)); push!(bptr, length(btgt) + 1); push!(parent, pn)
             node = length(parent); c = ctx.bcapj[b]; f = sol.cfst[p] - 1
@@ -723,7 +741,7 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
             end
         end
 
-        sort!(nb)
+        sort!(nb; alg = QuickSort)
         push!(bmin, v0); push!(bsize, sz); push!(bwgt, w); push!(nidx, first(bt_tab_add!(nbrs, nb)))
     end
 
@@ -757,18 +775,24 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
             bt_put!(adj, bt_get(adj, bt_wrd(i), i) & ~bt_bit(i), bt_wrd(i), i)
         end
 
-        ptr = Vector{Int}(undef, nu + 1); tgt = Int[]; ptr[1] = 1
+        ptr = Vector{Int}(undef, nu + 1); ptr[1] = 1; m = 0
+
+        @inbounds for i in oneto(nu), k in oneto(nwrd)
+            m += count_ones(bt_get(adj, k, i))
+        end
+
+        tgt = Vector{Int}(undef, m); m = 0
 
         @inbounds for i in oneto(nu)
             for k in oneto(nwrd)
                 word = bt_get(adj, k, i)
 
                 while !iszero(word)
-                    push!(tgt, bt_vtx(Int, k, word)); word &= word - one(UInt64)
+                    m += 1; tgt[m] = bt_vtx(Int, k, word); word &= word - one(UInt64)
                 end
             end
 
-            ptr[i + 1] = length(tgt) + 1
+            ptr[i + 1] = m + 1
         end
 
         # keep the packed sets only if a search over them is no slower than
@@ -813,7 +837,7 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
         q = 1
 
         @inbounds for i in oneto(nu)
-            lo = ptr[i]; hi = ptr[i + 1] - 1; sort!(view(tgt, lo:hi)); ptr[i] = q
+            lo = ptr[i]; hi = ptr[i + 1] - 1; sort!(view(tgt, lo:hi); alg = QuickSort); ptr[i] = q
 
             for k in lo:hi
                 if k == lo || tgt[k] != tgt[k - 1]
@@ -833,6 +857,10 @@ function hbt_loc(ctx::NamedTuple, U::AbstractVector{Int})
         pool = UInt64[], lmark = zeros(Int, nu), lcomp = zeros(Int, nu),
         cmin = Int[], csize = Int[], cwgt = W[], qptr = Int[1], qtgt = Int[], csep = Int[],
         X = Int[], sep = Int[], queue = Int[],
+
+        # the components of the cliques of its triangulations, if they are
+        # found for all the cliques at once (see hbt_lfc!)
+        fast = hbt_isfast(nwrd, wgt, U, bwgt), fcl = Int[], fptr = Int[1], fmin = Int[], fsize = Int[], fwgt = W[], fsptr = Int[1], fstgt = Int[],
     )
 end
 
@@ -844,8 +872,9 @@ hbt_isnbr(L::NamedTuple, K::AbstractVector{Int}) = ispositive(bt_tab_find(L.nbrs
 # G - U[K] are the components Q of H - K, each joined with the components
 # B of G - U with ∅ ≠ N(B) - K ⊆ Q, and the components B of G - U with
 # N(B) ⊆ K. The separator of the former is N_H(Q) ∩ K = N_H(Q). Linear in
-# the size of the local graph.
-function hbt_lft!(ctx::NamedTuple, sol::NamedTuple, L::NamedTuple, K::AbstractVector{Int})
+# the size of the local graph, unless the components were found for all the
+# cliques of its triangulation at once (K is the c-th, see hbt_cls!).
+function hbt_lft!(ctx::NamedTuple, sol::NamedTuple, L::NamedTuple, c::Int, K::AbstractVector{Int})
     U = L.U; X = L.X; empty!(X)
 
     @inbounds for k in K
@@ -858,34 +887,45 @@ function hbt_lft!(ctx::NamedTuple, sol::NamedTuple, L::NamedTuple, K::AbstractVe
     lmark = L.lmark; lcomp = L.lcomp; cmin = L.cmin; csize = L.csize; cwgt = L.cwgt
     qptr = L.qptr; qtgt = L.qtgt; csep = L.csep
     empty!(cmin); empty!(csize); empty!(cwgt); resize!(qptr, 1); empty!(qtgt); empty!(csep)
-    sk = hbt_stp!(ctx)
 
-    @inbounds for k in K
-        lmark[k] = sk
-    end
+    if L.fast && ispositive(L.fcl[c])
+        # found for all the cliques at once (hbt_lfc!)
+        f = L.fcl[c]
 
-    if ispositive(L.nwrd)
-        hbt_cpb!(ctx, L, K)
+        @inbounds for i in L.fptr[f]:L.fptr[f + 1] - 1
+            push!(cmin, L.fmin[i]); push!(csize, L.fsize[i]); push!(cwgt, L.fwgt[i])
+            append!(qtgt, view(L.fstgt, L.fsptr[i]:L.fsptr[i + 1] - 1)); push!(qptr, length(qtgt) + 1)
+        end
     else
-        hbt_cpl!(ctx, L, sk)
-    end
+        sk = hbt_stp!(ctx)
 
-    # the components of G - U
-    @inbounds for b in eachindex(L.bmin)
-        nb = bt_tab_seq(L.nbrs, L.nidx[b]); q = 0
-
-        for v in nb
-            if lmark[v] != sk
-                q = lcomp[v]
-                break
-            end
+        @inbounds for k in K
+            lmark[k] = sk
         end
 
-        if iszero(q)
-            push!(cmin, L.bmin[b]); push!(csize, L.bsize[b]); push!(cwgt, L.bwgt[b])
-            append!(qtgt, nb); push!(qptr, length(qtgt) + 1)
+        if ispositive(L.nwrd)
+            hbt_cpb!(ctx, L, K)
         else
-            cmin[q] = min(cmin[q], L.bmin[b]); csize[q] += L.bsize[b]; cwgt[q] += L.bwgt[b]
+            hbt_cpl!(ctx, L, sk)
+        end
+
+        # the components of G - U
+        @inbounds for b in eachindex(L.bmin)
+            nb = bt_tab_seq(L.nbrs, L.nidx[b]); q = 0
+
+            for v in nb
+                if lmark[v] != sk
+                    q = lcomp[v]
+                    break
+                end
+            end
+
+            if iszero(q)
+                push!(cmin, L.bmin[b]); push!(csize, L.bsize[b]); push!(cwgt, L.bwgt[b])
+                append!(qtgt, nb); push!(qptr, length(qtgt) + 1)
+            else
+                cmin[q] = min(cmin[q], L.bmin[b]); csize[q] += L.bsize[b]; cwgt[q] += L.bwgt[b]
+            end
         end
     end
 
@@ -934,7 +974,7 @@ function hbt_cpl!(ctx::NamedTuple, L::NamedTuple, sk::Int)
             end
         end
 
-        sort!(sep)
+        sort!(sep; alg = QuickSort)
         push!(L.cmin, U[v0]); push!(L.csize, sz); push!(L.cwgt, w)
         append!(L.qtgt, sep); push!(L.qptr, length(L.qtgt) + 1)
     end
@@ -1088,8 +1128,13 @@ hbt_str(k) = string(k)
 # A greedy minimal triangulation: alg on a random relabeling of the graph
 # (greedy algorithms break ties by label), then made minimal.
 function hbt_grd(srh::NamedTuple, weights::AbstractVector, graph::AbstractGraph)
-    n = nv(graph); perm = randperm(srh.rng, n); invp = invperm(perm)
-    ptr = Vector{Int}(undef, n + 1); tgt = Vector{Int}(undef, de(graph)); ptr[1] = 1
+    n = nv(graph); buf = hbt_rbuf(srh, weights)
+    perm = randperm!(srh.rng, resize!(buf.rprm, n)); invp = resize!(buf.rinv, n); pweights = resize!(buf.rwgt, n)
+    ptr = resize!(buf.rptr, n + 1); tgt = resize!(buf.rtgt, de(graph)); ptr[1] = 1
+
+    @inbounds for i in oneto(n)
+        invp[perm[i]] = i; pweights[i] = weights[perm[i]]
+    end
 
     @inbounds for i in oneto(n)
         k = ptr[i]
@@ -1098,14 +1143,17 @@ function hbt_grd(srh::NamedTuple, weights::AbstractVector, graph::AbstractGraph)
             tgt[k] = invp[x]; k += 1
         end
 
-        sort!(view(tgt, ptr[i]:k - 1)); ptr[i + 1] = k
+        sort!(view(tgt, ptr[i]:k - 1); alg = QuickSort); ptr[i + 1] = k
     end
 
     pgraph = BipartiteGraph{Int, Int}(n, n, ptr[n + 1] - 1, ptr, tgt)
-    order, _ = permutation(weights[perm], pgraph, srh.par.alg)
+    order, _ = permutation(pweights, pgraph, srh.par.alg)
     order, _ = permutation(weights, graph, MinimalChordal(perm[order]))
     return order
 end
+
+# The arrays of the relabeled graph: those of the context, if there is one.
+hbt_rbuf(srh::NamedTuple, weights::AbstractVector) = haskey(srh, :ctx) && eltype(srh.ctx.rwgt) === eltype(weights) ? srh.ctx : (; rprm = Int[], rinv = Int[], rptr = Int[], rtgt = Int[], rwgt = Vector{eltype(weights)}())
 
 # the reduction rules applied to local graphs (see hbt_exa)
 const HBT_RULES = 5
@@ -1125,6 +1173,11 @@ struct HBTExact{W} <: EliminationAlgorithm
     dl::Float64
     status::Base.RefValue{BTStatus}
 end
+
+# The pieces run one after another, on the task of the search: they share the
+# deadline and the status, and a parallel search has a task on every thread
+# (see isconcurrent).
+isconcurrent(alg::HBTExact) = false
 
 function permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::HBTExact; verbose::Bool = false) where {V}
     perm, invp, _, status = septw(weights, graph, alg.lo, alg.hi, alg.dl, 1)
@@ -1202,9 +1255,9 @@ end
 # G - U. Returns the weight of the heaviest clique.
 function hbt_cls!(cptr::Vector{Int}, ctgt::Vector{Int}, srh::NamedTuple, L::NamedTuple, HS::AbstractGraph, order::AbstractVector, k)
     weights = L.wgt; W = eltype(weights); srh.nlocal[] += 1
-    label, tree = cliquetree(weights, HS, order); width = zero(W)
+    label, tree = cliquetree(weights, HS, order); width = zero(W); js = Int[]
 
-    for clique in tree
+    for (j, clique) in enumerate(tree)
         w = zero(W)
 
         for v in clique
@@ -1219,12 +1272,25 @@ function hbt_cls!(cptr::Vector{Int}, ctgt::Vector{Int}, srh::NamedTuple, L::Name
             push!(ctgt, label[v])
         end
 
-        K = view(ctgt, lo:length(ctgt)); sort!(K)
+        K = view(ctgt, lo:length(ctgt)); sort!(K; alg = QuickSort)
 
         if hbt_isnbr(L, K)
             resize!(ctgt, lo - 1)
         else
-            push!(cptr, length(ctgt) + 1)
+            push!(cptr, length(ctgt) + 1); push!(js, j)
+        end
+    end
+
+    # (the components of a few cliques are found faster one at a time)
+    if L.fast && length(js) >= HBT_LFC
+        for i in eachindex(js)
+            push!(L.fcl, length(L.fptr) + i - 1)
+        end
+
+        hbt_lfc!(L, label, tree, js)
+    else
+        for _ in js
+            push!(L.fcl, 0)
         end
     end
 
@@ -1257,7 +1323,7 @@ function hbt_adc!(srh::NamedTuple, st::NamedTuple, L::NamedTuple, cptr::Vector{I
             end
         end
 
-        hbt_lft!(ctx, sol, L, K)
+        hbt_lft!(ctx, sol, L, c, K)
     end
 
     return
@@ -1266,14 +1332,95 @@ end
 # Triangulate the local graph on U and add the resulting PMCs of G to the
 # solution, if the triangulation is no wider than the solution.
 function hbt_lcl!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, U::Vector{Int})
-    L = hbt_loc(srh.ctx, U); H = L.graph; weights = L.wgt
-    k = st.width[][1]
-    order = hbt_tri(srh, weights, H, k, hbt_limit(srh, st.maxbag[]); cap = k)
-    ismissing(order) && return
-    cptr = Int[1]; ctgt = Int[]
-    hbt_cls!(cptr, ctgt, srh, L, H, order, typemax(eltype(weights))) <= k || return
+    L, cptr, ctgt = hbt_lcc(srh, U, st.width[][1], hbt_limit(srh, st.maxbag[]))
     hbt_adc!(srh, st, L, cptr, ctgt, side)
     return
+end
+
+# The local graph on U and the cliques of its triangulation (exact if it has
+# at most limit vertices), or no cliques if the triangulation is wider than k.
+function hbt_lcc(srh::NamedTuple, U::Vector{Int}, k, limit::Int)
+    L = hbt_loc(srh.ctx, U); H = L.graph; weights = L.wgt
+    cptr = Int[1]; ctgt = Int[]
+    order = hbt_tri(srh, weights, H, k, limit; cap = k)
+
+    if !ismissing(order) && hbt_cls!(cptr, ctgt, srh, L, H, order, typemax(eltype(weights))) > k
+        resize!(cptr, 1); empty!(ctgt)
+    end
+
+    return L, cptr, ctgt
+end
+
+# The cliques (cptr, ctgt) of the local graph L lifted to PMCs of G apart from
+# any solution, for hbt_put!: the PMCs that hbt_adc! would add to a solution
+# without them, in a solution of their own whose blocks are named in a context
+# of their own (it shares the scratch space of ctx), with the blocks and
+# separators of that context. Most of the cost of adding a clique to a solution
+# is its lifting, which a worker does this way for the main task.
+function hbt_lif(srh::NamedTuple, L::NamedTuple, cptr::Vector{Int}, ctgt::Vector{Int})
+    W = eltype(srh.ctx.wgt); sol = hbt_sol(W)
+    ctx = merge(srh.ctx, (; seps = bt_tab(), swgt = W[], blks = bt_tab(), bmin = Int[], bsep = Int[], bsize = Int[], bwgt = W[]))
+
+    for c in oneto(length(cptr) - 1)
+        hbt_expired(srh) && break
+        hbt_lft!(ctx, sol, L, c, view(ctgt, cptr[c]:cptr[c + 1] - 1))
+    end
+
+    # (and the hashes of the PMCs, made here and not by the main task)
+    hsh = [bt_tab_hsh(hbt_pmc(sol, p)) for p in oneto(hbt_len(sol))]
+    return (; sol, hsh, ctx.seps, ctx.bmin, ctx.bsep, ctx.bwgt, ctx.bsize)
+end
+
+# Add the PMCs of r (see hbt_lif) to the solution, as hbt_adc! adds the cliques
+# they were lifted from: the same PMCs, in the same order, with the same blocks.
+# (A block is new to the solution's context only in a PMC new to the solution,
+# and the first such PMC is the one that r has it from.) The blocks and
+# separators of r are renamed (bmap, smap) as they are first met.
+function hbt_put!(srh::NamedTuple, st::NamedTuple, r::NamedTuple, side::Union{Nothing, NamedTuple} = nothing)
+    ctx = srh.ctx; sol = st.sol; src = r.sol
+    bmap = zeros(Int, length(r.bmin)); smap = zeros(Int, bt_tab_len(r.seps))
+
+    for p in oneto(hbt_len(src))
+        hbt_expired(srh) && break
+        X = hbt_pmc(src, p); h = r.hsh[p]
+
+        if !isnothing(side)
+            q = bt_tab_find(side.sol.pmcs, X, h)
+
+            if ispositive(q)
+                hbt_cpy!(sol, side.sol, q); continue
+            end
+        end
+
+        last(bt_tab_add!(sol.pmcs, X, h)) || continue
+        push!(sol.pwgt, src.pwgt[p])
+
+        @inbounds for c in src.cfst[p]:src.cfst[p + 1] - 1
+            push!(sol.csub, hbt_ren!(ctx, r, bmap, smap, src.csub[c]))
+            push!(sol.csup, hbt_ren!(ctx, r, bmap, smap, src.csup[c]))
+
+            for i in src.iptr[c]:src.iptr[c + 1] - 1
+                push!(sol.itgt, src.itgt[i])
+            end
+
+            push!(sol.iptr, length(sol.itgt) + 1)
+        end
+
+        push!(sol.cfst, length(sol.csub) + 1)
+    end
+
+    return
+end
+
+# The block of ctx named b in r.
+function hbt_ren!(ctx::NamedTuple, r::NamedTuple, bmap::Vector{Int}, smap::Vector{Int}, b::Int)
+    @inbounds if iszero(bmap[b])
+        s = r.bsep[b]
+        iszero(smap[s]) && (smap[s] = hbt_sep!(ctx, bt_tab_seq(r.seps, s)))
+        bmap[b] = hbt_blk!(ctx, r.bmin[b], smap[s], r.bsize[b], r.bwgt[b])
+    end
+
+    return @inbounds bmap[b]
 end
 
 # ---------------------------------------------------------------------------
@@ -1672,6 +1819,419 @@ function hbt_cqs!(ctx::NamedTuple, sol::NamedTuple, label::AbstractVector, tree)
     return
 end
 
+# ---------------------------------------------------------------------------
+# Lifting all the cliques of a triangulation of a local graph at once
+# ---------------------------------------------------------------------------
+
+# A component of H⁺ - K (see hbt_lfc!): its smallest local vertex mu
+# (typemax(Int) if it has none, as the component B of G - U numbered b), its
+# smallest vertex mg in G, its size and weight in G, and its separator, as
+# sorted positions in the elimination order.
+struct HBTLComp{W}
+    mu::Int
+    mg::Int
+    b::Int
+    sz::Int
+    w::W
+    sep::Vector{Int}
+end
+
+# the fewest cliques of a triangulation whose components hbt_lfc! finds
+const HBT_LFC = 32
+
+# Whether hbt_lfc! can lift the cliques of triangulations of a local graph
+# (on U, with nwrd and the weights of the components of G - U): it is given as lists (a large one, where a search for each clique costs
+# most), and the sums of its weights do not depend on their order.
+function hbt_isfast(nwrd::Int, wgt::AbstractVector, U::AbstractVector{Int}, bwgt::AbstractVector)
+    iszero(nwrd) || return false
+    t = zero(eltype(wgt))
+
+    @inbounds for v in U
+        hbt_isexact(wgt[v]) || return false
+        t += wgt[v]
+    end
+
+    @inbounds for w in bwgt
+        hbt_isexact(w) || return false
+        t += w
+    end
+
+    return hbt_isexact(t)
+end
+
+hbt_isexact(w::Integer) = true
+hbt_isexact(w::AbstractFloat) = isinteger(w) && abs(w) < maxintfloat(typeof(w)) / 4
+hbt_isexact(w) = false
+
+# The component B of G - U numbered b, as a component of H⁺ - K for a clique
+# K that contains N(B) (hbt_lfc!).
+function hbt_lfb(L::NamedTuple, pos::Vector{Int}, b::Int)
+    W = eltype(L.bwgt); sep = [pos[x] for x in bt_tab_seq(L.nbrs, L.nidx[b])]
+    return HBTLComp{W}(typemax(Int), L.bmin[b], b, L.bsize[b], L.bwgt[b], sort!(sep; alg = QuickSort))
+end
+
+# Join the classes of the items i and v (hbt_lfc!).
+function hbt_lfj!(par::Vector{Int}, up::Vector{Set{Int}}, cmu::Vector{Int}, cmg::Vector{Int}, cb::Vector{Int}, cs::Vector{Int}, cw::Vector, tid::Vector{Int}, alive::BitVector, i::Int, v::Int)
+    a = hbt_find!(par, i); r = hbt_find!(par, v)
+    a == r && return
+
+    # the larger set survives
+    @inbounds begin
+        length(up[a]) < length(up[r]) && ((a, r) = (r, a))
+        par[r] = a; union!(up[a], up[r]); up[r] = Set{Int}()
+        cmu[a] = min(cmu[a], cmu[r]); cmg[a] = min(cmg[a], cmg[r]); cb[a] = min(cb[a], cb[r])
+        cs[a] += cs[r]; cw[a] += cw[r]
+
+        if tid[r] < tid[a]
+            alive[tid[a]] = false; tid[a] = tid[r]
+        else
+            alive[tid[r]] = false
+        end
+    end
+
+    return
+end
+
+# The components of G - U[K] for the cliques K = tree[j] (j in js) of a
+# triangulation of the local graph L, as hbt_lft! finds them one clique at a
+# time (the components Q of H - K, each joined with the components B of G - U
+# whose neighborhoods meet it, ordered by their smallest vertices, then the
+# components B with N(B) ⊆ K, in order), appended to the lists of L (fptr,
+# fmin, fsize, fwgt, fsptr, fstgt: the separators local and sorted).
+#
+# They are the components of H⁺ - K, where H⁺ is H with a vertex for every
+# component B of G - U, adjacent to N(B), and they are found for all the
+# cliques together as hbt_cqs! finds the components of G - K: B is a leaf of
+# the tree below the node where the first vertex of N(B) is eliminated (that
+# node's clique contains the clique N(B)), and is taken before the node's own
+# vertices. The weights are summed in another order than by hbt_lft!, so they
+# must sum exactly (hbt_isfast).
+function hbt_lfc!(L::NamedTuple, label::AbstractVector, tree, js::Vector{Int})
+    H = L.graph; nu = nv(H); U = L.U; wgt = L.wgt; W = eltype(wgt); nc = length(tree)
+    nb = length(L.bmin); ni = nu + nb
+    pos = Vector{Int}(undef, nu); node = Vector{Int}(undef, nu)
+
+    @inbounds for i in oneto(nu)
+        pos[label[i]] = i
+    end
+
+    @inbounds for j in oneto(nc), p in residual(tree, j)
+        node[p] = j
+    end
+
+    # the components B of G - U attached to each node (aptr, atgt), and the
+    # components whose neighborhoods contain each vertex (xptr, xtgt)
+    aptr = zeros(Int, nc + 1); xptr = zeros(Int, nu + 1); bnode = Vector{Int}(undef, nb)
+
+    # (a component with no neighbors, of a graph that is not connected, is a
+    # component of G - U[K] for every clique K, and is not attached)
+    free = Int[]
+
+    @inbounds for b in oneto(nb)
+        nbr = bt_tab_seq(L.nbrs, L.nidx[b]); p = nu + 1
+
+        for x in nbr
+            p = min(p, pos[x]); xptr[x + 1] += 1
+        end
+
+        if p > nu
+            bnode[b] = 0; push!(free, b)
+        else
+            bnode[b] = node[p]; aptr[node[p] + 1] += 1
+        end
+    end
+
+    aptr[1] = 1; xptr[1] = 1
+
+    @inbounds for j in oneto(nc)
+        aptr[j + 1] += aptr[j]
+    end
+
+    @inbounds for x in oneto(nu)
+        xptr[x + 1] += xptr[x]
+    end
+
+    atgt = Vector{Int}(undef, nb); xtgt = Vector{Int}(undef, xptr[nu + 1] - 1)
+    an = aptr[1:nc]; xn = xptr[1:nu]
+
+    @inbounds for b in oneto(nb)
+        iszero(bnode[b]) && continue
+        atgt[an[bnode[b]]] = b; an[bnode[b]] += 1
+
+        for x in bt_tab_seq(L.nbrs, L.nidx[b])
+            xtgt[xn[x]] = b; xn[x] += 1
+        end
+    end
+
+    # ---- bottom-up: the components of H⁺[U(j)], for every node j. The items
+    # are the positions 1:nu and the components nu + b; tid is the order in
+    # which they are taken (stack ids)
+    par = collect(oneto(ni)); cmu = zeros(Int, ni); cmg = zeros(Int, ni); cb = zeros(Int, ni)
+    cs = zeros(Int, ni); cw = zeros(W, ni); up = Vector{Set{Int}}(undef, ni)
+    tid = zeros(Int, ni); itm = zeros(Int, ni); alive = falses(ni)
+    stk = Int[]; lo = zeros(Int, nc); t = 0
+    B = Vector{Vector{HBTLComp{W}}}(undef, nc)
+
+    @inbounds for j in oneto(nc)
+        l = t + 1
+
+        for c in childindices(tree, j)
+            l = min(l, lo[c])
+        end
+
+        lo[j] = l
+
+        # the components attached to j: no neighbor is taken before them
+        for a in aptr[j]:aptr[j + 1] - 1
+            b = atgt[a]; i = nu + b; t += 1; tid[i] = t; itm[t] = i
+            cmu[i] = typemax(Int); cmg[i] = L.bmin[b]; cb[i] = b; cs[i] = L.bsize[b]; cw[i] = L.bwgt[b]
+            up[i] = Set{Int}(pos[x] for x in bt_tab_seq(L.nbrs, L.nidx[b]))
+            alive[t] = true; push!(stk, t)
+        end
+
+        for v in residual(tree, j)
+            x = label[v]; S = Set{Int}(); t += 1; tid[v] = t; itm[t] = v
+
+            for y in neighbors(H, x)
+                u = pos[y]; u > v && push!(S, u)
+            end
+
+            cmu[v] = x; cmg[v] = U[x]; cb[v] = typemax(Int); cs[v] = 1; cw[v] = wgt[x]; up[v] = S
+            alive[t] = true; push!(stk, t)
+
+            # the neighbors taken before v: those eliminated before it, and
+            # the components whose neighborhoods contain it
+            for y in neighbors(H, x)
+                u = pos[y]; u < v && hbt_lfj!(par, up, cmu, cmg, cb, cs, cw, tid, alive, u, v)
+            end
+
+            for k in xptr[x]:xptr[x + 1] - 1
+                hbt_lfj!(par, up, cmu, cmg, cb, cs, cw, tid, alive, nu + xtgt[k], v)
+            end
+
+            delete!(up[hbt_find!(par, v)], v)
+        end
+
+        # the live classes inside U(j) are those with a stack id in it
+        i0 = length(stk) + 1
+
+        while i0 > 1 && stk[i0 - 1] >= l
+            i0 -= 1
+        end
+
+        k = i0 - 1; comps = HBTLComp{W}[]
+
+        for i in i0:length(stk)
+            s = stk[i]; alive[s] || continue
+            k += 1; stk[k] = s; r = hbt_find!(par, itm[s])
+            push!(comps, HBTLComp{W}(cmu[r], cmg[r], cb[r], cs[r], cw[r], sort!(collect(up[r]); alg = QuickSort)))
+        end
+
+        resize!(stk, k); B[j] = comps
+    end
+
+    # ---- top-down: the components of H⁺[P(j)], P(j) = V - U(j) - S(j), for
+    # every node j: from those of its parent p, of the other branches at p,
+    # the vertices of K(p) - S(j), and the components attached to p
+    A = Vector{Vector{HBTLComp{W}}}(undef, nc); roots = Int[]
+
+    for j in oneto(nc)
+        isnothing(parentindex(tree, j)) && push!(roots, j)
+    end
+
+    markS = zeros(Int, nu); markY = zeros(Int, nu); markK = zeros(Int, nu); gmark = zeros(Int, nu)
+    itemof = zeros(Int, nu); stamp = 0; Y = Int[]; EK = Tuple{Int, Int}[]
+    upar = Int[]; nmu = Int[]; nmg = Int[]; nbb = Int[]; nsz = Int[]; nw = W[]; nsep = Vector{Int}[]
+    touched = Bool[]; isroot = Bool[]
+
+    @inbounds for p in Iterators.flatten((0, nc:-1:1))
+        children = p == 0 ? roots : childindices(tree, p)
+        isempty(children) && continue
+        K = p == 0 ? Int[] : collect(tree[p]); stamp += 1; sk = stamp
+        na = p == 0 ? 0 : aptr[p + 1] - aptr[p]
+
+        for v in K
+            markK[v] = sk
+        end
+
+        # the edges of H inside K(p)
+        empty!(EK)
+
+        for v in K, y in neighbors(H, label[v])
+            u = pos[y]
+            (u > v && markK[u] == sk) && push!(EK, (v, u))
+        end
+
+        above = p == 0 ? HBTLComp{W}[] : A[p]
+
+        for j in children
+            stamp += 1; ss = stamp
+
+            for v in separator(tree, j)
+                markS[v] = ss
+            end
+
+            stamp += 1; sy = stamp; empty!(Y)
+
+            for v in K
+                if markS[v] != ss
+                    push!(Y, v); markY[v] = sy; itemof[v] = length(Y)
+                end
+            end
+
+            # the items: the vertices Y, the components attached to p, then the
+            # components of the other branches
+            ny = length(Y); comps = HBTLComp{W}[]; append!(comps, above)
+
+            for c in children
+                c == j || append!(comps, B[c])
+            end
+
+            ni2 = ny + na + length(comps); resize!(upar, ni2)
+
+            for i in oneto(ni2)
+                upar[i] = i
+            end
+
+            for (a, b) in EK
+                if markY[a] == sy && markY[b] == sy
+                    ra = hbt_find!(upar, itemof[a]); rb = hbt_find!(upar, itemof[b])
+                    ra == rb || (upar[rb] = ra)
+                end
+            end
+
+            for e in oneto(na), x in bt_tab_seq(L.nbrs, L.nidx[atgt[aptr[p] + e - 1]])
+                s = pos[x]
+
+                if markY[s] == sy
+                    ra = hbt_find!(upar, itemof[s]); rb = hbt_find!(upar, ny + e)
+                    ra == rb || (upar[rb] = ra)
+                end
+            end
+
+            resize!(touched, length(comps)); out = HBTLComp{W}[]
+
+            for (q, C) in enumerate(comps)
+                touched[q] = false
+
+                for s in C.sep
+                    if markS[s] != ss
+                        # s is in K(p) - S(j)
+                        markY[s] == sy || error("hbt_lfc!: a separator leaves its clique")
+                        ra = hbt_find!(upar, itemof[s]); rb = hbt_find!(upar, ny + na + q)
+                        ra == rb || (upar[rb] = ra)
+                        touched[q] = true
+                    end
+                end
+
+                touched[q] || push!(out, C)
+            end
+
+            # the groups of the vertices Y and the attached components:
+            # aggregates indexed by root item
+            nyb = ny + na
+            resize!(nmu, nyb); resize!(nmg, nyb); resize!(nbb, nyb); resize!(nsz, nyb); resize!(nw, nyb)
+            resize!(nsep, nyb); resize!(isroot, nyb)
+
+            for i in oneto(nyb)
+                r = hbt_find!(upar, i)
+                r <= nyb || error("hbt_lfc!: a group without a root item")
+                isroot[i] = r == i
+
+                if r == i
+                    nmu[r] = typemax(Int); nmg[r] = typemax(Int); nbb[r] = typemax(Int); nsz[r] = 0; nw[r] = zero(W); nsep[r] = Int[]
+                end
+            end
+
+            for i in oneto(ny)
+                r = hbt_find!(upar, i); x = label[Y[i]]
+                nmu[r] = min(nmu[r], x); nmg[r] = min(nmg[r], U[x]); nsz[r] += 1; nw[r] += wgt[x]
+            end
+
+            base = stamp; stamp += nyb
+
+            for e in oneto(na)
+                b = atgt[aptr[p] + e - 1]; r = hbt_find!(upar, ny + e)
+                nmg[r] = min(nmg[r], L.bmin[b]); nbb[r] = min(nbb[r], b); nsz[r] += L.bsize[b]; nw[r] += L.bwgt[b]
+
+                for x in bt_tab_seq(L.nbrs, L.nidx[b])
+                    s = pos[x]
+
+                    if markS[s] == ss
+                        gmark[s] == base + r || (gmark[s] = base + r; push!(nsep[r], s))
+                    end
+                end
+            end
+
+            for (a, b) in EK
+                # an edge from Y to S(j) puts its end in S(j) into the separator
+                if markY[a] == sy && markS[b] == ss
+                    r = hbt_find!(upar, itemof[a])
+                    gmark[b] == base + r || (gmark[b] = base + r; push!(nsep[r], b))
+                elseif markY[b] == sy && markS[a] == ss
+                    r = hbt_find!(upar, itemof[b])
+                    gmark[a] == base + r || (gmark[a] = base + r; push!(nsep[r], a))
+                end
+            end
+
+            for (q, C) in enumerate(comps)
+                touched[q] || continue
+                r = hbt_find!(upar, ny + na + q)
+                nmu[r] = min(nmu[r], C.mu); nmg[r] = min(nmg[r], C.mg); nbb[r] = min(nbb[r], C.b)
+                nsz[r] += C.sz; nw[r] += C.w
+
+                for s in C.sep
+                    if markS[s] == ss
+                        gmark[s] == base + r || (gmark[s] = base + r; push!(nsep[r], s))
+                    end
+                end
+            end
+
+            for i in oneto(nyb)
+                isroot[i] && push!(out, HBTLComp{W}(nmu[i], nmg[i], nbb[i], nsz[i], nw[i], sort!(nsep[i]; alg = QuickSort)))
+            end
+
+            A[j] = out
+        end
+    end
+
+    # ---- the components of the cliques js, in the order of hbt_lft!
+    sep = Int[]
+
+    @inbounds for j in js
+        comps = copy(A[j])
+
+        for c in childindices(tree, j)
+            append!(comps, B[c])
+        end
+
+        for a in aptr[j]:aptr[j + 1] - 1
+            push!(comps, hbt_lfb(L, pos, atgt[a]))
+        end
+
+        for b in free
+            push!(comps, hbt_lfb(L, pos, b))
+        end
+
+        sort!(comps; by = C -> (C.mu, C.b))
+
+        for C in comps
+            empty!(sep)
+
+            for s in C.sep
+                push!(sep, label[s])
+            end
+
+            append!(L.fstgt, sort!(sep; alg = QuickSort)); push!(L.fsptr, length(L.fstgt) + 1)
+            push!(L.fmin, C.mg); push!(L.fsize, C.sz); push!(L.fwgt, C.w)
+        end
+
+        push!(L.fptr, length(L.fmin) + 1)
+    end
+
+    return
+end
+
 # The solution merged with st.
 function hbt_side!(srh::NamedTuple, st::NamedTuple)
     d = st.depth + 1
@@ -1681,12 +2241,16 @@ end
 # Merge (Tamaki 2022): pairs of PMCs X of st and Y of side, where side has no
 # greater width, pick out small focus sets U, whose local graphs are
 # triangulated; their PMCs and those of side are added to st.
-function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple)
+function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool = nothing)
     hbt_cut!(srh, st.kstall[])
     ctx = srh.ctx; g = ctx.graph; n = nv(g); sol = st.sol
     mark1 = ctx.mark1; mark2 = ctx.mark2; mark3 = ctx.mark3; queue = ctx.queue
-    srh.nstep[] += 1
-    focuses = bt_tab()
+    srh.nstep[] += 1; ntry = srh.par.ntry
+
+    # the ntry smallest focuses, a focus of a size found first before those
+    # of its size found later (as a stable sort of all of them would order
+    # them), without repeats
+    Us = Vector{Int}[]
 
     # the scope: a random PMC X and the largest component C of G - X
     p = rand(srh.rng, oneto(hbt_len(sol)))
@@ -1723,7 +2287,7 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple)
             end
         end
 
-        if ispositive(o)
+        if ispositive(o) && ispositive(ntry)
             k = st.width[][1]; U = Int[]
 
             for q in oneto(hbt_len(side.sol))
@@ -1738,9 +2302,12 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple)
                     mark2[y] = sy
                 end
 
+                # (a focus as large as the largest of ntry kept ones is not
+                # kept, so its search stops there)
+                bound = length(Us) < ntry ? typemax(Int) : length(last(Us))
                 empty!(U); empty!(queue); push!(queue, o); mark3[o] = sy; head = 1
 
-                while head <= length(queue)
+                while head <= length(queue) && length(U) < bound
                     u = queue[head]; head += 1
                     mark1[u] == ss && push!(U, u)
 
@@ -1755,17 +2322,23 @@ function hbt_mrg!(srh::NamedTuple, st::NamedTuple, side::NamedTuple)
                     end
                 end
 
-                bt_tab_add!(focuses, sort!(U))
+                length(U) < bound || continue
+                sort!(U; alg = QuickSort)
+                any(F -> F == U, Us) && continue
+                i = searchsortedlast(Us, U; by = length)
+                insert!(Us, i + 1, copy(U))
+                length(Us) > ntry && pop!(Us)
             end
         end
     end
 
-    nf = bt_tab_len(focuses)
-    list = sortperm(oneto(nf); by = f -> focuses.ptr[f + 1] - focuses.ptr[f])
-
-    for i in oneto(min(nf, srh.par.ntry))
-        hbt_expired(srh) && break
-        hbt_lcl!(srh, st, side, collect(bt_tab_seq(focuses, list[i])))
+    if isnothing(pool)
+        for U in Us
+            hbt_expired(srh) && break
+            hbt_lcl!(srh, st, side, U)
+        end
+    else
+        hbt_lcp!(srh, st, side, pool, Us)
     end
 
     for q in oneto(hbt_len(side.sol))
@@ -1777,43 +2350,58 @@ end
 
 # Merge with an independent solution of no greater width, improving that
 # solution first if necessary (recursively, with the same strategies).
-function hbt_imm!(srh::NamedTuple, st::NamedTuple)
+function hbt_imm!(srh::NamedTuple, st::NamedTuple, pool = nothing)
     side = hbt_side!(srh, st)
 
     if side.width[][1] > st.width[][1]
-        hbt_imp!(srh, side)
+        hbt_imp!(srh, side, pool)
         return false
     else
-        return hbt_mrg!(srh, st, side)
+        return hbt_mrg!(srh, st, side, pool)
     end
 end
 
 # One improvement step. With both strategies on, a solution is diversified,
 # and merged with an independent solution only once it has gone patience
-# steps without progress.
-function hbt_imp!(srh::NamedTuple, st::NamedTuple)
-    k = st.width[][1]
+# steps without progress. In a parallel search (pool), the step adds every
+# diversification that the workers have made of the solution since the last
+# step, and counts as that many steps.
+function hbt_imp!(srh::NamedTuple, st::NamedTuple, pool = nothing)
+    k = st.width[][1]; n = 1
 
     if srh.par.diversify
-        hbt_dvs!(srh, st)
+        rs = hbt_take!(srh, st, pool)
+
+        if isempty(rs)
+            hbt_dvs!(srh, st)
+        else
+            for r in rs
+                hbt_put!(srh, st, r)
+            end
+
+            n = length(rs)
+        end
+
         improved = hbt_upd!(srh, st)
     else
         improved = false
     end
 
-    return hbt_end!(srh, st, k, improved)
+    improved = hbt_end!(srh, st, k, improved, n, pool)
+    hbt_pub!(pool, st, improved)
+    return improved
 end
 
 # Merge if the solution has stalled, and count the steps without progress.
-function hbt_end!(srh::NamedTuple, st::NamedTuple, k, improved::Bool)
+function hbt_end!(srh::NamedTuple, st::NamedTuple, k, improved::Bool, n::Int = 1, pool = nothing)
     par = srh.par
 
     if par.merge && !hbt_expired(srh) && (!par.diversify || st.stall[] >= par.patience)
-        improved |= hbt_imm!(srh, st)
+        improved |= hbt_imm!(srh, st, pool)
     end
 
-    st.stall[] = improved ? 0 : st.stall[] + 1
-    st.kstall[] = st.width[][1] < k ? 0 : st.kstall[] + 1
+    st.stall[] = improved ? 0 : st.stall[] + n
+    st.kstall[] = st.width[][1] < k ? 0 : st.kstall[] + n
     return improved
 end
 
@@ -1963,7 +2551,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
         end
     end
 
-    sort!(U)
+    sort!(U; alg = QuickSort)
     L = hbt_loc(ctx, U); H = L.graph; nu = length(U); weights = L.wgt
 
     # X₀ in local numbering (loc is set by hbt_loc)
@@ -1993,6 +2581,10 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
     # neighborhood of the component of H - N[a] containing b
     tried = bt_tab()
 
+    # H + S, made in the same arrays of the context for every S (it is done
+    # with when the next is made)
+    ptr = resize!(ctx.hsp, nu + 1); tgt = ctx.hst
+
     for _ in oneto(par.nsep)
         hbt_expired(srh) && break
         a = 0; b = 0
@@ -2011,7 +2603,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
         last(bt_tab_add!(tried, S)) || continue
 
         # H + S
-        ptr = Vector{Int}(undef, nu + 1); tgt = Int[]; ptr[1] = 1
+        empty!(tgt); sizehint!(tgt, de(H) + length(S)^2; shrink = false); ptr[1] = 1
         sm = hbt_stp!(ctx)
 
         for v in S
@@ -2027,7 +2619,7 @@ function hbt_div(srh::NamedTuple, snp::NamedTuple)
                     x == v || push!(tgt, x)
                 end
 
-                sort!(view(tgt, start:length(tgt))); m = start - 1
+                sort!(view(tgt, start:length(tgt)); alg = QuickSort); m = start - 1
 
                 for i in start:length(tgt)
                     if m < start || tgt[i] != tgt[m]
@@ -2081,7 +2673,7 @@ function hbt_msp(ctx::NamedTuple, H::AbstractGraph, a::Int, b::Int, lmark::Vecto
         end
     end
 
-    return sort!(S)
+    return sort!(S; alg = QuickSort)
 end
 
 function hbt_stats(srh::NamedTuple)
@@ -2091,47 +2683,47 @@ end
 # ---------------------------------------------------------------------------
 # Workers
 #
-# With nt tasks, nt - 1 workers diversify the latest snapshot of the
-# solution, again and again, each with a context and random numbers of its
-# own, and pass the results to this task, which adds them to the solution,
-# evaluates it, and merges when it stalls, as hbt_imp! does. When no result
-# is waiting, this task diversifies the solution itself. (The time of a
-# diversification varies a great deal, so workers that waited for each
-# other would mostly wait.) Returns the statistics of the workers.
+# With nt tasks, the main task improves the solution as hbt_imp! does, and
+# nt - 1 workers do the costly parts of its steps: they diversify the latest
+# snapshot of each solution that the main task is improving (the solution,
+# and the solutions merged with it while it is stalled), again and again,
+# each with a context and random numbers of its own, and lift the cliques to
+# PMCs (hbt_lif). A step of the main task adds all the diversifications made
+# since its last step (hbt_put!), and when it merges, the workers triangulate
+# the local graphs of the merge with it. At most cap diversifications of a
+# solution wait or are being made, so that a main task that falls behind
+# holds the workers back instead of a growing heap of stale results. When no
+# diversification is waiting and none is being made, the main task makes one
+# itself. Returns the statistics of the workers.
 # ---------------------------------------------------------------------------
 
 function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
-    ctx = srh.ctx
-    workers = [hbt_srh(hbt_ctx(ctx.graph, ctx.wgt), Xoshiro(rand(srh.rng, UInt64)), srh.par) for _ in 2:nt]
+    ctx = srh.ctx; pool = hbt_pool(nt)
+    seeds = [rand(srh.rng, UInt64) for _ in 2:nt]
+    workers = Vector{Any}(nothing, nt - 1)
 
-    for w in workers
-        w.deadline[] = srh.deadline[]; w.t0[] = srh.t0[]
+    # each worker makes its context on its own thread
+    tasks = map(eachindex(seeds)) do i
+        return Threads.@spawn begin
+            w = hbt_srh(hbt_ctx(ctx.graph, ctx.wgt), Xoshiro(seeds[i]), srh.par)
+            w.deadline[] = srh.deadline[]; w.t0[] = srh.t0[]; workers[i] = w
+            withworkspace(() -> hbt_wrk(w, pool))
+        end
     end
 
-    # the snapshot copies the decomposition only when it changes
-    cur = hbt_cop(st); snap = Ref(merge(cur, (; kstall = st.kstall[])))
-    lck = ReentrantLock(); stop = Threads.Atomic{Bool}(false); results = Channel{Any}(typemax(Int))
-    tasks = [Threads.@spawn hbt_wrk(w, snap, lck, stop, results) for w in workers]
-
     try
-        while !hbt_expired(srh) && hbt_going(st, lb, ub)
-            k = st.width[][1]
-
-            if isready(results)
-                L, cptr, ctgt = take!(results)
-            else
-                L, cptr, ctgt = hbt_div(srh, hbt_snp(st))
+        withworkspace() do
+            while !hbt_expired(srh) && hbt_going(st, lb, ub) && !pool.stop[]
+                @lock pool.lock pool.round[] += 1
+                hbt_imp!(srh, st, pool)
             end
-
-            hbt_adc!(srh, st, L, cptr, ctgt)
-            improved = hbt_upd!(srh, st)
-            hbt_end!(srh, st, k, improved)
-            improved && (cur = hbt_cop(st))
-            s = merge(cur, (; kstall = st.kstall[]))
-            lock(() -> (snap[] = s), lck)
         end
     finally
-        stop[] = true; foreach(wait, tasks)
+        @lock pool.lock begin
+            pool.stop[] = true; notify(pool.wake); notify(pool.ready)
+        end
+
+        foreach(wait, tasks)
     end
 
     stats = (0, 0, 0, 0)
@@ -2143,13 +2735,181 @@ function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
     return stats
 end
 
+# The pool of a parallel search, guarded by lock: the latest snapshot of each
+# solution, by depth (snaps), the main task's last round of steps that wanted
+# its diversifications (want), these diversifications (queue), and the number
+# being made (busy); the local graphs of the current merge (jobs), the next
+# to take, the number done, and their cliques (jres). Workers wait on wake for
+# something to do, and the main task on ready for results.
+function hbt_pool(nt::Integer)
+    lock = ReentrantLock()
+
+    return (;
+        lock, wake = Threads.Condition(lock), ready = Threads.Condition(lock),
+        cap = 2 * (Int(nt) - 1), stop = Ref(false), round = Ref(0),
+        snaps = Any[], want = Int[], queue = Vector{Any}[], busy = Int[],
+        jobs = Any[], next = Ref(1), done = Ref(0), jres = Any[],
+    )
+end
+
+function hbt_wrk(w::NamedTuple, pool::NamedTuple)
+    try
+        while !hbt_expired(w)
+            job = hbt_job!(pool)
+            isnothing(job) && break
+            i, x = job
+
+            if ispositive(i)
+                # the local graph of a merge
+                r = nothing
+
+                if !hbt_expired(w)
+                    hbt_cut!(w, x.kstall)
+                    r = hbt_lif(w, hbt_lcc(w, x.U, x.k, x.limit)...)
+                end
+
+                @lock pool.lock begin
+                    pool.jres[i] = r; pool.done[] += 1; notify(pool.ready)
+                end
+            else
+                # a diversification of the solution at depth -i - 1
+                r = hbt_lif(w, hbt_div(w, x)...)
+
+                @lock pool.lock begin
+                    push!(pool.queue[-i], r); pool.busy[-i] -= 1; notify(pool.ready)
+                end
+            end
+        end
+    catch
+        # the main task waits for no more results
+        @lock pool.lock begin
+            pool.stop[] = true; notify(pool.wake); notify(pool.ready)
+        end
+
+        rethrow()
+    end
+
+    return
+end
+
+# The next job of a worker, waiting for one: (i, x) for the local graph x of
+# the merge, the ith, or (-d, x) for a diversification of the snapshot x of
+# the solution at depth d - 1, the one with the fewest diversifications
+# waiting or being made, of the solutions wanted in the last two rounds;
+# nothing once the search stops.
+function hbt_job!(pool::NamedTuple)
+    @lock pool.lock begin
+        while !pool.stop[]
+            i = pool.next[]
+
+            if i <= length(pool.jobs)
+                pool.next[] = i + 1
+                return (i, pool.jobs[i])
+            end
+
+            d = 0; m = pool.cap
+
+            for e in eachindex(pool.snaps)
+                if pool.want[e] >= pool.round[] - 1
+                    f = length(pool.queue[e]) + pool.busy[e]
+
+                    if f < m
+                        d = e; m = f
+                    end
+                end
+            end
+
+            if ispositive(d)
+                pool.busy[d] += 1
+                return (-d, pool.snaps[d])
+            end
+
+            wait(pool.wake)
+        end
+    end
+
+    return nothing
+end
+
+# The diversifications of the solution made by the workers since the last
+# step (none: the main task makes one itself), and want them in this round.
+function hbt_take!(srh::NamedTuple, st::NamedTuple, pool::NamedTuple)
+    d = st.depth + 1
+
+    @lock pool.lock begin
+        while length(pool.snaps) < d
+            push!(pool.snaps, nothing); push!(pool.want, -1); push!(pool.queue, Any[]); push!(pool.busy, 0)
+        end
+    end
+
+    isnothing(pool.snaps[d]) && hbt_pub!(pool, st, true)
+
+    @lock pool.lock begin
+        fresh = pool.want[d] < pool.round[] - 1; pool.want[d] = pool.round[]
+        rs = pool.queue[d]
+        isempty(rs) || (pool.queue[d] = Any[])
+        (fresh || !isempty(rs)) && notify(pool.wake)
+        return rs
+    end
+end
+
+hbt_take!(srh::NamedTuple, st::NamedTuple, pool::Nothing) = ()
+
+# Publish the snapshot of a solution after a step: its decomposition is copied
+# only when it changes.
+function hbt_pub!(pool::NamedTuple, st::NamedTuple, improved::Bool)
+    d = st.depth + 1
+    snap = improved ? hbt_cop(st) : pool.snaps[d]
+    snap = merge(snap, (; kstall = st.kstall[]))
+    @lock pool.lock pool.snaps[d] = snap
+    return
+end
+
+hbt_pub!(pool::Nothing, st::NamedTuple, improved::Bool) = nothing
+
 # A snapshot of the decomposition of a solution, apart from it.
 hbt_cop(st::NamedTuple) = (; bptr = copy(st.bptr), btgt = copy(st.btgt), parent = copy(st.parent), width = st.width[])
 
-function hbt_wrk(w::NamedTuple, snap::Ref, lck::ReentrantLock, stop::Threads.Atomic{Bool}, results::Channel)
-    while !stop[] && !hbt_expired(w)
-        s = lock(() -> snap[], lck)
-        put!(results, hbt_div(w, s))
+# Triangulate the local graphs on the sets Us, with the workers, and add their
+# PMCs to the solution, in order, as hbt_lcl! does.
+function hbt_lcp!(srh::NamedTuple, st::NamedTuple, side::NamedTuple, pool::NamedTuple, Us::Vector{Vector{Int}})
+    k = st.width[][1]; limit = hbt_limit(srh, st.maxbag[]); kstall = st.kstall[]; m = length(Us)
+
+    @lock pool.lock begin
+        resize!(pool.jres, m); fill!(pool.jres, nothing)
+
+        for U in Us
+            push!(pool.jobs, (; U, k, limit, kstall))
+        end
+
+        notify(pool.wake)
+    end
+
+    # this task takes jobs too, then waits for the others
+    while true
+        i = @lock pool.lock begin
+            j = pool.next[]; j <= m && (pool.next[] = j + 1); j
+        end
+
+        i > m && break
+        r = hbt_expired(srh) ? nothing : hbt_lif(srh, hbt_lcc(srh, Us[i], k, limit)...)
+
+        @lock pool.lock begin
+            pool.jres[i] = r; pool.done[] += 1
+        end
+    end
+
+    rs = @lock pool.lock begin
+        while pool.done[] < m && !pool.stop[]
+            wait(pool.ready)
+        end
+
+        rs = copy(pool.jres); empty!(pool.jobs); empty!(pool.jres); pool.next[] = 1; pool.done[] = 0
+        rs
+    end
+
+    for r in rs
+        isnothing(r) || hbt_put!(srh, st, r, side)
     end
 
     return
@@ -2201,8 +2961,10 @@ function hbtrun!(hbt::NamedTuple; mt::Real = 10.0, nt::Integer = Threads.nthread
     if nt > 1 && srh.par.diversify
         stats = hbt_par!(srh, st, lb, ub, nt)
     else
-        while !hbt_expired(srh) && hbt_going(st, lb, ub)
-            hbt_imp!(srh, st)
+        withworkspace() do
+            while !hbt_expired(srh) && hbt_going(st, lb, ub)
+                hbt_imp!(srh, st)
+            end
         end
     end
 

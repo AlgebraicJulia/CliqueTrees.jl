@@ -4,28 +4,28 @@ function mcs_etree(weights::AbstractVector, graph::AbstractGraph{V}, alg::Permut
 end
 
 function mcs_etree!(order::AbstractVector{V}, index::AbstractVector{V}, graph::AbstractGraph{V}) where {V}
-    E = etype(graph); m = de(graph); n = nv(graph)
+    E = etype(graph); m = de(graph); n = nv(graph); ws = workspace()
 
-    begptr = FVector{E}(undef, n + one(V))
-    endptr = FVector{E}(undef, n + one(V))
-    target = FVector{V}(undef, m)
-    tree = Parent{V}(n)
-    fdesc = FVector{V}(undef, n)
-    count = FVector{V}(undef, n)
-    stale = FVector{V}(undef, n)
-    stamp = FVector{V}(undef, n)
-    stops = FVector{V}(undef, n)
-    marks = FVector{V}(undef, n)
-    block = FVector{V}(undef, n)
+    begptr = workvector(ws, E, 91, n + one(V))
+    endptr = workvector(ws, E, 92, n + one(V))
+    target = workvector(ws, V, 93, m)
+    tree = Parent(n, workvector(ws, V, 94, n))
+    fdesc = workvector(ws, V, 95, n)
+    count = workvector(ws, V, 96, n)
+    stale = workvector(ws, V, 97, n)
+    stamp = workvector(ws, V, 98, n)
+    stops = workvector(ws, V, 99, n)
+    marks = workvector(ws, V, 100, n)
+    block = workvector(ws, V, 101, n)
 
-    work1 = FVector{V}(undef, n)
-    work2 = FVector{V}(undef, n)
-    work3 = FVector{V}(undef, n)
-    work4 = FVector{V}(undef, n)
-    work5 = FVector{V}(undef, n)
-    work6 = FVector{V}(undef, n)
-    work7 = FVector{V}(undef, n)
-    work8 = FVector{V}(undef, n)
+    work1 = workvector(ws, V, 102, n)
+    work2 = workvector(ws, V, 103, n)
+    work3 = workvector(ws, V, 104, n)
+    work4 = workvector(ws, V, 105, n)
+    work5 = workvector(ws, V, 106, n)
+    work6 = workvector(ws, V, 107, n)
+    work7 = workvector(ws, V, 108, n)
+    work8 = workvector(ws, V, 109, n)
 
     mcs_etree_impl!(work1, work2, work3, work4, work5, work6, work7, work8,
         block, marks, stamp, begptr, endptr, target, tree, fdesc, count,

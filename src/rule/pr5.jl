@@ -1766,7 +1766,8 @@ function asr_twins!(
 
     # the absorbers are `v` and its twins, `stack2[1:t]`, heaviest first
     t = nt + one(V); stack2[t] = v
-    sort!(view(stack2, oneto(t)); by = y -> weight[y], rev = true)
+    # (the ordering as an object: with by and rev as keywords, sort! allocates)
+    sort!(view(stack2, oneto(t)); order = ReverseOrdering(By(y -> weight[y])))
 
     # the usable absorbers are the lightest ones: `stack2[jstart:t]`
     wS = degree[v] - weight[v]; capacity = zero(W); jstart = t + one(V)
