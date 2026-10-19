@@ -1511,26 +1511,60 @@ end
     rng = MersenneTwister(0)
 
     for n in (10, 30, 60), trial in 1:5
-        # sparse graphs, power-law graphs, and sparse graphs with a hub
+        # sparse graphs, power-law graphs, sparse graphs with a hub, and
+        # sparse graphs with several hubs
         hub = erdos_renyi(n, 2 / n; rng)
 
         for v in 2:n
             add_edge!(hub, 1, v)
         end
 
-        for graph in (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub)
-            for mass in (false, true), external in (false, true)
+        hubs = erdos_renyi(n, 2 / n; rng)
+
+        for h in 1:4, v in 1:n
+            h != v && rand(rng) < 0.8 && add_edge!(hubs, h, v)
+        end
+
+        for graph in (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub, hubs)
+            # `dense = 0` makes every node with more than 16 neighbors dense
+            for mass in (false, true), external in (false, true), dense in (10.0, 0.0, -1.0)
                 # `debug` recomputes every degree after every elimination
                 for weights in (ones(Int, n), rand(rng, 1:3, n))
-                    index = CliqueTrees.MDLib.md(weights, graph; mass, external, debug = true)
+                    index = CliqueTrees.MDLib.md(weights, graph; mass, external, dense, debug = true)
                     @test sort(index) == 1:n
 
-                    if !mass && !external
+                    # counting fill as a complement does not change the ordering
+                    for complement in (0, 4)
+                        @test index == CliqueTrees.MDLib.md(weights, graph; mass, external, dense, complement, debug = true)
+                    end
+
+                    if !external
                         @test isminimumdegree(graph, weights, invperm(index))
                     end
                 end
             end
         end
+    end
+end
+
+@testset "element list search" begin
+    # `mdsearch` decides whether two element lists, sorted by decreasing
+    # `degnext`, share an element
+    rng = MersenneTwister(1)
+
+    for trial in 1:2000
+        n = rand(rng, 1:300)
+        a = sort(unique(rand(rng, 1:n, rand(rng, 1:20))); rev = true)
+        b = sort(unique(rand(rng, 1:n, rand(rng, 1:200))); rev = true)
+
+        if isodd(trial)
+            b = sort(setdiff(b, a); rev = true)
+            isempty(b) && (b = [n + 1])
+        end
+
+        degnext = collect(Int32, 1:(n + 1))
+        iw = Int32[a; b]
+        @test CliqueTrees.MDLib.mdsearch(iw, degnext, Int32(1), Int32(length(a)), Int32(length(a) + 1), Int32(length(b))) == !isempty(intersect(a, b))
     end
 end
 

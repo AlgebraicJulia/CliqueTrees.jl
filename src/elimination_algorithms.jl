@@ -274,7 +274,7 @@ end
 """
     MD <: EliminationAlgorithm
 
-    MD(; mass=false, external=false)
+    MD(; mass=false, external=false, dense=10.0)
 
 The [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
 
@@ -282,6 +282,9 @@ The [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algo
 
   - `mass`: mass elimination
   - `external`: minimum external degree
+  - `dense`: dense node parameter. Nodes with more than `max(16, dense * sqrt(n))`
+    neighbors are kept out of the quotient graph until one of them has minimum
+    degree; the ordering remains exact. A negative value disables this.
 
 ### References
 
@@ -290,6 +293,7 @@ The [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algo
 @kwdef struct MD <: EliminationAlgorithm
     mass::Bool = false
     external::Bool = false
+    dense::Float64 = 10.0
 end
 
 """
@@ -1186,7 +1190,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD; ve
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD; verbose::Bool = false)
-    index = md(weights, graph; mass = alg.mass, external = alg.external)
+    index = md(weights, graph; mass = alg.mass, external = alg.external, dense = alg.dense)
     return invperm(index), index
 end
 
