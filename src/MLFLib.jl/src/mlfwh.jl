@@ -111,6 +111,17 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     defncy  = FVector{W}(undef, n)
     heap    = FVector{SCORE}(undef, twice(n))
 
+    umask   = FVector{UInt64}(undef, n)
+    touch   = FVector{V}(undef, n)
+    gq      = FVector{W}(undef, GROUPSIZE)
+    gucnt   = FVector{W}(undef, GROUPSIZE)
+    gpq     = FVector{W}(undef, GROUPSIZE)
+    gacc    = FVector{W}(undef, GROUPSIZE)
+
+    @inbounds for i in oneto(n)
+        umask[i] = zero(UInt64)
+    end
+
     #       ------------------------------------------------------------
     #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
     #       A ZERO VALUE MEANS THAT THE INITIAL DEFICIENCIES WILL BE
@@ -133,6 +144,7 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
         qsize, qnmbr, ecforw, defncy, adj2, changed,
         degree, umark, heap, heapinv, ecliq,
         xadj2, len2, work1, work2,
+        umask, touch, gq, gucnt, gpq, gacc,
     )
 
     return perm, invp

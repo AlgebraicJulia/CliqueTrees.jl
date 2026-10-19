@@ -184,6 +184,12 @@
 #                     DEFICIENCIES.
 #                     USED IN OTHER CAPACITIES AS A WORK VECTOR.
 #       WORK1(*)    - ARRAY OF LENGTH NEQNS, A WORK VECTOR.
+#       UMASK(*)    - ARRAY OF LENGTH NEQNS, ALL ZERO ON INPUT.  BIT
+#                     MASKS USED BY MFUPD_DEF TO MARK THE NEIGHBORS OF
+#                     UP TO 64 CLIQUE MEMBERS AT ONCE.
+#       TOUCH(*)    - ARRAY OF LENGTH NEQNS, A WORK VECTOR.
+#       GQ(*), GUCNT(*), GPQ(*), GACC(*)
+#                   - ARRAYS OF LENGTH 64, WORK VECTORS FOR MFUPD_DEF.
 #
 #**********************************************************************
 #
@@ -216,6 +222,12 @@ function genmf_wh(
         len2::AbstractVector{V},
         work1::AbstractVector{I},
         work2::AbstractVector{W},
+        umask::AbstractVector{UInt64},
+        touch::AbstractVector{V},
+        gq::AbstractVector{W},
+        gucnt::AbstractVector{W},
+        gpq::AbstractVector{W},
+        gacc::AbstractVector{W},
     ) where {V, E, I, W, S}
 
     #       ****************
@@ -287,7 +299,6 @@ function genmf_wh(
     #       ECHEAD, ECTAIL: EMPTY ELIMINATION CLIQUE LIST.
     #       GBGCNT: GARBAGE COLLECTION COUNT INITIALLY ZERO.
     #       TAG:    INITIAL MARKER VALUE IS ZERO.
-    #       UTAG:   INITIAL W-H MARKER VALUE IS ZERO.
     #       NXTLOC: POINTS TO FIRST LOCATION IN VACANT STORAGE
     #               REMAINING AT END OF ADJNCY(*).
     #       REMAIN: AMOUNT OF VACANT STORAGE REMAINING AT END OF
@@ -299,7 +310,6 @@ function genmf_wh(
     ectail = zero(V)
     gbgcnt = zero(I)
     tag    = zero(I)
-    utag   = zero(I)
     nxtloc = xadj[neqns + one(V)]
     remain = adjlen - nxtloc + one(E)
 
@@ -364,15 +374,15 @@ function genmf_wh(
         #                       ADJLEN, XADJ, ADJNCY, NVTXS, WORK,
         #                       QSIZE, NNODES, FNODE
         #             MODIFIED: NNODES2, ECLIQ, DEGREE, DEFNCY, TAG, MARKER,
-        #                       UTAG, UMARK, CHANGED
-        #             WORK:     XADJ2, LEN2
+        #                       CHANGED
+        #             WORK:     WORK2, UMASK, TOUCH, GQ, GUCNT, GPQ, GACC
         #           ---------------------------------------------------------
-        tag, utag, nnodes2 = mfupd_def(
+        tag, nnodes2 = mfupd_def(
             enode, neqns, adjlen, xadj,
             adjncy, nvtxs, work, qsize, nnodes,
             fnode, ecliq, degree, defncy,
-            tag, marker, utag, umark, changed,
-            len2, work2
+            tag, marker, changed, work2,
+            umask, touch, gq, gucnt, gpq, gacc
         )
     
         #           -------------------------------------------------------
