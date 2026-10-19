@@ -397,7 +397,7 @@ function genmf_wh(
         #                       ECLIQ, INVP
         #             MODIFIED: TAG, XADJ, ADJNCY, NVTXS, WORK,
         #                       QSIZE, MARKER, ECHEAD, ECTAIL, ECFORW,
-        #                       NXTLOC, GBGCNT, CLQSIZ
+        #                       NXTLOC, GBGCNT, CLQSIZ, HEAPINV (AS ECOUNT)
         #             WORK:     WORK1, XADJ2
         #           -------------------------------------------------------
         tag, echead, ectail, nxtloc, gbgcnt, clqsiz = elmtra(
@@ -405,7 +405,7 @@ function genmf_wh(
             ecliq, invp, tag, xadj, adjncy,
             nvtxs, work, qsize, qnmbr, marker, echead,
             ectail, ecforw, nxtloc, gbgcnt, clqsiz,
-            perm, len2
+            perm, len2, heapinv
         )
     
         #           -------------------------------------------------------
