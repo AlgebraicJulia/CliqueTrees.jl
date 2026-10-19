@@ -18,7 +18,7 @@ end
 function paramd(path, nt)
     best = Inf; o = nothing
     for rep in 1:3
-        txt = read(setenv(`$PARAMD --matrix $path --algo paramd --mult 1.1 --lim 8192 --mem 3.0 --seed 1 --sym`, "OMP_NUM_THREADS" => string(nt), "OMP_PROC_BIND" => "close", "OMP_PLACES" => "cores", "PATH" => ENV["PATH"]), String)
+        txt = read(addenv(`$PARAMD --matrix $path --algo paramd --mult 1.1 --lim 8192 --mem 3.0 --seed 1 --sym`, "OMP_NUM_THREADS" => string(nt), "OMP_PROC_BIND" => "close", "OMP_PLACES" => "cores", "PATH" => ENV["PATH"]), String)
         best = min(best, parse(Float64, match(r"Ordering Time = ([0-9.eE+-]+)", txt)[1]))
         o = parse.(Int, split(read(path * ".perm", String))) .+ 1
     end

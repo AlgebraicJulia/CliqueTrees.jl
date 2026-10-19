@@ -20,7 +20,7 @@ end
 function paramd(path, nt; mult = 1.1)
     best = Inf; o = nothing
     for rep in 1:3
-        txt = read(setenv(`$PARAMD --matrix $path --algo paramd --mult $mult --lim 8192 --mem 3.0 --seed 1 --sym`, "OMP_NUM_THREADS" => string(nt), "OMP_PROC_BIND" => "true", "OMP_PLACES" => "cores", "PATH" => ENV["PATH"]), String)
+        txt = read(addenv(`$PARAMD --matrix $path --algo paramd --mult $mult --lim 8192 --mem 3.0 --seed 1 --sym`, "OMP_NUM_THREADS" => string(nt), "OMP_PROC_BIND" => "true", "OMP_PLACES" => "cores", "PATH" => ENV["PATH"]), String)
         t = parse(Float64, match(r"Ordering Time = ([0-9.eE+-]+)", txt)[1])
         best = min(best, t)
         o = parse.(Int, split(read(path * ".perm", String))) .+ 1
