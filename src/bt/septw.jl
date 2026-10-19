@@ -94,8 +94,9 @@ end
 
 # The rounds of septw, from the width k, where lb <= k is a lower
 # bound and the cheap ordering hord has width hk > k.
+# Each round runs on the backend (see bt_round!).
 function septw_run(weights::AbstractVector{W}, graph::AbstractGraph{V}, k::W, lb::W, hi::W, hord::AbstractVector, hk::W, dl::Real, nt::Integer) where {W, V}
-    wmin = minimum(view(weights, oneto(nv(graph))))
+    esc = bt_esc(SEPTW[], weights, graph, dl)
 
     while true
         # every round below k failed, so the cheap ordering is optimal
@@ -105,14 +106,11 @@ function septw_run(weights::AbstractVector{W}, graph::AbstractGraph{V}, k::W, lb
 
         k > hi && return hord, k, BT_ABOVE
 
-        sep, status = sepenum(weights, graph, k, dl, nt)
+        perm, next, status = bt_round!(esc, weights, graph, k, dl, nt)
         status == BT_TIMEOUT && return hord, lb, BT_TIMEOUT
+        status == BT_FOUND && return perm, next, BT_FOUND
 
-        perm, _, mink, status = sepdp(weights, graph, sep, k, dl, nt)
-        status == BT_TIMEOUT && return hord, lb, BT_TIMEOUT
-        status == BT_FOUND && return perm, mink, BT_FOUND
-
-        lb = k = min(mink, k + wmin)
+        lb = k = next
     end
 end
 

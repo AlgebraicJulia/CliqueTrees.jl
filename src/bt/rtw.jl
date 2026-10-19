@@ -240,7 +240,7 @@ function rtw_probe(weights::AbstractVector{W}, graph::AbstractGraph, lo, dl::Rea
 end
 
 function rtw_probe_run(weights::AbstractVector{W}, graph::AbstractGraph{V}, k::W, lb::W, hi::W, hord::AbstractVector, hk::W, dl::Real, nt::Integer) where {W, V}
-    wmin = minimum(view(weights, oneto(nv(graph)))); t0 = t1 = 0.0
+    esc = bt_esc(SEPTW[], weights, graph, dl); t0 = t1 = 0.0
 
     while true
         # every round below k failed, so the cheap ordering is optimal
@@ -248,12 +248,10 @@ function rtw_probe_run(weights::AbstractVector{W}, graph::AbstractGraph{V}, k::W
         k > hi && return hord, k, BT_ABOVE
         ts = time()
         ispositive(t1) && ts + (ispositive(t0) ? max(2.0, t1 / t0) : RTW_PROBE_GROWTH) * t1 > dl && return hord, lb, BT_TIMEOUT
-        sep, status = sepenum(weights, graph, k, dl, nt)
+        perm, next, status = bt_round!(esc, weights, graph, k, dl, nt)
         status == BT_TIMEOUT && return hord, lb, BT_TIMEOUT
-        perm, _, mink, status = sepdp(weights, graph, sep, k, dl, nt)
-        status == BT_TIMEOUT && return hord, lb, BT_TIMEOUT
-        status == BT_FOUND && return perm, mink, BT_FOUND
-        lb = k = min(mink, k + wmin); t0 = t1; t1 = time() - ts
+        status == BT_FOUND && return perm, next, BT_FOUND
+        lb = k = next; t0 = t1; t1 = time() - ts
     end
 end
 

@@ -31,6 +31,10 @@ end
     include("rtw.jl")
 end
 
+@testset "GPU rounds of the exact searches" begin
+    include("gpu.jl")
+end
+
 @testset "Multifrontal" begin
     include("multifrontal.jl")
 end
