@@ -7,7 +7,7 @@
 # returns it as a parent vector of length 2m - 2.
 #
 # Costs of a branch tree (`branchstats` returns all three in one pass):
-#   - branchwidth: max over contractions of w(legs)               -- largest intermediate; the branchwidth
+#   - branchwidth: max over contractions of w(legs)               -- largest intermediate (not the inputs); the branchwidth
 #   - branchpeak:  max over contractions of w(legs(l) u legs(r))  -- most expensive step; induced treewidth of the line graph
 #   - branchcost:  log2 sum over contractions of 2^w(legs(l) u legs(r)) -- total flops
 # These match cotengra's contraction_width, max log2 get_flops, and contraction_cost.
@@ -40,7 +40,8 @@ include("anneal.jl")
     branchstats(weights, hypergraph, point, parent) -> (; width, peak, cost)
 
 Width, contraction complexity and log2 of the total cost of any contraction tree given as
-a parent vector (see the module docstring for the definitions). Computed in one pass by
+a parent vector (see the module docstring for the definitions; the width is that of the
+intermediates, so an input tensor wider than all of them does not count). Computed in one pass by
 the Gilbert-Ng-Peyton column-count scheme (union-find for the LCAs), with no leg sets:
 `cross[x] = w(legs[x])` from deltas (+w(v) at each occurrence, -w(v) at each
 consecutive-pair LCA, -w(v) at L(v) = LCA of v's occurrences), and
@@ -200,6 +201,9 @@ end
 
 The contraction as a 0-based SSA path over the tensors (the hyperedges other than the
 point, in order), e.g. for cotengra's `ContractionTree.from_path(..., ssa_path=...)`.
+The contractions are listed in the order of their nodes, except that a node always comes
+after its children: any binary tree gives a valid path, whatever its numbering (that of
+`branchtree`, `branchrefine` and `branchanneal` already puts children first).
 """
 function branchssa(parent::AbstractVector{<:Integer}, point::Integer)
     nn = length(parent); m = (nn + 2) ÷ 2
@@ -207,8 +211,10 @@ function branchssa(parent::AbstractVector{<:Integer}, point::Integer)
     id    = FVector{Int}(undef, nn)
     left  = FVector{Int}(undef, nn)
     right = FVector{Int}(undef, nn)
+    stack = FVector{Int}(undef, nn)
+    path  = Vector{Tuple{Int, Int}}(undef, max(nn - m, 0))
 
-    fill!(id, 0)
+    fill!(id, -1)
     fill!(left, 0)
     fill!(right, 0)
 
@@ -218,10 +224,6 @@ function branchssa(parent::AbstractVector{<:Integer}, point::Integer)
         if e != point
             id[e] = t; t += 1
         end
-    end
-
-    for x in m + 1:nn
-        id[x] = t; t += 1
     end
 
     for x in oneto(nn)
@@ -236,7 +238,30 @@ function branchssa(parent::AbstractVector{<:Integer}, point::Integer)
         end
     end
 
-    return [(id[left[x]], id[right[x]]) for x in m + 1:nn]
+    # nodes in index order, each after its children (a postorder of the subtree below
+    # a node that is not yet numbered)
+    k = 0
+
+    for x in m + 1:nn
+        if id[x] < 0
+            sp = 1; stack[1] = x
+
+            while sp > 0
+                y = stack[sp]; l = left[y]; r = right[y]
+
+                if id[l] < 0
+                    sp += 1; stack[sp] = l
+                elseif id[r] < 0
+                    sp += 1; stack[sp] = r
+                else
+                    sp -= 1; id[y] = t; t += 1
+                    k += 1; path[k] = (id[l], id[r])
+                end
+            end
+        end
+    end
+
+    return path
 end
 
 # thin accessors over branchstats (one pass each)

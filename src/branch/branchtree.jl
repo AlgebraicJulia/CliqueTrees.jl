@@ -1456,13 +1456,14 @@ function solve_window_impl!(
     X = newstore(S, nw, np + nwin)
     fill!(X, zero(UInt64))      # msetbit! ORs bits into zeroed words
 
+    # (a name of its own: a `j` here would be the `j` of the loops below, captured and boxed)
     function col(y)
-        j = findfirst(==(y), pieces)
+        hit = findfirst(==(y), pieces)
 
-        if j === nothing
-            return np + findfirst(==(y), win)
+        if hit === nothing
+            return np + something(findfirst(==(y), win))
         else
-            return j
+            return hit
         end
     end
 

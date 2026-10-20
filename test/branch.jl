@@ -58,6 +58,23 @@ function branchvalid(parent::AbstractVector{Int}, point::Int)
     return true
 end
 
+# internal nodes numbered after their children
+function branchchildrenfirst(parent::AbstractVector{Int}, point::Int)
+    return all(x -> parent[x] == 0 || parent[x] == point || parent[x] > x, eachindex(parent))
+end
+
+# every step contracts two distinct ids that already exist
+function branchssavalid(path::AbstractVector, ntensors::Int)
+    next = ntensors
+
+    for (a, b) in path
+        (a < next && b < next && a != b) || return false
+        next += 1
+    end
+
+    return true
+end
+
 @testset "branch decompositions" begin
     rng = Xoshiro(1)
 
@@ -86,35 +103,72 @@ end
 
     @testset "anneal" for (i, (ixs, iy, weights)) in enumerate(nets)
         H, point = branchhypergraph(ixs, iy, length(weights))
+        m = nv(H)
 
-        for parent in (branchtree(weights, H, point), branchrandtree(rng, nv(H)))
+        for parent in (branchtree(weights, H, point), branchrandtree(rng, m))
             stats = branchstats(weights, H, point, parent)
 
-            # default: never wider
-            new = branchanneal(weights, H, point, parent; sweeps = 50, seed = i)
+            # default: never wider; children numbered first; a valid SSA path
+            new, info = branchanneal(weights, H, point, parent; sweeps = 50, seed = i, info = true)
             newstats = branchstats(weights, H, point, new)
             @test branchvalid(new, point)
+            @test branchchildrenfirst(new, point)
+            @test branchssavalid(branchssa(new, point), m - 1)
             @test newstats.cost <= stats.cost + 1.0e-9
             @test newstats.width <= stats.width + 1.0e-9
+            @test info.feasible && info.sweeps == 50 && info.proposals == 50 * (m - 2)
+            @test info.cost ≈ newstats.cost && info.width == newstats.width
 
             # deterministic
             @test new == branchanneal(weights, H, point, parent; sweeps = 50, seed = i)
 
-            # no cap, mixed criterion
-            new = branchanneal(weights, H, point, parent; sweeps = 50, W = Inf, mix = 0.5, seed = i)
-            @test branchvalid(new, point)
-            @test branchstats(weights, H, point, new).cost <= stats.cost + 1.0e-9
+            # dense and sparse legs, a single cycle, no refinement, no cap, mixed criterion
+            for dense in (true, false)
+                new = branchanneal(weights, H, point, parent; sweeps = 50, beta0 = 1.0, W = Inf,
+                    mix = 0.5, refine = false, seed = i, dense)
+                @test branchvalid(new, point)
+                @test branchchildrenfirst(new, point)
+                @test branchstats(weights, H, point, new).cost <= stats.cost + 1.0e-9
+            end
 
-            # an explicit cap
+            # an explicit cap above the start
             W = stats.width + 2
             new = branchanneal(weights, H, point, parent; sweeps = 50, W, mix = 0.0, seed = i)
             @test branchvalid(new, point)
             @test branchstats(weights, H, point, new).width <= W + 1.0e-9
 
-            # a time limit
-            new = branchanneal(weights, H, point, parent; sweeps = typemax(Int), time = 0.01, seed = i)
+            # an explicit cap below the start: within it if feasible, else the narrowest seen
+            W = stats.width - 2
+            new, info = branchanneal(weights, H, point, parent; sweeps = 50, W, seed = i, info = true)
+            width = branchstats(weights, H, point, new).width
+            @test branchvalid(new, point)
+            @test info.feasible == (width <= W + 1.0e-9)
+            @test width <= stats.width + 1.0e-9
+
+            # a time limit (the sweeps are not limited)
+            new, info = branchanneal(weights, H, point, parent; time = 0.01, seed = i, info = true)
             @test branchvalid(new, point)
         end
+    end
+
+    @testset "anneal dense = sparse" begin
+        # with unit weights the two kinds of legs make the same moves
+        for (ixs, iy, weights) in nets[1:2]
+            H, point = branchhypergraph(ixs, iy, length(weights))
+            parent = branchrandtree(rng, nv(H))
+            a = branchanneal(weights, H, point, parent; sweeps = 100, dense = true, refine = false)
+            b = branchanneal(weights, H, point, parent; sweeps = 100, dense = false, refine = false)
+            @test a == b
+        end
+    end
+
+    @testset "anneal time" begin
+        ixs, iy, weights = nets[1]
+        H, point = branchhypergraph(ixs, iy, length(weights))
+        parent = branchtree(weights, H, point)
+        new, info = branchanneal(weights, H, point, parent; time = 0.2, refine = false, info = true)
+        @test info.sweeps > 1000
+        @test info.time >= 0.2
     end
 
     @testset "anneal improves" begin
