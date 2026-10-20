@@ -53,37 +53,6 @@ function KaHyParND(order::Ordering = Forward; beta::Number = 1.0)
     return KaHyParND(order, beta)
 end
 
-"""
-    FlowND <: DissectionAlgorithm
-
-    FlowND(; tries=3, balance=0.1, seed=0)
-
-Compute a vertex separator using maximum flows, in the manner of FlowCutter. A source and a sink are chosen at random,
-and a maximum flow is computed between them. Then the lighter side of the minimum cut is pierced: a vertex of the cut
-becomes a source (or a sink), and the flow is augmented. Of the cuts found along the way, the separator S minimizing the
-expansion
-
-    w(S) / min(w(A), w(B))
-
-subject to min(w(A), w(B)) ≥ `balance` w(V) is chosen. The parameter `imbalance` of [`ND`](@ref) is not used.
-
-### Parameters
-
-  - `tries`: number of source-sink pairs
-  - `balance`: minimum weight of the lighter part, as a fraction of the total weight
-  - `seed`: random seed
-
-### References
-
-  - Hamann, Michael, and Ben Strasser. "Graph bisection with Pareto optimization." *Journal of Experimental Algorithmics (JEA)* 23 (2018): 1-34.
-  - Strasser, Ben. "Computing tree decompositions with flowcutter: PACE 2017 submission." arXiv preprint arXiv:1709.08949 (2017).
-"""
-@kwdef struct FlowND <: DissectionAlgorithm
-    tries::Int = 3
-    balance::Float64 = 0.1
-    seed::Int = 0
-end
-
 # Turn a bipartition `hpart` of the cliques of a clique cover into a vertex
 # separator of the covered graph: a vertex is in A (part 0) or B (part 1) if
 # all of its cliques lie on that side, and in S (part 2) if they lie on both.
@@ -642,15 +611,6 @@ function Base.show(io::IO, ::MIME"text/plain", alg::KaHyParND{O}) where {O}
     println(io, " "^indent * "KaHyParND{$O}:")
     println(io, " "^indent * "    order: $(alg.order)")
     println(io, " "^indent * "    beta: $(alg.beta)")
-    return
-end
-
-function Base.show(io::IO, ::MIME"text/plain", alg::FlowND)
-    indent = get(io, :indent, 0)
-    println(io, " "^indent * "FlowND:")
-    println(io, " "^indent * "    tries: $(alg.tries)")
-    println(io, " "^indent * "    balance: $(alg.balance)")
-    println(io, " "^indent * "    seed: $(alg.seed)")
     return
 end
 
@@ -2049,10 +2009,3 @@ function hrecord!(
 
     return
 end
-
-# Compute a vertex separator of the graph `graph` with vertex weights `weights`
-# using the dissection algorithm `alg`. On return, `part[v]` is 0 or 1 if `v`
-# lies in one of the two parts and 2 if it lies in the separator, and
-# `sepsize[]` is the weight of the separator. The extensions add methods for
-# their algorithms.
-function separator! end

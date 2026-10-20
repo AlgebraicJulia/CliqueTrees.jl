@@ -46,7 +46,7 @@ using FillArrays
 using ..Utilities
 using ..CliqueTrees
 
-export amf, qamf
+export amf
 
 const FLOAT = Float64
 const AMF_SCOREMAX = 2.0^52   # largest rounded score; integers up to here are exact in a `FLOAT`
@@ -231,137 +231,6 @@ function amf_impl!(
     end
 
     return elen, last
-end
-
-function qamf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, m::V, eptr::AbstractVector{E}, etgt::AbstractVector{V}) where {V, E}
-    vwght = Ones{V}(n)
-    return qamf(n, vwght, xadj, adjncy, m, eptr, etgt)
-end
-
-# Approximate minimum fill ordering of the graph G given by a quotient graph:
-# the variables 1:n, joined by the edges (`xadj`, `adjncy`), and the elements
-# 1:m, which are cliques of G: the members of the element e are
-# etgt[eptr[e]:eptr[e + 1] - 1]. Two variables are adjacent in G if they are
-# joined by an edge or lie in a common element. G is never formed (see
-# `qamf_impl!`). The edges must be symmetric, without loops. The vertex
-# weights are as for `amf`. With no elements, the ordering is that of `amf`.
-function qamf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}, m::V, eptr::AbstractVector{E}, etgt::AbstractVector{V}) where {V, E}
-    @assert n <= length(vwght)
-    @assert n < length(xadj)
-    @assert m < length(eptr)
-    @inbounds nnode = n + m; nnz = xadj[n + one(V)] - one(E) + twice(eptr[m + one(V)] - one(E))
-
-    wt = FVector{FLOAT}(undef, nnode)
-    wsum = amf_weights!(wt, vwght, n)
-    nfine = amf_nfine(wsum, n)
-    nbbuck = twice(nfine)
-    norig = nnode                             # positions: the elements, numbered first, and the variables
-    iwlen = twice(nnz) + convert(E, 4nnode) + one(E)
-
-    len = FVector{V}(undef, nnode)
-    pe = FVector{E}(undef, nnode + one(V))
-    iw = FVector{V}(undef, iwlen)
-    nv = FVector{V}(undef, nnode)
-    elen = FVector{V}(undef, nnode)
-    last = FVector{V}(undef, nnode)
-    degree = FVector{FLOAT}(undef, nnode)
-    wf = FVector{FLOAT}(undef, nnode)
-    next = FVector{V}(undef, nnode)
-    w = FVector{Int}(undef, nnode)
-    head = FVector{V}(undef, max(nbbuck + two(V), norig))
-    marker = FVector{V}(undef, n)
-
-    perm, invp = qamf_impl!(norig, n, m, nfine, nbbuck, iwlen, pe, len, iw, nv,
-        elen, last, degree, wf, next, w, head, marker, wt, xadj, adjncy, eptr, etgt)
-
-    return convert(Vector{V}, perm), convert(Vector{V}, invp)
-end
-
-# A quotient graph is a graph partway through elimination: each element is
-# the clique left by eliminating a node joined to its members, and the
-# elements are pairwise nonadjacent, so they create no fill among
-# themselves. So the elements are passed to `hamf_impl!`, which treats them
-# as already eliminated, and the storage is that of the edges plus Σ |C|,
-# rather than Σ |C|². The nodes are the variables 1:n and the elements
-# n + 1:n + m; each variable lists its elements and then its neighbors, as
-# during elimination (see `quotientlists!`), and the weighted external
-# degree of each variable is computed by `quotientdegree!`.
-#
-# Returns the permutation and its inverse, as views of `elen` and `last`.
-function qamf_impl!(
-        norig::V,
-        n::V,
-        m::V,
-        nfine::V,
-        nbbuck::V,
-        iwlen::E,
-        pe::AbstractVector{E},
-        len::AbstractVector{V},
-        iw::AbstractVector{V},
-        nv::AbstractVector{V},
-        elen::AbstractVector{V},
-        last::AbstractVector{V},
-        degree::AbstractVector{F},
-        wf::AbstractVector{F},
-        next::AbstractVector{V},
-        w::AbstractVector,
-        head::AbstractVector{V},
-        marker::AbstractVector{V},
-        wt::AbstractVector{F},
-        xadj::AbstractVector{E},
-        adjncy::AbstractVector{V},
-        eptr::AbstractVector{E},
-        etgt::AbstractVector{V},
-    ) where {V, E, F}
-    nnode = n + m
-
-    # the lists of the quotient graph
-    pfree = quotientlists!(pe, len, elen, iw, marker, n, m, xadj, adjncy, eptr, etgt)
-
-    # every node is one position: a variable, or an element
-    @inbounds for i in oneto(nnode)
-        nv[i] = one(V)
-    end
-
-    # the weighted external degrees of the variables
-    quotientdegree!(degree, marker, wt, pe, len, elen, iw, n)
-
-    # the element markers; an empty list has no head for `hamf_impl!` to
-    # mark when it compresses `iw`, so empty elements are given a null
-    # pointer, as eliminated variables are
-    @inbounds for e in (n + one(V)):nnode
-        elen[e] = -nnode - one(V)
-
-        if iszero(len[e])
-            pe[e] = zero(E)
-        end
-    end
-
-    hamf_impl!(norig, nnode, m, nfine, nbbuck, iwlen, pe, pfree, len, iw, nv, elen,
-        last, degree, wf, next, w, head, wt, one(F), nothing)
-
-    # `abs(elen[i])` is the position of the node `i`: the elements
-    # come first, and are left out of the permutation
-    @inbounds for j in oneto(norig)
-        head[j] = zero(V)
-    end
-
-    @inbounds for v in oneto(n)
-        head[abs(elen[v])] = v
-    end
-
-    k = zero(V)
-
-    @inbounds for j in oneto(norig)
-        v = head[j]
-
-        if ispositive(v)
-            last[v] = k += one(V)
-            elen[k] = v
-        end
-    end
-
-    return view(elen, oneto(n)), view(last, oneto(n))
 end
 
 # round a score to a whole number of units, as an integer-valued float
