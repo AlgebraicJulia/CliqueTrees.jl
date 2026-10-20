@@ -89,8 +89,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     degree = FVector{V}(undef, n)
     exact = FVector{Bool}(undef, n)
     merged = FVector{Bool}(undef, n)
-    deghead = FVector{V}(undef, total + 1)
-    sdeghead = FVector{V}(undef, total + 1)
+    deghead = FVector{V}(undef, 2 * (total + 1))
     degnext = FVector{V}(undef, n)
     degprev = FVector{V}(undef, n)
     hashhead = FVector{V}(undef, nextpow(2, n))
@@ -125,7 +124,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
 
     md_impl!(marker, umarker, supersize, superwght, degree, exact, merged,
-        deghead, sdeghead, degnext, degprev, hashhead, hashval, rchset, bndlo,
+        deghead, degnext, degprev, hashhead, hashval, rchset, bndlo,
         bndgap, wext, dwght, extbuf, extstart, extlen, grphead, grpnext, zset,
         eset, pe, len, elen, iw, iwlen, convert(V, total), n, external, debug,
         newvwght, xadj, adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
@@ -192,7 +191,6 @@ function md_impl!(
         exact::AbstractVector{Bool},
         merged::AbstractVector{Bool},
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         hashhead::AbstractVector{V},
@@ -286,7 +284,7 @@ function md_impl!(
     end
 
     md!_impl!(marker, umarker, supersize, superwght, degree, exact, merged,
-        deghead, sdeghead, degnext, degprev, hashhead, hashval, rchset, bndlo,
+        deghead, degnext, degprev, hashhead, hashval, rchset, bndlo,
         bndgap, wext, dwght, extbuf, extstart, extlen, grphead, grpnext, zset,
         eset, pe, len, elen, iw, iwlen, pfree, total, neqns, external, debug,
         vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
@@ -296,7 +294,7 @@ end
 
 """
     md!_impl!(marker, umarker, supersize, superwght, degree, exact, merged,
-        deghead, sdeghead, degnext, degprev, hashhead, hashval, rchset, bndlo,
+        deghead, degnext, degprev, hashhead, hashval, rchset, bndlo,
         bndgap, wext, dwght, extbuf, extstart, extlen, grphead, grpnext, zset,
         eset, pe, len, elen, iw, iwlen, pfree, total, neqns, external, debug,
         vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
@@ -349,18 +347,17 @@ output parameters:
 
 working arrays:
 
-  - `deghead`, `sdeghead`: points to the first exact (`deghead`) or not
-    exact (`sdeghead`) node with a key, or 0 if there are no such nodes
+  - `deghead`: `deghead[key]` points to the first exact node with a key,
+    and `deghead[key + total + 1]` to the first node that is not exact, or
+    0 if there are no such nodes
   - `degnext`: during algorithm, points to the next node in the degree list
     (or hash bucket) associated with node, or stores negative values for
     eliminated/merged nodes (-num for an eliminated node, -parent for a
     merged node). After algorithm, stores the final ordering.
   - `degprev`: points to the previous node in a degree list associated with
-    node, or the negative of the key of node (if node was the first in an
-    exact list), or the negative of `total + 1` plus the key (if it was the
-    first in a list that is not exact), or 0 if the node is not in the
-    degree lists. While indistinguishable nodes are detected, the hash
-    bucket of node.
+    node, or the negative of the index in `deghead` of its list (if node
+    was the first in it), or 0 if the node is not in the degree lists.
+    While indistinguishable nodes are detected, the hash bucket of node.
   - `degree`: the bound on the external degree of each uneliminated
     supernode; for an element, the weight of the nodes in it
   - `exact`: true if the bound of a node is its external degree
@@ -393,7 +390,6 @@ function md!_impl!(
         exact::AbstractVector{Bool},
         merged::AbstractVector{Bool},
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         hashhead::AbstractVector{V},
@@ -435,8 +431,7 @@ function md!_impl!(
     @assert neqns <= length(degree)
     @assert neqns <= length(exact)
     @assert neqns <= length(merged)
-    @assert total < length(deghead)
-    @assert total < length(sdeghead)
+    @assert twice(total + one(V)) <= length(deghead)
     @assert neqns <= length(degnext)
     @assert neqns <= length(degprev)
     @assert neqns <= length(hashhead)
@@ -475,9 +470,8 @@ function md!_impl!(
         dwght[node] = zero(V)
     end
 
-    @inbounds for key in oneto(total + one(V))
+    @inbounds for key in oneto(twice(total + one(V)))
         deghead[key] = zero(V)
-        sdeghead[key] = zero(V)
     end
 
     @inbounds for hash in eachindex(hashhead)
@@ -527,7 +521,7 @@ function md!_impl!(
         key = mdkey(deg, vwght[node], external)
 
         if key > one(V)
-            mindeg = mdinsert!(key, mindeg, node, true, deghead, sdeghead, degnext, degprev, offset)
+            mindeg = mdinsert!(key, mindeg, node, true, deghead, degnext, degprev, offset)
         else
             # eliminate node of degree 0
             degnext[node] = -num; num += one(V)
@@ -535,7 +529,7 @@ function md!_impl!(
     end
 
     @inbounds while num <= neqns
-        while mindeg <= total && !ispositive(deghead[mindeg]) && !ispositive(sdeghead[mindeg])
+        while mindeg <= total && !ispositive(deghead[mindeg]) && !ispositive(deghead[mindeg + offset])
             mindeg += one(V)
         end
 
@@ -579,10 +573,10 @@ function md!_impl!(
             for p in pstart:pstop
                 dwght[iw[p]] -= dwgt
             end
-        elseif ispositive(sdeghead[mindeg])
+        elseif ispositive(deghead[mindeg + offset])
             # recompute every node at the minimum key
             mindeg, tag, utag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
-                degree, exact, deghead, sdeghead, degnext, degprev, marker, tag,
+                degree, exact, deghead, degnext, degprev, marker, tag,
                 umarker, utag, extbuf, extstart, extlen, grphead, grpnext, zset,
                 eset, dwght, nbypass, external, offset, debug)
 
@@ -590,7 +584,7 @@ function md!_impl!(
         else
             # remove `mdnode` from the degree structure.
             mdnode = deghead[mindeg]
-            mdremove!(mdnode, deghead, sdeghead, degnext, degprev, offset)
+            mdremove!(mdnode, deghead, degnext, degprev, offset)
         end
 
         degprev[mdnode] = zero(V)
@@ -616,7 +610,7 @@ function md!_impl!(
 
         rchsze, pfree, delta, swght, wflg, lemax = mdelim!(mdnode, pe, len,
             elen, iw, iwlen, pfree, neqns, superwght, degree, deghead,
-            sdeghead, degnext, degprev, hashhead, hashval, merged, bndlo,
+            degnext, degprev, hashhead, hashval, merged, bndlo,
             bndgap, wext, wflg, lemax, rchset, dS, offset)
 
         debug && @assert delta == degS
@@ -632,7 +626,7 @@ function md!_impl!(
         # their bounds, and return them to the degree structure
         mindeg, tag, utag = mdupdate!(mdnode, rchsze, delta, dS, swght, pe,
             len, elen, iw, supersize, superwght, degree, exact, merged,
-            deghead, sdeghead, degnext, degprev, hashhead, hashval, rchset,
+            deghead, degnext, degprev, hashhead, hashval, rchset,
             bndlo, bndgap, marker, tag, umarker, utag, extbuf, extstart,
             extlen, zset, dwght, nwords, dmask, nbypass, mindeg, external,
             offset, debug)
@@ -651,7 +645,7 @@ end
 
 """
     mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, superwght,
-        degree, deghead, sdeghead, degnext, degprev, hashhead, hashval,
+        degree, deghead, degnext, degprev, hashhead, hashval,
         merged, bndlo, bndgap, wext, wflg, lemax, rchset, dS, offset)
 
 This routine eliminates the node `mdnode` of minimum degree from the
@@ -682,7 +676,7 @@ updated parameters:
     `mdnode`
   - `degree`: on output, `degree[mdnode]` is the weight of the nodes in the
     new element
-  - `(deghead, sdeghead, degnext, degprev)`: degree lists; on output, the
+  - `(deghead, degnext, degprev)`: degree lists; on output, the
     nodes in the reachable set are removed from them
   - `(hashhead, hashval)`: on output, the nodes in the reachable set are
     placed in hash buckets (`degprev` and `degnext` hold their buckets and
@@ -710,7 +704,6 @@ function mdelim!(
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         hashhead::AbstractVector{V},
@@ -813,7 +806,7 @@ function mdelim!(
         rnode = rchset[k]
 
         # remove `rnode` from the degree structure
-        mdremove!(rnode, deghead, sdeghead, degnext, degprev, offset)
+        mdremove!(rnode, deghead, degnext, degprev, offset)
         merged[rnode] = false
 
         # purge inactive quotient neighbors of `rnode`: absorbed elements,
@@ -901,8 +894,7 @@ end
 
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, pe, len, elen, iw,
-        supersize, superwght, degree, exact, merged, deghead, sdeghead,
-        degnext, degprev, hashhead, hashval, rchset, bndlo, bndgap, marker,
+        supersize, superwght, degree, exact, merged, deghead, degnext, degprev, hashhead, hashval, rchset, bndlo, bndgap, marker,
         tag, umarker, utag, extbuf, extstart, extlen, zset, dwght, nwords,
         dmask, nbypass, mindeg, external, offset, debug)
 
@@ -936,11 +928,11 @@ updated parameters:
 
   - `mindeg`: new minimum key after degree update
   - `(supersize, superwght, degree, exact)`: supernodes and their bounds
-  - `(deghead, sdeghead, degnext, degprev)`: degree lists
+  - `(deghead, degnext, degprev)`: degree lists
   - `(hashhead, hashval)`: hash buckets (empty on output)
   - `(marker, tag, umarker, utag)`: marker vectors
 """
-function mdupdate!(
+@inline function mdupdate!(
         mdnode::V,
         rchsze::V,
         delta::V,
@@ -956,7 +948,6 @@ function mdupdate!(
         exact::AbstractVector{Bool},
         merged::AbstractVector{Bool},
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         hashhead::AbstractVector{V},
@@ -1084,7 +1075,7 @@ function mdupdate!(
     # the eager pass
     if ispositive(zsze)
         mindeg, tag, utag = mdrecompute!(zset, zsze, mdnode, pe, len, elen, iw,
-            superwght, degree, exact, deghead, sdeghead, degnext, degprev,
+            superwght, degree, exact, deghead, degnext, degprev,
             marker, tag, umarker, utag, extbuf, extstart, extlen, dwght,
             nbypass, mindeg, external, offset, debug)
     end
@@ -1095,7 +1086,7 @@ function mdupdate!(
 
         if iszero(degprev[rnode])
             key = mdkey(degree[rnode], superwght[rnode], external)
-            mindeg = mdinsert!(key, mindeg, rnode, exact[rnode], deghead, sdeghead, degnext, degprev, offset)
+            mindeg = mdinsert!(key, mindeg, rnode, exact[rnode], deghead, degnext, degprev, offset)
         end
     end
 
@@ -1104,7 +1095,7 @@ end
 
 """
     mdvisit!(key, pe, len, elen, iw, superwght, degree, exact, deghead,
-        sdeghead, degnext, degprev, marker, tag, umarker, utag, extbuf,
+        degnext, degprev, marker, tag, umarker, utag, extbuf,
         extstart, extlen, grphead, grpnext, zset, eset, dwght, nbypass,
         external, offset, debug)
 
@@ -1130,7 +1121,6 @@ function mdvisit!(
         degree::AbstractVector{V},
         exact::AbstractVector{Bool},
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         marker::AbstractVector{I},
@@ -1152,7 +1142,7 @@ function mdvisit!(
     ) where {I, V, E}
     # take the whole list, and group it by most recent element
     tag += one(I); gtag = tag; esze = zero(V); mindeg = key
-    @inbounds node = sdeghead[key]; sdeghead[key] = zero(V)
+    @inbounds node = deghead[key + offset]; deghead[key + offset] = zero(V)
 
     @inbounds while ispositive(node)
         nxnode = degnext[node]
@@ -1177,7 +1167,7 @@ function mdvisit!(
         end
 
         mindeg, tag, utag = mdrecompute!(zset, zsze, elmnt, pe, len, elen, iw,
-            superwght, degree, exact, deghead, sdeghead, degnext, degprev,
+            superwght, degree, exact, deghead, degnext, degprev,
             marker, tag, umarker, utag, extbuf, extstart, extlen, dwght,
             nbypass, mindeg, external, offset, debug)
     end
@@ -1187,7 +1177,7 @@ end
 
 """
     mdrecompute!(zset, zsze, elmnt, pe, len, elen, iw, superwght, degree,
-        exact, deghead, sdeghead, degnext, degprev, marker, tag, umarker,
+        exact, deghead, degnext, degprev, marker, tag, umarker,
         utag, extbuf, extstart, extlen, dwght, nbypass, mindeg, external,
         offset, debug)
 
@@ -1204,7 +1194,7 @@ working arrays:
   - `(extbuf, extstart, extlen)`: the nodes of each element outside
     `elmnt`, in `extbuf[extstart[f]:extstart[f] + extlen[f] - 1]`
 """
-function mdrecompute!(
+@inline function mdrecompute!(
         zset::AbstractVector{V},
         zsze::V,
         elmnt::V,
@@ -1216,7 +1206,6 @@ function mdrecompute!(
         degree::AbstractVector{V},
         exact::AbstractVector{Bool},
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         marker::AbstractVector{I},
@@ -1322,21 +1311,20 @@ function mdrecompute!(
         debug && @assert deg >= degree[znode]
         degree[znode] = deg; exact[znode] = true
         key = mdkey(deg, superwght[znode], external)
-        mindeg = mdinsert!(key, mindeg, znode, true, deghead, sdeghead, degnext, degprev, offset)
+        mindeg = mdinsert!(key, mindeg, znode, true, deghead, degnext, degprev, offset)
     end
 
     return mindeg, tag, utag
 end
 
 """
-    mdremove!(node, deghead, sdeghead, degnext, degprev, offset)
+    mdremove!(node, deghead, degnext, degprev, offset)
 
 This routine removes `node` from the degree lists.
 """
 @inline function mdremove!(
         node::V,
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         offset::V,
@@ -1352,8 +1340,6 @@ This routine removes `node` from the degree lists.
 
         if ispositive(pvnode)
             @inbounds degnext[pvnode] = nxnode
-        elseif -pvnode > offset
-            @inbounds sdeghead[-pvnode - offset] = nxnode
         else
             @inbounds deghead[-pvnode] = nxnode
         end
@@ -1365,7 +1351,7 @@ This routine removes `node` from the degree lists.
 end
 
 """
-    mdinsert!(key, mindeg, node, isexact, deghead, sdeghead, degnext,
+    mdinsert!(key, mindeg, node, isexact, deghead, degnext,
         degprev, offset)
 
 This routine inserts `node` into the exact (`isexact`) or other degree
@@ -1377,16 +1363,15 @@ list with key `key`, and returns the new minimum key.
         node::V,
         isexact::Bool,
         deghead::AbstractVector{V},
-        sdeghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         offset::V,
     ) where {V}
-    head = isexact ? deghead : sdeghead
-    @inbounds firstnode = head[key]
-    @inbounds head[key] = node
+    index = isexact ? key : key + offset
+    @inbounds firstnode = deghead[index]
+    @inbounds deghead[index] = node
     @inbounds degnext[node] = firstnode
-    @inbounds degprev[node] = isexact ? -key : -(key + offset)
+    @inbounds degprev[node] = -index
 
     if ispositive(firstnode)
         @inbounds degprev[firstnode] = node
