@@ -151,6 +151,17 @@ end
         end
     end
 
+    @testset "anneal penalties" begin
+        ixs, iy, weights = nets[1]
+        H, point = branchhypergraph(ixs, iy, length(weights))
+        parent = branchtree(weights, H, point)
+
+        # from a tree within the cap, the default is a penalty in the first cycle only
+        @test branchanneal(weights, H, point, parent; sweeps = 100) ==
+            branchanneal(weights, H, point, parent; sweeps = 100, lambda = (1.0, 0.0))
+        @test_throws AssertionError branchanneal(weights, H, point, parent; lambda = (1.0, 1.0, 1.0))
+    end
+
     @testset "anneal dense = sparse" begin
         # with unit weights the two kinds of legs make the same moves
         for (ixs, iy, weights) in nets[1:2]

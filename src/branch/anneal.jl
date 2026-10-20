@@ -36,10 +36,11 @@
 # there is none, the narrowest).
 #
 # The run is one or more annealing cycles, each from the best tree so far. By default, a
-# cold cycle refines the initial tree, and a hotter one searches further from the result:
-# a hot start alone can lose a good initial tree (under a width cap, the walk can settle
-# among trees of the same width that are worse than it), and a cold start alone cannot
-# leave a poor one.
+# cold cycle refines the initial tree under the penalty, and a hotter one then walks
+# without it (the cap only selects the trees kept): a hot start alone can lose a good
+# initial tree (under the penalty, the walk can settle among trees of the same width that
+# are worse than it), a cold start alone cannot leave a poor one, and some cheaper trees
+# within the cap are reached only through wider ones.
 #
 const ANNEAL_CLASSES = 8
 const ANNEAL_DENSE = 48     # dense legs for at most this many words (and a small matrix)
@@ -77,7 +78,8 @@ end
 
 """
     branchanneal(weights, hypergraph, point, parent; sweeps=nothing, beta0=(5.0, 1.0),
-        beta1=30.0, mix=1.0, W=nothing, lambda=1.0, time=Inf, refine=true, seed=1, info=false)
+        beta1=30.0, mix=1.0, W=nothing, lambda=nothing, time=Inf, refine=true, seed=1,
+        info=false)
 
 Simulated annealing of a contraction tree by tree rotations, as in TreeSA (see the comment at
 the top of `anneal.jl`). Each sweep proposes one rotation at every internal node. The run is
@@ -98,7 +100,9 @@ improved by `branchrefine` (never wider). Widths are those of the intermediates,
   - `W`: width cap (by default the width of `parent`, so the tree returned is never wider;
     `Inf` for none)
   - `lambda`: penalty per unit of width above `W`, which steers the walk towards trees
-    within the cap
+    within the cap: a number, or one per cycle. By default 1, except 0 in the last of
+    several cycles once a tree within the cap is known: that cycle walks freely and keeps
+    only the trees within the cap
   - `time`: time limit of the annealing in seconds; if finite, the schedule follows the
     elapsed time (whichever of `sweeps` and `time` runs out first ends the run)
   - `refine`: finish with `branchrefine` (it runs after the time limit)
@@ -119,7 +123,7 @@ function branchanneal(
         beta1::Real = 30.0,
         mix::Real = 1.0,
         W = nothing,
-        lambda::Real = 1.0,
+        lambda::Union{Nothing, Real, Tuple{Vararg{Real}}} = nothing,
         time::Real = Inf,
         refine::Bool = true,
         seed::Integer = 1,
@@ -133,7 +137,8 @@ function branchanneal(
     @assert length(weights) == n
     @assert 0 <= mix <= 1
     @assert all(>(0), beta0) && 0 < beta1 && !isempty(beta0)
-    @assert 0 <= lambda
+    @assert isnothing(lambda) || all(>=(0), lambda)
+    @assert !(lambda isa Tuple) || length(lambda) == length(beta0) "one lambda per cycle"
 
     if isnothing(sweeps)
         nsweep = isfinite(time) ? typemax(Int) : 1000
@@ -230,13 +235,19 @@ function branchanneal(
     lca    = FVector{Int}(undef, n)
     next   = FVector{Int}(undef, n)
     betas  = FVector{Float64}(undef, length(beta0))
+    lams   = FVector{Float64}(undef, length(beta0))
 
     @inbounds for x in oneto(nn)
         par[x] = parent[x]
     end
 
+    # by default, a penalty of 1, except in the last of several cycles if the best tree so
+    # far is within the cap: that cycle walks freely (the cap only selects the trees kept)
+    freelast = isnothing(lambda) && length(betas) > 1
+
     @inbounds for i in eachindex(betas)
         betas[i] = beta0[i]
+        lams[i] = isnothing(lambda) ? 1.0 : lambda[min(i, length(lambda))]
     end
 
     # the bit positions, from a preorder of the initial tree
@@ -266,7 +277,7 @@ function branchanneal(
 
         res = branchanneal_cycles!(dlegs, gtab, mask, touch, nyw, nyb, left, right, par, tc, sc,
             best, pre, preidx, stack, uf, head, prev, lca, next, bit, H, m, Int(point), betas,
-            nsweep, Float64(beta1), Float64(mix), Wcap, Float64(lambda), Float64(time), t0,
+            lams, freelast, nsweep, Float64(beta1), Float64(mix), Wcap, Float64(time), t0,
             Xoshiro(seed))
     else
         lptr = FVector{Int}(undef, nn)
@@ -281,7 +292,7 @@ function branchanneal(
 
         res = branchanneal_cycles!(slegs, gtab, mask, touch, nyw, nyb, left, right, par, tc, sc,
             best, pre, preidx, stack, uf, head, prev, lca, next, bit, H, m, Int(point), betas,
-            nsweep, Float64(beta1), Float64(mix), Wcap, Float64(lambda), Float64(time), t0,
+            lams, freelast, nsweep, Float64(beta1), Float64(mix), Wcap, Float64(time), t0,
             Xoshiro(seed))
     end
 
@@ -331,16 +342,17 @@ function branchanneal_cycles!(
         m::Int,
         point::Int,
         betas::AbstractVector{Float64},
+        lams::AbstractVector{Float64},
+        freelast::Bool,
         sweeps::Int,
         beta1::Float64,
         mix::Float64,
         Wcap::Float64,
-        lambda::Float64,
         time::Float64,
         t0::Float64,
         rng::AbstractRNG,
     )
-    nn = 2m - 2; nc = length(betas); total = 0; accepted = 0
+    nn = 2m - 2; nc = length(betas); total = 0; accepted = 0; feasible = false
 
     for c in oneto(nc)
         if c > 1
@@ -359,9 +371,11 @@ function branchanneal_cycles!(
         ns = sweeps == typemax(Int) ? sweeps : (sweeps - total) ÷ k
         tc0 = Base.time(); tm = (time - (tc0 - t0)) / k
 
-        ns1, acc, Wcap = branchanneal_impl!(legs, gtab, nyw, nyb, left, right, par, tc,
-            sc, best, pre, preidx, stack, root, m, point, ns, @inbounds(betas[c]), beta1, mix,
-            Wcap, lambda, tm, tc0, rng)
+        lam = freelast && c == nc && feasible ? 0.0 : @inbounds(lams[c])
+
+        ns1, acc, Wcap, feasible = branchanneal_impl!(legs, gtab, nyw, nyb, left, right, par,
+            tc, sc, best, pre, preidx, stack, root, m, point, ns, @inbounds(betas[c]), beta1,
+            mix, Wcap, lam, tm, tc0, rng)
 
         total += ns1; accepted += acc
     end
@@ -473,7 +487,7 @@ function branchanneal_impl!(
         end
     end
 
-    return sweep, accepted, Wcap
+    return sweep, accepted, Wcap, bestX <= EPS
 end
 
 # left and right children from par; the preorder from the point (pre, preidx); returns the
