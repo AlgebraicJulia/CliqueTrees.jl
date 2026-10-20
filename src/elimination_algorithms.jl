@@ -278,24 +278,28 @@ end
 """
     MD <: EliminationAlgorithm
 
-    MD(; mass=false, external=false, dense=10.0)
+    MD(; external=false, dense=10.0)
 
-The [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+The exact [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+Every eliminated node has minimum degree (or minimum external degree) in the
+elimination graph. Degrees are kept as lower bounds and computed exactly only
+for the nodes of minimum bound.
 
 ### Parameters
 
-  - `mass`: mass elimination
-  - `external`: minimum external degree
+  - `external`: minimum external degree. Indistinguishable nodes are detected in
+    the reachable set of each eliminated node, and the ordering minimizes the
+    external degree of these supernodes.
   - `dense`: dense node parameter. Nodes with more than `max(16, dense * sqrt(n))`
     neighbors are kept out of the quotient graph until one of them has minimum
     degree; the ordering remains exact. A negative value disables this.
 
 ### References
 
+  - George, Alan, and Joseph WH Liu. "The evolution of the minimum degree ordering algorithm." *SIAM Review* 31.1 (1989): 1-19.
   - Cummings, Robert, Matthew Fahrbach, and Animesh Fatehpuria. "A fast minimum degree algorithm and matching lower bound." *Proceedings of the 2021 ACM-SIAM Symposium on Discrete Algorithms (SODA)*. 2021.
 """
 @kwdef struct MD <: EliminationAlgorithm
-    mass::Bool = false
     external::Bool = false
     dense::Float64 = 10.0
 end
@@ -1194,7 +1198,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD; ve
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD; verbose::Bool = false)
-    index = md(weights, graph; mass = alg.mass, external = alg.external, dense = alg.dense)
+    index = md(weights, graph; external = alg.external, dense = alg.dense)
     return invperm(index), index
 end
 

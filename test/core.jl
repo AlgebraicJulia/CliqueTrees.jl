@@ -489,6 +489,7 @@ end
             MF(1),
             MMD(),
             MD(),
+            MD(; external = true),
             METIS(),
             ND{1}(MMD(), METISND(); width = 5),
             ND{2}(MMD(), KaHyParND(); width = 5),
@@ -585,6 +586,8 @@ end
             MF(),
             MF(1),
             MMD(),
+            MD(),
+            MD(; external = true),
             # METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
             NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
@@ -667,6 +670,8 @@ end
             MF(),
             MF(1),
             MMD(),
+            MD(),
+            MD(; external = true),
             METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
             NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
@@ -843,6 +848,8 @@ end
                 @inferred CliqueTrees.mlf(weights, graph)
                 @inferred CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @inferred CliqueTrees.mmd(weights, graph)
+                @inferred CliqueTrees.md(weights, graph)
+                @inferred CliqueTrees.md(weights, graph; external = true)
                 @inferred CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
@@ -883,6 +890,8 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph; external = true)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
@@ -933,6 +942,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
                 #@test_opt target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph; external = true)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
@@ -1031,7 +1042,7 @@ end
                         MF(1),
                         MMD(),
                         MD(),
-                        MD(; mass = true),
+                        MD(; external = true),
                         METIS(),
                         NDS{1}(MMD(), METISND(); width = 5),
                         SimplicialRule(NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
@@ -1480,8 +1491,8 @@ end
 end
 
 @testset "exact minimum degree" begin
-    # test whether `order` eliminates, at every step, a vertex of minimum
-    # weighted closed degree in the elimination graph
+    # test whether `order` eliminates, at every step, a node of minimum
+    # weighted degree in the elimination graph
     function isminimumdegree(graph, weights, order)
         n = nv(graph); eliminated = falses(n)
         nbrs = [Set(neighbors(graph, v)) for v in vertices(graph)]
@@ -1508,11 +1519,100 @@ end
         return true
     end
 
+    # test whether `order` eliminates, at every step, a supernode of minimum
+    # external degree in the elimination graph. After a supernode is
+    # eliminated, the elements adjacent to it and the elements contained in
+    # its reachable set are absorbed, and the supernodes in the reachable set
+    # with the same elements and the same neighbors outside their elements are
+    # merged.
+    function isminimumexternaldegree(graph, order)
+        n = nv(graph); live = trues(n); sup = collect(1:n)
+        nbrs = [Set(neighbors(graph, v)) for v in vertices(graph)]
+        elements = Dict{Int, Set{Int}}(); pos = 1
+
+        while pos <= n
+            snodes = Dict{Int, Vector{Int}}()
+
+            for v in vertices(graph)
+                live[v] && push!(get!(snodes, sup[v], Int[]), v)
+            end
+
+            extdeg(S) = length(setdiff(union((nbrs[v] for v in S)...), S))
+            S = snodes[sup[order[pos]]]
+            all(extdeg(T) >= extdeg(S) for T in values(snodes)) || return false
+            Set(order[pos:(pos + length(S) - 1)]) == Set(S) || return false
+            pos += length(S)
+
+            # eliminate `S`
+            R = setdiff(union((nbrs[v] for v in S)...), S)
+
+            for v in S, w in nbrs[v]
+                delete!(nbrs[w], v)
+            end
+
+            for v in R, w in R
+                v != w && push!(nbrs[v], w)
+            end
+
+            for v in S
+                live[v] = false
+            end
+
+            filter!(p -> isdisjoint(p.second, S) && !issubset(p.second, R), elements)
+            elements[pos] = Set(R)
+
+            # merge the supernodes in `R`
+            E(v) = Set(id for (id, e) in elements if v in e)
+            A(v) = Set(sup[w] for w in neighbors(graph, v) if live[w] && !any(e -> v in e && w in e, values(elements)))
+            first = Dict{Any, Int}()
+
+            for r in unique(sup[v] for v in R)
+                root = get!(first, (E(r), A(r)), r)
+
+                if root != r
+                    for v in vertices(graph)
+                        live[v] && sup[v] == r && (sup[v] = root)
+                    end
+                end
+            end
+        end
+
+        return true
+    end
+
+    # add twins to `graph`, so that supernodes form
+    function addtwins!(graph, rng)
+        n = nv(graph)
+
+        for _ in 1:(n ÷ 4)
+            a, b = rand(rng, 1:n, 2)
+            a == b && continue
+
+            for w in collect(neighbors(graph, a))
+                w != b && add_edge!(graph, b, w)
+            end
+
+            rand(rng) < 0.5 && add_edge!(graph, a, b)
+        end
+
+        return graph
+    end
+
+    function adjacency(graph)
+        xadj = [1]; adjncy = Int[]
+
+        for v in vertices(graph)
+            append!(adjncy, neighbors(graph, v)); push!(xadj, length(adjncy) + 1)
+        end
+
+        return xadj, adjncy
+    end
+
     rng = MersenneTwister(0)
 
-    for n in (10, 30, 60), trial in 1:5
-        # sparse graphs, power-law graphs, sparse graphs with a hub, and
-        # sparse graphs with several hubs
+    for n in (10, 30, 60, 120), trial in 1:3
+        # sparse graphs, power-law graphs, sparse graphs with one or several
+        # hubs, and sparse and dense graphs with twins
         hub = erdos_renyi(n, 2 / n; rng)
 
         for v in 2:n
@@ -1525,46 +1625,38 @@ end
             h != v && rand(rng) < 0.8 && add_edge!(hubs, h, v)
         end
 
-        for graph in (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub, hubs)
-            # `dense = 0` makes every node with more than 16 neighbors dense
-            for mass in (false, true), external in (false, true), dense in (10.0, 0.0, -1.0)
-                # `debug` recomputes every degree after every elimination
-                for weights in (ones(Int, n), rand(rng, 1:3, n))
-                    index = CliqueTrees.MDLib.md(weights, graph; mass, external, dense, debug = true)
-                    @test sort(index) == 1:n
+        graphs = (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub, hubs,
+            addtwins!(erdos_renyi(n, 4 / n; rng), rng), addtwins!(erdos_renyi(n, 0.6; rng), rng))
 
-                    # counting fill as a complement does not change the ordering
-                    for complement in (0, 4)
-                        @test index == CliqueTrees.MDLib.md(weights, graph; mass, external, dense, complement, debug = true)
-                    end
+        for graph in graphs
+            # `dense = 0` makes every node with more than 16 neighbors dense
+            for external in (false, true), dense in (10.0, 0.0, -1.0)
+                # `debug` checks every bound after every elimination
+                for weights in (ones(Int, n), rand(rng, 1:3, n))
+                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, debug = true)
+                    @test sort(index) == 1:n
 
                     if !external
                         @test isminimumdegree(graph, weights, invperm(index))
+                    elseif dense < 0 && all(isone, weights)
+                        @test isminimumexternaldegree(graph, invperm(index))
                     end
                 end
             end
         end
     end
-end
 
-@testset "element list search" begin
-    # `mdsearch` decides whether two element lists, sorted by decreasing
-    # `degnext`, share an element
-    rng = MersenneTwister(1)
+    # the integer type of the working arrays does not change the ordering;
+    # with 16-bit integers, the flag of the external parts is reset
+    for trial in 1:3
+        graph = addtwins!(erdos_renyi(400, 0.3; rng), rng)
+        xadj, adjncy = adjacency(graph); weights = ones(Int, 400)
 
-    for trial in 1:2000
-        n = rand(rng, 1:300)
-        a = sort(unique(rand(rng, 1:n, rand(rng, 1:20))); rev = true)
-        b = sort(unique(rand(rng, 1:n, rand(rng, 1:200))); rev = true)
-
-        if isodd(trial)
-            b = sort(setdiff(b, a); rev = true)
-            isempty(b) && (b = [n + 1])
+        for external in (false, true)
+            index = CliqueTrees.MDLib.md(Int64, 400, 400, weights, xadj, adjncy; external)
+            @test index == CliqueTrees.MDLib.md(Int16, 400, 400, weights, xadj, adjncy; external)
+            @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external)
         end
-
-        degnext = collect(Int32, 1:(n + 1))
-        iw = Int32[a; b]
-        @test CliqueTrees.MDLib.mdsearch(iw, degnext, Int32(1), Int32(length(a)), Int32(length(a) + 1), Int32(length(b))) == !isempty(intersect(a, b))
     end
 end
 
