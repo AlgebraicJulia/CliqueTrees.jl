@@ -81,7 +81,6 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     # the rest is room to grow between compressions
     iwlen = twice(nnz) + convert(E, twice(neqns))
 
-    newvwght = FVector{V}(undef, n)
     marker = FVector{Int}(undef, n)
     supersize = FVector{V}(undef, n)
     superwght = FVector{V}(undef, n)
@@ -92,29 +91,24 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     hashval = FVector{UInt64}(undef, n)
     rchset = FVector{V}(undef, n)
     wext = FVector{V}(undef, n)
-    dwght = FVector{V}(undef, n)
     extlen = FVector{V}(undef, n)
-    zset = FVector{V}(undef, n)
     pe = FVector{E}(undef, n)
     len = FVector{V}(undef, n)
     elen = FVector{V}(undef, n)
     iw = FVector{V}(undef, iwlen)
 
-    @inbounds for node in oneto(n)
-        newvwght[node] = trunc(V, vwght[node])
-    end
-
     # select the dense nodes
     dindex = FVector{V}(undef, n)
     ndense = mdselect!(dindex, n, xadj, adjncy, dense)
     nwords = cld(convert(Int, ndense), 64)
+    dwght = FVector{V}(undef, ispositive(ndense) ? n : zero(V))
     dnode = FVector{V}(undef, ndense)
     ddeg = FVector{V}(undef, ndense)
     dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
 
     md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        hashval, rchset, wext, dwght, extlen, zset, pe, len,
-        elen, iw, iwlen, convert(V, total), n, external, debug, newvwght, xadj,
+        hashval, rchset, wext, dwght, extlen, pe, len,
+        elen, iw, iwlen, convert(V, total), n, external, debug, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -183,7 +177,6 @@ function md_impl!(
         wext::AbstractVector{V},
         dwght::AbstractVector{V},
         extlen::AbstractVector{V},
-        zset::AbstractVector{V},
         pe::AbstractVector{E},
         len::AbstractVector{V},
         elen::AbstractVector{V},
@@ -193,7 +186,7 @@ function md_impl!(
         neqns::V,
         external::Bool,
         debug::Bool,
-        vwght::AbstractVector{V},
+        vwght::AbstractVector,
         xadj::AbstractVector,
         adjncy::AbstractVector,
         ndense::V,
@@ -261,7 +254,7 @@ function md_impl!(
     end
 
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        hashval, rchset, wext, dwght, extlen, zset, pe, len,
+        hashval, rchset, wext, dwght, extlen, pe, len,
         elen, iw, iwlen, pfree, total, neqns, external, debug, vwght, ndense,
         nwords, dindex, dnode, ddeg, dmask)
 
@@ -270,7 +263,7 @@ end
 
 """
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        hashval, rchset, wext, dwght, extlen, zset, pe, len,
+        hashval, rchset, wext, dwght, extlen, pe, len,
         elen, iw, iwlen, pfree, total, neqns, external, debug, vwght, ndense,
         nwords, dindex, dnode, ddeg, dmask)
 
@@ -296,7 +289,7 @@ input parameters:
 
   - `neqns`: number of equations
   - `total`: sum of the vertex weights
-  - `vwght`: vertex weights
+  - `vwght`: vertex weights (truncated to integers)
   - `external`: minimize the external degree instead of the degree
   - `debug`: check every bound after every elimination
   - `iwlen`: length of `iw`
@@ -346,7 +339,8 @@ working arrays:
     if it has not been met at the current elimination, and `wflg` plus the
     weight of its nodes outside the reachable set if it has. For a node of
     the reachable set, the first term of its bound (see `mdelim!`).
-  - `dwght`: the weight of the dense neighbors of each node
+  - `dwght`: the weight of the dense neighbors of each node (empty if there
+    are no dense nodes)
   - `hashval`: hash values, used to detect indistinguishable nodes. The
     hash buckets share `deghead` with the degree lists, as in AMD. They use
     its last entries, whose lists (not exact, with keys near `total`) are
@@ -361,7 +355,6 @@ working arrays:
     element being recomputed. These lists are stored in the free space of
     `iw`, after `pfree`. For a node of the reachable set, `extlen` is the
     second term of its bound, and then its upper bound (see `mdupdate!`).
-  - `zset`: the nodes of a group of a recomputation
   - `marker`: temporary marker vector, used with increasing tags
 """
 function md!_impl!(
@@ -377,7 +370,6 @@ function md!_impl!(
         wext::AbstractVector{V},
         dwght::AbstractVector{V},
         extlen::AbstractVector{V},
-        zset::AbstractVector{V},
         pe::AbstractVector{E},
         len::AbstractVector{V},
         elen::AbstractVector{V},
@@ -388,7 +380,7 @@ function md!_impl!(
         neqns::V,
         external::Bool,
         debug::Bool,
-        vwght::AbstractVector{V},
+        vwght::AbstractVector,
         ndense::V,
         nwords::Int,
         dindex::AbstractVector{V},
@@ -406,9 +398,8 @@ function md!_impl!(
     @assert neqns <= length(hashval)
     @assert neqns <= length(rchset)
     @assert neqns <= length(wext)
-    @assert neqns <= length(dwght)
+    @assert iszero(ndense) || neqns <= length(dwght)
     @assert neqns <= length(extlen)
-    @assert neqns <= length(zset)
     @assert neqns <= length(pe)
     @assert neqns <= length(len)
     @assert neqns <= length(elen)
@@ -423,12 +414,11 @@ function md!_impl!(
     @inbounds for node in oneto(neqns)
         marker[node] = zero(I)
         supersize[node] = one(V)
-        superwght[node] = vwght[node]
+        superwght[node] = trunc(V, vwght[node])
         elen[node] = zero(V)
         degnext[node] = zero(V)
         degprev[node] = zero(V)
         wext[node] = one(V)
-        dwght[node] = zero(V)
     end
 
     @inbounds for key in oneto(twice(total + one(V)))
@@ -451,7 +441,11 @@ function md!_impl!(
     nbypass = ndense; nmissing = 0
 
     if ispositive(ndense)
-        mddenseinit!(ddeg, dmask, nwords, ndense, dnode, neqns, vwght)
+        @inbounds for node in oneto(neqns)
+            dwght[node] = zero(V)
+        end
+
+        mddenseinit!(ddeg, dmask, nwords, ndense, dnode, neqns, superwght)
 
         @inbounds for j in oneto(ndense)
             nmissing += convert(Int, ndense) - 1 - mdcount(dmask, nwords, dnode[j])
@@ -464,18 +458,18 @@ function md!_impl!(
         pstop = pstart + convert(E, len[node]) - one(E)
 
         for p in pstart:pstop
-            deg += vwght[iw[p]]
+            deg += superwght[iw[p]]
         end
 
         if ispositive(ndense)
             # dense nodes stay out of the degree lists
             ispositive(dindex[node]) && continue
-            dwght[node] = mdweight(dmask, nwords, dnode, node, vwght)
+            dwght[node] = mdweight(dmask, nwords, dnode, node, superwght)
             deg += dwght[node]
         end
 
         degree[node] = deg
-        key = mdkey(deg, vwght[node], external)
+        key = mdkey(deg, superwght[node], external)
 
         if key > one(V)
             mindeg = mdinsert!(key, mindeg, node, true, deghead, degnext, degprev, offset)
@@ -534,7 +528,7 @@ function md!_impl!(
             # recompute every node at the minimum key
             mindeg, tag, pfree = mdvisit!(mindeg, pe, len, elen, iw, superwght,
                 degree, deghead, degnext, degprev, hashval, rchset, marker,
-                tag, pfree, iwlen, neqns, extlen, zset, dwght, nbypass, external, offset,
+                tag, pfree, iwlen, neqns, extlen, dwght, nbypass, external, offset,
                 debug)
 
             continue
@@ -582,7 +576,7 @@ function md!_impl!(
         mindeg, tag, pfree = mdupdate!(mdnode, rchsze, delta, dS, swght, pe,
             len, elen, iw, supersize, superwght, degree, deghead, degnext,
             degprev, hashval, rchset, wext, marker, tag, pfree, iwlen,
-            neqns, extlen, zset, dwght, nwords, dmask, nbypass, mindeg, external,
+            neqns, extlen, dwght, nwords, dmask, nbypass, mindeg, external,
             offset, debug)
 
         num += supersize[mdnode]; superwght[mdnode] = zero(V)
@@ -856,7 +850,7 @@ end
 
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, pe, len, elen, iw,
-        supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, pfree, iwlen, neqns, extlen, zset, dwght,
+        supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, pfree, iwlen, neqns, extlen, dwght,
         nwords, dmask, nbypass, mindeg, external, offset, debug)
 
 This routine updates the degree structure after the elimination of
@@ -922,7 +916,6 @@ updated parameters:
         iwlen::E,
         neqns::V,
         extlen::AbstractVector{V},
-        zset::AbstractVector{V},
         dwght::AbstractVector{V},
         nwords::Int,
         dmask::AbstractVector{UInt64},
@@ -1017,8 +1010,9 @@ updated parameters:
     end
 
     # for each principal node in the reachable set, assign its bound; with
-    # external degree, list the nodes for the eager pass in `zset`
-    floor = max(zero(V), delta - swght); zsze = zero(V)
+    # external degree, chain the nodes for the eager pass through `degnext`,
+    # in order
+    floor = max(zero(V), delta - swght); zhead = ztail = zero(V)
 
     @inbounds for k in oneto(nrch)
         rnode = rchset[k]; rwght = superwght[rnode]
@@ -1038,13 +1032,19 @@ updated parameters:
         degree[rnode] = lo; extlen[rnode] = hi
 
         if external && lo < hi && lo < floor + rwght - one(V)
-            zsze += one(V); zset[zsze] = rnode
+            if iszero(ztail)
+                zhead = rnode
+            else
+                degnext[ztail] = rnode
+            end
+
+            ztail = rnode
         end
     end
 
     # the eager pass
-    if ispositive(zsze)
-        mindeg, tag, pfree = mdrecompute!(zset, zsze, mdnode, pe, len, elen, iw,
+    if ispositive(zhead)
+        mindeg, tag, pfree = mdrecompute!(zhead, mdnode, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, hashval, marker,
             tag, pfree, iwlen, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
@@ -1065,7 +1065,7 @@ end
 
 """
     mdvisit!(key, pe, len, elen, iw, superwght, degree, deghead, degnext,
-        degprev, hashval, rchset, marker, tag, pfree, iwlen, neqns, extlen, zset, dwght,
+        degprev, hashval, rchset, marker, tag, pfree, iwlen, neqns, extlen, dwght,
         nbypass, external, offset, debug)
 
 This routine recomputes every node with key `key` that is not exact. The
@@ -1079,7 +1079,6 @@ working arrays:
   - `degnext`: for a node taken from the list, the next node in its group
   - `rchset`: the elements with a group (the reachable set is not in use
     between eliminations)
-  - `zset`: the nodes of a group
 """
 function mdvisit!(
         key::V,
@@ -1100,7 +1099,6 @@ function mdvisit!(
         iwlen::E,
         neqns::V,
         extlen::AbstractVector{V},
-        zset::AbstractVector{V},
         dwght::AbstractVector{V},
         nbypass::V,
         external::Bool,
@@ -1127,13 +1125,9 @@ function mdvisit!(
 
     # recompute each group
     @inbounds for k in oneto(esze)
-        elmnt = rchset[k]; zsze = zero(V); node = degprev[elmnt]
+        elmnt = rchset[k]
 
-        while ispositive(node)
-            zsze += one(V); zset[zsze] = node; node = degnext[node]
-        end
-
-        mindeg, tag, pfree = mdrecompute!(zset, zsze, elmnt, pe, len, elen, iw,
+        mindeg, tag, pfree = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, hashval, marker,
             tag, pfree, iwlen, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
@@ -1143,12 +1137,13 @@ function mdvisit!(
 end
 
 """
-    mdrecompute!(zset, zsze, elmnt, pe, len, elen, iw, superwght, degree,
+    mdrecompute!(zhead, elmnt, pe, len, elen, iw, superwght, degree,
         deghead, degnext, degprev, hashval, marker, tag, pfree, iwlen, neqns, extlen,
         dwght, nbypass, mindeg, external, offset, debug)
 
-This routine recomputes the external degrees of the nodes `zset[1:zsze]`,
-whose most recent element is `elmnt`. The nodes of `elmnt` are marked, each
+This routine recomputes the external degrees of the nodes of the chain that
+starts at `zhead` and is linked by `degnext`, whose most recent element is
+`elmnt`. The nodes of `elmnt` are marked, each
 other element of the nodes is scanned once to list its nodes outside
 `elmnt`, and the external degree of each node is the weight of `elmnt`, of
 the union of these lists and of its uneliminated neighbors, and of its
@@ -1165,8 +1160,7 @@ working arrays:
     change.
 """
 @inline function mdrecompute!(
-        zset::AbstractVector{V},
-        zsze::V,
+        zhead::V,
         elmnt::V,
         pe::AbstractVector{E},
         len::AbstractVector{V},
@@ -1209,8 +1203,10 @@ working arrays:
     # an uneliminated node)
     tag += one(I); ftag = tag; need = zero(E)
 
-    @inbounds for k in oneto(zsze)
-        znode = zset[k]
+    znode = zhead
+
+    @inbounds while ispositive(znode)
+        znext = degnext[znode]
         p1 = pe[znode]
         p2 = p1 + convert(E, elen[znode]) - one(E)
 
@@ -1221,6 +1217,8 @@ working arrays:
                 marker[f] = ftag; need += convert(E, len[f])
             end
         end
+
+        znode = znext
     end
 
     # the lists of nodes outside `elmnt` go into the free space of `iw`
@@ -1234,8 +1232,10 @@ working arrays:
     # `elmnt`
     tag += one(I); stag = tag; pos = pfree
 
-    @inbounds for k in oneto(zsze)
-        znode = zset[k]
+    znode = zhead
+
+    @inbounds while ispositive(znode)
+        znext = degnext[znode]
         p1 = pe[znode]
         p2 = p1 + convert(E, elen[znode]) - one(E)
 
@@ -1258,14 +1258,18 @@ working arrays:
                 extlen[f] = convert(V, pos - fstart)
             end
         end
+
+        znode = znext
     end
 
     # for each node, take the union of the lists and of its uneliminated
     # neighbors
     @inbounds ewght = degree[elmnt]
 
-    @inbounds for k in oneto(zsze)
-        znode = zset[k]
+    znode = zhead
+
+    @inbounds while ispositive(znode)
+        znext = degnext[znode]
         tag += one(I); utag = tag; deg = zero(V)
         p1 = pe[znode]
         p2 = p1 + convert(E, elen[znode]) - one(E)
@@ -1306,6 +1310,7 @@ working arrays:
         degree[znode] = deg
         key = mdkey(deg, superwght[znode], external)
         mindeg = mdinsert!(key, mindeg, znode, true, deghead, degnext, degprev, offset)
+        znode = znext
     end
 
     return mindeg, tag, pfree
