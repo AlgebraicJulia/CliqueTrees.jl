@@ -126,7 +126,7 @@ function mfinit_heap(
             #               -------------------------------
             #               COMPUTE DEFICIENCY-BASED SCORE.
             #               -------------------------------
-            key = mlfscore(score, defncy, degree, jnode)
+            key = mlfscore(score, defncy, degree, qsize, jnode)
         
             #               ---------------------------------------------
             #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE

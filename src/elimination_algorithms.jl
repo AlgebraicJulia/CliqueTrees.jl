@@ -244,11 +244,18 @@ The greedy minimum fill algorithm.
 
 ### Parameters
 
-  - `strategy`: node-selection score (`0` for minimum fill, `1` for minimum average fill)
+  - `strategy`: node-selection score. Writing `F` for the fill created by eliminating a supernode `K`
+    and `d` for its external degree, the scores are
+      - `0`: `F` (minimum fill)
+      - `1`: `F / (d + |K|)` (minimum average fill)
+      - `2`: `F / |K|` (minimum mean fill, MMF)
+      - `3`: `F - d|K|` (minimum increase in neighbor degree, MIND)
+      - `4`: `F / sqrt(|K|)`
 
 ### References
 
   - Ng, Esmond G., and Barry W. Peyton. "Fast implementation of the minimum local fill ordering heuristic." *CSC14: The Sixth SIAM Workshop on Combinatorial Scientific Computing.* 2014.
+  - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." *SIAM Journal on Matrix Analysis and Applications* 19.3 (1998): 682-695.
   - Otsuka, Hiromu, et al. "Experimental evaluation of greedy treewidth heuristics on huge graphs." *IPSJ SIG Technical Report* 2018-AL-166-12 (2018). (In Japanese.)
   - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." *arXiv preprint* arXiv:2108.07551 (2021).
 """

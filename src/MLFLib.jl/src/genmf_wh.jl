@@ -473,7 +473,7 @@ function genmf_wh(
                 #                   -------------------------------
                 #                   COMPUTE DEFICIENCY-BASED SCORE.
                 #                   -------------------------------
-                key = mlfscore(score, defncy, degree, jnode)
+                key = mlfscore(score, defncy, degree, qsize, jnode)
             
                 #                   -------------------
                 #                   RESTORE HEAP ORDER.

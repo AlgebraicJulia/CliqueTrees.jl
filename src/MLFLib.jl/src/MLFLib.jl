@@ -4,7 +4,7 @@ using Base: oneto
 using FillArrays
 using ..Utilities
 
-export mlf!, MLFScore, MinFill, MinAvgFill
+export mlf!, MLFScore, MinFill, MinAvgFill, MinMeanFill, MinIncDeg, MinSqrtFill
 
 function maxint(::Type{I}) where {I}
     return typemax(I) - convert(I, 100000)
