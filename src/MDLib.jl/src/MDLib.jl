@@ -1,8 +1,9 @@
 #= A collection of routines to find an exact minimum degree ordering, or an
    exact minimum external degree ordering.
    The degree of every node is kept as a lower bound. Exact degrees are
-   computed only for the nodes of minimum bound, in batches that share
-   their most recent element, so each element is scanned once per batch.
+   computed only for the nodes of minimum bound, once no exact node of
+   minimum bound is left, in batches that share their most recent element,
+   so each element is scanned once per batch.
    With external degree, an eager pass at each elimination also recomputes
    the nodes whose bound lies within their own weight of the floor. The
    quotient graph, the detection of indistinguishable nodes, element
@@ -524,7 +525,13 @@ function md!_impl!(
             for p in pstart:pstop
                 dwght[iw[p]] -= dwgt
             end
-        elseif ispositive(deghead[mindeg + offset])
+        elseif ispositive(deghead[mindeg])
+            # remove `mdnode` from the degree structure. The exact nodes at
+            # the minimum key go before the others are recomputed: their
+            # eliminations may touch those nodes and give them new bounds
+            mdnode = deghead[mindeg]
+            mdremove!(mdnode, deghead, degnext, degprev, offset)
+        else
             # recompute every node at the minimum key
             mindeg, tag, pfree = mdvisit!(mindeg, pe, len, elen, iw, superwght,
                 degree, deghead, degnext, degprev, hashval, rchset, marker,
@@ -532,10 +539,6 @@ function md!_impl!(
                 debug)
 
             continue
-        else
-            # remove `mdnode` from the degree structure.
-            mdnode = deghead[mindeg]
-            mdremove!(mdnode, deghead, degnext, degprev, offset)
         end
 
         degprev[mdnode] = zero(V)
