@@ -2976,6 +2976,59 @@ end
     @test nfired > 0
 end
 
+@testset "safe reduction rules: twin-split contraction" begin
+    # v = 1 weighs 3; N(v) = {2, 3, 4, 5} with weights 1, 2, 2, 2 and the missing
+    # edges {2, 4}, {2, 5}, {3, 5}: no friend (no vertex meets all three), no
+    # star forest (they form the path 4-2-5-3), and no false twin. The cover
+    # {2, 3} weighs 3 = w(v): split the twins of v over 2 and 3.
+    graph = Graph(9)
+
+    for (a, b) in ((1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (3, 4), (4, 5),
+                   (2, 6), (3, 7), (4, 8), (5, 9), (6, 7), (7, 8), (8, 9), (6, 9))
+        add_edge!(graph, a, b)
+    end
+
+    weights = [3, 1, 2, 2, 2, 3, 3, 3, 3]
+    width = treewidth(weights, graph; alg = PIDBT())
+
+    for on in (false, true)
+        CliqueTrees.ASR_TWINSPLIT[] = on; CliqueTrees.ASR_TWINSPLIT_COUNT[] = 0
+        kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, width)
+        @test (CliqueTrees.ASR_TWINSPLIT_COUNT[] > 0) == on
+    end
+
+    CliqueTrees.ASR_TWINSPLIT[] = true
+
+    # random graphs, with the exact width as the lower bound (so that the rule
+    # fires often): the reduction must preserve the width
+    rng = Xoshiro(13)
+    nfired = 0
+
+    for trial in 1:500
+        n = rand(rng, 8:14)
+        graph = isodd(trial) ? erdos_renyi(n, rand(rng, (0.2, 0.3, 0.4)); rng) : random_regular_graph(n - n % 2, 3; rng)
+        is_connected(graph) || continue
+        weights = isodd(trial ÷ 2) ? rand(rng, 1:4, nv(graph)) : rand(rng, (1.0, 2.0, log2(5), 3.0), nv(graph))
+        width = treewidth(weights, graph; alg = PIDBT())
+        CliqueTrees.ASR_TWINSPLIT_COUNT[] = 0
+        kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, width)
+        nfired += CliqueTrees.ASR_TWINSPLIT_COUNT[] > 0
+        @test result.width <= width + 1e-9
+
+        kerorder = if nv(kg) > 0
+            first(permutation([kw[i] for i in 1:nv(kg)], kg; alg = ConnectedComponents(PIDBT())))
+        else
+            Int[]
+        end
+
+        order = CliqueTrees.rule_pull(result, kerorder)
+        @test sort(order) == 1:nv(graph)
+        @test treewidth(weights, graph; alg = order) ≈ width
+    end
+
+    @test nfired > 0
+end
+
 @testset "safe reduction rules: unit connector" begin
     # in this weighted graph (a kernel of bfwa62 with the lower bound 7),
     # vertex 4 is almost simplicial with friend 7 and w(N[4]) = 8. The

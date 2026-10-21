@@ -240,11 +240,19 @@ function rule_reducer(::Val{5}, ::Type{W}, graph::AbstractGraph{V}) where {W, V}
     aunits = FVector{W}(undef, n)
 
     return function (w, g, wd)
-        return pr5_impl!(
+        kernel, stack, inject, width = pr5_impl!(
             degree, number, status, marker, source, target, begptr, endptr, invptr,
             stack1, stack2, stack3, stack4, stack5, stack6, stack7, stack8, stack0, tmpptr,
             afillin, amarker, amarker2, asource, atarget, abegptr, atmpptr, atgt, aunits,
             weight1, w, g, wd)
+
+        # the twin-split contraction rule, on the kernel (see `asr_twinsplit`);
+        # the kernel may have at most `m` arcs, the size of the work arrays
+        if ASR_TWINSPLIT[] && nv(kernel) > zero(V)
+            kernel, stack, inject, _ = asr_twinsplit(kernel, stack, inject, nv(g) - nv(kernel), w, width, m)
+        end
+
+        return kernel, stack, inject, width
     end
 end
 
