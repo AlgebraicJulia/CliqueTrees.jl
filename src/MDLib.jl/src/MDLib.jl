@@ -1151,6 +1151,10 @@ dense neighbors, minus its own weight. The nodes become exact and are
 inserted into the degree lists. Returns the new minimum key, the tag and
 `pfree`.
 
+The elements in the lists of all the nodes (the core) are united once, as
+they are scanned, so each node only adds the lists of its other elements.
+This keeps groups whose nodes share many overlapping elements cheap.
+
 working arrays:
 
   - `(hashval, extlen)`: the nodes of each element `f` outside `elmnt` are
@@ -1158,6 +1162,10 @@ working arrays:
     values of elements are not in use), in the free space after `pfree`.
     `iw` is compressed first if that space is too small, so `pfree` may
     change.
+  - `marker`: the nodes of `elmnt` are marked `etag`; while the elements
+    are counted, `marker[f] - base` is the number of nodes that list `f`;
+    the core and the nodes of its lists are marked `ctag`, the other
+    elements `stag`, and the union of each node `utag`.
 """
 @inline function mdrecompute!(
         zhead::V,
@@ -1198,10 +1206,18 @@ working arrays:
         end
     end
 
-    # mark the other elements of the nodes, and count their entries
-    # (elements and nodes are marked in the same vector: an element is never
-    # an uneliminated node)
-    tag += one(I); ftag = tag; need = zero(E)
+    # count the nodes of the group
+    gsize = 0; znode = zhead
+
+    @inbounds while ispositive(znode)
+        gsize += 1; znode = degnext[znode]
+    end
+
+    # mark the other elements of the nodes with the number of nodes that list
+    # them, `marker[f] - base`, and count their entries (elements and nodes
+    # are marked in the same vector: an element is never an uneliminated
+    # node)
+    tag += one(I); base = tag; tag += convert(I, gsize); need = zero(E)
 
     znode = zhead
 
@@ -1213,8 +1229,12 @@ working arrays:
         for p in p1:p2
             f = iw[p]
 
-            if f != elmnt && marker[f] != ftag
-                marker[f] = ftag; need += convert(E, len[f])
+            if f != elmnt
+                if marker[f] <= base
+                    marker[f] = base + one(I); need += convert(E, len[f])
+                else
+                    marker[f] += one(I)
+                end
             end
         end
 
@@ -1229,8 +1249,11 @@ working arrays:
     end
 
     # scan each other element of the nodes once, and list its nodes outside
-    # `elmnt`
-    tag += one(I); stag = tag; pos = pfree
+    # `elmnt`. The elements listed by every node of the group (the core) are
+    # marked `ctag`, and the union of their lists, also marked `ctag`, is
+    # taken once here: its weight is `cwght`
+    tag += one(I); stag = tag; tag += one(I); ctag = tag; pos = pfree
+    full = base + convert(I, gsize); cwght = zero(V)
 
     znode = zhead
 
@@ -1242,8 +1265,9 @@ working arrays:
         for p in p1:p2
             f = iw[p]
 
-            if f != elmnt && marker[f] == ftag
-                marker[f] = stag; hashval[f] = pos % UInt64; fstart = pos
+            if f != elmnt && base < marker[f] <= full
+                core = marker[f] == full
+                marker[f] = core ? ctag : stag; hashval[f] = pos % UInt64; fstart = pos
                 jstart = pe[f]
                 jstop = jstart + convert(E, len[f]) - one(E)
 
@@ -1252,6 +1276,10 @@ working arrays:
 
                     if ispositive(superwght[node]) && marker[node] != etag
                         iw[pos] = node; pos += one(E)
+
+                        if core && marker[node] != ctag
+                            marker[node] = ctag; cwght += superwght[node]
+                        end
                     end
                 end
 
@@ -1270,7 +1298,7 @@ working arrays:
 
     @inbounds while ispositive(znode)
         znext = degnext[znode]
-        tag += one(I); utag = tag; deg = zero(V)
+        tag += one(I); utag = tag; deg = cwght
         p1 = pe[znode]
         p2 = p1 + convert(E, elen[znode]) - one(E)
         p4 = p1 + convert(E, len[znode]) - one(E)
@@ -1278,14 +1306,14 @@ working arrays:
         for p in p1:p2
             f = iw[p]
 
-            if f != elmnt
+            if f != elmnt && marker[f] != ctag
                 qstart = hashval[f] % E
                 qstop = qstart + convert(E, extlen[f]) - one(E)
 
                 for q in qstart:qstop
                     node = iw[q]
 
-                    if marker[node] != utag
+                    if marker[node] != utag && marker[node] != ctag
                         marker[node] = utag; deg += superwght[node]
                     end
                 end
@@ -1295,7 +1323,7 @@ working arrays:
         for p in (p2 + one(E)):p4
             node = iw[p]; wght = superwght[node]
 
-            if ispositive(wght) && marker[node] != etag && marker[node] != utag
+            if ispositive(wght) && marker[node] != etag && marker[node] != utag && marker[node] != ctag
                 marker[node] = utag; deg += wght
             end
         end
