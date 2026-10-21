@@ -276,11 +276,11 @@ modification by minimum external degree.
 The degree of a node is kept as a lower bound, which is exact for some
 nodes. Let the key of a node be its bound plus 1 (with external degree)
 or plus its weight (with degree). The algorithm repeats the following.
-If a node at the minimum key is not exact, every such node is recomputed:
-they are grouped by most recent element, and each group is recomputed at
-once (`mdrecompute!`). Otherwise an exact node at the minimum key is
-eliminated (`mdelim!`, `mdupdate!`), and the nodes of its reachable set
-get new bounds.
+If an exact node has the minimum key, it is eliminated (`mdelim!`,
+`mdupdate!`), and the nodes of its reachable set get new bounds.
+Otherwise every node at the minimum key is recomputed: they are grouped
+by most recent element, and each group is recomputed at once
+(`mdrecompute!`).
 
 A node of weight w stands for w indistinguishable nodes, so the degree of
 a node is the weight of its closed neighborhood minus one, and its external
