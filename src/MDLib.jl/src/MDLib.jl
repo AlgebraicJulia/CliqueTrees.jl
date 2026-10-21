@@ -944,6 +944,20 @@ updated parameters:
 
         # for each node `inode` in the bucket, do the following...
         while !iszero(inode) && !iszero(degnext[inode])
+            # find the first node `jnode` after `inode` whose hash value and
+            # list lengths match, with `jlast` before it: only then are the
+            # lists compared
+            jlast = inode; jnode = degnext[inode]
+
+            while !iszero(jnode) && !(hashval[jnode] == hashval[inode] && len[jnode] == len[inode] && elen[jnode] == elen[inode])
+                jlast = jnode; jnode = degnext[jnode]
+            end
+
+            if iszero(jnode)
+                inode = degnext[inode]
+                continue
+            end
+
             # mark the quotient neighbors of `inode`
             tag += one(I)
             pstart = pe[inode]
@@ -953,9 +967,8 @@ updated parameters:
                 marker[iw[p]] = tag
             end
 
-            # for each node `jnode` after `inode` in the bucket, do the
+            # for each node `jnode` from there on in the bucket, do the
             # following...
-            jlast = inode; jnode = degnext[inode]
 
             while !iszero(jnode)
                 jnext = degnext[jnode]
