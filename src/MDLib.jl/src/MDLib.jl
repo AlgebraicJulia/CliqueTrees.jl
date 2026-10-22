@@ -78,10 +78,11 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     iszero(n) && return FVector{V}(undef, 0)
     @inbounds nnz = xadj[neqns + 1] - one(E)
 
-    # the quotient graph needs at most `nnz` entries of `iw` until a dense
-    # node rejoins it (see `mdreinsert!`). As in AMD, `iw` is a fifth longer,
-    # plus `neqns`, to leave room between compressions
-    iwlen = nnz + nnz ÷ convert(E, 5) + convert(E, neqns)
+    # the lists never take more than `nnz` entries of `iw`, except while a
+    # dense node rejoins, which adds fewer than `2 neqns` (see `mdreinsert!`).
+    # The extra `max(nnz ÷ 5, neqns) + neqns` covers that, and leaves room
+    # between compressions
+    iwlen = nnz + max(nnz ÷ convert(E, 5), convert(E, neqns)) + convert(E, neqns)
 
     marker = FVector{Int}(undef, n)
     supersize = FVector{V}(undef, n)
@@ -313,8 +314,6 @@ updated parameters:
     An element is absorbed, and the list of a merged node released, by
     setting its length to 0. Destroyed on output.
   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
-  - `(iw, iwlen)`: replaced by a longer copy if the lists of a rejoining
-    dense node do not fit (see `mdreinsert!`)
 
 output parameters:
 
@@ -350,7 +349,7 @@ working arrays:
   - `dwght`: the weight of the dense neighbors of each node (empty if there
     are no dense nodes)
   - `hashval`: hash values, used to detect indistinguishable nodes. The
-    hash buckets share `deghead` with the degree lists, as in AMD. They use
+    hash buckets share `deghead` with the degree lists. They use
     its last entries, whose lists (not exact, with keys near `total`) are
     almost always empty: the first node of the bucket at `deghead[b]` is
     `-deghead[b]` if no degree list starts there, and otherwise
@@ -523,7 +522,7 @@ function md!_impl!(
             mdnode = dnode[dj]
             nmissing -= 2 * (convert(Int, nbypass) - 1 - mdcount(dmask, nwords, mdnode))
             nbypass -= one(V)
-            pfree, iw, iwlen = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree,
+            pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree,
                 superwght, nwords, dindex, dnode, dmask, rchset)
             degree[mdnode] = ddeg[dj]
 
@@ -1660,10 +1659,13 @@ This routine returns the dense node with index `j` to the quotient graph.
 Its neighbors are the uneliminated principal nodes, other than dense nodes,
 whose masks contain `j`; they become its list, and it is appended to each
 of their lists (which are moved to the end of `iw` to make room). The node
-is then removed from every mask. Returns `pfree`, `iw` and `iwlen`. A
-rejoining dense node is the only step that can make the quotient graph
-longer, so if its lists do not fit after a compression, `iw` is replaced by
-a longer copy (`mdgrow`).
+is then removed from every mask. Returns the updated `pfree`.
+
+The lists fit after a compression. Outside a rejoin, each list is no
+longer than in the quotient graph that keeps the dense nodes, so the lists
+take at most `nnz` entries. Until the dense node is eliminated, the rejoin
+adds fewer than `2 neqns`: its list and one entry per neighbor, or, while a
+list is copied, the entries appended so far and that list.
 
 working arrays:
 
@@ -1703,10 +1705,7 @@ function mdreinsert!(
 
                 if pfree + convert(E, nlen) > iwlen
                     pfree = mdcompress!(neqns, pe, len, iw, pfree)
-
-                    if pfree + convert(E, nlen) > iwlen
-                        iw, iwlen = mdgrow(iw, iwlen, pfree, convert(E, nlen) + one(E))
-                    end
+                    @assert pfree + convert(E, nlen) <= iwlen
                 end
 
                 pstart = pe[node]; pe[node] = pfree
@@ -1724,10 +1723,7 @@ function mdreinsert!(
 
     if pfree + convert(E, cnt) - one(E) > iwlen
         pfree = mdcompress!(neqns, pe, len, iw, pfree)
-
-        if pfree + convert(E, cnt) - one(E) > iwlen
-            iw, iwlen = mdgrow(iw, iwlen, pfree, convert(E, cnt))
-        end
+        @assert pfree + convert(E, cnt) - one(E) <= iwlen
     end
 
     @inbounds pe[dnd] = pfree
@@ -1737,20 +1733,7 @@ function mdreinsert!(
     end
 
     @inbounds len[dnd] = cnt; elen[dnd] = zero(V)
-    return pfree, iw, iwlen
-end
-
-"""
-    mdgrow(iw, iwlen, pfree, need)
-
-This routine returns a copy of `iw[1:pfree - 1]` with room for `need` more
-entries, and for half of `iwlen` beyond them, and its length.
-"""
-function mdgrow(iw::AbstractVector{V}, iwlen::E, pfree::E, need::E) where {V, E}
-    newlen = convert(E, convert(Int, pfree) - 1 + convert(Int, need) + convert(Int, iwlen) ÷ 2)
-    newiw = similar(iw, newlen)
-    copyto!(newiw, 1, iw, 1, convert(Int, pfree) - 1)
-    return newiw, newlen
+    return pfree
 end
 
 """
