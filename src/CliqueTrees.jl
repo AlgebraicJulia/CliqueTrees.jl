@@ -73,7 +73,13 @@ export BFS,
     BestWidth,
     BestFill,
     permutation,
-    batch_permutation
+    batch_permutation,
+    HybridTW,
+    HybridResult,
+    hybridtw,
+    hybridmodel,
+    hybridwarmup!,
+    hybridcost
 
 # Trees
 export Tree, FTree, eliminationtree, setrootindex!
@@ -132,6 +138,7 @@ include("rule/rule.jl")
 include("bt/bt.jl")
 include("branch/branch.jl")
 include("io.jl")
+include("pipeline.jl")
 
 # Submodules
 include("./Multifrontal.jl/src/Multifrontal.jl")

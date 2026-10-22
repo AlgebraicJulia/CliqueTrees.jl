@@ -35,6 +35,10 @@ end
     include("gpu.jl")
 end
 
+@testset "Hybrid pipeline" begin
+    include("pipeline.jl")
+end
+
 @testset "Branch decompositions" begin
     include("branch.jl")
 end
