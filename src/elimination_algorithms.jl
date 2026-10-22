@@ -285,7 +285,7 @@ end
 """
     MD <: EliminationAlgorithm
 
-    MD(; external=false, dense=10.0, mass=false)
+    MD(; external=false, dense=10.0, mass=false, twin=false)
 
 The exact [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
 Every eliminated node has minimum degree (or minimum external degree) in the
@@ -303,6 +303,9 @@ for the nodes of minimum bound.
   - `mass`: mass elimination. Each node whose only neighbors are those of the
     clique formed by an elimination is eliminated with the pivot. The ordering
     remains exact with degree, but not with external degree.
+  - `twin`: false-twin elimination. Each node whose neighbors are exactly
+    those of the pivot (a false twin of the pivot) is eliminated right after it.
+    The ordering remains exact with degree, but not with external degree.
 
 ### References
 
@@ -313,6 +316,7 @@ for the nodes of minimum bound.
     external::Bool = false
     dense::Float64 = 10.0
     mass::Bool = false
+    twin::Bool = false
 end
 
 """
@@ -1209,7 +1213,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD; ve
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD; verbose::Bool = false)
-    index = md(weights, graph; external = alg.external, dense = alg.dense, mass = alg.mass)
+    index = md(weights, graph; external = alg.external, dense = alg.dense, mass = alg.mass, twin = alg.twin)
     return invperm(index), index
 end
 

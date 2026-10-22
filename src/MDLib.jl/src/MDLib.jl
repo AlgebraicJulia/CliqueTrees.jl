@@ -28,8 +28,8 @@ using ..Utilities
 export md
 
 """
-    md(neqns, xadj, adjncy; external=false, dense=10.0, mass=false)
-    md(neqns, vwght, xadj, adjncy; external=false, dense=10.0, mass=false)
+    md(neqns, xadj, adjncy; external=false, dense=10.0, mass=false, twin=false)
+    md(neqns, vwght, xadj, adjncy; external=false, dense=10.0, mass=false, twin=false)
 
 Compute an exact minimum degree ordering of the graph `(xadj, adjncy)`.
 Returns `index`, where `index[node]` is the position of `node`. The vertex
@@ -52,6 +52,13 @@ indistinguishable nodes.
     is eliminated with the pivot. With degree such a node is
     indistinguishable from the pivot, so the ordering remains exact. With
     `external` it need not be, and the ordering is no longer exact.
+  - `twin`: false-twin elimination. Each node outside the reachable
+    set whose neighbors are exactly the reachable set of the pivot, which
+    has never been in a reachable set, and whose dense neighbors (and, with
+    degree, weight) are those of the pivot, is eliminated right after the
+    pivot's supernode. With degree it is then simplicial and of minimum
+    degree, so the ordering remains exact. With `external` it need not be,
+    and the ordering is no longer exact.
 """
 function md(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
     vwght = Ones{V}(neqns)
@@ -78,7 +85,7 @@ function md(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abstr
     return convert(Vector{V}, index)
 end
 
-function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector; external::Bool = false, dense::Real = 10.0, mass::Bool = false, debug::Bool = false) where {V, E}
+function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector; external::Bool = false, dense::Real = 10.0, mass::Bool = false, twin::Bool = false, debug::Bool = false) where {V, E}
     @assert neqns < length(xadj)
     n = convert(V, neqns)
     iszero(n) && return FVector{V}(undef, 0)
@@ -120,7 +127,8 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
 
     md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, convert(V, total), n, external, mass, debug, vwght, xadj,
+        elen, iw, iwlen, xw, convert(V, total), n, external, mass,
+        twin, debug, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -199,6 +207,7 @@ function md_impl!(
         neqns::V,
         external::Bool,
         mass::Bool,
+        twin::Bool,
         debug::Bool,
         vwght::AbstractVector,
         xadj::AbstractVector,
@@ -269,8 +278,8 @@ function md_impl!(
 
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, debug, vwght, ndense,
-        nwords, dindex, dnode, ddeg, dmask)
+        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
+        debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
 end
@@ -278,8 +287,8 @@ end
 """
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, debug, vwght, ndense,
-        nwords, dindex, dnode, ddeg, dmask)
+        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
+        debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
 This routine implements the exact minimum degree algorithm. It makes use
 of the implicit representation of elimination graphs by quotient graphs,
@@ -306,6 +315,7 @@ input parameters:
   - `vwght`: vertex weights (truncated to integers)
   - `external`: minimize the external degree instead of the degree
   - `mass`: mass elimination (see `md`)
+  - `twin`: false-twin elimination (see `md` and `mdelim!`)
   - `debug`: check every bound after every elimination
   - `iwlen`: length of `iw`
   - `(ndense, nwords, dindex, dnode, ddeg, dmask)`: the dense nodes (see
@@ -398,6 +408,7 @@ function md!_impl!(
         neqns::V,
         external::Bool,
         mass::Bool,
+        twin::Bool,
         debug::Bool,
         vwght::AbstractVector,
         ndense::V,
@@ -578,10 +589,11 @@ function md!_impl!(
         # transformation
         degS = degree[mdnode]
 
-        rchsze, pfree, delta, swght, wflg, lemax = mdelim!(mdnode, pe, len,
-            elen, iw, iwlen, pfree, neqns, superwght, degree, deghead,
-            degnext, degprev, hashval, wext, extlen, wflg, lemax,
-            rchset, dS, offset)
+        rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght = mdelim!(mdnode,
+            pe, len, elen, iw, iwlen, pfree, neqns, supersize, superwght, degree,
+            deghead, degnext, degprev, hashval, wext, extlen, wflg, lemax,
+            rchset, dS, offset, external, twin, num + supersize[mdnode],
+            nbypass, nwords, dmask, ddeg)
 
         debug && @assert delta == degS
 
@@ -594,14 +606,19 @@ function md!_impl!(
 
         # merge the indistinguishable nodes of the reachable set, eliminate
         # some of them with `mdnode` (mass elimination), assign the bounds
-        # of the others, and return them to the degree structure
-        mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, pe,
+        # of the others, and return them to the degree structure. The
+        # reachable set also loses the false twins of `mdnode`. Mass
+        # elimination is skipped when there are any: a node of the reachable
+        # set adjacent only to the new element and to them is not
+        # indistinguishable from `mdnode`, and it must follow them (they
+        # are numbered right after the supernode of `mdnode`)
+        mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
             len, elen, iw, supersize, superwght, degree, deghead, degnext,
             degprev, hashval, rchset, wext, marker, tag, xw,
             neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
-            mass, offset, debug)
+            mass && iszero(fsze), offset, debug)
 
-        num += supersize[mdnode]; superwght[mdnode] = zero(V)
+        num += supersize[mdnode] + fsze; superwght[mdnode] = zero(V)
 
         if debug
             mdcheck(neqns, pe, len, elen, iw, supersize, superwght, degree,
@@ -614,9 +631,10 @@ function md!_impl!(
 end
 
 """
-    mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, superwght,
-        degree, deghead, degnext, degprev, hashval, wext, extlen,
-        wflg, lemax, rchset, dS, offset)
+    mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, supersize,
+        superwght, degree, deghead, degnext, degprev, hashval, wext, extlen,
+        wflg, lemax, rchset, dS, offset, external, twin, fnum, nbypass,
+        nwords, dmask, ddeg)
 
 This routine eliminates the node `mdnode` of minimum degree from the
 adjacency structure, which is stored in the quotient graph format. It
@@ -631,6 +649,18 @@ slots are unused for uneliminated nodes). The
 nodes are placed in hash buckets, and the reachable set becomes the new
 element `mdnode`.
 
+With `twin`, the false twins of `mdnode` are found first: the nodes
+outside the reachable set whose neighbors are exactly the reachable set.
+Each lies in every list of the reachable set, so only the shortest is
+scanned. A node of it qualifies if it has never been in a reachable set
+(its adjacency is then all in its list, and its degree is exact), its
+degree and dense neighbors (and, with degree, its weight) are those of
+`mdnode`, and its list holds no node outside the reachable set. Once
+`mdnode` is eliminated, it is simplicial and has the key of `mdnode`. It
+leaves the quotient graph, numbered right after the supernode of
+`mdnode`: its weight is set to 0 before the lists are purged, so it drops
+out of them.
+
 input parameters:
 
   - `mdnode`: node of minimum degree
@@ -638,17 +668,26 @@ input parameters:
   - `iwlen`: length of `iw`
   - `dS`: the weight of the dense neighbors of `mdnode`
   - `offset`: separates the keys of the lists that are not exact
+  - `external`: the keys are external degrees (the false twins need not
+    have the weight of `mdnode`)
+  - `twin`: find the false twins of `mdnode`
+  - `fnum`: the number of the first false twin (the position after the
+    supernode of `mdnode`)
+  - `supersize`: the size of the supernodes
+  - `(nbypass, nwords, dmask)`: the dense nodes
 
 updated parameters:
 
   - `(pe, len, elen, iw)`: quotient graph
   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
+  - `ddeg`: the degrees of the dense nodes, which lose the false twins
   - `superwght`: weight of the supernodes; on output, negative for
     `mdnode`
   - `degree`: on output, `degree[mdnode]` is the weight of the nodes in the
     new element
   - `(deghead, degnext, degprev)`: degree lists; on output, the
-    nodes in the reachable set are removed from them
+    nodes in the reachable set are removed from them, and the false twins
+    are numbered in `degnext`
   - `hashval`: on output, the nodes in the reachable set are placed in hash
     buckets, which share `deghead` with the degree lists (`degprev` and
     `degnext` hold their buckets and links)
@@ -663,6 +702,8 @@ output parameters:
   - `delta`: the weight of the reachable set, with the dense neighbors of
     `mdnode`
   - `swght`: the weight of `mdnode`
+  - `fsze`: the number of nodes in the false twins of `mdnode`
+  - `fwght`: their weight
 """
 function mdelim!(
         mdnode::V,
@@ -673,6 +714,7 @@ function mdelim!(
         iwlen::E,
         pfree::E,
         neqns::V,
+        supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
@@ -686,6 +728,13 @@ function mdelim!(
         rchset::AbstractVector{V},
         dS::V,
         offset::V,
+        external::Bool,
+        twin::Bool,
+        fnum::V,
+        nbypass::V,
+        nwords::Int,
+        dmask::AbstractVector{UInt64},
+        ddeg::AbstractVector{V},
     ) where {V, E}
     # the pivot leaves the quotient graph
     @inbounds swght = superwght[mdnode]; superwght[mdnode] = -swght
@@ -698,8 +747,10 @@ function mdelim!(
     @inbounds nstop = estart + convert(E, len[mdnode]) - one(E)
 
     # form the reachable set: the weight of its nodes is negated, and they
-    # are removed from the degree structure
-    rchsze = zero(V)
+    # are removed from the degree structure. With `twin`, `rsum` is the
+    # weight of the set, and `rbest` its node with the fewest neighbors in
+    # its list (`lbest`)
+    rchsze = zero(V); rsum = zero(V); rbest = zero(V); lbest = typemax(V)
 
     @inbounds for i in estart:estop
         elmnt = iw[i]
@@ -713,6 +764,14 @@ function mdelim!(
                 superwght[node] = -wght
                 rchsze += one(V); rchset[rchsze] = node
                 mdremove!(node, deghead, degnext, degprev, offset)
+
+                if twin
+                    rsum += wght; nlen = len[node] - elen[node]
+
+                    if nlen < lbest
+                        lbest = nlen; rbest = node
+                    end
+                end
             end
         end
     end
@@ -724,6 +783,53 @@ function mdelim!(
             superwght[node] = -wght
             rchsze += one(V); rchset[rchsze] = node
             mdremove!(node, deghead, degnext, degprev, offset)
+
+            if twin
+                rsum += wght; nlen = len[node] - elen[node]
+
+                if nlen < lbest
+                    lbest = nlen; rbest = node
+                end
+            end
+        end
+    end
+
+    # false twins of `mdnode`: they lie in the list of `rbest`. Each is
+    # numbered (from `fnum`), leaves the degree lists and its dense
+    # neighbors, and gets weight 0 so that the purge below drops it
+    fsze = fwght = zero(V)
+
+    if twin && ispositive(lbest) && lbest < typemax(V)
+        tdeg = rsum + dS
+        @inbounds pstart = pe[rbest] + convert(E, elen[rbest])
+        @inbounds pstop = pe[rbest] + convert(E, len[rbest]) - one(E)
+
+        @inbounds for p in pstart:pstop
+            node = iw[p]; wght = superwght[node]
+
+            # cheapest tests first: the weight is in hand
+            if ispositive(wght) && (external || wght == swght) &&
+                    degree[node] == tdeg && iszero(elen[node]) &&
+                    (!ispositive(nbypass) || mdsame(dmask, nwords, node, mdnode))
+                # every neighbor of `node` must lie in the reachable set
+                same = true
+                qstart = pe[node]
+                qstop = qstart + convert(E, len[node]) - one(E)
+
+                for q in qstart:qstop
+                    if ispositive(superwght[iw[q]])
+                        same = false
+                        break
+                    end
+                end
+
+                if same
+                    mdremove!(node, deghead, degnext, degprev, offset)
+                    ispositive(nbypass) && mdlose!(ddeg, dmask, nwords, node, wght)
+                    degnext[node] = -(fnum + fsze); fsze += supersize[node]
+                    superwght[node] = zero(V); len[node] = zero(V); fwght += wght
+                end
+            end
         end
     end
 
@@ -868,11 +974,11 @@ function mdelim!(
     end
 
     @inbounds len[mdnode] = rchsze; degree[mdnode] = ewght; wext[mdnode] = one(V)
-    return rchsze, pfree, ewght + dS, swght, wflg, max(lemax, ewght)
+    return rchsze, pfree, ewght + dS, swght, wflg, max(lemax, ewght), fsze, fwght
 end
 
 """
-    mdupdate!(mdnode, rchsze, delta, dS, swght, pe, len, elen, iw,
+    mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe, len, elen, iw,
         supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, xw, neqns, extlen, dwght,
         nwords, dmask, ddeg, nbypass, mindeg, external, mass, offset, debug)
 
@@ -886,8 +992,8 @@ set gets the bound
 
     delta - m - w(u) + wext[u] + (weight of its dense neighbors not adjacent to `mdnode`),
 
-raised to its old bound minus `swght + m` if it was not formed by a
-merge. It is exact if it equals the upper bound, the same expression
+raised to its old bound minus `swght + fwght + m` if it was not formed by
+a merge. It is exact if it equals the upper bound, the same expression
 with `extlen[u]` added. With external degree, the supernodes whose bound
 is less than `max(0, delta - swght) + w(u) - 1` are recomputed at once
 (`mdrecompute!`). The supernodes are returned to the degree lists.
@@ -900,6 +1006,7 @@ input parameters:
     `mdnode`
   - `dS`: the weight of the dense neighbors of `mdnode`
   - `swght`: the weight of `mdnode`
+  - `fwght`: the weight of the false twins of `mdnode` (see `mdelim!`)
   - `(pe, len, elen, iw)`: quotient graph
   - `(wext, extlen)`: the terms of the bounds (see `mdelim!`); on output,
     `extlen[u]` is the upper bound of each node `u` of the reachable set
@@ -925,6 +1032,7 @@ updated parameters:
         delta::V,
         dS::V,
         swght::V,
+        fwght::V,
         pe::AbstractVector{E},
         len::AbstractVector{V},
         elen::AbstractVector{V},
@@ -1063,9 +1171,10 @@ updated parameters:
     end
 
     # the floor of the eager pass is that of `mdnode`. The other nodes lose
-    # the nodes eliminated with it, as they lose `mdnode`
+    # the nodes eliminated with it, and its false twins, as they lose
+    # `mdnode`
     floor = max(zero(V), delta - swght)
-    delta -= mwght; swght += mwght
+    delta -= mwght; swght += mwght + fwght
     @inbounds degree[mdnode] -= mwght
 
     # for each principal node in the reachable set, assign its bound; with
