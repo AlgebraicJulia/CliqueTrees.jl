@@ -91,7 +91,7 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     #       --------------------
     #       ALLOCATE WORK SPACE.
     #       --------------------
-    #       (SLOTS 3 AND 21 TO 38 OF THE WORKSPACE; SEE UTILITIES.)
+    #       (SLOTS 3, 21 TO 40 AND 42 OF THE WORKSPACE; SEE UTILITIES.)
     ws      = workspace()
     changed = workvector(ws, Bool, 21, n)
     degree  = workvector(ws, W, 22, n)
@@ -103,7 +103,6 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
     nvtxs   = workvector(ws, V, 28, n)
     qsize   = workvector(ws, W, 29, n)
     qnmbr   = workvector(ws, V, 30, n)
-    umark   = workvector(ws, Int, 31, n)
     work    = workvector(ws, V, 32, n)
     work1   = workvector(ws, Int, 33, n)
     work2   = workvector(ws, W, 34, n)
@@ -112,6 +111,12 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
 
     defncy  = workvector(ws, W, 37, n)
     heap    = workvector(ws, SCORE, 38, twice(n))
+
+    umask   = workvector(ws, GMASK, 31, n)
+    gq      = workvector(ws, W, 39, GROUPSIZE)
+    gucnt   = workvector(ws, W, 40, GROUPSIZE)
+    gpq     = workvector(ws, W, 42, GROUPSIZE)
+    gacc    = workvector(ws, W, 36, GROUPSIZE)
 
     #       ------------------------------------------------------------
     #       DEFFLAG INDICATES HOW THE INITIAL DEFICIENCIES ARE COMPUTED.
@@ -133,8 +138,9 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
         adjncy, defflag, perm, invp,
         marker, nvtxs, work,
         qsize, qnmbr, ecforw, defncy, adj2, changed,
-        degree, umark, heap, heapinv, ecliq,
+        degree, heap, heapinv, ecliq,
         xadj2, len2, work1, work2,
+        umask, gq, gucnt, gpq, gacc,
     )
 
     return perm, invp

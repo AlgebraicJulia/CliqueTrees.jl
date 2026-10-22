@@ -487,8 +487,12 @@ end
             AMF(; exact = true),
             MF(),
             MF(1),
+            MF(2),
+            MF(3),
+            MF(4),
             MMD(),
             MD(),
+            MD(; external = true),
             METIS(),
             ND{1}(MMD(), METISND(); width = 5),
             ND{2}(MMD(), KaHyParND(); width = 5),
@@ -584,7 +588,12 @@ end
             AMF(; exact = true),
             MF(),
             MF(1),
+            MF(2),
+            MF(3),
+            MF(4),
             MMD(),
+            MD(),
+            MD(; external = true),
             # METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
             NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
@@ -666,7 +675,12 @@ end
             AMF(; exact = true),
             MF(),
             MF(1),
+            MF(2),
+            MF(3),
+            MF(4),
             MMD(),
+            MD(),
+            MD(; external = true),
             METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
             NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
@@ -843,6 +857,8 @@ end
                 @inferred CliqueTrees.mlf(weights, graph)
                 @inferred CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @inferred CliqueTrees.mmd(weights, graph)
+                @inferred CliqueTrees.md(weights, graph)
+                @inferred CliqueTrees.md(weights, graph; external = true)
                 @inferred CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @inferred CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @inferred CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
@@ -883,6 +899,8 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph; external = true)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
@@ -933,6 +951,8 @@ end
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
                 #@test_opt target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph)
+                @test_opt target_modules = (CliqueTrees,) CliqueTrees.md(weights, graph; external = true)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.mcs_etree(weights, graph, 1:17)
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr3(weights, graph, lowerbound(weights, graph))
                 @test_opt target_modules = (CliqueTrees,) CliqueTrees.pr4(weights, graph, lowerbound(weights, graph))
@@ -1029,9 +1049,12 @@ end
                         AMF(; exact = true),
                         MF(),
                         MF(1),
+                        MF(2),
+                        MF(3),
+                        MF(4),
                         MMD(),
                         MD(),
-                        MD(; mass = true),
+                        MD(; external = true),
                         METIS(),
                         NDS{1}(MMD(), METISND(); width = 5),
                         SimplicialRule(NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
@@ -1480,8 +1503,8 @@ end
 end
 
 @testset "exact minimum degree" begin
-    # test whether `order` eliminates, at every step, a vertex of minimum
-    # weighted closed degree in the elimination graph
+    # test whether `order` eliminates, at every step, a node of minimum
+    # weighted degree in the elimination graph
     function isminimumdegree(graph, weights, order)
         n = nv(graph); eliminated = falses(n)
         nbrs = [Set(neighbors(graph, v)) for v in vertices(graph)]
@@ -1508,28 +1531,143 @@ end
         return true
     end
 
+    # test whether `order` eliminates, at every step, a supernode of minimum
+    # external degree in the elimination graph. After a supernode is
+    # eliminated, the elements adjacent to it and the elements contained in
+    # its reachable set are absorbed, and the supernodes in the reachable set
+    # with the same elements and the same neighbors outside their elements are
+    # merged.
+    function isminimumexternaldegree(graph, order)
+        n = nv(graph); live = trues(n); sup = collect(1:n)
+        nbrs = [Set(neighbors(graph, v)) for v in vertices(graph)]
+        elements = Dict{Int, Set{Int}}(); pos = 1
+
+        while pos <= n
+            snodes = Dict{Int, Vector{Int}}()
+
+            for v in vertices(graph)
+                live[v] && push!(get!(snodes, sup[v], Int[]), v)
+            end
+
+            extdeg(S) = length(setdiff(union((nbrs[v] for v in S)...), S))
+            S = snodes[sup[order[pos]]]
+            all(extdeg(T) >= extdeg(S) for T in values(snodes)) || return false
+            Set(order[pos:(pos + length(S) - 1)]) == Set(S) || return false
+            pos += length(S)
+
+            # eliminate `S`
+            R = setdiff(union((nbrs[v] for v in S)...), S)
+
+            for v in S, w in nbrs[v]
+                delete!(nbrs[w], v)
+            end
+
+            for v in R, w in R
+                v != w && push!(nbrs[v], w)
+            end
+
+            for v in S
+                live[v] = false
+            end
+
+            filter!(p -> isdisjoint(p.second, S) && !issubset(p.second, R), elements)
+            elements[pos] = Set(R)
+
+            # merge the supernodes in `R`
+            E(v) = Set(id for (id, e) in elements if v in e)
+            A(v) = Set(sup[w] for w in neighbors(graph, v) if live[w] && !any(e -> v in e && w in e, values(elements)))
+            first = Dict{Any, Int}()
+
+            for r in unique(sup[v] for v in R)
+                root = get!(first, (E(r), A(r)), r)
+
+                if root != r
+                    for v in vertices(graph)
+                        live[v] && sup[v] == r && (sup[v] = root)
+                    end
+                end
+            end
+        end
+
+        return true
+    end
+
+    # add twins to `graph`, so that supernodes form
+    function addtwins!(graph, rng)
+        n = nv(graph)
+
+        for _ in 1:(n ÷ 4)
+            a, b = rand(rng, 1:n, 2)
+            a == b && continue
+
+            for w in collect(neighbors(graph, a))
+                w != b && add_edge!(graph, b, w)
+            end
+
+            rand(rng) < 0.5 && add_edge!(graph, a, b)
+        end
+
+        return graph
+    end
+
+    function adjacency(graph)
+        xadj = [1]; adjncy = Int[]
+
+        for v in vertices(graph)
+            append!(adjncy, neighbors(graph, v)); push!(xadj, length(adjncy) + 1)
+        end
+
+        return xadj, adjncy
+    end
+
     rng = MersenneTwister(0)
 
-    for n in (10, 30, 60), trial in 1:5
-        # sparse graphs, power-law graphs, and sparse graphs with a hub
+    for n in (10, 30, 60, 120), trial in 1:3
+        # sparse graphs, power-law graphs, sparse graphs with one or several
+        # hubs, and sparse and dense graphs with twins
         hub = erdos_renyi(n, 2 / n; rng)
 
         for v in 2:n
             add_edge!(hub, 1, v)
         end
 
-        for graph in (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub)
-            for mass in (false, true), external in (false, true)
-                # `debug` recomputes every degree after every elimination
+        hubs = erdos_renyi(n, 2 / n; rng)
+
+        for h in 1:4, v in 1:n
+            h != v && rand(rng) < 0.8 && add_edge!(hubs, h, v)
+        end
+
+        graphs = (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub, hubs,
+            addtwins!(erdos_renyi(n, 4 / n; rng), rng), addtwins!(erdos_renyi(n, 0.6; rng), rng))
+
+        for graph in graphs
+            # `dense = 0` makes every node with more than 16 neighbors dense
+            for external in (false, true), dense in (10.0, 0.0, -1.0)
+                # `debug` checks every bound after every elimination
                 for weights in (ones(Int, n), rand(rng, 1:3, n))
-                    index = CliqueTrees.MDLib.md(weights, graph; mass, external, debug = true)
+                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, debug = true)
                     @test sort(index) == 1:n
 
-                    if !mass && !external
+                    if !external
                         @test isminimumdegree(graph, weights, invperm(index))
+                    elseif dense < 0 && all(isone, weights)
+                        @test isminimumexternaldegree(graph, invperm(index))
                     end
                 end
             end
+        end
+    end
+
+    # the integer type of the working arrays does not change the ordering;
+    # with 16-bit integers, the flag of the external parts is reset
+    for trial in 1:3
+        graph = addtwins!(erdos_renyi(400, 0.3; rng), rng)
+        xadj, adjncy = adjacency(graph); weights = ones(Int, 400)
+
+        for external in (false, true)
+            index = CliqueTrees.MDLib.md(Int64, 400, 400, weights, xadj, adjncy; external)
+            @test index == CliqueTrees.MDLib.md(Int16, 400, 400, weights, xadj, adjncy; external)
+            @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external)
         end
     end
 end
@@ -2845,6 +2983,59 @@ end
         order = CliqueTrees.rule_pull(result, kerorder)
         @test sort(order) == 1:nv(graph)
         @test treewidth(weights, graph; alg = order) == width
+    end
+
+    @test nfired > 0
+end
+
+@testset "safe reduction rules: twin-split contraction" begin
+    # v = 1 weighs 3; N(v) = {2, 3, 4, 5} with weights 1, 2, 2, 2 and the missing
+    # edges {2, 4}, {2, 5}, {3, 5}: no friend (no vertex meets all three), no
+    # star forest (they form the path 4-2-5-3), and no false twin. The cover
+    # {2, 3} weighs 3 = w(v): split the twins of v over 2 and 3.
+    graph = Graph(9)
+
+    for (a, b) in ((1, 2), (1, 3), (1, 4), (1, 5), (2, 3), (3, 4), (4, 5),
+                   (2, 6), (3, 7), (4, 8), (5, 9), (6, 7), (7, 8), (8, 9), (6, 9))
+        add_edge!(graph, a, b)
+    end
+
+    weights = [3, 1, 2, 2, 2, 3, 3, 3, 3]
+    width = treewidth(weights, graph; alg = PIDBT())
+
+    for on in (false, true)
+        CliqueTrees.ASR_TWINSPLIT[] = on; CliqueTrees.ASR_TWINSPLIT_COUNT[] = 0
+        kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, width)
+        @test (CliqueTrees.ASR_TWINSPLIT_COUNT[] > 0) == on
+    end
+
+    CliqueTrees.ASR_TWINSPLIT[] = true
+
+    # random graphs, with the exact width as the lower bound (so that the rule
+    # fires often): the reduction must preserve the width
+    rng = Xoshiro(13)
+    nfired = 0
+
+    for trial in 1:500
+        n = rand(rng, 8:14)
+        graph = isodd(trial) ? erdos_renyi(n, rand(rng, (0.2, 0.3, 0.4)); rng) : random_regular_graph(n - n % 2, 3; rng)
+        is_connected(graph) || continue
+        weights = isodd(trial ÷ 2) ? rand(rng, 1:4, nv(graph)) : rand(rng, (1.0, 2.0, log2(5), 3.0), nv(graph))
+        width = treewidth(weights, graph; alg = PIDBT())
+        CliqueTrees.ASR_TWINSPLIT_COUNT[] = 0
+        kw, kg, result = CliqueTrees.compressreduce(5, weights, graph, width)
+        nfired += CliqueTrees.ASR_TWINSPLIT_COUNT[] > 0
+        @test result.width <= width + 1e-9
+
+        kerorder = if nv(kg) > 0
+            first(permutation([kw[i] for i in 1:nv(kg)], kg; alg = ConnectedComponents(PIDBT())))
+        else
+            Int[]
+        end
+
+        order = CliqueTrees.rule_pull(result, kerorder)
+        @test sort(order) == 1:nv(graph)
+        @test treewidth(weights, graph; alg = order) ≈ width
     end
 
     @test nfired > 0

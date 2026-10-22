@@ -62,7 +62,7 @@
 #       SCORE       - NODE-SELECTION SCORE (AN MLFSCORE).
 #       NEQNS       - NUMBER OF EQUATIONS.
 #       MAXINT      - MAXIMUM INTEGER VALUE WITH WHICH VERTICES CAN
-#                     BE MARKED (SEE MARKER(*) AND UMARK(*)).
+#                     BE MARKED (SEE MARKER(*)).
 #       ADJLEN      - LENGTH OF THE ADJACENCY STRUCTURE (ADJNCY(*)).
 #                     IDEALLY AT LEAST NEQNS GREATER THAN INITIAL
 #                     XADJ(NEQNS+1)-1 (SEE IFLAG).
@@ -162,10 +162,6 @@
 #                     OF UNODE IN THE CURRENT ELIMINATION GRAPH
 #                     PLUS ONE.  THAT IS, IT IS THE SIZE OF THE
 #                     CLOSED NEIGHBORHOOD.
-#       UMARK(*)    - ARRAY OF LENGTH NEQNS, USED TO MARK NEIGHBORS
-#                     OF UNODE DURING THE W-H UPDATE PROCESS.
-#                       NOT ABSORBED: < MAXINT.
-#                       ABSORBED:     MAXINT.
 #       HEAP(*)     - ARRAY OF SIZE 2*NEQNS, THE HEAP OF ACTIVE
 #                     NODES BASED ON SOME DEFICIENCY-BASED SCORE. 
 #       HEAPINV(*)  - ARRAY OF LENGTH NEQNS, GIVES LOCATION IN THE
@@ -184,6 +180,13 @@
 #                     DEFICIENCIES.
 #                     USED IN OTHER CAPACITIES AS A WORK VECTOR.
 #       WORK1(*)    - ARRAY OF LENGTH NEQNS, A WORK VECTOR.
+#       UMASK(*)    - ARRAY OF LENGTH NEQNS.  BIT MASKS USED BY
+#                     MFUPD_DEF TO MARK THE NEIGHBORS OF UP TO
+#                     GROUPSIZE CLIQUE MEMBERS AT ONCE.  ITS STORAGE
+#                     IS ALSO USED AS A MARKER VECTOR (UMARK) DURING
+#                     INITIALIZATION; IT IS ZEROED BEFORE THE MAIN LOOP.
+#       GQ(*), GUCNT(*), GPQ(*), GACC(*)
+#                   - ARRAYS OF LENGTH 64, WORK VECTORS FOR MFUPD_DEF.
 #
 #**********************************************************************
 #
@@ -208,7 +211,6 @@ function genmf_wh(
         adj2::AbstractVector{V},
         changed::AbstractVector{Bool},
         degree::AbstractVector{W},
-        umark::AbstractVector{I},
         heap::AbstractVector{S},
         heapinv::AbstractVector{V},
         ecliq::AbstractVector{V},
@@ -216,11 +218,22 @@ function genmf_wh(
         len2::AbstractVector{V},
         work1::AbstractVector{I},
         work2::AbstractVector{W},
+        umask::AbstractVector{GMASK},
+        gq::AbstractVector{W},
+        gucnt::AbstractVector{W},
+        gpq::AbstractVector{W},
+        gacc::AbstractVector{W},
     ) where {V, E, I, W, S}
 
     #       ****************
     #       INITIALIZATIONS.
     #       ****************
+
+    #       -----------------------------------------------------
+    #       DURING INITIALIZATION, UMASK'S STORAGE SERVES AS THE
+    #       MARKER VECTOR UMARK (IT IS ZEROED AGAIN BELOW).
+    #       -----------------------------------------------------
+    umark = reinterpret(I, umask)
 
     #       -------------------------------------
     #       COMPRESS THE GRAPH.
@@ -274,12 +287,16 @@ function genmf_wh(
     #       ON INITIAL DEFICIENCY-BASED SCORES.
     #         INPUT:  NEQNS, XADJ, DEGREE, QSIZE, DEFNCY
     #         OUTPUT: HEAP, HEAPSIZE, HEAPINV, MARKER, NVTXS, WORK,
-    #                 ECFORW, CHANGED, UMARK, INVP
+    #                 ECFORW, CHANGED, INVP
     #       ----------------------------------------------------------
+    @inbounds for i in oneto(neqns)
+        umask[i] = zero(GMASK)
+    end
+
     heapsize = mfinit_heap(
         score, neqns, xadj, degree, qsize, defncy,
         heap, heapinv, marker, nvtxs,
-        work, ecforw, changed, umark, invp
+        work, ecforw, changed, invp
     )
 
     #       ------------------------------------------------------
@@ -287,7 +304,6 @@ function genmf_wh(
     #       ECHEAD, ECTAIL: EMPTY ELIMINATION CLIQUE LIST.
     #       GBGCNT: GARBAGE COLLECTION COUNT INITIALLY ZERO.
     #       TAG:    INITIAL MARKER VALUE IS ZERO.
-    #       UTAG:   INITIAL W-H MARKER VALUE IS ZERO.
     #       NXTLOC: POINTS TO FIRST LOCATION IN VACANT STORAGE
     #               REMAINING AT END OF ADJNCY(*).
     #       REMAIN: AMOUNT OF VACANT STORAGE REMAINING AT END OF
@@ -299,7 +315,6 @@ function genmf_wh(
     ectail = zero(V)
     gbgcnt = zero(I)
     tag    = zero(I)
-    utag   = zero(I)
     nxtloc = xadj[neqns + one(V)]
     remain = adjlen - nxtloc + one(E)
 
@@ -364,15 +379,15 @@ function genmf_wh(
         #                       ADJLEN, XADJ, ADJNCY, NVTXS, WORK,
         #                       QSIZE, NNODES, FNODE
         #             MODIFIED: NNODES2, ECLIQ, DEGREE, DEFNCY, TAG, MARKER,
-        #                       UTAG, UMARK, CHANGED
-        #             WORK:     XADJ2, LEN2
+        #                       CHANGED
+        #             WORK:     WORK2, UMASK, LEN2, GQ, GUCNT, GPQ, GACC
         #           ---------------------------------------------------------
-        tag, utag, nnodes2 = mfupd_def(
+        tag, nnodes2 = mfupd_def(
             enode, neqns, adjlen, xadj,
             adjncy, nvtxs, work, qsize, nnodes,
             fnode, ecliq, degree, defncy,
-            tag, marker, utag, umark, changed,
-            len2, work2
+            tag, marker, changed, work2,
+            umask, len2, gq, gucnt, gpq, gacc
         )
     
         #           -------------------------------------------------------
@@ -382,7 +397,7 @@ function genmf_wh(
         #                       ECLIQ, INVP
         #             MODIFIED: TAG, XADJ, ADJNCY, NVTXS, WORK,
         #                       QSIZE, MARKER, ECHEAD, ECTAIL, ECFORW,
-        #                       NXTLOC, GBGCNT, CLQSIZ, UMARK
+        #                       NXTLOC, GBGCNT, CLQSIZ, HEAPINV (AS ECOUNT)
         #             WORK:     WORK1, XADJ2
         #           -------------------------------------------------------
         tag, echead, ectail, nxtloc, gbgcnt, clqsiz = elmtra(
@@ -390,7 +405,7 @@ function genmf_wh(
             ecliq, invp, tag, xadj, adjncy,
             nvtxs, work, qsize, qnmbr, marker, echead,
             ectail, ecforw, nxtloc, gbgcnt, clqsiz,
-            umark, perm, len2
+            perm, len2, heapinv
         )
     
         #           -------------------------------------------------------
@@ -458,7 +473,7 @@ function genmf_wh(
                 #                   -------------------------------
                 #                   COMPUTE DEFICIENCY-BASED SCORE.
                 #                   -------------------------------
-                key = mlfscore(score, defncy, degree, jnode)
+                key = mlfscore(score, defncy, degree, qsize, jnode)
             
                 #                   -------------------
                 #                   RESTORE HEAP ORDER.

@@ -35,6 +35,10 @@ end
     include("gpu.jl")
 end
 
+@testset "Branch decompositions" begin
+    include("branch.jl")
+end
+
 @testset "Multifrontal" begin
     include("multifrontal.jl")
 end

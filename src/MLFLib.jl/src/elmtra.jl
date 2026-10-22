@@ -30,6 +30,9 @@
 #
 #       NOTES:
 #         IT USES HASHING TO DETECT SUPERNODES.
+#         IT PERFORMS AGGRESSIVE ABSORPTION (AS IN AMD): AN ELIMINATION
+#         CLIQUE ALL OF WHOSE UNABSORBED MEMBERS LIE IN ENODE'S CLIQUE IS
+#         REDUNDANT AND IS REMOVED FROM THE QUOTIENT GRAPH.
 #
 #     INPUT PARAMETERS:
 #       ENODE       - NODE TO BE ELIMINATED.
@@ -101,16 +104,19 @@
 #                     ENODE'S ELIMINATION.  IT IS CORRECT ON
 #                     INPUT, AND IS MODIFIED BY ANY MASS
 #                     ELIMINATION.
-#       UMARK(*)    - ARRAY OF LENGTH NEQNS, USED FOR MARKING
-#                     DURING WING-HUANG MARKING PROCESSES.
-#                       NOT ABSORBED: <MAXINT.
-#                       ABSORBED:     MAXINT.
+#
+#       ECOUNT(*)   - ARRAY OF LENGTH NEQNS.  FOR AN ACTIVE ELIMINATION
+#                     CLIQUE, THE NUMBER OF ITS UNABSORBED MEMBERS.
+#                     (SHARES STORAGE WITH HEAPINV(*), WHICH IS NOT
+#                     USED FOR ELIMINATED NODES.)
 #
 #     WORKING PARAMETERS:
 #       HHEADS      - ARRAY OF SIZE NEQNS.  HEADS OF THE LISTS
 #                     USED FOR HASHING.
 #       HLINK(*)    - ARRAY OF LENGTH NEQNS.  FORWARD LINK IN
-#                     HASH LISTS (>=0).
+#                     HASH LISTS (>=0).  BEFORE HASHING IT HOLDS THE
+#                     LIST OF CANDIDATE CLIQUES FOR AGGRESSIVE
+#                     ABSORPTION.
 #
 #**********************************************************************
 #
@@ -135,9 +141,9 @@ function elmtra(
         nxtloc::E,
         gbgcnt::I,
         clqsiz::W,
-        umark::AbstractVector{I},
         hheads::AbstractVector{V},
         hlink::AbstractVector{V},
+        ecount::AbstractVector{V},
     ) where {V, E, I, W}
 
     #       -------------------
@@ -147,8 +153,10 @@ function elmtra(
     #       ---------------------
     #       BUMP TAG.
     #       NOTE: TAG <= MAXINT-1
+    #       (TAG+1, ..., TAG+NNODES+2 ARE RESERVED FOR COUNTING
+    #       DURING AGGRESSIVE ABSORPTION.)
     #       ---------------------
-    if tag <= maxint(I) - two(I)
+    if tag <= maxint(I) - convert(I, nnodes) - four(I)
         tag += one(I)
     else
         tag = one(I)
@@ -233,6 +241,12 @@ function elmtra(
     #           (1) MASS ELIMINATION
     #       **************************************************************
     #       --------------------------------------------------------
+    #       BASE: MARKER(CNODE) - BASE COUNTS THE MEMBERS OF ENODE'S
+    #             CLIQUE LISTING CNODE (FOR AGGRESSIVE ABSORPTION).
+    #       NCAND: NUMBER OF DISTINCT CANDIDATE CLIQUES (IN HLINK).
+    base = tag + one(I)
+    ncand = zero(V)
+
     #       FOR EVERY VERTEX JNODE IN ENODE'S ELIMINATION CLIQUE ...
     #       --------------------------------------------------------
     @inbounds jstart = xadj[enode]
@@ -280,12 +294,27 @@ function elmtra(
             #               IF CNODE WAS NOT MERGED TO FORM ENODE'S
             #               ELIMINATION CLIQUE ...
             #               ---------------------------------------
-            if marker[cnode] < tag
+            mark = marker[cnode]
+
+            if mark != tag
                 #                   --------------------------
                 #                   ADD CNODE TO JNODE'S LIST.
                 #                   --------------------------
                 adjncy[nxtlc2] = cnode
                 nxtlc2 += one(E)
+
+                #                   ---------------------------------
+                #                   COUNT THE CLIQUE MEMBERS LISTING
+                #                   CNODE (MARKER(CNODE) - BASE), AND
+                #                   COLLECT THE DISTINCT CANDIDATES.
+                #                   ---------------------------------
+                if mark < base
+                    marker[cnode] = base + one(I)
+                    ncand += one(V)
+                    hlink[ncand] = cnode
+                else
+                    marker[cnode] = mark + one(I)
+                end
             end
         end
         #           ----------------------------------------------------
@@ -312,12 +341,59 @@ function elmtra(
             qnmbr[enode] += qnmbr[jnode]
             nvtxs[jnode] = -one(V)
             marker[jnode] = maxint(I)
-            umark[jnode] = maxint(I)
             clqsiz += qsize[jnode]
             qsize[jnode] = zero(W)
             qnmbr[jnode] = zero(V)
         end
     end
+
+    #       *********************************************************
+    #       AGGRESSIVE ABSORPTION.
+    #       A CANDIDATE CLIQUE CNODE IS REDUNDANT IF ALL OF ITS
+    #       UNABSORBED MEMBERS ARE IN ENODE'S CLIQUE, I.E. IF THE
+    #       NUMBER OF CLIQUE MEMBERS LISTING IT EQUALS ECOUNT(CNODE).
+    #       REDUNDANT CLIQUES ARE MARKED AS MERGED AND REMOVED FROM
+    #       THE MEMBERS' LISTS.  NEIGHBORHOODS ARE UNCHANGED.
+    #       (MASS-ELIMINATED MEMBERS LIST NO CANDIDATES.)
+    #       *********************************************************
+    kill = base + convert(I, nnodes) + one(I)
+    nkill = zero(V)
+
+    @inbounds for i in oneto(ncand)
+        cnode = hlink[i]
+
+        if marker[cnode] - base == convert(I, ecount[cnode])
+            marker[cnode] = kill
+            nvtxs[cnode] = -one(V)
+            nkill += one(V)
+        end
+    end
+
+    if ispositive(nkill)
+        @inbounds for j in jstart:jstop
+            jnode = adjncy[j]
+
+            if !iszero(qsize[jnode])
+                cstart = xadj[jnode] + convert(E, nvtxs[jnode])
+                cstop = cstart + convert(E, work[jnode]) - two(E)
+                nxtlc2 = cstart
+
+                for c in cstart:cstop
+                    cnode = adjncy[c]
+
+                    if marker[cnode] != kill
+                        adjncy[nxtlc2] = cnode
+                        nxtlc2 += one(E)
+                    end
+                end
+
+                adjncy[nxtlc2] = enode
+                work[jnode] = convert(V, nxtlc2 - cstart) + one(V)
+            end
+        end
+    end
+
+    tag = kill
 
     #       *********************************
     #       SUPERNODE ABSORPTION VIA HASHING.
@@ -412,12 +488,23 @@ function elmtra(
                     #                       INODE WILL BE ABSORBED INTO JNODE.
                     #                       NOTE: QSIZE'S ARE NEGATIVE.
                     #                       ----------------------------------
+
+                    #                       INODE IS NO LONGER A MEMBER OF ITS
+                    #                       ELIMINATION CLIQUES (ENODE'S COUNT
+                    #                       IS SET AT THE END).
+                    kstart = xadj[inode] + convert(E, nvtxi)
+                    kstop = kstart + convert(E, nclqi) - two(E)
+
+                    for k in kstart:kstop
+                        cnode = adjncy[k]
+                        ecount[cnode] -= one(V)
+                    end
+
                     work[inode] = -jnode
                     qsize[jnode] += qsize[inode]
                     qnmbr[jnode] += qnmbr[inode]
                     nvtxs[inode] = -one(V)
                     marker[inode] = maxint(I)
-                    umark[inode] = maxint(I)
                     qsize[inode] = zero(W)
                     qnmbr[inode] = zero(V)
                     #                       -------------------
@@ -473,6 +560,7 @@ function elmtra(
     #       IN QUOTIENT GRAPH.
     #       ----------------------------------------------------------
     @inbounds nvtxs[enode] = convert(V, nxtlc2 - istart)
+    @inbounds ecount[enode] = nvtxs[enode]
     @inbounds qsize[enode] = -qsize[enode]
     nxtloc = nxtlc2
 

@@ -91,7 +91,7 @@ export Clique, separator, residual
 export CliqueTree, cliquetree, treewidth, treefill, separatorwidth, separators
 
 # Branch Decompositions (Contraction Trees)
-export branchtree, branchstats, branchwidth, branchpeak, branchcost, branchrefine, branchssa
+export branchtree, branchstats, branchwidth, branchpeak, branchcost, branchrefine, branchanneal, branchssa
 
 # Supernode Reordering (Partition Refinement)
 
@@ -130,7 +130,7 @@ include("safe/tutte.jl")
 include("safe/components.jl")
 include("rule/rule.jl")
 include("bt/bt.jl")
-include("branch.jl")
+include("branch/branch.jl")
 include("io.jl")
 
 # Submodules

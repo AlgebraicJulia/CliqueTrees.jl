@@ -10,6 +10,8 @@
 #
 #     LAST UPDATED:
 #       2025-09-22
+#       2026-10-19 (GROUPED, WORD-PARALLEL MARKING OF THE NEW CLIQUE
+#                   MEMBERS; SEE NOTE BELOW.)
 #
 #**********************************************************************
 #
@@ -17,6 +19,17 @@
 #       THIS SUBROUTINE USES WING-HUANG UPDATING TO UPDATE THE
 #       DEFICIENCIES OF ALL VERTICES WHOSE DEFICIENCIES ARE INFLUENCED
 #       BY THE ELIMINATION OF ENODE.
+#
+#     NOTE:
+#       THE NEW MEMBERS OF ENODE'S ELIMINATION CLIQUE (ECLIQ(FNODE:
+#       NNODES)) ARE PROCESSED IN GROUPS OF UP TO 64.  EACH VERTEX
+#       CARRIES A 64-BIT MASK OF THE GROUP MEMBERS IT IS ADJACENT TO,
+#       SO THE NEIGHBORHOOD OF EACH FILL PARTNER WNODE IS SCANNED ONCE
+#       PER GROUP RATHER THAN ONCE PER FILL EDGE.  THE DEFICIENCIES ARE
+#       EXACTLY THOSE OF THE PER-EDGE WING-HUANG UPDATE; ONLY THE ORDER
+#       IN WHICH CHANGED EXTERNAL NODES ARE RECORDED (AND HENCE TIE-
+#       BREAKING IN THE HEAP) MAY DIFFER.  WITH GROUPSIZE = 1 THE
+#       ORIGINAL VISITING ORDER IS REPRODUCED EXACTLY.
 #
 #     INPUT PARAMETERS:
 #       ENODE       - ELIMINATION NODE.
@@ -70,26 +83,60 @@
 #       MARKER(*)   - ARRAY OF LENGTH NEQNS, USED FOR MARKING TO 
 #                     PREVENT PROCESSING SAME NODE MORE THAN ONCE
 #                     OR PROCESSING AN ABSORBED NODE.
-#       UTAG        - USED TO TAG THE NEIGHBORS OF UNODE FOR
-#                     THE WING-HUANG UPDATING PROCESS.
-#       UMARK(*)    - ARRAY OF LENGTH NEQNS, USED TO MARK THE
-#                     NEIGHBORS OF UNODE FOR THE W-H UPDATING
-#                     PROCESS.
 #       CHANGED(*)  - ARRAY OF LENGTH NEQNS,
 #                       -1 - DEFICIENCY IS UNCHANGED
 #                        1 - DEFICIENCY IS POTENTIALLY CHANGED
 #
 #   WORKING PARAMETERS:
-#       DSET(*)     - ARRAY OF LENGTH NEQNS, USED TO STORE THE 
-#                     BACK-EDGES OF THE DEFICIENCY OF ENODE,
-#                     INCIDENT, IN TURN, UPON EACH MEMBER UNODE
-#                     OF ENODE'S ELIMINATION CLIQUE.
 #       DEGINC(*)   - ARRAY OF LENGTH NEQNS, USED TO ACCUMULATE
 #                     THE CHANGE IN DEGREES OF THE NODES IN THE
 #                     ELIMINATION CLIQUE.
+#       UMASK(*)    - ARRAY OF LENGTH NEQNS, ALL ZERO ON INPUT AND
+#                     OUTPUT.  BIT G-1 OF UMASK(X) IS SET WHEN X IS
+#                     A NEIGHBOR OF THE G-TH MEMBER OF THE CURRENT
+#                     GROUP.
+#       TOUCH(*)    - ARRAY OF LENGTH NEQNS, LISTS THE NODES WHOSE
+#                     UMASK IS NONZERO (SO THEY CAN BE CLEARED).
+#       GQ(*)       - ARRAY OF LENGTH 64, QSIZE OF EACH GROUP MEMBER.
+#       GUCNT(*)    - ARRAY OF LENGTH 64, EXTERNAL WEIGHT OF EACH
+#                     GROUP MEMBER'S NEIGHBORHOOD.
+#       GPQ(*)      - ARRAY OF LENGTH 64, SUM OF QSIZE OVER EACH
+#                     GROUP MEMBER'S FILL PARTNERS.
+#       GACC(*)     - ARRAY OF LENGTH 64, SUM OVER EACH GROUP
+#                     MEMBER'S FILL PARTNERS WNODE AND THEIR COMMON
+#                     EXTERNAL NEIGHBORS XNODE OF QSIZE(WNODE) *
+#                     QSIZE(XNODE).
 #
 #**********************************************************************
 #
+
+# sum of the (negative) supernode sizes gq(g) of the group members g in mask m;
+# heavy marks the members whose size is not one
+@inline function grp_sum(m::GMASK, heavy::GMASK, gq::AbstractVector{W}) where {W <: Integer}
+    # count every member as size one, then correct the few heavy ones
+    s = -convert(W, count_ones(m))
+    h = m & heavy
+
+    @inbounds while !iszero(h)
+        s += gq[trailing_zeros(h) + 1] + one(W)
+        h &= h - one(GMASK)
+    end
+
+    return s
+end
+
+@inline function grp_sum(m::GMASK, heavy::GMASK, gq::AbstractVector{W}) where {W}
+    iszero(m & heavy) && return -convert(W, count_ones(m))
+    s = zero(W)
+
+    @inbounds while !iszero(m)
+        s += gq[trailing_zeros(m) + 1]
+        m &= m - one(GMASK)
+    end
+
+    return s
+end
+
 function mfupd_def(
         enode::V,
         neqns::V,
@@ -106,11 +153,14 @@ function mfupd_def(
         defncy::AbstractVector{W},
         tag::I,
         marker::AbstractVector{I},
-        utag::I,
-        umark::AbstractVector{I},
         changed::AbstractVector{Bool},
-        dset::AbstractVector{V},
         deginc::AbstractVector{W},
+        umask::AbstractVector{GMASK},
+        touch::AbstractVector{V},
+        gq::AbstractVector{W},
+        gucnt::AbstractVector{W},
+        gpq::AbstractVector{W},
+        gacc::AbstractVector{W},
     ) where {V, E, I, W}
 
     #       -------------------
@@ -128,328 +178,217 @@ function mfupd_def(
 
     k = nnodes
 
-    #       -----------------------------------------------------
-    #       FOR EACH NODE UNODE IN ENODE'S ELIMINATION CLIQUE ...
-    #       (STARTING FIRST WITH NODE FNODE)
-    #       -----------------------------------------------------
-    @inbounds for j in fnode:nnodes
-    
-        #           ----------
-        #           GET UNODE.
-        #           ----------
-        unode = ecliq[j]
-        qu = abs(qsize[unode])
-    
-        #           ---------
-        #           BUMP TAG.
-        #           ---------
-        if tag <= maxint(I) - convert(I, j) - one(I)
-            tag0 = tag
-            tag += convert(I, j)
-        else
-            tag0 = zero(I)
-            tag = convert(I, j)
+    j = fnode
 
-            for i in oneto(neqns)
-                if marker[i] < maxint(I)
-                    marker[i] = zero(I)
-                end
-            end
-        end
+    @inbounds while j <= nnodes
+        jhi = min(nnodes, j + convert(V, GROUPSIZE) - one(V))
+        ng = Int(jhi - j) + 1
+        allbits = ng == GROUPSIZE ? typemax(GMASK) : (one(GMASK) << ng) - one(GMASK)
+        heavy = zero(GMASK)
+        ntouch = 0
 
-        #           ----------
-        #           BUMP UTAG.
-        #           ----------
-        if utag <= maxint(I) - two(I)
-            utag += one(I)
-        else
-            utag = one(I)
-
-            for i in oneto(neqns)
-                if marker[i] < maxint(I)
-                    umark[i] = zero(I)
-                end
-            end
-        end
-
-        #           ------------------------------------------------
-        #           INITIALIZE NUMBER OF EXTERNAL NEIGHBORS OF UNODE
-        #           TO ZERO.
-        #           ------------------------------------------------
-        ucount = zero(W)
-        #           ------------------------------------------
-        #           FOR EVERY UNABSORBED VERTEX NEIGHBOR WNODE
-        #           OF UNODE ...
-        #           ------------------------------------------
-        istart = xadj[unode]
-        istop = istart + convert(E, nvtxs[unode]) - one(E)
-
-        for i in istart:istop
-            wnode = adjncy[i]
-            #               --------------------------------------------
-            #               IF WNODE IS A FIRST-TIME UNABSORBED NEIGHBOR
-            #               OF UNODE ...
-            #               --------------------------------------------
-            if umark[wnode] < utag
-                #                   --------------------------------------
-                #                   IF WNODE IS NOT IN ENODE'S ELIMINATION
-                #                   CLIQUE ...
-                #                   --------------------------------------
-                if ispositive(qsize[wnode])
-                    #                       ------------------------------------
-                    #                       COUNT WNODE AS AN EXTERNAL NEIGHBOR.
-                    #                       ------------------------------------
-                    ucount += qsize[wnode]
-                end
-                #                   --------------------
-                #                   ... THEN MARK WNODE.
-                #                   --------------------
-                umark[wnode] = utag
-            end
-        end
-        #           --------------------------------------------
-        #           FOR EVERY CLIQUE NEIGHBOR CNODE OF UNODE ...
-        #           --------------------------------------------
-        cstart = xadj[unode] + convert(E, nvtxs[unode])
-        cstop = cstart + convert(E, work[unode]) - one(E)
-
-        for c in cstart:cstop
-            cnode = adjncy[c]
-            #               ----------------------------------------
-            #               FOR EVERY NODE WNODE IN CLIQUE CNODE ...
-            #               ----------------------------------------
-            istart = xadj[cnode]
-            istop = istart + convert(E, nvtxs[cnode]) - one(E)
+        #           -----------------------------------------
+        #           MARK THE NEIGHBORHOODS OF THE GROUP MEMBERS.
+        #           -----------------------------------------
+        for g in 1:ng
+            unode = ecliq[j + convert(V, g - 1)]
+            bit = one(GMASK) << (g - 1)
+            gq[g] = qsize[unode]
+            qsize[unode] == -one(W) || (heavy |= bit)
+            ucount = zero(W)
+            istart = xadj[unode]
+            istop = istart + convert(E, nvtxs[unode]) - one(E)
 
             for i in istart:istop
                 wnode = adjncy[i]
-                #                   -----------------------------------
-                #                   IF WNODE IS A FIRST-TIME UNABSORBED
-                #                   NEIGHBOR OF UNODE ...
-                #                   -----------------------------------
-                if umark[wnode] < utag
-                    #                       --------------------------
-                    #                       IF WNODE IS NOT IN ENODE'S
-                    #                       ELIMINATION CLIQUE ...
-                    #                       --------------------------
-                    if ispositive(qsize[wnode])
-                        #                           ------------------------------------
-                        #                           COUNT WNODE AS AN EXTERNAL NEIGHBOR.
-                        #                           ------------------------------------
-                        ucount += qsize[wnode]
+
+                if marker[wnode] < maxint(I)
+                    mw = umask[wnode]
+
+                    if iszero(mw & bit)
+                        iszero(mw) && (ntouch += 1; touch[ntouch] = wnode)
+                        umask[wnode] = mw | bit
+                        ispositive(qsize[wnode]) && (ucount += qsize[wnode])
                     end
-                    #                       --------------------
-                    #                       ... THEN MARK WNODE.
-                    #                       --------------------
-                    umark[wnode] = utag
                 end
             end
-        end
-    
-        #           ----------------------------------
-        #           FOR EVERY EARLIER WNODE IN ENODE'S
-        #           ELIMINATION CLIQUE ...
-        #           (NOTE THAT UNODE = ECLIQ(J))
-        #           ----------------------------------
-        dvtxs = zero(V)
 
-        for i in oneto(j - one(V))
-            wnode = ecliq[i]
-            #               ---------------------------------------
-            #               IF WNODE IS NOT A NEIGHBOR OF UNODE ...
-            #               ---------------------------------------
-            if umark[wnode] < utag
-                #                   ---------------------------------------------
-                #                   ... THEN THERE IS A NEW FILL EDGE JOINING
-                #                   UNODE AND WNODE.
-                #                   ACCUMULATE THE CONTRIBUTION OF THE FILL
-                #                   EDGE TO UNODE'S AND WNODE'S DEGREE INCREMENT.
-                #                   ---------------------------------------------
-                deginc[unode] -= qsize[wnode]
-                deginc[wnode] += qu
-                dvtxs += one(V)
-                dset[dvtxs] = wnode
+            cstart = xadj[unode] + convert(E, nvtxs[unode])
+            cstop = cstart + convert(E, work[unode]) - one(E)
+
+            for c in cstart:cstop
+                cnode = adjncy[c]
+                istart = xadj[cnode]
+                istop = istart + convert(E, nvtxs[cnode]) - one(E)
+
+                for i in istart:istop
+                    wnode = adjncy[i]
+
+                    if marker[wnode] < maxint(I)
+                        mw = umask[wnode]
+
+                        if iszero(mw & bit)
+                            iszero(mw) && (ntouch += 1; touch[ntouch] = wnode)
+                            umask[wnode] = mw | bit
+                            ispositive(qsize[wnode]) && (ucount += qsize[wnode])
+                        end
+                    end
+                end
             end
+
+            gucnt[g] = ucount
+            gpq[g] = zero(W)
+            gacc[g] = zero(W)
         end
 
-        #           ---------------------------------------------
-        #           FOR EACH NEW FILL NEIGHBOR WNODE OF UNODE ...
-        #           ---------------------------------------------
-        for w in oneto(dvtxs)
+        #           ---------------------------------------------------
+        #           FOR EVERY EARLIER CLIQUE MEMBER WNODE = ECLIQ(I) ...
+        #           PM: GROUP MEMBERS AFTER WNODE THAT ARE NOT ADJACENT
+        #           TO IT, I.E. WNODE'S FILL PARTNERS IN THIS GROUP.
+        #           ---------------------------------------------------
+        for i in oneto(jhi - one(V))
+            g0 = Int(i) - Int(j) + 2
 
-            #               --------------------------------------
-            #               INITIALIZE COUNTS FOR UNODE AND WNODE.
-            #               --------------------------------------
-            wnode = dset[w]
-            cntu = ucount
-            cntw = zero(W)
-            tag0 += one(I)
-            uwfill = qsize[unode] * qsize[wnode]
+            after = if g0 <= 1
+                allbits
+            elseif g0 > ng
+                zero(GMASK)
+            else
+                allbits & ~((one(GMASK) << (g0 - 1)) - one(GMASK))
+            end
 
-            #               -------------------------------------------------------
-            #               FOR EVERY UNABSORBED VERTEX NEIGHBOR XNODE OF WNODE ...
-            #               -------------------------------------------------------
+            wnode = ecliq[i]
+            pm = after & ~umask[wnode]
+            iszero(pm) && continue
+
+            qw = qsize[wnode]
+            sqpm = grp_sum(pm, heavy, gq)
+
+            #               DEGREE INCREMENTS DUE TO THE NEW FILL EDGES.
+            deginc[wnode] -= sqpm
+            bits = pm
+
+            while !iszero(bits)
+                g = trailing_zeros(bits) + 1
+                deginc[ecliq[j + convert(V, g - 1)]] -= qw
+                gpq[g] += qw
+                bits &= bits - one(GMASK)
+            end
+
+            #               BUMP TAG (USED TO DEDUPLICATE WNODE'S NEIGHBORHOOD).
+            if tag <= maxint(I) - two(I)
+                tag += one(I)
+            else
+                tag = one(I)
+
+                for t in oneto(neqns)
+                    if marker[t] < maxint(I)
+                        marker[t] = zero(I)
+                    end
+                end
+            end
+
+            qext = zero(W)
+            bw = zero(W)
             istart = xadj[wnode]
             istop = istart + convert(E, nvtxs[wnode]) - one(E)
 
-            for i in istart:istop
-                xnode = adjncy[i]
+            for i2 in istart:istop
+                xnode = adjncy[i2]
 
-                if marker[xnode] < tag0
-                    #                       ------------------------------------
-                    #                       FIRST TIME VISIT TO UNABSORBED XNODE
-                    #                       AS A NEIGHBOR OF WNODE.
-                    #                       ------------------------------------
-                    if ispositive(qsize[xnode])
-                        #                           --------------------------------
-                        #                           XNODE IS NOT A MEMBER OF ENODE'S
-                        #                           ELIMINATION CLIQUE.
-                        #                           --------------------------------
-                        if umark[xnode] == utag
-                            #                               ----------------------------------
-                            #                               XNODE IS ALSO A NEIGHBOR OF UNODE.
-                            #                               ----------------------------------
-                        
-                            #                               ---------------------------
-                            #                               DECREMENT UNODE'S COUNT AND
-                            #                               DEFICIENCY OF XNODE.
-                            #                               ---------------------------
-                            cntu -= qsize[xnode]
-                            defncy[xnode] -= uwfill
-                            #                               ---------------------------------
-                            #                               IF XNODE'S DEFICIENCY IS CHANGED
-                            #                               FOR THE FIRST TIME, THEN STORE IT
-                            #                               AND MARK IT AS CHANGED.
-                            #                               ---------------------------------
+                if marker[xnode] < tag
+                    marker[xnode] = tag
+                    qx = qsize[xnode]
+                    m = umask[xnode] & pm
+
+                    if ispositive(qx)
+                        qext += qx
+
+                        if !iszero(m)
+                            sq = grp_sum(m, heavy, gq)
+                            defncy[xnode] -= qw * sq
+                            bw += qx * sq
+                            bits = m
+
+                            while !iszero(bits)
+                                g = trailing_zeros(bits) + 1
+                                gacc[g] += qw * qx
+                                bits &= bits - one(GMASK)
+                            end
+
                             if !changed[xnode]
                                 k += one(V)
                                 ecliq[k] = xnode
                                 changed[xnode] = true
                             end
-                        else
-                            #                               ------------------------------------
-                            #                               XNODE IS NOT A NEIGHBOR OF UNODE ...
-                            #                               SO IT WILL INCREASE THE DEFICIENCY
-                            #                               OF WNODE.
-                            #                               ------------------------------------
-                            cntw += qsize[xnode]
                         end
-                    else
-                        #                           ----------------------------
-                        #                           XNODE IS A MEMBER OF ENODE'S
-                        #                           ELIMINATION CLIQUE.
-                        #                           ----------------------------
-                        if umark[xnode] == utag
-                            #                               ---------------------------------
-                            #                               ... AND IT IS ADJACENT TO UNODE.
-                            #                               SO DECREMENT DEFICIENCY OF XNODE.
-                            #                               ---------------------------------
-                            defncy[xnode] -= uwfill
-                        end
+                    elseif !iszero(m)
+                        defncy[xnode] -= qw * grp_sum(m, heavy, gq)
                     end
-                    #                       ---------------------------------------------
-                    #                       MARK XNODE AS VISITED AS A NEIGHBOR OF WNODE.
-                    #                       ---------------------------------------------
-                    marker[xnode] = tag0
                 end
             end
 
-            #               --------------------------------------------
-            #               FOR EVERY CLIQUE NEIGHBOR CNODE OF WNODE ...
-            #               --------------------------------------------
             cstart = xadj[wnode] + convert(E, nvtxs[wnode])
             cstop = cstart + convert(E, work[wnode]) - one(E)
 
             for c in cstart:cstop
                 cnode = adjncy[c]
-                #                   ----------------------------------
-                #                   FOR EVERY UNABSORBED NODE XNODE IN
-                #                   CLIQUE CNODE ...
-                #                   ----------------------------------
                 istart = xadj[cnode]
                 istop = istart + convert(E, nvtxs[cnode]) - one(E)
 
-                for i in istart:istop
-                    xnode = adjncy[i]
+                for i2 in istart:istop
+                    xnode = adjncy[i2]
 
-                    if marker[xnode] < tag0
-                        #                           ------------------------------------
-                        #                           FIRST TIME VISIT TO UNABSORBED XNODE
-                        #                           AS A NEIGHBOR OF WNODE.
-                        #                           ------------------------------------
-                        if ispositive(qsize[xnode])
-                            #                               --------------------------------
-                            #                               XNODE IS NOT A MEMBER OF ENODE'S
-                            #                               ELIMINATION CLIQUE.
-                            #                               --------------------------------
-                            if umark[xnode] == utag
-                                #                                   ------------------------
-                                #                                   XNODE IS ALSO A NEIGHBOR
-                                #                                   OF UNODE.
-                                #                                   ------------------------
-                                #                                   ---------------------------
-                                #                                   DECREMENT UNODE'S COUNT AND
-                                #                                   DEFICIENCY OF XNODE.
-                                #                                   ---------------------------
-                                cntu -= qsize[xnode]
-                                defncy[xnode] -= uwfill
-                                #                                   ---------------------------------
-                                #                                   IF XNODE'S DEFICIENCY IS CHANGED
-                                #                                   FOR THE FIRST TIME, ADD IT TO THE
-                                #                                   LIST OF NODES WITH CHANGED
-                                #                                   DEFICIENCIES.
-                                #                                   ---------------------------------
+                    if marker[xnode] < tag
+                        marker[xnode] = tag
+                        qx = qsize[xnode]
+                        m = umask[xnode] & pm
+
+                        if ispositive(qx)
+                            qext += qx
+
+                            if !iszero(m)
+                                sq = grp_sum(m, heavy, gq)
+                                defncy[xnode] -= qw * sq
+                                bw += qx * sq
+                                bits = m
+
+                                while !iszero(bits)
+                                    g = trailing_zeros(bits) + 1
+                                    gacc[g] += qw * qx
+                                    bits &= bits - one(GMASK)
+                                end
+
                                 if !changed[xnode]
                                     k += one(V)
                                     ecliq[k] = xnode
                                     changed[xnode] = true
                                 end
-                            else
-                                #                                   -----------------------
-                                #                                   XNODE IS NOT A NEIGHBOR
-                                #                                   OF UNODE ...
-                                #                                   SO IT WILL INCREASE THE
-                                #                                   DEFICIENCY OF WNODE.
-                                #                                   -----------------------
-                                cntw += qsize[xnode]
                             end
-                        else
-                            #                               ----------------------------
-                            #                               XNODE IS A MEMBER OF ENODE'S
-                            #                               ELIMINATION CLIQUE.
-                            #                               ----------------------------
-                            if umark[xnode] == utag
-                                #                                   ---------------------------------
-                                #                                   ... AND IT IS ADJACENT TO UNODE.
-                                #                                   SO DECREMENT DEFICIENCY OF XNODE.
-                                #                                   ---------------------------------
-                                defncy[xnode] -= uwfill
-                            end
+                        elseif !iszero(m)
+                            defncy[xnode] -= qw * grp_sum(m, heavy, gq)
                         end
-                        #                           -----------------------------------
-                        #                           MARK XNODE AS VISITED AS A NEIGHBOR
-                        #                           OF WNODE.
-                        #                           -----------------------------------
-                        marker[xnode] = tag0
                     end
                 end
             end
-        
-            #               ---------------------------------------------
-            #               WING-HUANG UPDATES FOR UNODE AND WNODE DUE TO
-            #               FILL JOINING UNODE AND WNODE.
-            #               NOTE: QSIZE IS NEGATIVE.
-            #               ---------------------------------------------
-            defncy[unode] -= cntu * qsize[wnode]
-            defncy[wnode] -= cntw * qsize[unode]
-        
-            #               -----------
-            #               NEXT WNODE.
-            #               -----------
+
+            #               WNODE GAINS NEW MISSING PAIRS: ITS EXTERNAL
+            #               NEIGHBORS THAT ARE NOT ADJACENT TO EACH PARTNER.
+            defncy[wnode] -= qext * sqpm - bw
         end
-        #           -----------
-        #           NEXT UNODE.
-        #           -----------
+
+        #           EACH UNODE GAINS NEW MISSING PAIRS: ITS EXTERNAL
+        #           NEIGHBORS THAT ARE NOT ADJACENT TO EACH PARTNER.
+        for g in 1:ng
+            unode = ecliq[j + convert(V, g - 1)]
+            defncy[unode] -= gucnt[g] * gpq[g] - gacc[g]
+        end
+
+        for t in 1:ntouch
+            umask[touch[t]] = zero(GMASK)
+        end
+
+        j = jhi + one(V)
     end
 
     #       -------------------------------------------
@@ -474,5 +413,5 @@ function mfupd_def(
         error("ELIMINATED NODE HAS NONZERO DEFICIENCY: $enode => $(defncy[enode])")
     end
 
-    return tag, utag, nnodes2
+    return tag, nnodes2
 end

@@ -4,11 +4,16 @@ using Base: oneto
 using FillArrays
 using ..Utilities
 
-export mlf!, MLFScore, MinFill, MinAvgFill
+export mlf!, MLFScore, MinFill, MinAvgFill, MinMeanFill, MinIncDeg, MinSqrtFill
 
 function maxint(::Type{I}) where {I}
     return typemax(I) - convert(I, 100000)
 end
+
+# bit-mask type used by mfupd_def; the number of new clique members
+# marked at once (the group size) is its width
+const GMASK = UInt64
+const GROUPSIZE = 8 * sizeof(GMASK)
 
 include("mlfscore.jl")
 include("mlfwh.jl")

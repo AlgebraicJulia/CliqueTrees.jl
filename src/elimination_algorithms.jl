@@ -219,6 +219,10 @@ struct MCSM <: MinimalAlgorithm end
 
 The approximate minimum fill algorithm.
 
+The vertex weights may be any finite positive numbers. A vertex of weight `w` stands for a class
+of true twins of total weight `w`, and the ordering does not depend on the unit in which the weights
+are measured: multiplying every weight by the same constant leaves it unchanged, up to rounding.
+
 ### Parameters
 
   - `exact`: compute the initial score of each vertex from its exact fill-in, rather than its degree
@@ -240,11 +244,18 @@ The greedy minimum fill algorithm.
 
 ### Parameters
 
-  - `strategy`: node-selection score (`0` for minimum fill, `1` for minimum average fill)
+  - `strategy`: node-selection score. Writing `F` for the fill created by eliminating a supernode `K`
+    and `d` for its external degree, the scores are
+      - `0`: `F` (minimum fill)
+      - `1`: `F / (d + |K|)` (minimum average fill)
+      - `2`: `F / |K|` (minimum mean fill, MMF)
+      - `3`: `F - d|K|` (minimum increase in neighbor degree, MIND)
+      - `4`: `F / sqrt(|K|)`
 
 ### References
 
   - Ng, Esmond G., and Barry W. Peyton. "Fast implementation of the minimum local fill ordering heuristic." *CSC14: The Sixth SIAM Workshop on Combinatorial Scientific Computing.* 2014.
+  - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." *SIAM Journal on Matrix Analysis and Applications* 19.3 (1998): 682-695.
   - Otsuka, Hiromu, et al. "Experimental evaluation of greedy treewidth heuristics on huge graphs." *IPSJ SIG Technical Report* 2018-AL-166-12 (2018). (In Japanese.)
   - Tamaki, Hisao. "A heuristic for listing almost-clique minimal separators of a graph." *arXiv preprint* arXiv:2108.07551 (2021).
 """
@@ -274,22 +285,30 @@ end
 """
     MD <: EliminationAlgorithm
 
-    MD(; mass=false, external=false)
+    MD(; external=false, dense=10.0)
 
-The [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+The exact [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
+Every eliminated node has minimum degree (or minimum external degree) in the
+elimination graph. Degrees are kept as lower bounds and computed exactly only
+for the nodes of minimum bound.
 
 ### Parameters
 
-  - `mass`: mass elimination
-  - `external`: minimum external degree
+  - `external`: minimum external degree. Indistinguishable nodes are detected in
+    the reachable set of each eliminated node, and the ordering minimizes the
+    external degree of these supernodes.
+  - `dense`: dense node parameter. Nodes with more than `max(16, dense * sqrt(n))`
+    neighbors are kept out of the quotient graph until one of them has minimum
+    degree; the ordering remains exact. A negative value disables this.
 
 ### References
 
+  - George, Alan, and Joseph WH Liu. "The evolution of the minimum degree ordering algorithm." *SIAM Review* 31.1 (1989): 1-19.
   - Cummings, Robert, Matthew Fahrbach, and Animesh Fatehpuria. "A fast minimum degree algorithm and matching lower bound." *Proceedings of the 2021 ACM-SIAM Symposium on Discrete Algorithms (SODA)*. 2021.
 """
 @kwdef struct MD <: EliminationAlgorithm
-    mass::Bool = false
     external::Bool = false
+    dense::Float64 = 10.0
 end
 
 """
@@ -1186,7 +1205,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MMD; ve
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MD; verbose::Bool = false)
-    index = md(weights, graph; mass = alg.mass, external = alg.external)
+    index = md(weights, graph; external = alg.external, dense = alg.dense)
     return invperm(index), index
 end
 

@@ -2131,3 +2131,193 @@ function asr_unit_search!(
 
     return covered == nx, tag, visits
 end
+
+# ---------------------------------------------------------------------------
+# The twin-split contraction rule (A13), run on the kernel of `asr`
+# ---------------------------------------------------------------------------
+#
+# Let v be a vertex with w(N[v]) ≤ `width` whose neighborhood is not a clique.
+# If the missing edges of N(v) have a vertex cover C with w(C) ≤ w(v), then v
+# is eliminated: N(v) is made a clique and v is deleted.
+#
+# Why it is safe. Think of a vertex of weight w as w unit-weight true twins
+# (rational weights scale to integers; real weights follow by continuity, as
+# the width is a minimum of maxima of linear forms in the weights). Contract
+# w(x) of the twins of v into the twins of each x ∈ C, and delete the rest.
+# Every twin of x is then adjacent to all of N(v), and C covers the missing
+# edges, so N(v) becomes a clique: G - v + K(N(v)) is a weighted minor of G.
+# Its width is at most that of G, and v is simplicial in G + K(N(v)), with a
+# bag of weight w(N[v]) ≤ `width`. So max(`width`, tw) is preserved.
+#
+# The almost simplicial rule is the case |C| = 1. The twin rule (`asr_twins!`)
+# is the case of several absorbers, and needs a false twin of v; this rule
+# needs none. The cover is compared with w(v) without tolerance, so that
+# shortfalls within the tolerance cannot add up.
+#
+# Implementation. The fill is not stored in the quotient graph (a cover with
+# two vertices or more would need new arcs), so the rule runs on the kernel
+# that `asr` returns, with explicit adjacency lists, and returns a new kernel.
+# The rounds of the solver (`rule_step!`) then merge the true twins and run
+# the other rules again. The new kernel may have at most `cap` arcs (the size
+# of the solver's buffers); a vertex whose fill would exceed it is skipped.
+
+# a switch for experiments, and a count of the vertices the rule eliminates
+const ASR_TWINSPLIT = Ref(true)
+const ASR_TWINSPLIT_COUNT = Ref(0)
+
+# the rule is tried on vertices of degree at most this, with at most this many
+# missing edges in their neighborhood
+const ASR_TWINSPLIT_DEGREE = 16
+const ASR_TWINSPLIT_MISSING = 32
+
+# the least weight of a vertex cover of the edges `ea[i:ne]`, `eb[i:ne]` (as
+# vertices) that avoids the vertices marked `out` and has weight at most `cap`,
+# or `typemax`-like `Inf` if there is none (branching on the first uncovered
+# edge). `inC` marks the vertices taken so far.
+function asr_tscover(ea::Vector{V}, eb::Vector{V}, ne::Int, i::Int, inC::Vector{Bool}, weight::AbstractVector{W}, cap::W) where {V, W}
+    # skip the covered edges
+    while i <= ne && (inC[ea[i]] || inC[eb[i]])
+        i += 1
+    end
+
+    i > ne && return zero(W), true
+    best = zero(W); found = false
+
+    for x in (ea[i], eb[i])
+        wx = weight[x]
+        wx <= cap || continue
+        inC[x] = true
+        c, ok = asr_tscover(ea, eb, ne, i + 1, inC, weight, found ? min(cap, best) - wx : cap - wx)
+        inC[x] = false
+
+        if ok && (!found || c + wx < best)
+            best = c + wx; found = true
+        end
+    end
+
+    return best, found
+end
+
+# Apply the rule to the kernel `graph` of `asr` (vertices 1:n, with `weight`
+# indexed through `inject`), given the eliminated vertices `stack[1:m0]`.
+# Returns the new kernel, the eliminated vertices, the new `inject`, and the
+# number of vertices eliminated by the rule.
+function asr_twinsplit(graph::AbstractGraph{V}, stack::AbstractVector{V}, inject::AbstractVector{V}, m0::Integer, weights::AbstractVector{W}, width::W, cap::Integer) where {V, W}
+    n = nv(graph); tol = tolerance(W)
+    weight = W[weights[inject[v]] for v in oneto(n)]
+    adj = [V[x for x in neighbors(graph, v) if x != v] for v in oneto(n)]
+    narcs = sum(length, adj; init = 0)
+    alive = trues(n); mark = zeros(Int, n); tag = 0
+    queue = collect(oneto(n)); queued = trues(n); head = 1
+    elim = V[]
+    ea = V[]; eb = V[]
+    inCv = fill(false, n)
+
+    while head <= length(queue)
+        v = queue[head]; head += 1; queued[v] = false
+        alive[v] || continue
+        N = adj[v]; d = length(N)
+        (2 <= d <= ASR_TWINSPLIT_DEGREE) || continue
+        nw = weight[v]
+
+        for x in N
+            nw += weight[x]
+        end
+
+        # w(N[v]) ≤ `width`, in the convention of `tolerance` (for integers,
+        # tol = 1)
+        nw < width + tol || continue
+
+        # the missing edges of N(v)
+        empty!(ea); empty!(eb); ok = true
+
+        for i in 1:d
+            a = N[i]; tag += 1
+
+            for y in adj[a]
+                mark[y] = tag
+            end
+
+            for j in i + 1:d
+                b = N[j]
+
+                if mark[b] != tag
+                    push!(ea, a); push!(eb, b)
+                    length(ea) > ASR_TWINSPLIT_MISSING && (ok = false; break)
+                end
+            end
+
+            ok || break
+        end
+
+        (ok && !isempty(ea)) || continue
+        ne = length(ea)
+
+        # the arcs after the elimination
+        newarcs = narcs - 2d + 2ne
+        newarcs <= cap || continue
+
+        # a vertex cover of weight at most w(v) (exact comparison)
+        c, found = asr_tscover(ea, eb, ne, 1, inCv, weight, weight[v])
+        (found && c <= weight[v]) || continue
+
+        # eliminate v: fill N(v), and delete v
+        for e in 1:ne
+            a = ea[e]; b = eb[e]
+            push!(adj[a], b); push!(adj[b], a)
+        end
+
+        for x in N
+            filter!(!=(v), adj[x])
+
+            if !queued[x]
+                queued[x] = true; push!(queue, x)
+            end
+        end
+
+        narcs = newarcs; alive[v] = false; empty!(adj[v]); push!(elim, v)
+    end
+
+    k = length(elim)
+    iszero(k) && return graph, stack, inject, 0
+
+    # the new kernel: the live vertices, renumbered in order
+    newid = zeros(V, n); n1 = zero(V)
+
+    for v in oneto(n)
+        if alive[v]
+            n1 += one(V); newid[v] = n1
+        end
+    end
+
+    E = etype(graph)
+    ptr = FVector{E}(undef, n1 + one(V)); tgt = FVector{V}(undef, narcs)
+    ptr[1] = p = one(E)
+
+    for v in oneto(n)
+        alive[v] || continue
+
+        for x in sort!(adj[v])
+            tgt[p] = newid[x]; p += one(E)
+        end
+
+        ptr[newid[v] + one(V)] = p
+    end
+
+    kernel = BipartiteGraph(n1, n1, convert(E, narcs), ptr, tgt)
+    stack1 = FVector{V}(undef, m0 + k)
+    copyto!(stack1, 1, stack, 1, m0)
+
+    for (i, v) in enumerate(elim)
+        stack1[m0 + i] = inject[v]
+    end
+
+    inject1 = FVector{V}(undef, n1)
+
+    for v in oneto(n)
+        alive[v] && (inject1[newid[v]] = inject[v])
+    end
+
+    ASR_TWINSPLIT_COUNT[] += k
+    return kernel, stack1, inject1, k
+end

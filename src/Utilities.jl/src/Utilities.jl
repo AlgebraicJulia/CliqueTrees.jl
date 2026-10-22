@@ -190,7 +190,7 @@ end
 #
 #   - 1: the bucket array of AMF and MMD (`BUCKETS`)
 #   - 2, 3: arrays as large as the graph (AMF, MMD, MF, `bestwidth`)
-#   - 4 to 12: AMF and MMD
+#   - 4 to 13: AMF and MMD
 #   - 21 to 43: MF
 #   - 51 to 66: `bestwidth` and `bestfill`
 #   - 71 to 82: the lower bound MMW
