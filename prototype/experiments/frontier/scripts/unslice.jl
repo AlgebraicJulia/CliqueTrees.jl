@@ -4,10 +4,10 @@
 # Starting from S (e.g. cotengra's sliced set), try to restore each s in S (lowest degree first):
 # keep s unsliced if an ordering of G - (S \ {s}) still has bag width <= B: the ND ordering (nd8,
 # ~0.3 s) or, if that is too wide, the hbt-nd pipeline with T seconds (default 3).
-include(joinpath(get(ENV, "TNCORPUS_DIR", "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/tncorpus"), "prof", "common.jl"))
+include(joinpath(get(ENV, "TNCORPUS_DIR", "/path/to/tn-work/tncorpus"), "prof", "common.jl"))
 name = ARGS[1]; S = parse.(Int, readlines(ARGS[2])); B = parse(Float64, ARGS[3]); outf = ARGS[4]
 T = length(ARGS) >= 5 ? parse(Float64, ARGS[5]) : 3.0
-fdir = get(ENV, "FRONTIER_DIR", "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/frontier")
+fdir = get(ENV, "FRONTIER_DIR", "/path/to/tn-work/frontier")
 inst = TNCorpus.load(name; dir = fdir)
 G = inst.graph; w = inst.weights
 function bagw(Sset)

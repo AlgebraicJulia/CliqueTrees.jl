@@ -28,7 +28,7 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.environ.get("TNCORPUS_DIR", "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/tncorpus"), "scripts"))
+sys.path.insert(0, os.path.join(os.environ.get("TNCORPUS_DIR", "/path/to/tn-work/tncorpus"), "scripts"))
 from tncwrite import manifest_line, write_tn  # noqa: E402
 
 SEED = 2026  # bitstring seed (structure does not depend on the bit values)

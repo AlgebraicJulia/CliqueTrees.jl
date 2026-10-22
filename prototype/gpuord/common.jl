@@ -3,7 +3,7 @@ const GPUORD = @__DIR__
 isdefined(Main, :GPUOrd) || include(joinpath(GPUORD, "src", "GPUOrd.jl"))
 isdefined(Main, :Hybrid) || include(joinpath(GPUORD, "src", "Hybrid.jl"))
 using .GPUOrd, .Hybrid
-isdefined(Main, :TNCorpus) || include("/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/tncorpus/load.jl")
+isdefined(Main, :TNCorpus) || include("/path/to/tn-work/tncorpus/load.jl")
 using .TNCorpus
 
 const bw = BestWidth(MF(), MF(; strategy = 1), AMF(), MMD())

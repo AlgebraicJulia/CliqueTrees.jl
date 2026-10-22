@@ -3,7 +3,7 @@
 using CUDA, CliqueTrees, Graphs, Printf, Serialization
 const GO = dirname(@__DIR__)
 include(joinpath(@__DIR__, "SeptwGPU.jl"))
-include(get(ENV, "TNLOAD", "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/tncorpus/load.jl")); using .TNCorpus
+include(get(ENV, "TNLOAD", "/path/to/tn-work/tncorpus/load.jl")); using .TNCorpus
 const MINS = (MinimalChordal(MF()), MinimalChordal(MF(; strategy = 1)), MinimalChordal(AMF()), MinimalChordal(MMD()))
 hbt(T) = SafeRules(SafeSeparators(HBT(; time = T, threads = 1), MINS; maxmissing = 50))
 T = parse(Float64, ARGS[1]); mode = get(ENV, "HBTMODE", "both")

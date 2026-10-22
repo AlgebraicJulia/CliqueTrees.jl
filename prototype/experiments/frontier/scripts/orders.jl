@@ -8,11 +8,11 @@
 #   nd    = BestWidth of 8 ND(bw, METISND(; seed = s); width = 16, level = 12, scale = 100, imbalance = 300)
 #   hbt   = SafeRules(SafeSeparators(HBT(; time = T, threads = 1, seed), 4 minimal greedy orderings; maxmissing = 50))
 #   hbtnd = the same with HBT(; init = nd)
-include(joinpath(get(ENV, "TNCORPUS_DIR", "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/tncorpus"), "prof", "common.jl"))
+include(joinpath(get(ENV, "TNCORPUS_DIR", "/path/to/tn-work/tncorpus"), "prof", "common.jl"))
 
 name = ARGS[1]; method = ARGS[2]; budgets = parse.(Float64, split(ARGS[3], ','))
 outdir = ARGS[4]
-fdir = length(ARGS) >= 5 ? ARGS[5] : get(ENV, "FRONTIER_DIR", "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/frontier")
+fdir = length(ARGS) >= 5 ? ARGS[5] : get(ENV, "FRONTIER_DIR", "/path/to/tn-work/frontier")
 seed = length(ARGS) >= 6 ? parse(Int, ARGS[6]) : 1
 mkpath(outdir)
 # watchdog: HBT can overrun its budget (seen: syc53_m12_marg6, T = 100 s, still running after 56 min).

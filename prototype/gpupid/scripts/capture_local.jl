@@ -2,7 +2,7 @@
 #   julia -t 1 --project=mtenv capture_local.jl <instance> <hbt seconds> <out.jls>
 using CliqueTrees, Graphs, Serialization
 const CT = CliqueTrees
-SP = "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad"
+SP = "/path/to/tn-work"
 include(joinpath(SP, "tncorpus", "load.jl")); using .TNCorpus
 const CALLS = Any[]
 function CT.permutation(weights::AbstractVector, graph::AbstractGraph{V}, alg::CT.HBTExact; verbose::Bool = false) where {V}

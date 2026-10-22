@@ -2,7 +2,7 @@
 # Laptop runner: same tasks/format as frontier.sbatch, one pinned single-threaded process per core.
 # usage: run_local.sh <tasks file> <outdir> <core list, e.g. "11 12 13 14 15">
 set -u
-SP=/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad
+SP=/path/to/tn-work
 F=$SP/frontier; PY=$SP/tncorpus/venv/bin/python; JL=$HOME/.juliaup/bin/julia; ENV=$SP/mtenv
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMBA_NUM_THREADS=1
 LIST=$1; OUT=$2; CORES=($3)

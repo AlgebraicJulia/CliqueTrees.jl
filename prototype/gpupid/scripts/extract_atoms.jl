@@ -2,7 +2,7 @@
 # julia -t 1 --project=mtenv extract_atoms.jl <outdir> <names file or "paper"> [minn]
 using CliqueTrees, Graphs, Serialization
 const CT = CliqueTrees
-SP = "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad"
+SP = "/path/to/tn-work"
 include(joinpath(SP, "tncorpus", "prof", "common.jl"))
 outdir = ARGS[1]; minn = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 30
 names = ARGS[2] == "paper" ? [r.name for r in TNCorpus.select(; source = "einsum", paper = true)] : readlines(ARGS[2])

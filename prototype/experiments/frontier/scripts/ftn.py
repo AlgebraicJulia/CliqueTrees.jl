@@ -15,7 +15,7 @@ import time
 
 import cotengra as ctg
 
-FDIR = "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/frontier"
+FDIR = "/path/to/tn-work/frontier"
 
 
 def sym(v):

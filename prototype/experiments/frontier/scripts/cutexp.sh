@@ -8,9 +8,9 @@
 set -u
 name=$1; pj=$2; W=$3; out=$4; core=$5; budgets=$6
 S=$(dirname "$0")
-FD=${FRONTIER_DIR:-/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/frontier}
-PY=${PY:-/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/tncorpus/venv/bin/python}
-JL=${JL:-$HOME/.juliaup/bin/julia}; JENV=${JENV:-/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad/mtenv}
+FD=${FRONTIER_DIR:-/path/to/tn-work/frontier}
+PY=${PY:-/path/to/tn-work/tncorpus/venv/bin/python}
+JL=${JL:-$HOME/.juliaup/bin/julia}; JENV=${JENV:-/path/to/tn-work/mtenv}
 mkdir -p $out/ord $out/res
 exec 9>$FD/manifest.lock; flock 9
 cut=$($PY $S/make_cut.py $name $pj $FD | awk '{print $1}')

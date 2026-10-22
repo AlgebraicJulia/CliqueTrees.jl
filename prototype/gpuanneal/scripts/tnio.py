@@ -16,7 +16,7 @@ import os
 import numpy as np
 import cotengra as ctg
 
-SCR = "/tmp/claude-1000/-home-itaykadosh-Projects-GATAS/2e762ebb-ae79-4e3b-a677-b7caf4118124/scratchpad"
+SCR = "/path/to/tn-work"
 CORPUS = os.path.join(SCR, "tncorpus")
 FRONTIER = os.path.join(SCR, "frontier")
 MAGIC = b"TNCORP1\0"
