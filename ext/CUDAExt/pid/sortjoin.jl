@@ -151,9 +151,10 @@ end
 
 # The pruned join with the tile tests spread over the lanes: lane l tests O-tile base + l against
 # the warp's I-tile summary (coalesced loads), a ballot gives the surviving O-tiles, and for each of
-# them the lanes (now I-blocks) test their own block against the tile, then the pairs.
+# them the lanes (now I-blocks) test their own block against the tile, then the pairs. A warp
+# stops when the host sets abort[1] (read every 64 steps, the same answer for the whole warp).
 function k_join3!(out, ctr, cap, IC, IN, ilo, ihi, ItC, ItN, OA, ON, Ow, olo, ohi, OtAor, OtAand, OtNAor, OtW,
-        masks, wcls, ncls, K, tol, rej, TO)
+        masks, wcls, ncls, K, tol, rej, TO, abort)
     ws = Int(warpsize())
     lane = (Int(threadIdx().x) - 1) % ws + 1
     wib = (Int(threadIdx().x) - 1) ÷ ws
@@ -163,9 +164,9 @@ function k_join3!(out, ctr, cap, IC, IN, ilo, ihi, ItC, ItN, OA, ON, Ow, olo, oh
     nto = tohi - tolo + 1
     chunk = cld(cld(nto, Int(gridDim().y)), ws) * ws
     jlo = tolo + (Int(blockIdx().y) - 1) * chunk; jhi = min(tohi, jlo + chunk - 1)
-    best = Inf
+    best = Inf; stopped = false; step = 0
     it = tilo + (Int(blockIdx().x) - 1) * nwb + wib
-    while it <= tihi
+    while it <= tihi && !stopped
         i = (it - 1) * ws + lane
         valid = ilo <= i <= ihi
         ii = valid ? i : max(ilo, (it - 1) * ws + 1)
@@ -173,6 +174,11 @@ function k_join3!(out, ctr, cap, IC, IN, ilo, ihi, ItC, ItN, OA, ON, Ow, olo, oh
         @inbounds tC = ItC[it]; @inbounds tN = ItN[it]
         base = jlo
         while base <= jhi
+            step += 1
+            if (step & 63) == 1
+                ab = CUDA.atomic_add!(pointer(abort), UInt32(0)) != UInt32(0)
+                CUDA.vote_any_sync(CUDA.FULL_MASK, ab) && (stopped = true; break)
+            end
             # lane-parallel tile tests
             j = base + lane - 1
             pass = false

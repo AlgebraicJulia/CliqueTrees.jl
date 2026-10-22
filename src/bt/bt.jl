@@ -132,7 +132,8 @@ end
 # and it reads the time on the first tick and every BT_TICK ticks
 # after; once the deadline has passed, out is set, and the search
 # unwinds. The tasks of a search
-# each have their own ticks and share out.
+# each have their own ticks and share out. Another task may set out
+# to stop the search.
 const BT_TICK = 1024
 
 function bt_clk(deadline::Real)

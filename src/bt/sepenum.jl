@@ -46,7 +46,8 @@
 # (sepenum_st). The result is (sep, status): the list and
 # BT_FOUND, or, if the search runs for more than mt seconds, an
 # empty list and BT_TIMEOUT. The positional method takes the
-# deadline dl, in the sense of time(), instead.
+# deadline dl, in the sense of time(), instead, or a clock (bt_clk):
+# then the search also stops when another task sets its flag.
 #
 #   - Tamaki, Hisao. "Computing treewidth via exact and heuristic
 #     lists of minimal separators." SEA 2019.
@@ -55,7 +56,7 @@ function sepenum(weights::AbstractVector, graph::AbstractGraph, maxk; mt::Real =
     return sepenum(weights, graph, maxk, time() + mt, nt)
 end
 
-function sepenum(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, dl::Real, nt::Integer) where {W, V}
+function sepenum(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, dl::Union{Real, NamedTuple}, nt::Integer) where {W, V}
     nvtx = nv(graph)
 
     if nt <= 1 || nvtx < SEPENUM_MT
@@ -75,7 +76,7 @@ end
 const SEPENUM_MT = 20
 
 # One thread: the starts in order.
-function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, deadline::Real = Inf) where {W, V}
+function sepenum_st(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, deadline::Union{Real, NamedTuple} = Inf) where {W, V}
     nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk); clk = bt_clk(deadline)
 
     # the work arrays are slots 161 to 166 of the workspace
@@ -106,7 +107,7 @@ end
 # set of the starts before it. The separators of the start i are
 # lsts[task[i]][lo[i] + 1:hi[i]], and they are put back in the order
 # of the starts, so the result is that of sepenum_st.
-function sepenum_mt(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, nt::Integer, deadline::Real = Inf) where {W, V}
+function sepenum_mt(weights::AbstractVector{W}, graph::AbstractGraph{V}, maxk, nt::Integer, deadline::Union{Real, NamedTuple} = Inf) where {W, V}
     nvtx = nv(graph); nwrd = convert(V, cld(nvtx, 64)); maxk = convert(W, maxk); clk = bt_clk(deadline)
 
     adj = bt_mat(nwrd, nvtx)

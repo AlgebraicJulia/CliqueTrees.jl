@@ -40,7 +40,8 @@
 # can build, and (perm, invp) is the identity. If the search runs
 # for more than mt seconds, the status is BT_TIMEOUT, mink is zero,
 # and (perm, invp) is the identity. The positional method takes the
-# deadline dl, in the sense of time(), instead. If the weights are positive and
+# deadline dl, in the sense of time(), instead, or a clock (bt_clk, as
+# in sepenum). If the weights are positive and
 # S contains every minimal separator of weight less than maxk,
 # then mink <= maxk if and only if the graph has a tree
 # decomposition of width at most maxk. In that case, a failed
@@ -58,7 +59,7 @@ function sepdp(weights::AbstractVector, graph::AbstractGraph, sep::BipartiteGrap
     return sepdp(weights, graph, sep, maxk, time() + mt, nt)
 end
 
-function sepdp(weights::AbstractVector{W}, graph::AbstractGraph{V}, sep::BipartiteGraph{V}, maxk, dl::Real, nt::Integer) where {W, V}
+function sepdp(weights::AbstractVector{W}, graph::AbstractGraph{V}, sep::BipartiteGraph{V}, maxk, dl::Union{Real, NamedTuple}, nt::Integer) where {W, V}
     nvtx = nv(graph); nsep = nv(sep); maxk = convert(W, maxk); clk = bt_clk(dl)
 
     perm = FVector{V}(undef, nvtx)

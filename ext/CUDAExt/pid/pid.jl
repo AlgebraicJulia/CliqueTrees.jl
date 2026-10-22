@@ -45,14 +45,15 @@ end
 const INITCAP = Ref(1024)
 DSet{W}(cap::Int = INITCAP[]) where {W} = DSet{W}(CuVector{BS{W}}(undef, cap), 0, CUDA.zeros(Int32, nextpow(2, 4 * cap)))
 
-function k_hins!(tab, keys, cand, m, isnew, slot)
+# (a candidate already in the set with the table xtab is not new, if hasx)
+function k_hins!(tab, keys, cand, m, isnew, slot, hasx, xtab, xkeys)
     mask = UInt64(length(tab) - 1)
     i = gtid()
     while i <= m
         @inbounds key = cand[i]
         h = bs_hash(key) & mask
-        new = Int32(0); sl = Int64(0)
-        while true
+        new = Int32(0); sl = Int64(0); seen = hasx && k_hfind(xtab, xkeys, key)
+        while !seen
             p = pointer(tab, Int(h) + 1)
             old = CUDA.atomic_cas!(p, Int32(0), Int32(-i))
             if old == Int32(0)
@@ -110,11 +111,13 @@ function clear!(s::DSet)
     s.n = 0; fill!(s.tab, Int32(0)); return s
 end
 # Insert m candidates; returns (pos, nnew): pos[i] = new key index if candidate i was new, else 0.
-function dinsert!(s::DSet{W}, cand::CuVector{BS{W}}, m::Int) where {W}
+# The candidates in the set x are not inserted.
+function dinsert!(s::DSet{W}, cand::CuVector{BS{W}}, m::Int, x::Union{Nothing, DSet{W}} = nothing) where {W}
     m == 0 && return CUDA.zeros(Int32, 0), 0
     reserve!(s, m)
     isnew = CuVector{Int32}(undef, m); slot = CuVector{Int64}(undef, m)
-    launch!(k_hins!, m, s.tab, s.keys, cand, m, isnew, slot)
+    xs = isnothing(x) ? s : x
+    launch!(k_hins!, m, s.tab, s.keys, cand, m, isnew, slot, !isnothing(x), xs.tab, xs.keys)
     rank = cumsum(isnew) .- isnew            # exclusive prefix
     nnew = Int(sum(isnew))
     pos = CuVector{Int32}(undef, m)
@@ -146,13 +149,14 @@ function fill_buf!(f, b::DBuf{T}) where {T}
     c, _ = fill_buf_cap!(f, b, typemax(Int))
     return c
 end
-# The same, but the buffer grows to at most maxcap entries: returns (count, fits).
-function fill_buf_cap!(f, b::DBuf{T}, maxcap::Int) where {T}
+# The same, but the buffer grows to at most maxcap entries: returns (count, fits). If quit()
+# after f, the count is returned as it is (the output is not used).
+function fill_buf_cap!(f, b::DBuf{T}, maxcap::Int, quit = Returns(false)) where {T}
     while true
         reset!(b)
         f(b.data, b.ctr, length(b.data))
         c = bcount(b)
-        c <= length(b.data) && return c, true
+        (c <= length(b.data) || quit()) && return c, true
         c > maxcap && return c, false
         b.data = CuVector{T}(undef, min(maxcap, nextpow(2, c + c ÷ 2)))
     end
@@ -400,6 +404,25 @@ function ensure!(d::DVec{T}, cap::Int) where {T}
     return d
 end
 
+# ------------------------------------------------------------------ stopping kernels
+# The kernels launched so far end; if late() first, the flag (device memory) is set by a memset
+# on a stream that does not wait for them (a copy from the host, or a kernel, would wait), and
+# the kernels that read it stop. Returns whether the flag was set.
+const ABORTSTREAM = Ref{Any}(nothing)
+function waitfor!(late, flag::CuVector{UInt32})
+    ABORTSTREAM[] === nothing && (ABORTSTREAM[] = CuStream(; flags = CUDA.STREAM_NON_BLOCKING))
+    e = CuEvent(); CUDA.record(e); ab = false
+    while !CUDA.isdone(e)
+        if !ab && late()
+            CUDA.memset(reinterpret(CuPtr{UInt32}, pointer(flag)), UInt32(1), 1; stream = ABORTSTREAM[])
+            ab = true
+        end
+        Libc.systemsleep(50.0e-6)
+    end
+    CUDA.synchronize(e)
+    return ab
+end
+
 # ------------------------------------------------------------------ the decision
 mutable struct GPUGraph{W}
     pg::PGraph{W}
@@ -419,7 +442,12 @@ struct GPUResult{W}
     stats::Dict{Symbol, Any}
 end
 
-function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, tile = Val(64), deadline = Inf, dump = false, join = :pruned3, TO = 8, xdedup = :round) where {W}
+# The candidate O-blocks and PMCs of a round are deduplicated (against the blocks of the earlier
+# rounds and against each other) after each join chunk if dedup = :chunk, at the end of the round
+# if dedup = :round: the same blocks, in the same order, but the candidate buffers hold one chunk
+# instead of a round. The search stops at the deadline, or when stop[] (a Threads.Atomic{Bool}).
+function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, tile = Val(64), deadline = Inf, dump = false, join = :pruned3, TO = 8, xdedup = :round,
+        dedup = :chunk, stop = nothing) where {W}
     pg = gg.pg; n = pg.n; adj = gg.adj; all = pg.all
     masks = gg.masks; wcls = gg.wcls; ncls = gg.ncls
     rej = CuVector{UInt64}([f2u(Inf)])
@@ -429,6 +457,9 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
     X2 = DSet{W}(); X3 = DSet{W}()
     bufX = DBuf{BS{W}}(); bufOA = DBuf{BS{W}}(); bufON = CuVector{BS{W}}(undef, INITCAP[])
     bufP = DBuf{BS{W}}(); bufBig = DBuf{BS{W}}(64)
+    Ostg = DSet{W}(); OstgN = DVec{BS{W}}(); Pstg = DSet{W}()
+    jab = CUDA.zeros(UInt32, 1)
+    late() = time() > deadline || (!isnothing(stop) && stop[])
     bufIC = DBuf{BS{W}}(); bufIN = CuVector{BS{W}}(undef, INITCAP[]); bufIP = CuVector{Int32}(undef, INITCAP[])
     pend = DVec{Int32}(); still = DBuf{Int32}()
     root = CUDA.zeros(Int32, 1)
@@ -447,12 +478,35 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
         launch!(k_osum!, nt - tlo + 1, OtAor.v, OtAand.v, OtNAor.v, OtW.v, Oset.keys, ON.v, Ow.v, tlo, nt, Oset.n, TO)
         OtAor.n = OtAand.n = OtNAor.n = OtW.n = nt
     end
-    st = Dict{Symbol, Any}(:rounds => 0, :pairs => 0, :xcand2 => 0, :xcand3 => 0, :pmc_tests => 0, :t => Dict{Symbol, Float64}())
+    st = Dict{Symbol, Any}(:rounds => 0, :pairs => 0, :xcand2 => 0, :xcand3 => 0, :pmc_tests => 0, :t => Dict{Symbol, Float64}(), :peak => 0, :peakdev => 0)
     tt = st[:t]
     tick(f, key) = (t0 = time(); r = f(); CUDA.synchronize(); tt[key] = get(tt, key, 0.0) + time() - t0; r)
     scr = CuVector{UInt64}(undef, 1)
     # the largest candidate buffer: a share of the free device memory (no device-specific constant)
     maxbuf = max(1 << 16, Int(floor(0.06 * CUDA.total_memory() / sizeof(BS{W}))))
+    # with dedup = :chunk, the sets X2 and X3 (the join results of a round, classified once) are
+    # caches: emptied when full, so a set may be classified twice, with the same result
+    xcap = max(1 << 16, maxbuf ÷ 2)
+    # the bytes of the device arrays of the search (largest at the checkpoints: st[:peak]), and of
+    # the device in use (st[:peakdev], if verbose; it includes the free blocks of the pool)
+    nbytes(x::CuArray) = length(x) * sizeof(eltype(x))
+    nbytes(x::DSet) = nbytes(x.keys) + nbytes(x.tab)
+    nbytes(x::DVec) = nbytes(x.v)
+    nbytes(x::DBuf) = nbytes(x.data)
+    held() = sum(nbytes, (Iset, IN, Ibp, Oset, ON, Ow, Pset, blk, X2, X3, bufX, bufOA, bufP, bufIC, pend, still, ItC, ItN, OtAor, OtAand, OtNAor, OtW, Ostg, OstgN, Pstg)) +
+        nbytes(bufON) + nbytes(bufIN) + nbytes(bufIP) + nbytes(scr)
+    function track!()
+        h = held()
+        if h > st[:peak] && verbose
+            names = ("I", "IN", "Ibp", "O", "ON", "Ow", "P", "blk", "X2", "X3", "bufX", "bufOA", "bufP", "bufIC", "pend", "still", "ItC", "ItN", "OtAor", "OtAand", "OtNAor", "OtW", "Ostg", "OstgN", "Pstg", "bufON")
+            xs = (Iset, IN, Ibp, Oset, ON, Ow, Pset, blk, X2, X3, bufX, bufOA, bufP, bufIC, pend, still, ItC, ItN, OtAor, OtAand, OtNAor, OtW, Ostg, OstgN, Pstg, bufON)
+            sz = [nbytes(x) for x in xs]; ord = sortperm(sz; rev = true)[1:6]
+            st[:peakwhat] = Base.join(("$(names[i])=$(round(sz[i] / 2^30; digits = 2))" for i in ord), " ")
+        end
+        st[:peak] = max(st[:peak], h)
+        verbose && (st[:peakdev] = max(st[:peakdev], CUDA.total_memory() - CUDA.free_memory()))
+        return
+    end
 
     # classify a set of unique X's; O-block and PMC candidates go to bufOA/bufON and bufP (appended)
     function classify!(Xkeys, lo, m, pmc_only)
@@ -471,7 +525,8 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
             oc2 = bcount(bufOA); pc2 = bcount(bufP)
             if oc2 <= length(bufOA.data) && pc2 <= length(bufP.data)
                 bcount(bufBig) > 0 && error("bag of more than 128 vertices: not supported")
-                st[:pmc_tests] += m
+                st[:pmc_tests] += m; track!()
+                dedup === :chunk && (stageO!(); stageP!())
                 return
             end
             # overflow: grow and redo this batch from the counts before it
@@ -482,21 +537,47 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
             copyto!(bufOA.ctr, Int64[oc]); copyto!(bufP.ctr, Int64[pc])
         end
     end
-    # insert the PMC candidates in bufP; new PMCs join the pending list
+    # the candidates in bufOA/bufON and bufP that are new (not blocks of an earlier round), without
+    # repeats, in the sets Ostg (with OstgN) and Pstg
+    function stageO!()
+        m = bcount(bufOA); m == 0 && return
+        pos, _ = dinsert!(Ostg, bufOA.data, m, Oset)
+        ensure!(OstgN, Ostg.n); launch!(k_gather!, m, OstgN.v, bufON, pos, m); OstgN.n = Ostg.n
+        reset!(bufOA); track!()
+        return
+    end
+    function stageP!()
+        m = bcount(bufP); m == 0 && return
+        dinsert!(Pstg, bufP.data, m, Pset)
+        reset!(bufP); track!()
+        return
+    end
+    # insert the PMC candidates; new PMCs join the pending list
     function flushP!()
-        m = bcount(bufP); m == 0 && return 0
-        pos, nnew = dinsert!(Pset, bufP.data, m)
+        if dedup === :chunk
+            stageP!(); m = Pstg.n; cand = Pstg.keys
+        else
+            m = bcount(bufP); cand = bufP.data
+        end
+        m == 0 && return 0
+        pos, nnew = dinsert!(Pset, cand, m)
         ensure!(blk, Pset.n); fill!(view(blk.v, (blk.n + 1):Pset.n), bs_zero(Val(W))); blk.n = Pset.n
         ensure!(pend, pend.n + nnew)
         c = CuVector{Int32}([pend.n]); launch!(k_newlist!, m, view(pend.v, 1:length(pend.v)), pos, m, c)
         # k_newlist! writes at pend.n + k
-        pend.n += nnew; reset!(bufP)
+        pend.n += nnew; reset!(bufP); clear!(Pstg); track!()
         return nnew
     end
+    # insert the O-block candidates, in the order of their neighborhoods
     function flushO!()
-        m = bcount(bufOA); m == 0 && return 0
-        idx = sortidx(bufON, m)
-        cA = permute(bufOA.data, idx, m); cN = permute(bufON, idx, m)
+        if dedup === :chunk
+            stageO!(); m = Ostg.n; cA0 = Ostg.keys; cN0 = OstgN.v
+        else
+            m = bcount(bufOA); cA0 = bufOA.data; cN0 = bufON
+        end
+        m == 0 && return 0
+        idx = sortidx(cN0, m)
+        cA = permute(cA0, idx, m); cN = permute(cN0, idx, m)
         oldn = Oset.n
         pos, nnew = dinsert!(Oset, cA, m)
         ensure!(ON, Oset.n); ensure!(Ow, Oset.n)
@@ -504,10 +585,11 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
         lo = ON.n + 1; ON.n = Oset.n; Ow.n = Oset.n
         launch!(k_weights!, ON.n - lo + 1, Ow.v, ON.v, lo, ON.n, masks, wcls, ncls)
         osum!(oldn)
-        reset!(bufOA)
+        reset!(bufOA); clear!(Ostg); OstgN.n = 0; track!()
         return nnew
     end
     function dedupX!(S::DSet, cnt)   # insert bufX into S, return range of new keys
+        dedup === :chunk && S.n + cnt > xcap && clear!(S)
         lo = S.n + 1
         dinsert!(S, bufX.data, cnt)
         return lo, S.n - lo + 1
@@ -521,7 +603,7 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
 
     nIold = 0; nOold = 0; rootp = 0
     while true
-        time() > deadline && (st[:timeout] = true; break)
+        late() && (st[:timeout] = true; break)
         # R4
         tick(:r4) do
             np = pend.n
@@ -548,6 +630,7 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
             end
         end
         rootp > 0 && break
+        late() && (st[:timeout] = true; break)
         dIlo = nIold + 1; dIhi = Iset.n; dOlo = nOold + 1; dOhi = Oset.n
         (dIhi < dIlo && dOhi < dOlo) && break
         st[:rounds] += 1
@@ -558,6 +641,7 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
                     length(bufON) < length(d) && (bufON = CuVector{BS{W}}(undef, length(d)))
                     launch!(k_r1!, dIhi - dIlo + 1, d, bufON, ctr, cap, IN.v, dIlo, dIhi, adj, all, masks, wcls, ncls, K, tol, rej)
                 end
+                dedup === :chunk && stageO!()
             end
         end
         xdedup == :round && (clear!(X2); clear!(X3))
@@ -568,13 +652,14 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
         while !isempty(stack)
             (ilo, ihi, olo, ohi) = pop!(stack)
             cX, fits = tick(:join) do
-                fill_buf_cap!(bufX, maxbuf) do d, ctr, cap
+                fill_buf_cap!(bufX, maxbuf, late) do d, ctr, cap
                     jargs = (d, ctr, cap, Iset.keys, IN.v, ilo, ihi, ItC.v, ItN.v, Oset.keys, ON.v, Ow.v, olo, ohi,
-                        OtAor.v, OtAand.v, OtNAor.v, OtW.v, masks, wcls, ncls, K, tol, rej, TO)
+                        OtAor.v, OtAand.v, OtNAor.v, OtW.v, masks, wcls, ncls, K, tol, rej, TO, jab)
                     nti = (ihi - 1) ÷ ws - (ilo - 1) ÷ ws + 1; nto = (ohi - 1) ÷ TO - (olo - 1) ÷ TO + 1
-                    launch_join!(k_join3!, jargs, ws, nti, cld(nto, ws))
+                    fill!(jab, UInt32(0)); launch_join!(k_join3!, jargs, ws, nti, cld(nto, ws)); waitfor!(late, jab)
                 end
             end
+            late() && (timedout = true; break)
             if !fits
                 # split the larger side
                 if ihi - ilo >= ohi - olo && ihi > ilo
@@ -591,7 +676,7 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
                 lo2, m2 = dedupX!(X2, cX)
                 classify!(X2.keys, lo2, m2, false)
             end
-            time() > deadline && (timedout = true; break)
+            late() && (timedout = true; break)
         end
         timedout && (st[:timeout] = true; break)
         # R3 on ΔO, in chunks of O-blocks whose pairs (A, v ∈ N(A)) fit the buffer
@@ -602,7 +687,7 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
                 launch!(k_popc!, nb, off, ON.v, dOlo, dOhi)
                 cnt = Array(off)
                 lo = 1
-                while lo <= nb
+                while lo <= nb && !late()
                     hi = lo; tot = Int(cnt[lo])
                     while hi < nb && tot + cnt[hi + 1] <= maxbuf
                         hi += 1; tot += cnt[hi]
@@ -619,11 +704,17 @@ function gpu_decide(gg::GPUGraph{W}, K::Float64; tol = 1e-9, verbose = false, ti
                 end
             end
         end
+        late() && (st[:timeout] = true; break)
         nIold = dIhi; nOold = dOhi
         tick(:flush) do
             flushO!(); flushP!()
         end
-        verbose && println("round $(st[:rounds]): |I|=$(Iset.n) |O|=$(Oset.n) |P|=$(Pset.n) pending=$(pend.n) pairs=$(st[:pairs])")
+        if verbose
+            gib(x) = round(x / 2^30; digits = 3)
+            println("round $(st[:rounds]): |I|=$(Iset.n) |O|=$(Oset.n) |P|=$(Pset.n) pending=$(pend.n) pairs=$(st[:pairs]) xcand2=$(st[:xcand2]) xcand3=$(st[:xcand3]) ",
+                "held=$(gib(held())) GiB peak=$(gib(st[:peak])) GiB device=$(gib(st[:peakdev])) GiB t=$(round(sum(values(tt)); digits = 2)) s [$(get(st, :peakwhat, ""))]")
+            flush(stdout)
+        end
     end
     st[:I] = Iset.n; st[:O] = Oset.n; st[:P] = Pset.n
     nextK = u2f(Array(rej)[1])

@@ -53,8 +53,27 @@ function prepare(::Type{T}, graphs, weights, maxks) where {T}
             push!(tg, g); push!(ti, i)
         end
     end
-    return Batch{T}(CuArray(adj), CuArray(wts), CuArray(nvs), CuArray(Float64.(maxks)), CuArray(smax), CuArray(order),
-        CuArray(tg), CuArray(ti), length(tg), emp, G)
+    # (one copy for each element type)
+    dwts, dmaxk = upload([wts, Float64[k for k in maxks]])
+    dnvs, dsmax, dorder, dtg, dti = upload([nvs, smax, order, tg, ti])
+    return Batch{T}(CuArray(adj), dwts, dnvs, dmaxk, dsmax, dorder, dtg, dti, length(tg), emp, G)
+end
+
+# Upload host arrays of one element type in one copy: device arrays of the
+# same shapes (views of one buffer).
+function upload(xs::AbstractVector{<:Array{E}}) where {E}
+    h = Vector{E}(undef, sum(length, xs; init = 0)); o = 0
+
+    for x in xs
+        copyto!(h, o + 1, x, 1, length(x)); o += length(x)
+    end
+
+    dev = CuArray(h); o = 0
+
+    return map(xs) do x
+        v = reshape(view(dev, (o + 1):(o + length(x))), size(x)); o += length(x)
+        v
+    end
 end
 
 # ------------------------------------------------------------- device --
@@ -242,7 +261,7 @@ end
 @inline keyvtx(key::UInt64) = Int32(UInt64(typemax(UInt32)) - (key & UInt64(typemax(UInt32))))
 
 @inline function rundfs!(::Type{T}, st, stkw, adj, wts, X, a, maxk, smax, n, mask, A, R, S, F, ws, path0, level0, k1,
-        outkey, outsep, cnt, cap, split, tasks, tcnt, tcap, root, ovf, tid, maxsteps) where {T}
+        outkey, outsep, cnt, cap, split, tasks, tcnt, tcap, root, ovf, tid, maxsteps, abp) where {T}
     W = nwords(T); HF = fromhdr(T); HB = brhdr(T)
     seq = Int32(0); sp = Int32(0); steps = Int64(0); top = Int32(0)
     nsp = push_from(T, st, sp, adj, A, R, S, F, ws, maxk, n, path0, level0)
@@ -254,8 +273,8 @@ end
         if steps > maxsteps || sp + margin > stkw - top
             @inbounds ovf[tid] = Int32(1); break
         end
-        # cooperative cancellation: cnt[2] is the abort flag (set by the host at the deadline)
-        if (steps & 1023) == 0 && CUDA.atomic_add!(pointer(cnt, 2), Int32(0)) != Int32(0)
+        # cooperative cancellation: the abort flag of the graph (set by the host)
+        if (steps & 1023) == 0 && CUDA.atomic_add!(abp, Int32(0)) != Int32(0)
             @inbounds ovf[tid] = Int32(3); break
         end
         fp = Int32(st[stkw - top + 1])
@@ -336,24 +355,24 @@ end
         X = X | bitof(T, @inbounds orders[j, g])
     end
     a = @inbounds orders[i, g]
-    return adj, wts, n, maxk, smax, X, a, maskn(T, n)
+    return adj, wts, n, maxk, smax, X, a, maskn(T, n), g
 end
 
 function start_kernel!(::Type{T}, adj0, wts0, nvs, maxks, smaxs, orders, tg, ti, nthr::Int32, stk, stkw::Int32, outkey, outsep, cnt, cap::Int32, ovf, maxsteps::Int64,
-        split::Int32, tasks, tcnt, tcap::Int32) where {T}
+        split::Int32, tasks, tcnt, tcap::Int32, gab) where {T}
     tid = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     tid > nthr && return
-    adj, wts, n, maxk, smax, X, a, mask = threadsetup(T, tg, ti, nvs, maxks, smaxs, orders, adj0, wts0, tid)
+    adj, wts, n, maxk, smax, X, a, mask, g = threadsetup(T, tg, ti, nvs, maxks, smaxs, orders, adj0, wts0, tid)
     st = Stk(stk, (tid - Int32(1)) * Int64(stkw))
     A = bitof(T, a); S = adj[a]; F = S & X; R = ~(S | A) & mask
     if wgt(0.0, F, wts) < maxk && sml(Int32(1), popc(S), smax, n)
         rundfs!(T, st, stkw, adj, wts, X, a, maxk, smax, n, mask, A, R, S, F, wgt(0.0, S, wts), zero(UInt64), Int32(1), UInt64(tid) << PATHBITS,
-            outkey, outsep, cnt, cap, split, tasks, tcnt, tcap, tid, ovf, tid, maxsteps)
+            outkey, outsep, cnt, cap, split, tasks, tcnt, tcap, tid, ovf, tid, maxsteps, pointer(gab, g))
     end
     return
 end
 
-function task_kernel!(::Type{T}, adj0, wts0, nvs, maxks, smaxs, orders, tg, ti, ntask::Int32, next, tasks, stk, stkw::Int32, outkey, outsep, cnt, cap::Int32, ovf, maxsteps::Int64) where {T}
+function task_kernel!(::Type{T}, adj0, wts0, nvs, maxks, smaxs, orders, tg, ti, ntask::Int32, next, tasks, stk, stkw::Int32, outkey, outsep, cnt, cap::Int32, ovf, maxsteps::Int64, gab) where {T}
     W = nwords(T)
     me = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     st = Stk(stk, (me - Int32(1)) * Int64(stkw))
@@ -364,9 +383,9 @@ function task_kernel!(::Type{T}, adj0, wts0, nvs, maxks, smaxs, orders, tg, ti, 
         wS = reinterpret(Float64, @inbounds tasks[o + 1]); path = @inbounds tasks[o + 2]; root = Int32(@inbounds tasks[o + 3])
         tv = Stk(tasks, Int64(o) + 3)
         A = ldw(T, tv, 0); R = ldw(T, tv, W); S = ldw(T, tv, 2W); F = ldw(T, tv, 3W)
-        adj, wts, n, maxk, smax, X, a, mask = threadsetup(T, tg, ti, nvs, maxks, smaxs, orders, adj0, wts0, root)
+        adj, wts, n, maxk, smax, X, a, mask, g = threadsetup(T, tg, ti, nvs, maxks, smaxs, orders, adj0, wts0, root)
         rundfs!(T, st, stkw, adj, wts, X, a, maxk, smax, n, mask, A, R, S, F, wS, path, Int32(99), (UInt64(root) << PATHBITS) | path,
-            outkey, outsep, cnt, cap, Int32(0), tasks, cnt, Int32(0), root, ovf, j, maxsteps)
+            outkey, outsep, cnt, cap, Int32(0), tasks, cnt, Int32(0), root, ovf, j, maxsteps, pointer(gab, g))
     end
     return
 end
@@ -376,28 +395,37 @@ function resident(kernel, threads)
     return sms * CUDA.active_blocks(kernel.fun, threads) * threads
 end
 
-# Run f() (kernel launches) and wait; if the host clock passes the deadline
-# dl, set flag[i] (device memory) from another stream so that the kernels
-# stop. Returns (GPU time, aborted).
+# Run f() (kernel launches) and wait; while the kernels run, set the abort
+# flag flags[g] (device memory) of each graph g for which cut(g) holds (its
+# deadline has passed, or its answer is no longer needed), from another
+# stream, so that the kernels of the graph stop. The flags of the graphs in
+# the vector out are set already, and it gets the graphs cut here. Returns
+# the GPU time.
 const ABORTSTREAM = Ref{Any}(nothing)
-function timed_dl(f, dl::Float64, flag, i)
-    # (the flag is set by a memset on a stream that does not wait for the
+function timed_cut(f, cut, flags, out::AbstractVector{Bool})
+    # (a flag is set by a memset on a stream that does not wait for the
     # kernels: a copy from host memory, or a kernel, can wait for them)
     ABORTSTREAM[] === nothing && (ABORTSTREAM[] = CuStream(; flags = CUDA.STREAM_NON_BLOCKING))
     e0 = CuEvent(); e1 = CuEvent()
     CUDA.record(e0); f(); CUDA.record(e1)
-    ab = false
-    if isfinite(dl)
-        while !CUDA.isdone(e1)
-            if !ab && time() > dl
-                CUDA.memset(reinterpret(CuPtr{UInt32}, pointer(flag, i)), UInt32(1), 1; stream = ABORTSTREAM[])
-                ab = true
+    while !CUDA.isdone(e1)
+        for g in eachindex(out)
+            if !out[g] && cut(g)
+                CUDA.memset(reinterpret(CuPtr{UInt32}, pointer(flags, g)), UInt32(1), 1; stream = ABORTSTREAM[])
+                out[g] = true
             end
-            Libc.systemsleep(50e-6)
         end
+        Libc.systemsleep(50e-6)
     end
     CUDA.synchronize(e1)
-    return CUDA.elapsed(e0, e1), ab
+    return CUDA.elapsed(e0, e1)
+end
+
+# the abort flags of G graphs, those of the graphs in out set
+function cutflags(name::Symbol, out::AbstractVector{Bool})
+    flags = buf(name, Int32, max(length(out), 1))
+    copyto!(view(flags, 1:length(out)), Int32.(out))
+    return flags
 end
 
 # device buffers kept between calls; grown geometrically, never zeroed
@@ -413,26 +441,32 @@ function buf(name::Symbol, ::Type{E}, n::Integer) where {E}
 end
 
 """
-    gpu_sepenum(b::Batch{T}; split) -> (lists of sets per graph, overflow per graph, kernel time, info)
+    gpu_sepenum(b::Batch{T}; split, dl, cut) -> (lists of sets per graph, overflow per graph, kernel time, info)
 
 split = 0: one thread per start vertex; split = D (1..3): phase 1 runs
 levels 1..D per start and writes the deeper subtrees as tasks, which
 persistent threads take from a queue. Output and task capacity start small
 and the call is repeated with more if they overflow.
+
+The search of the graph g stops once cut(g) holds (by default, once the
+deadline dl has passed); info.cut[g] says whether it was stopped (its list
+is then empty), and info.aborted whether all were.
 """
-function gpu_sepenum(b::Batch{T}; split::Int = 3, stkw::Int = 1024 * nwords(T)^2, cap::Int = 1 << 18, tcap::Int = 1 << 16, maxsteps::Int = 10^10, threads::Int = 64, maxresident::Int = 1 << 15, dl::Float64 = Inf) where {T}
-    W = nwords(T)
+function gpu_sepenum(b::Batch{T}; split::Int = 3, stkw::Int = 1024 * nwords(T)^2, cap::Int = 1 << 18, tcap::Int = 1 << 16, maxsteps::Int = 10^10, threads::Int = 64, maxresident::Int = 1 << 15,
+        dl::Float64 = Inf, cut = g -> time() > dl) where {T}
+    W = nwords(T); out = falses(b.G)
+    stopped(t1, t2, ntask) = ([T[] for _ in 1:b.G], falses(b.G), t1 + t2, (; t1, t2, ntask, aborted = true, cut = trues(b.G)))
     while true
         outkey = buf(:outkey, UInt64, 2cap); outsep = buf(:outsep, UInt64, cap * W)
         cnt = buf(:cnt, Int32, 2); fill!(cnt, 0)
         ovf = buf(:ovf, Int32, b.nthr); fill!(view(ovf, 1:b.nthr), 0)
         tasks = buf(:tasks, UInt64, split > 0 ? tcap * (4W + 3) : 1); tcnt = buf(:tcnt, Int32, 1); fill!(tcnt, 0)
-        stk = buf(:stk, UInt64, stkw * b.nthr)
-        t1, ab = timed_dl(dl, cnt, 2) do
+        stk = buf(:stk, UInt64, stkw * b.nthr); gab = cutflags(:gab, out)
+        t1 = timed_cut(cut, gab, out) do
             @cuda threads = threads blocks = cld(b.nthr, threads) start_kernel!(T, b.adj, b.wts, b.nvs, b.maxk, b.smax, b.order, b.tg, b.ti, Int32(b.nthr),
-                stk, Int32(stkw), outkey, outsep, cnt, Int32(cap), ovf, Int64(maxsteps), Int32(split), tasks, tcnt, Int32(tcap))
+                stk, Int32(stkw), outkey, outsep, cnt, Int32(cap), ovf, Int64(maxsteps), Int32(split), tasks, tcnt, Int32(tcap), gab)
         end
-        ab && return nothing, nothing, t1, (; t1, t2 = 0.0, ntask = 0, aborted = true)
+        all(out) && return stopped(t1, 0.0, 0)
         t2 = 0.0; ntask = 0
         if split > 0
             ntask = Int(Array(tcnt)[1])
@@ -443,15 +477,15 @@ function gpu_sepenum(b::Batch{T}; split::Int = 3, stkw::Int = 1024 * nwords(T)^2
                 next = buf(:next, Int32, 1); fill!(next, 0)
                 ovf2 = buf(:ovf2, Int32, ntask); fill!(view(ovf2, 1:ntask), 0)
                 args = (T, b.adj, b.wts, b.nvs, b.maxk, b.smax, b.order, b.tg, b.ti, Int32(ntask), next, tasks,
-                    stk, Int32(stkw), outkey, outsep, cnt, Int32(cap), ovf2, Int64(maxsteps))
+                    stk, Int32(stkw), outkey, outsep, cnt, Int32(cap), ovf2, Int64(maxsteps), gab)
                 kernel = @cuda launch = false task_kernel!(args...)
                 # stacks get at most a quarter of the free device memory
                 Pmem = max(threads, (CUDA.free_memory() ÷ 4) ÷ (8stkw) ÷ threads * threads)
                 P = min(resident(kernel, threads), cld(ntask, threads) * threads, maxresident, Pmem)
                 stk2 = buf(:stk, UInt64, stkw * P)
                 args = Base.setindex(args, stk2, 13)
-                t2, ab = timed_dl(() -> kernel(args...; threads, blocks = cld(P, threads)), dl, cnt, 2)
-                ab && return nothing, nothing, t1 + t2, (; t1, t2, ntask, aborted = true)
+                t2 = timed_cut(() -> kernel(args...; threads, blocks = cld(P, threads)), cut, gab, out)
+                all(out) && return stopped(t1, t2, ntask)
                 ho = Array(view(ovf2, 1:ntask))
                 if any(!iszero, ho)
                     ht = Array(view(tasks, 1:ntask * (4W + 3))); hov = Array(view(ovf, 1:b.nthr))
@@ -473,28 +507,31 @@ function gpu_sepenum(b::Batch{T}; split::Int = 3, stkw::Int = 1024 * nwords(T)^2
         end
         p = sortperm(key; alg = Base.Sort.DEFAULT_UNSTABLE)
         tg = Array(b.tg); ov = Array(view(ovf, 1:b.nthr))
-        # counting pass, then fill each graph's list in key order
+        # counting pass, then fill each graph's list in key order (the
+        # lists of the graphs that were stopped stay empty)
         cntg = zeros(Int, b.G)
         for g in 1:b.G
-            b.emp[g] && (cntg[g] += 1)
+            b.emp[g] && !out[g] && (cntg[g] += 1)
         end
         @inbounds for j in 1:c
-            cntg[tg[Int(hk[1, j] >> PATHBITS)]] += 1
+            g = tg[Int(hk[1, j] >> PATHBITS)]
+            out[g] || (cntg[g] += 1)
         end
         lists = [Vector{T}(undef, cntg[g]) for g in 1:b.G]
         fillg = zeros(Int, b.G)
         for g in 1:b.G
-            b.emp[g] && (fillg[g] += 1; lists[g][1] = zero(T))
+            b.emp[g] && !out[g] && (fillg[g] += 1; lists[g][1] = zero(T))
         end
         @inbounds for j in p
             g = tg[Int(hk[1, j] >> PATHBITS)]
+            out[g] && continue
             fillg[g] += 1; lists[g][fillg[g]] = ldset(T, hs, j)
         end
         ovg = falses(b.G)
         for tid in 1:b.nthr
-            ov[tid] != 0 && (ovg[tg[tid]] = true)
+            ov[tid] != 0 && !out[tg[tid]] && (ovg[tg[tid]] = true)
         end
-        return lists, ovg, t1 + t2, (; t1, t2, ntask, aborted = false)
+        return lists, ovg, t1 + t2, (; t1, t2, ntask, aborted = false, cut = out)
     end
 end
 

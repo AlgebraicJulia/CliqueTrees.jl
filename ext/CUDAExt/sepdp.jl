@@ -14,29 +14,8 @@ using Graphs
 using ..GPUBits
 export gpu_sepdp, cpu_sepdp, settype
 
-# Run f() (kernel launches) and wait; if the host clock passes the deadline
-# dl, set flag[i] (device memory) from another stream so that the kernels
-# stop. Returns (GPU time, aborted).
-const ABORTSTREAM = Ref{Any}(nothing)
-function timed_dl(f, dl::Float64, flag, i)
-    # (the flag is set by a memset on a stream that does not wait for the
-    # kernels: a copy from host memory, or a kernel, can wait for them)
-    ABORTSTREAM[] === nothing && (ABORTSTREAM[] = CuStream(; flags = CUDA.STREAM_NON_BLOCKING))
-    e0 = CuEvent(); e1 = CuEvent()
-    CUDA.record(e0); f(); CUDA.record(e1)
-    ab = false
-    if isfinite(dl)
-        while !CUDA.isdone(e1)
-            if !ab && time() > dl
-                CUDA.memset(reinterpret(CuPtr{UInt32}, pointer(flag, i)), UInt32(1), 1; stream = ABORTSTREAM[])
-                ab = true
-            end
-            Libc.systemsleep(50e-6)
-        end
-    end
-    CUDA.synchronize(e1)
-    return CUDA.elapsed(e0, e1), ab
-end
+# (the abort flags of the graphs, as in SepEnumGPU)
+using ..SepEnumGPU: ABORTSTREAM, cutflags, upload
 
 const WS = Dict{Symbol, Any}()
 function buf(name::Symbol, ::Type{E}, n::Integer) where {E}
@@ -179,7 +158,7 @@ end
     return typemax(Float64), false, zero(T), Int32(0), Int32(0), 0.0, 0.0
 end
 
-@inline function capsearch!(::Type{T}, st, stkw, d, g, base, n, maxk, wmin, bag0, nbag0, wbag0, pc0, clen0, cmin0, cwgt0, root0, capout, ci, ovf, oi, next) where {T}
+@inline function capsearch!(::Type{T}, st, stkw, d, g, base, n, maxk, wmin, bag0, nbag0, wbag0, pc0, clen0, cmin0, cwgt0, root0, capout, ci, ovf, oi, gab) where {T}
     W = nwords(T); FR = frsize(T)
     k0, top0, pushed0 = cap_start!(T, st, Int32(0), d, g, base, maxk, bag0, nbag0, wbag0, pc0, clen0, cmin0, cwgt0, 0.0, root0, capout, ci)
     pushed0 || return k0
@@ -187,8 +166,8 @@ end
     have = false; result = 0.0; steps = Int64(0)
     while true
         steps += 1
-        # cooperative cancellation: next[2] is the abort flag
-        if (steps & 1023) == 0 && CUDA.atomic_add!(pointer(next, 2), Int32(0)) != Int32(0)
+        # cooperative cancellation: the abort flag of the graph
+        if (steps & 1023) == 0 && CUDA.atomic_add!(pointer(gab, g), Int32(0)) != Int32(0)
             @inbounds ovf[oi] = Int32(3); return typemax(Float64)
         end
         fp = Int32(st[stkw - nfr + 1])
@@ -293,7 +272,7 @@ end
     end
 end
 
-function val_kernel!(::Type{T}, d, jg, jb, joff::Int32, njob::Int32, nbag0, wbag0, blkmin, blkwgt, stk, stkw::Int32, capout, ovf, next) where {T}
+function val_kernel!(::Type{T}, d, jg, jb, joff::Int32, njob::Int32, nbag0, wbag0, blkmin, blkwgt, stk, stkw::Int32, capout, ovf, next, gab) where {T}
     me = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     st = Stk(stk, (me - Int32(1)) * Int64(stkw))
     while true
@@ -304,7 +283,7 @@ function val_kernel!(::Type{T}, d, jg, jb, joff::Int32, njob::Int32, nbag0, wbag
         if b > 0
             gb = base + b
             v = capsearch!(T, st, stkw, d, g, base, n, maxk, wmin, gset(T, d.sepset, gb), @inbounds(nbag0[gb]), @inbounds(wbag0[gb]),
-                gset(T, d.blkset, gb), @inbounds(d.blklen[gb]), @inbounds(blkmin[gb]), @inbounds(blkwgt[gb]), false, capout, gb, ovf, j, next)
+                gset(T, d.blkset, gb), @inbounds(d.blklen[gb]), @inbounds(blkmin[gb]), @inbounds(blkwgt[gb]), false, capout, gb, ovf, joff + j, gab)
             @inbounds d.valk[gb] = v
         else
             wall = 0.0
@@ -312,7 +291,7 @@ function val_kernel!(::Type{T}, d, jg, jb, joff::Int32, njob::Int32, nbag0, wbag
                 wall += @inbounds d.ww[v, g]
             end
             ri = @inbounds(d.base[length(d.base)]) + g
-            v = capsearch!(T, st, stkw, d, g, base, n, maxk, wmin, zero(T), Int32(0), 0.0, maskn(T, n), n, Int32(1), wall, true, capout, ri, ovf, j, next)
+            v = capsearch!(T, st, stkw, d, g, base, n, maxk, wmin, zero(T), Int32(0), 0.0, maskn(T, n), n, Int32(1), wall, true, capout, ri, ovf, joff + j, gab)
             @inbounds d.valk[ri] = v
         end
     end
@@ -325,6 +304,7 @@ end
 function prep(weights, graph, sep, dl = Inf)
     nvtx = nv(graph); V = Int; Wt = Float64; nwrd = cld(max(nvtx, 1), 64)
     adj = bt_adj!(bt_mat(nwrd, nvtx), graph); clk = bt_clk(dl)
+    clk.out[] && return nothing
     nsep = nv(sep); sepwgt = FVector{Wt}(undef, nsep); work1 = FVector{V}(undef, nvtx)
     lstmin, lstlen, lstwgt, lstsep, lstset = sepdp_blk!(sepwgt, adj, weights, graph, sep, clk)
     clk.out[] && return nothing
@@ -410,59 +390,135 @@ function buildjobs(blklens::Vector{Vector{Int}}, maxlen::Int, G::Int)
     return JG, JB, coff
 end
 
-function gpu_sepdp(::Type{T}, weights, graphs, seps, maxks; stkw::Int = 4096 * nwords(T), threads::Int = 64, maxresident::Int = 1 << 15, dl::Float64 = Inf) where {T}
-    W = nwords(T)
-    isempty(graphs) && return [], (; tprep = 0.0, tupload = 0.0, tgpu = 0.0, tfinish = 0.0, novf = 0, nblk = 0)
-    G = length(graphs); NM = 64W
-    tp = @elapsed Ps = [prep(weights[i], graphs[i], seps[i], dl) for i in 1:G]
-    (time() > dl || any(isnothing, Ps)) && return nothing, (; tprep = tp, tupload = 0.0, tgpu = 0.0, tfinish = 0.0, novf = 0, nblk = 0, aborted = true)
-    t0 = time()
+# The kernels of a part of a batch: the prepared graphs Ps at the widths
+# ks, on the stream s; the stacks take a share 1/nshare of a quarter of
+# the free memory. Returns the state of the launch (see collect!).
+function launch(::Type{T}, Ps, ks, s::CuStream, part::Int, nshare::Int; stkw::Int, threads::Int, maxresident::Int) where {T}
+    W = nwords(T); NM = 64W; L = length(Ps)
     nb = [P.nblk for P in Ps]; base = Int32.(cumsum(vcat(0, nb))); NB = Int(base[end])
     cat(f, Tt) = convert(Vector{Tt}, reduce(vcat, [f(P) for P in Ps]))
-    adj = zeros(UInt64, NM * W, G); ww = zeros(Float64, NM, G); head = zeros(Int32, NM + 1, G); fptr = zeros(Int32, NM + 2, G)
+    tr(f) = cat(P -> f(P.trie), Int32)
+    adj = zeros(UInt64, NM * W, L); ww = zeros(Float64, NM, L); head = zeros(Int32, NM + 1, L); fptr = zeros(Int32, NM + 2, L)
     for (g, P) in enumerate(Ps)
         n = P.nvtx
         a = widen(P.aa, P.nwrd, W); adj[1:length(a), g] .= a
         ww[1:n, g] .= P.ww; head[1:n, g] .= P.trie.head
         fp = CliqueTrees.pointers(P.fst); fptr[1:n+1, g] .= fp
     end
-    tr(f) = cat(P -> f(P.trie), Int32)
-    d = (; adj = CuArray(adj), ww = CuArray(ww), head = CuArray(head), fptr = CuArray(fptr), nvs = CuArray(Int32[P.nvtx for P in Ps]),
-        maxk = CuArray(Float64.(maxks)), wmin = CuArray(Float64[P.trie.wmin for P in Ps]), base = CuArray(base),
-        blkset = CuArray(cat(P -> widen(P.blkset, P.nwrd, W), UInt64)), sepset = CuArray(cat(P -> widen(P.sepset, P.nwrd, W), UInt64)),
-        blklen = CuArray(cat(P -> P.blklen, Int32)), tgt = CuArray(cat(P -> CliqueTrees.targets(P.fst), Int32)),
-        tord = CuArray(tr(t -> t.tord)), nodl = CuArray(tr(t -> t.nodl)), nodr = CuArray(tr(t -> t.nodr)), nodn = CuArray(tr(t -> t.nodn)),
-        nodw = CuArray(cat(P -> P.trie.nodw, Float64)), nodall = CuArray(cat(P -> widen(P.trie.nodall, P.nwrd, W), UInt64)),
-        nodany = CuArray(cat(P -> widen(P.trie.nodany, P.nwrd, W), UInt64)), valk = CUDA.zeros(Float64, NB + G))
-    nbag0 = CuArray(cat(P -> P.nbag0, Int32)); wbag0 = CuArray(cat(P -> P.wbag0, Float64))
-    blkmin = CuArray(cat(P -> P.blkmin, Int32)); blkwgt = CuArray(cat(P -> P.blkwgt, Float64))
-    capout = CUDA.zeros(UInt64, (NB + G) * W)
     maxlen = maximum(P -> isempty(P.blklen) ? 0 : maximum(P.blklen), Ps; init = 0)
-    JG, JB, coff = buildjobs([P.blklen for P in Ps], maxlen, G)   # jobs sorted by class, then the roots
-    maxjobs = max(G, maximum(diff(coff); init = 0))
-    djg = CuArray(JG); djb = CuArray(JB)
-    ovf = buf(:ovf, Int32, length(JG)); fill!(view(ovf, 1:length(JG)), 0); next = buf(:next, Int32, 2); fill!(next, 0)
-    kern = @cuda launch = false val_kernel!(T, d, djg, djb, Int32(0), Int32(1), nbag0, wbag0, blkmin, blkwgt, CUDA.zeros(UInt64, 1), Int32(stkw), capout, ovf, next)
-    sms = CUDA.attribute(CUDA.device(), CUDA.DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)
-    Pmem = max(threads, (CUDA.free_memory() ÷ 4) ÷ (8stkw) ÷ threads * threads)
-    P = min(sms * CUDA.active_blocks(kern.fun, threads) * threads, maxresident, Pmem)
-    stk = buf(:stk, UInt64, stkw * P)
-    tup = time() - t0
-    tg, ab = timed_dl(dl, next, 2) do
+    JG, JB, coff = buildjobs([P.blklen for P in Ps], maxlen, L)   # jobs sorted by class, then the roots
+    out = falses(L)
+    CUDA.stream!(s) do
+        # (three copies, one for each element type)
+        adj_, blkset, sepset, nodall, nodany = upload([adj, cat(P -> widen(P.blkset, P.nwrd, W), UInt64), cat(P -> widen(P.sepset, P.nwrd, W), UInt64),
+            cat(P -> widen(P.trie.nodall, P.nwrd, W), UInt64), cat(P -> widen(P.trie.nodany, P.nwrd, W), UInt64)])
+        ww_, maxk, wmin, nodw, wbag0, blkwgt = upload([ww, Float64[k for k in ks], Float64[P.trie.wmin for P in Ps], cat(P -> P.trie.nodw, Float64),
+            cat(P -> P.wbag0, Float64), cat(P -> P.blkwgt, Float64)])
+        head_, fptr_, nvs, base_, blklen, tgt, tord, nodl, nodr, nodn, nbag0, blkmin, djg, djb = upload([head, fptr, Int32[P.nvtx for P in Ps], base,
+            cat(P -> P.blklen, Int32), cat(P -> CliqueTrees.targets(P.fst), Int32), tr(t -> t.tord), tr(t -> t.nodl), tr(t -> t.nodr), tr(t -> t.nodn),
+            cat(P -> P.nbag0, Int32), cat(P -> P.blkmin, Int32), JG, JB])
+        d = (; adj = adj_, ww = ww_, head = head_, fptr = fptr_, nvs, maxk, wmin, base = base_, blkset, sepset, blklen, tgt, tord, nodl, nodr, nodn,
+            nodw, nodall, nodany, valk = CUDA.zeros(Float64, NB + L))
+        capout = CUDA.zeros(UInt64, (NB + L) * W)
+        ovf = buf(Symbol(:ovf, part), Int32, length(JG)); fill!(view(ovf, 1:length(JG)), 0); next = buf(Symbol(:next, part), Int32, 1)
+        gab = cutflags(Symbol(:gabdp, part), out)
+        kern = @cuda launch = false val_kernel!(T, d, djg, djb, Int32(0), Int32(1), nbag0, wbag0, blkmin, blkwgt, CUDA.zeros(UInt64, 1), Int32(stkw), capout, ovf, next, gab)
+        sms = CUDA.attribute(CUDA.device(), CUDA.DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)
+        Pmem = max(threads, (CUDA.free_memory() ÷ (4nshare)) ÷ (8stkw) ÷ threads * threads)
+        P = min(sms * CUDA.active_blocks(kern.fun, threads) * threads, maxresident, Pmem)
+        stk = buf(Symbol(:stk, part), UInt64, stkw * P)
+        e0 = CuEvent(); e1 = CuEvent(); CUDA.record(e0)
         for c in 1:length(coff) - 1
             nj = coff[c + 1] - coff[c]
             nj == 0 && continue
-            fill!(view(next, 1:1), 0)
-            kern(T, d, djg, djb, Int32(coff[c]), Int32(nj), nbag0, wbag0, blkmin, blkwgt, stk, Int32(stkw), capout, ovf, next;
+            fill!(next, 0)
+            kern(T, d, djg, djb, Int32(coff[c]), Int32(nj), nbag0, wbag0, blkmin, blkwgt, stk, Int32(stkw), capout, ovf, next, gab;
                 threads, blocks = cld(min(nj, P), threads))
         end
+        CUDA.record(e1)
+        return (; Ps, base, NB, JG, d, capout, ovf, gab, out, e0, e1, s, collected = Ref(false))
     end
-    ab && return nothing, (; tprep = tp, tupload = tup, tgpu = tg, tfinish = 0.0, novf = 0, nblk = NB, aborted = true)
-    novf = count(!iszero, Array(view(ovf, 1:length(JG))))
-    valk = Array(d.valk); capw = Array(capout)
-    tf = @elapsed res = [finish(Ps[g], capw, W, Int(base[g]), NB + g, valk[NB + g], maxks[g]) for g in 1:G]
-    return res, (; tprep = tp, tupload = tup, tgpu = tg, tfinish = tf, novf, nblk = NB, aborted = false)
 end
+
+# The block values of the graphs on the GPU, then their orderings: res[g] =
+# (perm, invp, mink, :found | :above), or nothing if the graph was stopped
+# (cut(g), by default its deadline dl; or its preprocessing ran past the
+# deadline of its clock clks[g]), or :failed if its search overflowed a
+# stack (ovf[g]). done(g, res[g]) is called once the result of g is known.
+#
+# The batch goes to the GPU in two parts, on two streams: the host prepares
+# the second part while the GPU searches the first, and makes the orderings
+# of the first while the GPU searches the second.
+function gpu_sepdp(::Type{T}, weights, graphs, seps, maxks; stkw::Int = 4096 * nwords(T), threads::Int = 64, maxresident::Int = 1 << 15, dl::Float64 = Inf,
+        cut = g -> time() > dl, clks = [bt_clk(dl) for _ in graphs], done = (g, r) -> nothing) where {T}
+    W = nwords(T); G = length(graphs)
+    res = Vector{Any}(nothing, G); ovg = falses(G); tp = tup = tg = tf = 0.0; NB = 0
+    info(aborted) = (; tprep = tp, tupload = tup, tgpu = tg, tfinish = tf, novf = count(ovg), ovf = ovg, nblk = NB, aborted)
+    G == 0 && return res, info(false)
+    np = G >= 2 ? 2 : 1; parts = [i:np:G for i in 1:np]
+    ABORTSTREAM[] === nothing && (ABORTSTREAM[] = CuStream(; flags = CUDA.STREAM_NON_BLOCKING))
+    while length(STREAMS) < np
+        push!(STREAMS, CuStream(; flags = CUDA.STREAM_NON_BLOCKING))
+    end
+    launched = []; ans = 0
+
+    # the results of a part, once its kernels are done
+    function collect!(x, idx)
+        ho = Array(view(x.ovf, 1:length(x.JG)))
+        for j in eachindex(x.JG)
+            ho[j] != 0 && !x.out[x.JG[j]] && (ovg[idx[x.JG[j]]] = true)
+        end
+        valk = Array(x.d.valk); capw = Array(x.capout)
+        tf += @elapsed for (j, g) in enumerate(idx)
+            if ovg[g]
+                res[g] = :failed
+            elseif !x.out[j] && !cut(g)
+                res[g] = finish(x.Ps[j], capw, W, Int(x.base[j]), x.NB + j, valk[x.NB + j], maxks[g])
+            end
+            done(g, res[g]); ans += 1
+        end
+        tg += CUDA.elapsed(x.e0, x.e1); x.collected[] = true
+        return
+    end
+
+    for (p, part) in enumerate(parts)
+        # (a graph whose preprocessing is stopped leaves the batch)
+        t = time()
+        Ps = [cut(i) ? nothing : prep(weights[i], graphs[i], seps[i], clks[i]) for i in part]
+        idx = [i for (i, P) in zip(part, Ps) if !isnothing(P) && !cut(i)]
+        for i in part
+            i in idx || (done(i, nothing); ans += 1)
+        end
+        tp += time() - t
+        isempty(idx) && continue
+        t = time()
+        x = launch(T, [P for (i, P) in zip(part, Ps) if i in idx], maxks[idx], STREAMS[p], p, np; stkw, threads, maxresident)
+        tup += time() - t; NB += x.NB
+        push!(launched, (x, idx))
+    end
+
+    # wait for the parts, and stop the graphs that are cut (see timed_cut)
+    while any(x -> !x.collected[], first.(launched))
+        for (x, idx) in launched
+            x.collected[] && continue
+            if CUDA.isdone(x.e1)
+                CUDA.synchronize(x.e1); collect!(x, idx)
+            else
+                for j in eachindex(idx)
+                    if !x.out[j] && cut(idx[j])
+                        CUDA.memset(reinterpret(CuPtr{UInt32}, pointer(x.gab, j)), UInt32(1), 1; stream = ABORTSTREAM[])
+                        x.out[j] = true
+                    end
+                end
+            end
+        end
+        all(x -> x.collected[], first.(launched)) || Libc.systemsleep(50e-6)
+    end
+
+    return res, info(all(isnothing, res))
+end
+
+const STREAMS = CuStream[]
 
 function cpu_sepdp(weights, graph, sep, maxk; nt = 1)
     perm, invp, mink, status = CliqueTrees.sepdp(weights, graph, sep, maxk, Inf, nt)

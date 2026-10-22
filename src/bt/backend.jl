@@ -8,10 +8,10 @@
 # the probes of RTW (rtw_probe).
 #
 #   - CPUSeptw: every round on the CPU (the default);
-#   - GPUSeptw: the rounds of an atom start on the CPU, and go to the
-#     GPU when the CPU has spent its budget on the atom (see
-#     GPUSeptw). The GPU rounds are in the extension CUDAExt; without
-#     it, or without a working device, the rounds stay on the CPU.
+#   - GPUSeptw: the rounds start on the CPU, and ask for the GPU when
+#     the CPU is expected to take longer (see GPUSeptw). The GPU rounds
+#     are in the extension CUDAExt; without it, or without a working
+#     device, the rounds stay on the CPU.
 #
 # A round is run by bt_round!(esc, weights, graph, k, dl, nt), where
 # esc = bt_esc(SEPTW[], weights, graph, dl) is made once for each
@@ -34,32 +34,46 @@ is the default backend.
 struct CPUSeptw <: SeptwBackend end
 
 """
-    GPUSeptw(; engine=:septw, budget=NaN, delta=2.0, nmin=0) <: SeptwBackend
+    GPUSeptw(; engine=:auto, budget=NaN, nmin=0, race=true, batch=true) <: SeptwBackend
 
-The rounds of an exact search start on the CPU and go to the GPU when the
-CPU has spent `budget` seconds on the atom, or when the next round is
-expected to end after that (judged by the growth of the last two rounds).
-The rest of the rounds of the atom stay on the GPU. The GPU rounds need the
-package extension of CUDA.jl.
+The rounds of the exact searches on the CPU and on the GPU. The GPU rounds
+need the package extension of CUDA.jl.
+
+A round starts on the CPU. It asks for the GPU when the CPU time that it is
+expected to take exceeds the time that the GPU is expected to take, both
+learned from the rounds measured so far (by the size of the graph). The GPU
+serves the rounds of all searches from a queue, the most promising first,
+with the rounds of sepenum and sepdp of other searches whose graphs have
+sets of the same size in the same launch (a batch); with `race`, the round
+goes on on the CPU in the meantime, and the first to finish answers it.
 
   - `engine`: `:septw` runs sepenum and sepdp on the GPU (the same
-    separators, blocks, and orderings as the CPU); `:pid` answers the
-    rounds by a positive-instance driven search (Tamaki 2017), downward
-    from a greedy ordering: the width and the status are those of the CPU,
-    but not the ordering.
-  - `budget`: the CPU seconds of an atom. If it is NaN, it is `delta` times
-    the cost of a GPU round on a small graph, measured on the device at hand.
-  - `nmin`: atoms with fewer vertices stay on the CPU.
+    separators, blocks, and orderings as the CPU, up to 512 vertices);
+    `:pid` answers the rounds by a positive-instance driven search (Tamaki
+    2017), downward from a greedy ordering: the width and the status are
+    those of the CPU, but not the ordering. A search of the PID engine
+    answers the later rounds of the graph too. `:auto` asks, for each
+    round, the engine with the least expected GPU time for the size of the
+    graph (learned as for the CPU).
+  - `budget`: if not NaN, a round asks for the GPU once the CPU has spent
+    `budget` seconds on the graph, instead.
+  - `nmin`: graphs with fewer vertices stay on the CPU.
+  - `race`: if false, a round that asks for the GPU waits for it, instead.
+  - `batch`: if false, the GPU serves one round at a time.
 
-The GPU is shared by the tasks of a search: a round that finds it busy runs
-on the CPU. A GPU round that fails (out of memory, a set too large for the
-bitsets of the device code) is run again on the CPU; the result is the same.
+The worker of the queue needs an interactive thread besides the one of the
+main task (julia -t n,2 from Julia 1.12, where the main task runs on an
+interactive thread). Without one, a round that asks for the GPU runs on it
+if it is free, and on the CPU if it is not.
+A GPU round that fails (out of memory, a set too large for the bitsets of
+the device code) is run on the CPU; the result is the same.
 """
 @kwdef struct GPUSeptw <: SeptwBackend
-    engine::Symbol = :septw
+    engine::Symbol = :auto
     budget::Float64 = NaN
-    delta::Float64 = 2.0
     nmin::Int = 0
+    race::Bool = true
+    batch::Bool = true
 end
 
 const SEPTW = Ref{SeptwBackend}(CPUSeptw())
