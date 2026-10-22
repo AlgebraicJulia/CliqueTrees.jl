@@ -391,3 +391,13 @@ HPG jobs, submitted Oct 19 (not polled):
 - 46696783 `itay-ct`: `hpg_cpu.sbatch tamaki17 exact` (1800 s, `-Xmx30g`, 7 workers because 7 x 30 GB must fit in 240 GB). Results `results_hpg/tamaki17_exact.tsv`, log `logs/pace-46696783.out`.
 - 46696785 `itay-ct`: `hpg_cpu.sbatch septw exact` (1800 s, 32 workers). Results `results_hpg/septw_exact.tsv`. Both `itay-ct` jobs run one after the other (singleton), also behind the older ParAMD job 46688560 of the same name.
 - td-validate was rebuilt on the HPG login node (the laptop binary needs a newer glibc).
+
+## PACE 2017 BONUS on HPG (Oct 19, submitted, not polled)
+
+Runners (`gpu/run_pace_{cpu,gpu}.jl`) with `PACE_SET=bonus`: instance names = filenames without `.gr`; `@list` files (`results_hpg/list_bonus.txt`). Columns: `known_ub` (width of `data/plain/bonus_td`, an UPPER bound, -1 if none) and a final `flag`. `flag`: `NEW_UB` = certified width < known_ub and td-validate accepts it (a better decomposition); `NEW_UB_UNVALIDATED`; `NEW_PROOF` = status optimal and `data/bonus2017/instances.csv` has "?" for that instance (new treewidth proof). Highlighted in green on stderr. `MISMATCH` (red): valid=NOT_VALID, optimal width > known_ub, or a width that differs from a treewidth the organisers proved (numeric in instances.csv). Fixed: the JIT warm-up used ex070/ex001/ex013 (absent in bonus); it now uses the 3 smallest bonus instances.
+Local sanity (septw pipeline, 30 s, mrpp_4x4#8_8, newton.3.3.i.smt2-stp212, Promedas_22_6): all optimal, widths 24/19/12 = known, td valid.
+
+Jobs:
+- 46726956 `itay-gpub`, hpg-b200 (b200:1), 96 h: `gpu/hpg_gpu_bonus.sbatch`; `/blue/fairbanksj/itaykadosh/gpu/pace/results_hpg/gpu_bonus_1800.tsv`, tds `td_bonus_1800/`, log `logs/gpub-46726956.out`.
+- 46726957 `itay-ctb`, hpg-milan, 32 cpus: `gpu/hpg_cpu_bonus.sbatch` (CPU septw per atom, 1 thread, 32 instances in parallel); per-instance `results_hpg/cpu_bonus_parts/`, merged `results_hpg/cpu_bonus_1800.tsv`, tds `td_cpu_bonus_1800/`, log `logs/ctb-46726957.out`.
+- 46726958 `itay-ctt` (name overridden): `hpg_cpu.sbatch tamaki17 bonus`; `results_hpg/tamaki17_bonus.tsv`, log `logs/pace-46726958.out`.

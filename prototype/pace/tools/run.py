@@ -1,6 +1,6 @@
 #!/usr/bin/env python3 -I
 """Benchmark driver.  usage: run.py SOLVER SET TIMEOUT PAR [OUTDIR]
-SOLVER: tamaki17 | tamaki16 | uplow22 | septw    SET: exact | bonus
+SOLVER: tamaki17 | tamaki16 | uplow22 | septw | rtw | exacttw | jdrasil | arboretum    SET: exact | bonus
 Writes OUTDIR/<SOLVER>_<SET>.tsv: inst status secs width valid
 status: OK (finished, optimal claimed) | TIMEOUT | FAIL.  For timeouts, width is the best
 upper bound found if the solver left a td file (uplow22), else '-'.
@@ -20,6 +20,18 @@ def td_width(path):
     except OSError: pass
     return None
 
+def twc2td(twc, td):
+    L = [l.split() for l in open(twc)]
+    i = next(k for k, l in enumerate(L) if l[:2] == ["s", "nbags"]); nb = int(L[i][2])
+    n = int(L[0][5]); bags = L[i + 1:i + 1 + nb]
+    w = max(len(b) - 2 for b in bags)
+    with open(td, "w") as o:
+        o.write(f"s td {nb} {w} {n}\n")
+        for b in bags: o.write("b " + " ".join(b[1:]) + "\n")
+        for l in L[i + 1 + nb:]:
+            if l[0] == "s": break
+            o.write(f"{l[0]} {l[1]}\n")
+
 def cmd(solver, gr, td, T):
     if solver == "tamaki17":
         return [JAVA, *JV, "-XX:ActiveProcessorCount=1", "-cp", f"{HERE}/src/PACE2017-TrackA", "tw.exact.MainDecomposer"], gr, td
@@ -27,6 +39,15 @@ def cmd(solver, gr, td, T):
         return [f"{HERE}/src/treewidth-exact/tw-exact"], gr, td
     if solver == "uplow22":  # needs two threads (upper and lower bound)
         return [JAVA, *JV, "-XX:ActiveProcessorCount=2", "-cp", f"{HERE}/build/tw2022", "io.github.twalgor.main.UpLow", gr, td, td + ".mnr"], None, None
+    if solver == "jdrasil":  # Jdrasil (Bannach/Berndt/Ehlers) jdrasil.Exact, stdin/stdout
+        return [JAVA, *JV[:1], "-Xmx" + os.environ.get("JXMX", "8g"), "-Xss512m", "-XX:ActiveProcessorCount=1", "-cp", f"{HERE}/build/jdrasil", "jdrasil.Exact", "-s", "1"], gr, td
+    if solver == "arboretum":
+        return [f"{HERE}/arboretum/src/target/release/arboretum-cli", "-m", "exact"], gr, td
+    if solver == "rtw":  # Tamaki 2023 contraction-recursive (HPID); args: name, graph dir, cert dir; writes <name>.twc
+        name = os.path.basename(gr)[:-3]
+        return [JAVA, *JV[:1], "-Xmx" + os.environ.get("JXMX", "8g"), "-Xss1g", "-XX:ActiveProcessorCount=" + os.environ.get("RTW_CPUS", "1"), "-cp", f"{HERE}/build/rtw", "io.github.twalgor.main.Main", name, os.path.dirname(gr), os.path.dirname(td)], None, None
+    if solver == "exacttw":  # twalgor ExactTW as README: gr td [-acsd]
+        return [JAVA, *JV[:1], "-Xmx" + os.environ.get("JXMX", "8g"), "-Xss1g", "-XX:ActiveProcessorCount=1", "-cp", f"{HERE}/build/tw2022", "io.github.twalgor.main.ExactTW", gr, td, "-acsd"], None, None
     if solver == "septw":
         return [JULIA, "-t1", f"--project={MTENV}", f"{HERE}/ctrun.jl", str(T), gr, td], None, None
 
@@ -50,6 +71,10 @@ def one(a):
     if status == "OK" and solver == "septw" and secs > T: status = "TIMEOUT"
     for h in (inp, out):
         if h not in (None, subprocess.PIPE): h.close()
+    if solver == "rtw" and status == "OK":
+        twc = os.path.join(os.path.dirname(td), name + ".twc")
+        try: twc2td(twc, td)
+        except Exception: status = "FAIL"
     w = td_width(td) if os.path.exists(td) and os.path.getsize(td) else None
     valid = "-"
     if w is not None and (status == "OK" or solver == "uplow22"):

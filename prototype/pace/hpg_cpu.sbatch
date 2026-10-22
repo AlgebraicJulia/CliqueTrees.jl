@@ -11,6 +11,8 @@
 # Runs every instance of the set, 1800 s each, one process per core (uplow22: two cores each).
 # Prereq: this directory synced to /blue/fairbanksj/itaykadosh/gpu/pace/ (see README, "HPG").
 set -u
+export PATH=/apps/julia/1.12.6/bin:/apps/compilers/gcc/14.2.0/bin:$PATH
+export LD_LIBRARY_PATH=/apps/compilers/gcc/14.2.0/lib64:${LD_LIBRARY_PATH:-}
 P=/blue/fairbanksj/itaykadosh/gpu/pace
 SOLVER=${1:?solver}; SET=${2:?set}; T=${T:-1800}
 export JULIA=${JULIA:-julia}

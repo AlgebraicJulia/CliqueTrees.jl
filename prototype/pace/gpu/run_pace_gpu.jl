@@ -18,6 +18,7 @@ const CT = CliqueTrees
 const HERE = @__DIR__
 include(get(ENV, "GPUPID_SRC", joinpath(HERE, "..", "..", "gpupid", "src")) * "/gpupid.jl")
 const DATA = get(ENV, "PACE_DATA", joinpath(HERE, "..", "data", "plain"))
+const SET = get(ENV, "PACE_SET", "exact")   # "exact" or "bonus"
 const TDDIR = get(ENV, "PACE_TD_DIR", "")
 const VALIDATE = get(ENV, "PACE_VALIDATE", "")
 
@@ -39,7 +40,16 @@ function readgr(path)
     return g
 end
 
-optimum(name) = parse(Int, split(readline(joinpath(DATA, "exact_td", name * ".td")))[4]) - 1
+# bonus only: treewidth proven by the PACE organisers (instances.csv, numeric entries); "?" = unknown
+const PROVEN = Dict{String, Int}()
+if SET == "bonus"
+    csv = joinpath(DATA, "..", "bonus2017", "instances.csv")
+    isfile(csv) && for l in eachline(csv)
+        t = strip.(split(l, ","))
+        length(t) >= 2 && endswith(t[1], ".gr.xz") && tryparse(Int, t[2]) !== nothing && (PROVEN[t[1][1:end-6]] = parse(Int, t[2]))
+    end
+end
+optimum(name) = (f = joinpath(DATA, SET * "_td", name * ".td"); isfile(f) ? parse(Int, split(readline(f))[4]) - 1 : -1)   # -1: unknown
 
 # elimination order -> tree decomposition (bags {v} U higher neighbours), as in tools/ctrun.jl
 function writetd(path, g, order)
@@ -131,7 +141,7 @@ atompipe() = SafeRules(SafeSeparators(GPUExact(),
 
 # ---------------------------------------------------------------- driver
 function solve_instance(name, tl)
-    g = readgr(joinpath(DATA, "exact", name * ".gr")); n = nv(g); m = ne(g); opt = optimum(name)
+    g = readgr(joinpath(DATA, SET, name * ".gr")); n = nv(g); m = ne(g); opt = optimum(name)
     empty!(ATOMS); empty!(ERRORS); STICKY[] = false; WARM[] = 0.0
     t0 = time(); DEADLINE[] = t0 + tl
     order = Int[]; err = ""
@@ -152,19 +162,32 @@ function solve_instance(name, tl)
             mkpath(TDDIR); td = joinpath(TDDIR, name * ".td")
             w2 = writetd(td, g, order); w2 == width || (err *= " TDWIDTH($w2)")
             if !isempty(VALIDATE)
-                p = run(pipeline(ignorestatus(`$VALIDATE $(joinpath(DATA, "exact", name * ".gr")) $td`); stdout = devnull, stderr = devnull))
+                p = run(pipeline(ignorestatus(`$VALIDATE $(joinpath(DATA, SET, name * ".gr")) $td`); stdout = devnull, stderr = devnull))
                 valid = p.exitcode == 0 ? "y" : "NOT_VALID"
             end
         end
     end
     allsolved = !isempty(order) && all(a -> a.status in (:trivial, :found), ATOMS) && isempty(err)
     status = allsolved ? "optimal" : (any(a -> a.status == :oom, ATOMS) ? "oom" : any(a -> a.status == :error, ATOMS) || !isempty(err) ? "error" : "timeout")
-    if width >= 0 && ((allsolved && width != opt) || width < opt || valid == "NOT_VALID")
+    flag = "-"; bad = false
+    if SET == "bonus"
+        pv = get(PROVEN, name, -1)
+        bad = width >= 0 && ((opt >= 0 && allsolved && width > opt) || (pv >= 0 && (width < pv || (allsolved && width != pv))))   # a certified width can never exceed the best known ub; nor differ from a proven tw
+        if !bad && width >= 0 && valid != "NOT_VALID"
+            fl = String[]
+            opt >= 0 && width < opt && valid == "y" && push!(fl, "NEW_UB")
+            opt >= 0 && width < opt && valid != "y" && push!(fl, "NEW_UB_UNVALIDATED")
+            allsolved && pv < 0 && push!(fl, "NEW_PROOF")
+            isempty(fl) || (flag = join(fl, "+"))
+        end
+        flag != "-" && printstyled(stderr, "****** $name: $flag width=$width known_ub=$opt\n"; color = :green, bold = true)
+    end
+    if width >= 0 && ((SET == "bonus" ? bad : (opt >= 0 && ((allsolved && width != opt) || width < opt))) || valid == "NOT_VALID")
         status = "MISMATCH"
         err = "MISMATCH width=$width optimum=$opt valid=$valid " * err
         printstyled(stderr, "!!!!!! $name: $err\n"; color = :red, bold = true)
     end
-    return (; name, n, m, natoms, maxn, width, opt, status, t, valid, err = isempty(err) ? "-" : err)
+    return (; name, n, m, natoms, maxn, width, opt, status, t, valid, flag, err = isempty(err) ? "-" : err)
 end
 
 function main()
@@ -173,18 +196,18 @@ function main()
     done = isfile(out) ? Set(first(split(l, '\t')) for l in eachline(out) if !isempty(l)) : Set{String}()
     names = filter(k -> !(k in done), names)
     # compile the pipeline once on a tiny graph (not charged)
-    for w in ("ex070", "ex001", "ex013")   # JIT warm-up of the pipeline and the GPU path (uncharged)
-        g = readgr(joinpath(DATA, "exact", w * ".gr")); DEADLINE[] = Inf; WARM[] = 0.0
+    for w in (SET == "bonus" ? [first(splitext(basename(p))) for p in first(sort(readdir(joinpath(DATA, SET); join = true); by = filesize), 3)] : ["ex070", "ex001", "ex013"])   # JIT warm-up of the pipeline and the GPU path (uncharged)
+        g = readgr(joinpath(DATA, SET, w * ".gr")); DEADLINE[] = Inf; WARM[] = 0.0
         CT.permutation(ones(Float64, nv(g)), g, atompipe())
     end
     new = !isfile(out) || filesize(out) == 0
     io = open(out, "a")
-    new && (println(io, "instance\tn\tm\tnatoms\tmax_atom_n\twidth\toptimum\tstatus\ttime\tvalid\terror"); flush(io))
+    new && (println(io, "instance\tn\tm\tnatoms\tmax_atom_n\twidth\t", SET == "bonus" ? "known_ub" : "optimum", "\tstatus\ttime\tvalid\terror\tflag"); flush(io))
     for name in names
         r = solve_instance(name, tl)
-        @printf(io, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%.3f\t%s\t%s\n", r.name, r.n, r.m, r.natoms, r.maxn, r.width, r.opt, r.status, r.t, r.valid, r.err)
+        @printf(io, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%.3f\t%s\t%s\t%s\n", r.name, r.n, r.m, r.natoms, r.maxn, r.width, r.opt, r.status, r.t, r.valid, r.err, r.flag)
         flush(io)
-        println(r.name, " ", r.status, " ", round(r.t; digits = 2), " w=", r.width, " opt=", r.opt, " atoms=", r.natoms, " maxn=", r.maxn); flush(stdout)
+        println(r.name, " ", r.status, " ", round(r.t; digits = 2), " w=", r.width, " opt=", r.opt, " flag=", r.flag, " atoms=", r.natoms, " maxn=", r.maxn); flush(stdout)
         STICKY[] && (println("sticky CUDA error, exiting for restart"); exit(3))
         GC.gc(true); CUDA.reclaim()
     end
