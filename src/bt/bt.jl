@@ -336,6 +336,7 @@ function bt_nbr!(pool::Vector{UInt64}, adj::AbstractMatrix{UInt64}, p::V, b::V, 
 end
 
 include("pmcdp.jl")
+include("pmccost.jl")
 include("sepdp.jl")
 include("sepenum.jl")
 include("pmcenum.jl")
