@@ -274,5 +274,51 @@ else
             @test run(GPUSeptw(; budget = Inf), w, g, 0, hi) == cpu
             @test iszero(get(ext.STATS, :escalated, 0))
         end
+
+        @testset "the queue under load, and the GPU closed while searches run" begin
+            gs = [graphs(rng, 24, 0.25, 4); graphs(rng, 40, 0.12, 4); graphs(rng, 70, 0.0, 2)]
+            ws = [weights(rng, :int, nv(g)) for g in gs]; hi = typemax(Int)
+            cpu = [run(CPUSeptw(), w, g, 0, hi) for (w, g) in zip(ws, gs)]
+            ext.resetstats!(); old = septwbackend!(GPUSeptw(; budget = 0.0))
+
+            try
+                # searches that finish, and searches that their deadlines
+                # stop (their requests are stopped in the queue or in a
+                # batch), with the collector in between
+                for _ in 1:3
+                    tasks = [Threads.@spawn septw(w, g, 0, hi, Inf, 1) for (w, g) in zip(ws, gs)]
+                    short = [Threads.@spawn septw(w, g, 0, hi, time() + 0.002i, 1) for (i, (w, g)) in enumerate(zip(ws, gs))]
+                    foreach(wait, short); GC.gc()
+                    @test all(fetch(t)[3:4] == c[3:4] for (t, c) in zip(tasks, cpu))
+                end
+
+                @test get(ext.STATS, :escalated, 0) > 0
+
+                # the GPU closed, as when the process exits: the requests
+                # stop, the worker ends, the device is free, and the
+                # searches end on the CPU
+                tasks = [Threads.@spawn septw(w, g, 0, hi, Inf, 1) for (w, g) in zip(ws, gs)]
+                yield(); held = ext.quiesce!(; timeout = 60.0)
+                @test held
+                t = time()
+
+                while !(isnothing(ext.WORKER[]) || istaskdone(ext.WORKER[])) && time() < t + 10
+                    sleep(0.01)
+                end
+
+                @test isnothing(ext.WORKER[]) || istaskdone(ext.WORKER[])
+                @test all(fetch(t)[3:4] == c[3:4] for (t, c) in zip(tasks, cpu))
+                @test isnothing(CliqueTrees.bt_esc(GPUSeptw(), ws[1], gs[1], Inf))
+                ext.resume!(held)
+            finally
+                septwbackend!(old)
+            end
+
+            # no failure of the device, and it serves again once opened
+            @test !ext.BROKEN[] && iszero(get(ext.STATS, :broken, 0)) && iszero(get(ext.STATS, :fallback, 0))
+            ext.resetstats!()
+            @test run(GPUSeptw(; engine = :septw, budget = 0.0, race = false), ws[1], gs[1], 0, hi) == cpu[1]
+            @test get(ext.STATS, :escalated, 0) > 0
+        end
     end
 end

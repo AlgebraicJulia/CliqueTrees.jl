@@ -422,6 +422,9 @@ function launch(::Type{T}, Ps, ks, s::CuStream, part::Int, nshare::Int; stkw::In
         capout = CUDA.zeros(UInt64, (NB + L) * W)
         ovf = buf(Symbol(:ovf, part), Int32, length(JG)); fill!(view(ovf, 1:length(JG)), 0); next = buf(Symbol(:next, part), Int32, 1)
         gab = cutflags(Symbol(:gabdp, part), out)
+        # (the address of the flags, taken here, on the stream s: taken later,
+        # on the stream of the task, it would wait for the kernels)
+        gabp = reinterpret(CuPtr{UInt32}, pointer(gab))
         kern = @cuda launch = false val_kernel!(T, d, djg, djb, Int32(0), Int32(1), nbag0, wbag0, blkmin, blkwgt, CUDA.zeros(UInt64, 1), Int32(stkw), capout, ovf, next, gab)
         sms = CUDA.attribute(CUDA.device(), CUDA.DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)
         Pmem = max(threads, (CUDA.free_memory() ÷ (4nshare)) ÷ (8stkw) ÷ threads * threads)
@@ -436,7 +439,7 @@ function launch(::Type{T}, Ps, ks, s::CuStream, part::Int, nshare::Int; stkw::In
                 threads, blocks = cld(min(nj, P), threads))
         end
         CUDA.record(e1)
-        return (; Ps, base, NB, JG, d, capout, ovf, gab, out, e0, e1, s, collected = Ref(false))
+        return (; Ps, base, NB, JG, d, capout, ovf, gab, gabp, out, e0, e1, s, collected = Ref(false))
     end
 end
 
@@ -506,7 +509,7 @@ function gpu_sepdp(::Type{T}, weights, graphs, seps, maxks; stkw::Int = 4096 * n
             else
                 for j in eachindex(idx)
                     if !x.out[j] && cut(idx[j])
-                        CUDA.memset(reinterpret(CuPtr{UInt32}, pointer(x.gab, j)), UInt32(1), 1; stream = ABORTSTREAM[])
+                        CUDA.memset(x.gabp + 4(j - 1), UInt32(1), 1; stream = ABORTSTREAM[])
                         x.out[j] = true
                     end
                 end

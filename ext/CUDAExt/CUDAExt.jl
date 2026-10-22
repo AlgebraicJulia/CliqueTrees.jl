@@ -75,7 +75,9 @@ const BROKEN = Ref(false)
 # GPU), cpuwon (finished on the CPU while the GPU served it), known
 # (answered by an earlier PID round), escalated (requests served),
 # gpufound, gpuabove, gputimeout, gpufailed (their outcomes), expired (past
-# the deadline in the queue), busy (the GPU was held, no worker); and the
+# the deadline in the queue), busy (the GPU was held, no worker), broken (1
+# once the device has failed for good), fallback (searches and rounds kept
+# on the CPU after a failure of the GPU); and the
 # seconds of the rounds on the CPU (tcpu), on the GPU (tgpu), and of the
 # requests in the queue (twait)
 const STATS = Dict{Symbol, Float64}()
@@ -97,7 +99,7 @@ function resetstats!()
     return
 end
 
-usable() = !BROKEN[] && CUDA.functional()
+usable() = !BROKEN[] && !CLOSED[] && CUDA.functional()
 
 ispositive(x::Real) = x > zero(x)
 
@@ -244,6 +246,52 @@ const QLOCK = Threads.SpinLock()
 const CURRENT = Req[]
 const WORKER = Ref{Union{Nothing, Task}}(nothing)
 
+# Whether the GPU is closed (see quiesce!): no round starts on it.
+const CLOSED = Ref(false)
+
+# Close the GPU: stop the requests in the queue and in service, and wait,
+# at most timeout seconds, until the device is free; then hold it (LOCK),
+# so that no round starts on it. Returns whether the device is held (then
+# resume!(true) opens it again). The extension closes the GPU when the
+# process exits: the CUDA driver destroys its context after the hooks of
+# atexit, and a round still on the device (on the worker, which runs on
+# while the main task exits) would fail with "context is destroyed".
+function quiesce!(; timeout::Real = 10.0)
+    CLOSED[] = true
+
+    lock(QLOCK) do
+        foreach(r -> r.stop[] = true, QUEUE)
+        foreach(r -> r.stop[] = true, CURRENT)
+        purge!(time())
+    end
+
+    t = time() + timeout
+
+    while !trylock(LOCK)
+        time() > t && return false
+        Libc.systemsleep(0.001); yield()
+    end
+
+    return true
+end
+
+function resume!(held::Bool)
+    held && unlock(LOCK)
+    CLOSED[] = false
+    return
+end
+
+function __init__()
+    atexit() do
+        try
+            quiesce!()
+        catch
+        end
+    end
+
+    return
+end
+
 # Start the worker, on an interactive thread (the tasks of the searches do
 # not yield, and would hold it up on a thread of their own). The main task
 # may run on an interactive thread (thread 1, as from Julia 1.12) and search
@@ -261,9 +309,10 @@ function worker!()
     return true
 end
 
+# (a request to a closed GPU is finished at once, without an answer)
 function submit!(r::Req)
     lock(QLOCK) do
-        push!(QUEUE, r)
+        CLOSED[] ? finish!(r) : push!(QUEUE, r)
     end
 
     return
@@ -423,9 +472,10 @@ batchmax(free::Integer, W::Integer) = max(1, (free ÷ 4) ÷ (8 * 1024 * W^2))
 # sleeps with the thread (the timers of sleep need the event loop, which a
 # busy main thread may not run), and yields after, since it may be on the
 # thread of the main task, which waits for it and cannot move. The batch
-# is chosen once the device is free.
+# is chosen once the device is free. The worker ends when the GPU is
+# closed (see quiesce!).
 function work()
-    while true
+    while !CLOSED[]
         any = lock(() -> purge!(time()), QLOCK)
 
         # (a request ripens as its CPU round goes on)
@@ -435,7 +485,13 @@ function work()
         end
 
         while !trylock(LOCK)
+            CLOSED[] && return
             Libc.systemsleep(0.001); yield()
+        end
+
+        if CLOSED[]
+            unlock(LOCK)
+            return
         end
 
         batch = Req[]
@@ -529,22 +585,38 @@ function gpuround!(batch::Vector{Req}, done)
     return
 end
 
-# After a failure of the device: out of memory is not fatal, but an error
-# of a kernel spoils the context, and the GPU is not used again.
-function failed!(err)
+# After a failure of the device (called in the catch block, for the
+# backtrace): out of memory is not fatal, but an error of a kernel spoils
+# the context, and the GPU is not used again. The first failure of the
+# device is logged as an error, with its backtrace, and the statistics say
+# that the device is broken (broken = 1; fallback counts the searches and
+# rounds that stayed on the CPU because of it).
+function failed!(err, bt = catch_backtrace())
+    # (a round stopped by the exit of the process)
+    if CLOSED[]
+        @debug "septw: GPU round failed while the GPU closes" exception = (err, bt)
+        return
+    end
+
     if err isa CUDA.OutOfGPUMemoryError || err isa ErrorException
-        @debug "septw: GPU round failed" exception = err
+        @debug "septw: GPU round failed" exception = (err, bt)
     else
-        BROKEN[] = true
-        @warn "septw: the GPU failed; the exact searches stay on the CPU" exception = err maxlog = 1
+        broken!(err, bt)
     end
 
     try
         GC.gc(false); CUDA.reclaim()
-    catch
-        BROKEN[] = true
+    catch err2
+        broken!(err2, catch_backtrace())
     end
 
+    return
+end
+
+function broken!(err, bt)
+    BROKEN[] && return
+    BROKEN[] = true; count!(:broken)
+    @error "septw: the GPU failed for good (thread $(Threads.threadid()), pool $(Threads.threadpool())); the exact searches stay on the CPU" exception = (err, bt)
     return
 end
 
@@ -552,6 +624,7 @@ end
 function CliqueTrees.bt_esc(backend::GPUSeptw, weights::AbstractVector, graph::AbstractGraph, dl::Real)
     n = nv(graph)
     n < max(backend.nmin, 2) && return nothing
+    BROKEN[] && (count!(:fallback); return nothing)
     usable() || return nothing
     any(e -> !isnan(cost!(e)), engines(backend, n)) || return nothing
     return Esc(backend, n)
@@ -608,8 +681,9 @@ function CliqueTrees.bt_round!(esc::Esc, weights::AbstractVector{W}, graph::Abst
     ts = time(); b = esc.backend; req = nothing
 
     e, g = engine(b, esc.n)
+    (esc.off || BROKEN[]) && count!(:fallback)
 
-    if free && !esc.off && e !== :none
+    if free && !esc.off && !BROKEN[] && !CLOSED[] && e !== :none
         c = predict(:cpu, esc.n); isnan(c) && (c = 0.0)
         req = esc.req = Req(esc, e, weights, graph, k, dl, ts, max(c, growth(esc)), g)
 
