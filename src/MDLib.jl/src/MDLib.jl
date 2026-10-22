@@ -28,8 +28,8 @@ using ..Utilities
 export md
 
 """
-    md(neqns, xadj, adjncy; external=false, dense=10.0)
-    md(neqns, vwght, xadj, adjncy; external=false, dense=10.0)
+    md(neqns, xadj, adjncy; external=false, dense=10.0, mass=false)
+    md(neqns, vwght, xadj, adjncy; external=false, dense=10.0, mass=false)
 
 Compute an exact minimum degree ordering of the graph `(xadj, adjncy)`.
 Returns `index`, where `index[node]` is the position of `node`. The vertex
@@ -46,6 +46,12 @@ indistinguishable nodes.
     degree (a negative value disables this). The ordering remains exact;
     with `external`, indistinguishable nodes must also have the same dense
     neighbors.
+  - `mass`: mass elimination. Each node of the reachable set whose only
+    neighbors are those of the new element (it lies in no other element,
+    has no other neighbors, and has the same dense neighbors as the pivot)
+    is eliminated with the pivot. With degree such a node is
+    indistinguishable from the pivot, so the ordering remains exact. With
+    `external` it need not be, and the ordering is no longer exact.
 """
 function md(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
     vwght = Ones{V}(neqns)
@@ -72,7 +78,7 @@ function md(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abstr
     return convert(Vector{V}, index)
 end
 
-function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector; external::Bool = false, dense::Real = 10.0, debug::Bool = false) where {V, E}
+function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector; external::Bool = false, dense::Real = 10.0, mass::Bool = false, debug::Bool = false) where {V, E}
     @assert neqns < length(xadj)
     n = convert(V, neqns)
     iszero(n) && return FVector{V}(undef, 0)
@@ -114,7 +120,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
 
     md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, convert(V, total), n, external, debug, vwght, xadj,
+        elen, iw, iwlen, xw, convert(V, total), n, external, mass, debug, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -192,6 +198,7 @@ function md_impl!(
         total::V,
         neqns::V,
         external::Bool,
+        mass::Bool,
         debug::Bool,
         vwght::AbstractVector,
         xadj::AbstractVector,
@@ -262,7 +269,7 @@ function md_impl!(
 
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, pfree, total, neqns, external, debug, vwght, ndense,
+        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, debug, vwght, ndense,
         nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -271,7 +278,7 @@ end
 """
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, pfree, total, neqns, external, debug, vwght, ndense,
+        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, debug, vwght, ndense,
         nwords, dindex, dnode, ddeg, dmask)
 
 This routine implements the exact minimum degree algorithm. It makes use
@@ -298,6 +305,7 @@ input parameters:
   - `total`: sum of the vertex weights
   - `vwght`: vertex weights (truncated to integers)
   - `external`: minimize the external degree instead of the degree
+  - `mass`: mass elimination (see `md`)
   - `debug`: check every bound after every elimination
   - `iwlen`: length of `iw`
   - `(ndense, nwords, dindex, dnode, ddeg, dmask)`: the dense nodes (see
@@ -389,6 +397,7 @@ function md!_impl!(
         total::V,
         neqns::V,
         external::Bool,
+        mass::Bool,
         debug::Bool,
         vwght::AbstractVector,
         ndense::V,
@@ -583,13 +592,14 @@ function md!_impl!(
                 nwords, dnode, ddeg, dmask, nmissing)
         end
 
-        # merge the indistinguishable nodes of the reachable set, assign
-        # their bounds, and return them to the degree structure
+        # merge the indistinguishable nodes of the reachable set, eliminate
+        # some of them with `mdnode` (mass elimination), assign the bounds
+        # of the others, and return them to the degree structure
         mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, pe,
             len, elen, iw, supersize, superwght, degree, deghead, degnext,
             degprev, hashval, rchset, wext, marker, tag, xw,
-            neqns, extlen, dwght, nwords, dmask, nbypass, mindeg, external,
-            offset, debug)
+            neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
+            mass, offset, debug)
 
         num += supersize[mdnode]; superwght[mdnode] = zero(V)
 
@@ -864,17 +874,20 @@ end
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, pe, len, elen, iw,
         supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, xw, neqns, extlen, dwght,
-        nwords, dmask, nbypass, mindeg, external, offset, debug)
+        nwords, dmask, ddeg, nbypass, mindeg, external, mass, offset, debug)
 
 This routine updates the degree structure after the elimination of
 `mdnode`. Indistinguishable nodes in the reachable set are detected by
-hashing their quotient neighbors, and merged into supernodes. Each
-supernode of the reachable set gets the bound
+hashing their quotient neighbors, and merged into supernodes. With mass
+elimination, each supernode whose list holds only `mdnode`, and whose
+dense neighbors are those of `mdnode`, is eliminated with `mdnode`; let
+`m` be their weight (0 otherwise). Each other supernode of the reachable
+set gets the bound
 
-    delta - w(u) + wext[u] + (weight of its dense neighbors not adjacent to `mdnode`),
+    delta - m - w(u) + wext[u] + (weight of its dense neighbors not adjacent to `mdnode`),
 
-raised to its old bound minus the weight of `mdnode` if it was not formed
-by a merge. It is exact if it equals the upper bound, the same expression
+raised to its old bound minus `swght + m` if it was not formed by a
+merge. It is exact if it equals the upper bound, the same expression
 with `extlen[u]` added. With external degree, the supernodes whose bound
 is less than `max(0, delta - swght) + w(u) - 1` are recomputed at once
 (`mdrecompute!`). The supernodes are returned to the degree lists.
@@ -891,11 +904,14 @@ input parameters:
   - `(wext, extlen)`: the terms of the bounds (see `mdelim!`); on output,
     `extlen[u]` is the upper bound of each node `u` of the reachable set
   - `external`: key the degree lists by external degree instead of degree
+  - `mass`: mass elimination
   - `offset`: separates the keys of the lists that are not exact
 
 updated parameters:
 
   - `mindeg`: new minimum key after degree update
+  - `ddeg`: the degrees of the dense nodes, which lose the nodes eliminated
+    with `mdnode`
   - `xw`: the lists of the eager pass (see `mdrecompute!`)
   - `(supersize, superwght, degree)`: supernodes and their bounds
   - `(deghead, degnext, degprev)`: degree lists
@@ -930,9 +946,11 @@ updated parameters:
         dwght::AbstractVector{V},
         nwords::Int,
         dmask::AbstractVector{UInt64},
+        ddeg::AbstractVector{V},
         nbypass::V,
         mindeg::V,
         external::Bool,
+        mass::Bool,
         offset::V,
         debug::Bool,
     ) where {I, V, E}
@@ -1021,22 +1039,39 @@ updated parameters:
         end
     end
 
-    # keep the principal nodes of the reachable set
-    nrch = zero(V)
+    # keep the principal nodes of the reachable set. With mass elimination,
+    # a node whose list holds only `mdnode`, and whose dense neighbors are
+    # those of `mdnode`, is eliminated with `mdnode` instead: with degree, it
+    # is indistinguishable from `mdnode`. Its dense neighbors lose it
+    nrch = zero(V); mwght = zero(V)
 
     @inbounds for k in oneto(rchsze)
-        rnode = rchset[k]
+        rnode = rchset[k]; rwght = superwght[rnode]
 
-        if ispositive(superwght[rnode])
+        if ispositive(rwght)
             degprev[rnode] = degnext[rnode] = zero(V)
-            nrch += one(V); rchset[nrch] = rnode
+
+            if mass && isone(len[rnode]) && (!ispositive(nbypass) || dwght[rnode] == dS)
+                ispositive(nbypass) && mdlose!(ddeg, dmask, nwords, rnode, rwght)
+                supersize[mdnode] += supersize[rnode]; supersize[rnode] = zero(V)
+                superwght[rnode] = zero(V); degnext[rnode] = -mdnode
+                len[rnode] = elen[rnode] = zero(V); mwght += rwght
+            else
+                nrch += one(V); rchset[nrch] = rnode
+            end
         end
     end
+
+    # the floor of the eager pass is that of `mdnode`. The other nodes lose
+    # the nodes eliminated with it, as they lose `mdnode`
+    floor = max(zero(V), delta - swght)
+    delta -= mwght; swght += mwght
+    @inbounds degree[mdnode] -= mwght
 
     # for each principal node in the reachable set, assign its bound; with
     # external degree, chain the nodes for the eager pass through `degnext`,
     # in order
-    floor = max(zero(V), delta - swght); zhead = ztail = zero(V)
+    zhead = ztail = zero(V)
 
     @inbounds for k in oneto(nrch)
         rnode = rchset[k]; rwght = superwght[rnode]
