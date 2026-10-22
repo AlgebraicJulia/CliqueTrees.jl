@@ -78,9 +78,10 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     iszero(n) && return FVector{V}(undef, 0)
     @inbounds nnz = xadj[neqns + 1] - one(E)
 
-    # the quotient graph never needs more than `nnz` entries of `iw`;
-    # the rest is room to grow between compressions
-    iwlen = twice(nnz) + convert(E, twice(neqns))
+    # the quotient graph needs at most `nnz` entries of `iw` until a dense
+    # node rejoins it (see `mdreinsert!`). As in AMD, `iw` is a fifth longer,
+    # plus `neqns`, to leave room between compressions
+    iwlen = nnz + nnz ÷ convert(E, 5) + convert(E, neqns)
 
     marker = FVector{Int}(undef, n)
     supersize = FVector{V}(undef, n)
@@ -98,6 +99,9 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     elen = FVector{V}(undef, n)
     iw = FVector{V}(undef, iwlen)
 
+    # the lists of a recomputation (see `mdrecompute!`); it grows as needed
+    xw = Vector{V}(undef, n ÷ convert(V, 8))
+
     # select the dense nodes
     dindex = FVector{V}(undef, n)
     ndense = mdselect!(dindex, n, xadj, adjncy, dense)
@@ -109,7 +113,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
 
     md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, convert(V, total), n, external, debug, vwght, xadj,
+        elen, iw, iwlen, xw, convert(V, total), n, external, debug, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -183,6 +187,7 @@ function md_impl!(
         elen::AbstractVector{V},
         iw::AbstractVector{V},
         iwlen::E,
+        xw::Vector{V},
         total::V,
         neqns::V,
         external::Bool,
@@ -256,7 +261,7 @@ function md_impl!(
 
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, pfree, total, neqns, external, debug, vwght, ndense,
+        elen, iw, iwlen, xw, pfree, total, neqns, external, debug, vwght, ndense,
         nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -265,7 +270,7 @@ end
 """
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
         hashval, rchset, wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, pfree, total, neqns, external, debug, vwght, ndense,
+        elen, iw, iwlen, xw, pfree, total, neqns, external, debug, vwght, ndense,
         nwords, dindex, dnode, ddeg, dmask)
 
 This routine implements the exact minimum degree algorithm. It makes use
@@ -308,6 +313,8 @@ updated parameters:
     An element is absorbed, and the list of a merged node released, by
     setting its length to 0. Destroyed on output.
   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
+  - `(iw, iwlen)`: replaced by a longer copy if the lists of a rejoining
+    dense node do not fit (see `mdreinsert!`)
 
 output parameters:
 
@@ -349,13 +356,15 @@ working arrays:
     `-deghead[b]` if no degree list starts there, and otherwise
     `degprev[deghead[b]]`, which is restored to `-b` once the bucket is
     processed. For an element, `hashval` is the start in
-    `iw` of its list of nodes outside the element being recomputed.
+    `xw` of its list of nodes outside the element being recomputed.
   - `rchset`: the reachable set of the current pivot; during a visit, the
     elements with a group
   - `extlen`: for an element, the length of its list of nodes outside the
-    element being recomputed. These lists are stored in the free space of
-    `iw`, after `pfree`. For a node of the reachable set, `extlen` is the
-    second term of its bound, and then its upper bound (see `mdupdate!`).
+    element being recomputed. For a node of the reachable set, `extlen` is
+    the second term of its bound, and then its upper bound (see
+    `mdupdate!`).
+  - `xw`: the lists of nodes outside the element being recomputed (see
+    `mdrecompute!`); it grows when they do not fit
   - `marker`: temporary marker vector, used with increasing tags
 """
 function md!_impl!(
@@ -376,6 +385,7 @@ function md!_impl!(
         elen::AbstractVector{V},
         iw::AbstractVector{V},
         iwlen::E,
+        xw::Vector{V},
         pfree::E,
         total::V,
         neqns::V,
@@ -513,7 +523,7 @@ function md!_impl!(
             mdnode = dnode[dj]
             nmissing -= 2 * (convert(Int, nbypass) - 1 - mdcount(dmask, nwords, mdnode))
             nbypass -= one(V)
-            pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree,
+            pfree, iw, iwlen = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree,
                 superwght, nwords, dindex, dnode, dmask, rchset)
             degree[mdnode] = ddeg[dj]
 
@@ -533,9 +543,9 @@ function md!_impl!(
             mdremove!(mdnode, deghead, degnext, degprev, offset)
         else
             # recompute every node at the minimum key
-            mindeg, tag, pfree = mdvisit!(mindeg, pe, len, elen, iw, superwght,
+            mindeg, tag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
                 degree, deghead, degnext, degprev, hashval, rchset, marker,
-                tag, pfree, iwlen, neqns, extlen, dwght, nbypass, external, offset,
+                tag, xw, neqns, extlen, dwght, nbypass, external, offset,
                 debug)
 
             continue
@@ -576,9 +586,9 @@ function md!_impl!(
 
         # merge the indistinguishable nodes of the reachable set, assign
         # their bounds, and return them to the degree structure
-        mindeg, tag, pfree = mdupdate!(mdnode, rchsze, delta, dS, swght, pe,
+        mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, pe,
             len, elen, iw, supersize, superwght, degree, deghead, degnext,
-            degprev, hashval, rchset, wext, marker, tag, pfree, iwlen,
+            degprev, hashval, rchset, wext, marker, tag, xw,
             neqns, extlen, dwght, nwords, dmask, nbypass, mindeg, external,
             offset, debug)
 
@@ -834,7 +844,8 @@ function mdelim!(
     end
 
     # store the reachable set as the list of the new element `mdnode`
-    # (compress `iw` if necessary)
+    # (compress `iw` if necessary). It fits: it is no longer than the lists
+    # released above, and no other list grew
     if pfree + convert(E, rchsze) - one(E) > iwlen
         pfree = mdcompress!(neqns, pe, len, iw, pfree)
         @assert pfree + convert(E, rchsze) - one(E) <= iwlen
@@ -853,7 +864,7 @@ end
 
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, pe, len, elen, iw,
-        supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, pfree, iwlen, neqns, extlen, dwght,
+        supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, xw, neqns, extlen, dwght,
         nwords, dmask, nbypass, mindeg, external, offset, debug)
 
 This routine updates the degree structure after the elimination of
@@ -886,8 +897,7 @@ input parameters:
 updated parameters:
 
   - `mindeg`: new minimum key after degree update
-  - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`; the eager
-    pass may compress `iw`
+  - `xw`: the lists of the eager pass (see `mdrecompute!`)
   - `(supersize, superwght, degree)`: supernodes and their bounds
   - `(deghead, degnext, degprev)`: degree lists
   - `hashval`: the hash buckets, which share `deghead` with the degree
@@ -915,8 +925,7 @@ updated parameters:
         wext::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        pfree::E,
-        iwlen::E,
+        xw::Vector{V},
         neqns::V,
         extlen::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -1060,9 +1069,9 @@ updated parameters:
 
     # the eager pass
     if ispositive(zhead)
-        mindeg, tag, pfree = mdrecompute!(zhead, mdnode, pe, len, elen, iw,
+        mindeg, tag = mdrecompute!(zhead, mdnode, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, hashval, marker,
-            tag, pfree, iwlen, neqns, extlen, dwght, nbypass, mindeg, external, offset,
+            tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
     end
 
@@ -1076,18 +1085,18 @@ updated parameters:
         end
     end
 
-    return mindeg, tag, pfree
+    return mindeg, tag
 end
 
 """
     mdvisit!(key, pe, len, elen, iw, superwght, degree, deghead, degnext,
-        degprev, hashval, rchset, marker, tag, pfree, iwlen, neqns, extlen, dwght,
+        degprev, hashval, rchset, marker, tag, xw, neqns, extlen, dwght,
         nbypass, external, offset, debug)
 
 This routine recomputes every node with key `key` that is not exact. The
 nodes are grouped by their most recent element, and each group is
-recomputed at once (`mdrecompute!`). Returns the new minimum key, the tag
-and `pfree`.
+recomputed at once (`mdrecompute!`). Returns the new minimum key and the
+tag.
 
 working arrays:
 
@@ -1111,8 +1120,7 @@ function mdvisit!(
         rchset::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        pfree::E,
-        iwlen::E,
+        xw::Vector{V},
         neqns::V,
         extlen::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -1143,18 +1151,18 @@ function mdvisit!(
     @inbounds for k in oneto(esze)
         elmnt = rchset[k]
 
-        mindeg, tag, pfree = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
+        mindeg, tag = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, hashval, marker,
-            tag, pfree, iwlen, neqns, extlen, dwght, nbypass, mindeg, external, offset,
+            tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
     end
 
-    return mindeg, tag, pfree
+    return mindeg, tag
 end
 
 """
     mdrecompute!(zhead, elmnt, pe, len, elen, iw, superwght, degree,
-        deghead, degnext, degprev, hashval, marker, tag, pfree, iwlen, neqns, extlen,
+        deghead, degnext, degprev, hashval, marker, tag, xw, neqns, extlen,
         dwght, nbypass, mindeg, external, offset, debug)
 
 This routine recomputes the external degrees of the nodes of the chain that
@@ -1164,8 +1172,7 @@ other element of the nodes is scanned once to list its nodes outside
 `elmnt`, and the external degree of each node is the weight of `elmnt`, of
 the union of these lists and of its uneliminated neighbors, and of its
 dense neighbors, minus its own weight. The nodes become exact and are
-inserted into the degree lists. Returns the new minimum key, the tag and
-`pfree`.
+inserted into the degree lists. Returns the new minimum key and the tag.
 
 The elements in the lists of all the nodes (the core) are united once, as
 they are scanned, so each node only adds the lists of its other elements.
@@ -1173,11 +1180,10 @@ This keeps groups whose nodes share many overlapping elements cheap.
 
 working arrays:
 
-  - `(hashval, extlen)`: the nodes of each element `f` outside `elmnt` are
-    listed in `iw[s:s + extlen[f] - 1]`, with `s = hashval[f]` (the hash
-    values of elements are not in use), in the free space after `pfree`.
-    `iw` is compressed first if that space is too small, so `pfree` may
-    change.
+  - `(hashval, extlen, xw)`: the nodes of each element `f` outside `elmnt`
+    are listed in `xw[s:s + extlen[f] - 1]`, with `s = hashval[f]` (the
+    hash values of elements are not in use). `xw` grows first if it is too
+    short.
   - `marker`: the nodes of `elmnt` are marked `etag`; while the elements
     are counted, `marker[f] - base` is the number of nodes that list `f`;
     the core and the nodes of its lists are marked `ctag`, the other
@@ -1198,8 +1204,7 @@ working arrays:
         hashval::AbstractVector{UInt64},
         marker::AbstractVector{I},
         tag::I,
-        pfree::E,
-        iwlen::E,
+        xw::Vector{V},
         neqns::V,
         extlen::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -1257,18 +1262,16 @@ working arrays:
         znode = znext
     end
 
-    # the lists of nodes outside `elmnt` go into the free space of `iw`
-    # (compress `iw` if necessary)
-    if pfree + need - one(E) > iwlen
-        pfree = mdcompress!(neqns, pe, len, iw, pfree)
-        @assert pfree + need - one(E) <= iwlen
+    # the lists of nodes outside `elmnt` go into `xw` (grow it if necessary)
+    if need > length(xw)
+        resize!(xw, max(convert(Int, need), 2 * length(xw)))
     end
 
     # scan each other element of the nodes once, and list its nodes outside
     # `elmnt`. The elements listed by every node of the group (the core) are
     # marked `ctag`, and the union of their lists, also marked `ctag`, is
     # taken once here: its weight is `cwght`
-    tag += one(I); stag = tag; tag += one(I); ctag = tag; pos = pfree
+    tag += one(I); stag = tag; tag += one(I); ctag = tag; pos = one(E)
     full = base + convert(I, gsize); cwght = zero(V)
 
     znode = zhead
@@ -1291,7 +1294,7 @@ working arrays:
                     node = iw[j]
 
                     if ispositive(superwght[node]) && marker[node] != etag
-                        iw[pos] = node; pos += one(E)
+                        xw[pos] = node; pos += one(E)
 
                         if core && marker[node] != ctag
                             marker[node] = ctag; cwght += superwght[node]
@@ -1327,7 +1330,7 @@ working arrays:
                 qstop = qstart + convert(E, extlen[f]) - one(E)
 
                 for q in qstart:qstop
-                    node = iw[q]
+                    node = xw[q]
 
                     if marker[node] != utag && marker[node] != ctag
                         marker[node] = utag; deg += superwght[node]
@@ -1357,7 +1360,7 @@ working arrays:
         znode = znext
     end
 
-    return mindeg, tag, pfree
+    return mindeg, tag
 end
 
 """
@@ -1657,7 +1660,10 @@ This routine returns the dense node with index `j` to the quotient graph.
 Its neighbors are the uneliminated principal nodes, other than dense nodes,
 whose masks contain `j`; they become its list, and it is appended to each
 of their lists (which are moved to the end of `iw` to make room). The node
-is then removed from every mask. Returns the updated `pfree`.
+is then removed from every mask. Returns `pfree`, `iw` and `iwlen`. A
+rejoining dense node is the only step that can make the quotient graph
+longer, so if its lists do not fit after a compression, `iw` is replaced by
+a longer copy (`mdgrow`).
 
 working arrays:
 
@@ -1697,7 +1703,10 @@ function mdreinsert!(
 
                 if pfree + convert(E, nlen) > iwlen
                     pfree = mdcompress!(neqns, pe, len, iw, pfree)
-                    @assert pfree + convert(E, nlen) <= iwlen
+
+                    if pfree + convert(E, nlen) > iwlen
+                        iw, iwlen = mdgrow(iw, iwlen, pfree, convert(E, nlen) + one(E))
+                    end
                 end
 
                 pstart = pe[node]; pe[node] = pfree
@@ -1715,7 +1724,10 @@ function mdreinsert!(
 
     if pfree + convert(E, cnt) - one(E) > iwlen
         pfree = mdcompress!(neqns, pe, len, iw, pfree)
-        @assert pfree + convert(E, cnt) - one(E) <= iwlen
+
+        if pfree + convert(E, cnt) - one(E) > iwlen
+            iw, iwlen = mdgrow(iw, iwlen, pfree, convert(E, cnt))
+        end
     end
 
     @inbounds pe[dnd] = pfree
@@ -1725,15 +1737,29 @@ function mdreinsert!(
     end
 
     @inbounds len[dnd] = cnt; elen[dnd] = zero(V)
-    return pfree
+    return pfree, iw, iwlen
+end
+
+"""
+    mdgrow(iw, iwlen, pfree, need)
+
+This routine returns a copy of `iw[1:pfree - 1]` with room for `need` more
+entries, and for half of `iwlen` beyond them, and its length.
+"""
+function mdgrow(iw::AbstractVector{V}, iwlen::E, pfree::E, need::E) where {V, E}
+    newlen = convert(E, convert(Int, pfree) - 1 + convert(Int, need) + convert(Int, iwlen) ÷ 2)
+    newiw = similar(iw, newlen)
+    copyto!(newiw, 1, iw, 1, convert(Int, pfree) - 1)
+    return newiw, newlen
 end
 
 """
     mdcompress!(neqns, pe, len, iw, pfree)
 
 This routine compresses the quotient graph storage `iw`, releasing the
-space used by absorbed elements, merged nodes, and purged entries. Returns
-the new value of `pfree`.
+space used by absorbed elements, merged nodes, and purged entries. The
+first entry of each list is marked in a bitmap, so the released space is
+skipped 64 entries at a time. Returns the new value of `pfree`.
 
 input parameters:
 
@@ -1753,22 +1779,29 @@ function mdcompress!(
         pfree::E,
     ) where {V, E}
     # store `-node` in the first entry of the list of each node, saving the
-    # entry in `pe[node]`
+    # entry in `pe[node]`, and mark the entry in `heads`
+    heads = zeros(UInt64, cld(convert(Int, pfree) - 1, 64))
+
     @inbounds for node in oneto(neqns)
         if ispositive(len[node])
             p = pe[node]
             pe[node] = convert(E, iw[p])
             iw[p] = -node
+            i = convert(Int, p) - 1
+            heads[(i >> 6) + 1] |= one(UInt64) << (i & 63)
         end
     end
 
     # move the lists to the front of `iw`, in order
-    psrc = pdst = one(E); pend = pfree - one(E)
+    pdst = one(E)
 
-    @inbounds while psrc <= pend
-        node = -iw[psrc]; psrc += one(E)
+    @inbounds for w in eachindex(heads)
+        bits = heads[w]
 
-        if ispositive(node)
+        while !iszero(bits)
+            psrc = convert(E, ((w - 1) << 6) + trailing_zeros(bits) + 1)
+            bits &= bits - one(UInt64)
+            node = -iw[psrc]; psrc += one(E)
             iw[pdst] = convert(V, pe[node]); pe[node] = pdst; pdst += one(E)
 
             for _ in 2:len[node]
