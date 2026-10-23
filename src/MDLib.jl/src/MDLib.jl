@@ -103,7 +103,6 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
 
     # 32-bit tags when they leave room for many steps between resets
     marker = n < typemax(Int32) ÷ 64 ? FVector{Int32}(undef, n) : FVector{Int}(undef, n)
-    supersize = FVector{V}(undef, n)
     superwght = FVector{V}(undef, n)
     degree = FVector{V}(undef, n)
     deghead = FVector{V}(undef, 2 * (total + 1))
@@ -129,7 +128,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     ddeg = FVector{V}(undef, ndense)
     dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
 
-    md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
+    md_impl!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, convert(V, total), n, external, mass,
         twin, debug, vwght, xadj,
@@ -202,7 +201,6 @@ end
 
 function md_impl!(
         marker::AbstractVector{I},
-        supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
@@ -292,7 +290,7 @@ function md_impl!(
         end
     end
 
-    md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
+    md!_impl!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
         debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
@@ -301,7 +299,7 @@ function md_impl!(
 end
 
 """
-    md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
+    md!_impl!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
         debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
@@ -362,9 +360,10 @@ working arrays:
     0 if there are no such nodes
   - `degnext`: during algorithm, points to the next node in the degree list
     (or hash bucket) associated with node, or stores negative values for
-    eliminated/merged nodes (-num for an eliminated node, -parent for a
-    merged node). During a visit, the next node in a group. After
-    algorithm, stores the final ordering.
+    eliminated/merged nodes (`-(neqns + rank)` for an eliminated principal
+    node, the `rank`-th supernode eliminated, and -parent for a merged
+    node). During a visit, the next node in a group. After algorithm,
+    stores the final ordering.
   - `degprev`: points to the previous node in a degree list associated with
     node, or the negative of the index in `deghead` of its list (if node
     was the first in it), or 0 if the node is not in the degree lists.
@@ -372,7 +371,6 @@ working arrays:
     During a visit, the first node of the group of an element.
   - `degree`: the bound on the external degree of each uneliminated
     supernode; for an element, the weight of the nodes in it
-  - `supersize`: the size of the supernodes (0 means merged into another)
   - `superwght`: the weight of the supernodes. It is positive exactly for
     the uneliminated supernodes outside the reachable set being formed: it
     is negated for the nodes of that set and for the pivot, and 0 for
@@ -404,7 +402,6 @@ working arrays:
 """
 function md!_impl!(
         marker::AbstractVector{I},
-        supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
@@ -435,7 +432,6 @@ function md!_impl!(
         dmask::AbstractVector{UInt64},
     ) where {I, V, E}
     @assert neqns <= length(marker)
-    @assert neqns <= length(supersize)
     @assert neqns <= length(superwght)
     @assert neqns <= length(degree)
     @assert twice(total + one(V)) <= length(deghead)
@@ -457,7 +453,6 @@ function md!_impl!(
     # initialization for the minimum degree algorithm.
     @inbounds for node in oneto(neqns)
         marker[node] = zero(I)
-        supersize[node] = one(V)
         superwght[node] = trunc(V, vwght[node])
         elen[node] = zero(V)
         degnext[node] = zero(V)
@@ -470,13 +465,14 @@ function md!_impl!(
     end
 
     # - `mindeg` is the current minimum key
-    # - `num` counts the number of ordered nodes plus 1
+    # - `rank` counts the eliminated supernodes plus 1, and `wleft` is the
+    #   weight of the uneliminated nodes
     # - `tag` is used to facilitate marking nodes; the tags are reset
     #   before they overflow
     # - `wflg` is the flag of `wext`, and `lemax` the largest weight of an
     #   element
     # - `offset` separates the keys of the lists that are not exact
-    mindeg = total + one(V); num = one(V); tag = zero(I)
+    mindeg = total + one(V); rank = one(V); wleft = total; tag = zero(I)
     wflg = one(V); lemax = zero(V); offset = total + one(V)
 
     # - `nbypass` is the number of dense nodes outside the quotient graph
@@ -515,7 +511,7 @@ function md!_impl!(
             mindeg = mdinsert!(key, mindeg, node, true, deghead, degnext, degprev, offset)
         else
             # eliminate node of degree 0
-            degnext[node] = -num; num += one(V)
+            degnext[node] = -(neqns + rank); rank += one(V); wleft -= superwght[node]
         end
     end
 
@@ -523,7 +519,7 @@ function md!_impl!(
     # overflow
     tagmax = typemax(I) - convert(I, 8) * convert(I, neqns) - convert(I, 64)
 
-    @inbounds while num <= neqns
+    @inbounds while ispositive(wleft)
         if tag > tagmax
             for node in oneto(neqns)
                 marker[node] = zero(I)
@@ -586,6 +582,16 @@ function md!_impl!(
             # eliminations may touch those nodes and give them new bounds
             mdnode = deghead[mindeg]
             mdremove!(mdnode, deghead, degnext, degprev, offset)
+
+            # the new head of the list is likely the next pivot: ask for its
+            # fields and its list while `mdnode` is eliminated
+            @inbounds nxnode = deghead[mindeg]
+
+            if ispositive(nxnode)
+                mdprefetch(superwght, nxnode)
+                mdprefetch(degree, nxnode); mdprefetch(len, nxnode)
+                mdprefetch(elen, nxnode); @inbounds mdprefetch(iw, pe[nxnode])
+            end
         else
             # recompute every node at the minimum key
             mindeg, tag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
@@ -597,9 +603,10 @@ function md!_impl!(
         end
 
         degprev[mdnode] = zero(V)
-        degnext[mdnode] = -num
+        degnext[mdnode] = -(neqns + rank)
 
-        if num + supersize[mdnode] > neqns
+        # `mdnode` is the last supernode
+        if superwght[mdnode] >= wleft
             break
         end
 
@@ -618,9 +625,9 @@ function md!_impl!(
         degS = degree[mdnode]
 
         rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght = mdelim!(mdnode,
-            pe, len, elen, iw, iwlen, pfree, neqns, supersize, superwght, degree,
+            pe, len, elen, iw, iwlen, pfree, neqns, superwght, degree,
             deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
-            dS, offset, external, twin, num + supersize[mdnode],
+            dS, offset, external, twin, rank + one(V),
             nbypass, nwords, dmask, ddeg)
 
         debug && @assert delta == degS
@@ -640,30 +647,31 @@ function md!_impl!(
         # set adjacent only to the new element and to them is not
         # indistinguishable from `mdnode`, and it must follow them (they
         # are numbered right after the supernode of `mdnode`)
-        mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
-            len, elen, iw, supersize, superwght, degree, deghead, degnext,
+        mindeg, tag, mwght = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
+            len, elen, iw, superwght, degree, deghead, degnext,
             degprev, wext, marker, tag, xw,
             neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
             mass && iszero(fsze), offset, debug)
 
-        num += supersize[mdnode] + fsze; superwght[mdnode] = zero(V)
+        rank += one(V) + fsze; wleft -= swght + fwght + mwght
+        superwght[mdnode] = zero(V)
 
         if ispositive(dS) && (ispositive(fsze) || mass)
             dmin = zero(V)
         end
 
         if debug
-            mdcheck(neqns, pe, len, elen, iw, supersize, superwght, degree,
+            mdcheck(neqns, pe, len, elen, iw, superwght, degree,
                 deghead, degnext, total, dwght, ndense, nwords, dindex, dnode, dmask)
         end
     end
 
-    mdnumber!(neqns, supersize, degnext)
+    mdnumber!(neqns, degnext, degprev, degree)
     return degnext
 end
 
 """
-    mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, supersize,
+    mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns,
         superwght, degree, deghead, degnext, degprev, marker, wext, extlen,
         wflg, lemax, dS, offset, external, twin, fnum, nbypass,
         nwords, dmask, ddeg)
@@ -712,9 +720,8 @@ input parameters:
   - `external`: the keys are external degrees (the false twins need not
     have the weight of `mdnode`)
   - `twin`: find the false twins of `mdnode`
-  - `fnum`: the number of the first false twin (the position after the
-    supernode of `mdnode`)
-  - `supersize`: the size of the supernodes
+  - `fnum`: the rank of the first false twin (the rank after that of
+    `mdnode`)
   - `(nbypass, nwords, dmask)`: the dense nodes
 
 updated parameters:
@@ -744,7 +751,7 @@ output parameters:
   - `delta`: the weight of the reachable set, with the dense neighbors of
     `mdnode`
   - `swght`: the weight of `mdnode`
-  - `fsze`: the number of nodes in the false twins of `mdnode`
+  - `fsze`: the number of false twins of `mdnode` (supernodes)
   - `fwght`: their weight
 """
 function mdelim!(
@@ -756,7 +763,6 @@ function mdelim!(
         iwlen::E,
         pfree::E,
         neqns::V,
-        supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
@@ -811,6 +817,11 @@ function mdelim!(
 
     @inbounds for i in estart:estop
         elmnt = iw[i]
+
+        # ask for the length and the list of the next element
+        nxelmnt = iw[min(i + one(E), estop)]
+        mdprefetch(len, nxelmnt); mdprefetch(iw, pe[nxelmnt])
+
         jstart = pe[elmnt]
         jstop = jstart + convert(E, len[elmnt]) - one(E)
 
@@ -821,6 +832,11 @@ function mdelim!(
                 superwght[node] = -wght
                 iw[rstart + convert(E, rchsze)] = node; rchsze += one(V)
                 mdremove!(node, deghead, degnext, degprev, offset)
+
+                # the fields and the list of `node` are read only after
+                # the reachable set is formed: ask for them now
+                mdprefetch(len, node); mdprefetch(pe, node); mdprefetch(elen, node)
+                mdprefetch(degree, node); mdprefetch(iw, pe[node])
 
                 if twin
                     rsum += wght; nlen = len[node] - elen[node]
@@ -844,6 +860,8 @@ function mdelim!(
             superwght[node] = -wght
             iw[rstart + convert(E, rchsze)] = node; rchsze += one(V)
             mdremove!(node, deghead, degnext, degprev, offset)
+            mdprefetch(len, node); mdprefetch(pe, node); mdprefetch(elen, node)
+            mdprefetch(degree, node); mdprefetch(iw, pe[node])
 
             if twin
                 rsum += wght; nlen = len[node] - elen[node]
@@ -887,7 +905,7 @@ function mdelim!(
                 if same
                     mdremove!(node, deghead, degnext, degprev, offset)
                     ispositive(nbypass) && mdlose!(ddeg, dmask, nwords, node, wght)
-                    degnext[node] = -(fnum + fsze); fsze += supersize[node]
+                    degnext[node] = -(neqns + fnum + fsze); fsze += one(V)
                     superwght[node] = zero(V); len[node] = zero(V); fwght += wght
                 end
             end
@@ -934,8 +952,10 @@ function mdelim!(
         end
     end
 
-    # for each node in the reachable set, do the following...
-    hashmask = min(nextpow(2, max(twice(rchsze), one(V))), prevpow(2, length(deghead))) - 1
+    # for each node in the reachable set, do the following... The hash
+    # buckets are many (32 to 64 per node), so that a node is seldom in a
+    # bucket with another
+    hashmask = min(nextpow(2, max(32 * convert(Int, rchsze), 1)), prevpow(2, length(deghead))) - 1
 
     @inbounds for r in rstart:rstop
         rnode = iw[r]
@@ -1027,7 +1047,7 @@ end
 
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe, len, elen, iw,
-        supersize, superwght, degree, deghead, degnext, degprev, wext, marker, tag, xw, neqns, extlen, dwght,
+        superwght, degree, deghead, degnext, degprev, wext, marker, tag, xw, neqns, extlen, dwght,
         nwords, dmask, ddeg, nbypass, mindeg, external, mass, offset, debug)
 
 This routine updates the degree structure after the elimination of
@@ -1068,7 +1088,7 @@ updated parameters:
   - `ddeg`: the degrees of the dense nodes, which lose the nodes eliminated
     with `mdnode`
   - `xw`: the lists of the eager pass (see `mdrecompute!`)
-  - `(supersize, superwght, degree)`: supernodes and their bounds
+  - `(superwght, degree)`: supernodes and their bounds
   - `(deghead, degnext, degprev)`: degree lists
   - `marker`: the hashes of the nodes of the reachable set (see `mdelim!`),
     then tags; the hash buckets share `deghead` with the degree lists
@@ -1086,7 +1106,6 @@ updated parameters:
         len::AbstractVector{V},
         elen::AbstractVector{V},
         iw::AbstractVector{V},
-        supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
@@ -1181,7 +1200,6 @@ updated parameters:
                 if same
                     # `jnode` is indistinguishable from `inode`: merge them
                     # into a new supernode, and remove `jnode` from the bucket
-                    supersize[inode] += supersize[jnode]; supersize[jnode] = zero(V)
                     superwght[inode] += superwght[jnode]; superwght[jnode] = zero(V)
                     degnext[jnode] = -inode
                     len[jnode] = zero(V); elen[jnode] = zero(V)
@@ -1210,7 +1228,6 @@ updated parameters:
 
             if ispositive(rwght) && isone(len[rnode]) && (!ispositive(nbypass) || dwght[rnode] == dS)
                 ispositive(nbypass) && mdlose!(ddeg, dmask, nwords, rnode, rwght)
-                supersize[mdnode] += supersize[rnode]; supersize[rnode] = zero(V)
                 superwght[rnode] = zero(V); degprev[rnode] = zero(V); degnext[rnode] = -mdnode
                 len[rnode] = elen[rnode] = zero(V); mwght += rwght
             end
@@ -1290,7 +1307,7 @@ updated parameters:
         rnode = rnext
     end
 
-    return mindeg, tag
+    return mindeg, tag, mwght
 end
 
 """
@@ -1340,6 +1357,12 @@ function mdvisit!(
 
     @inbounds while ispositive(node)
         nxnode = degnext[node]
+
+        # ask for what the next node needs here, and for what this one
+        # needs in its recomputation
+        mdprefetch(pe, nxnode); mdprefetch(elen, nxnode)
+        mdprefetch(len, node); mdprefetch(degree, node)
+
         degnext[node] = degprev[node] = zero(V)
         elmnt = iw[pe[node] + convert(E, elen[node]) - one(E)]
 
@@ -1641,6 +1664,35 @@ list with key `key`, and returns the new minimum key.
     end
 
     return min(key, mindeg)
+end
+
+const MDPREFETCH = """
+    declare void @llvm.prefetch.p0i8(i8*, i32, i32, i32)
+
+    define void @entry(i$(Sys.WORD_SIZE) %0) #0 {
+        %p = inttoptr i$(Sys.WORD_SIZE) %0 to i8*
+        call void @llvm.prefetch.p0i8(i8* %p, i32 0, i32 3, i32 1)
+        ret void
+    }
+
+    attributes #0 = { alwaysinline }
+    """
+
+"""
+    mdprefetch(A, i)
+
+This routine asks the processor to bring `A[i]` into its caches (an LLVM
+prefetch: read, keep in all levels). It is a hint: it never faults, so `i`
+may lie outside `A`, and it does nothing unless `A` is dense. The pointer is
+written as `i8*`, which LLVM 15 (Julia 1.10) reads as a typed pointer and
+later versions upgrade.
+"""
+@inline mdprefetch(A::AbstractVector, i::Integer) = nothing
+
+@inline function mdprefetch(A::DenseVector, i::Integer)
+    ptr = convert(UInt, pointer(A, i))
+    Base.llvmcall((MDPREFETCH, "entry"), Cvoid, Tuple{UInt}, ptr)
+    return
 end
 
 # the key of a node: its external degree plus 1, or its degree plus 1
@@ -2029,53 +2081,81 @@ function mdcompress!(
 end
 
 """
-    mdnumber!(neqns, supersize, degnext)
+    mdnumber!(neqns, degnext, size, start)
 
-This routine performs the final step in producing the permutation and
-inverse permutation vectors in the minimum degree ordering algorithm.
+This routine computes the ordering. On input, `degnext[node]` is
+`-(neqns + rank)` for a principal node, the `rank`-th supernode eliminated,
+and `-parent` for a node merged into another (or eliminated with it). The
+nodes of each supernode are counted from these trees, and the supernodes laid
+out in the order of their ranks: the principal first, then its other nodes in
+increasing order. On output, `degnext[node]` is the position of `node`.
 
-input parameters:
+working arrays:
 
-  - `neqns`: number of equations
-  - `supersize`: size of supernodes (>0 for principals, 0 for merged)
-
-updated parameters:
-
-  - `degnext`: on input, stores -ordering for principals, -parent for merged.
-    on output, stores the final positive ordering for all nodes.
+  - `size`: for a principal, the number of nodes in its supernode, then the
+    next position in it
+  - `start`: for a rank, the size of its supernode, then its first position
 """
-function mdnumber!(neqns::V, supersize::AbstractVector{V}, degnext::AbstractVector{V}) where {V}
-    # first pass: convert principals to positive ordering
-    # and do path compression for merged nodes.
-    # we repurpose `supersize` as `mergelastnum` for principals.
+function mdnumber!(neqns::V, degnext::AbstractVector{V}, size::AbstractVector{V}, start::AbstractVector{V}) where {V}
     @inbounds for node in oneto(neqns)
-        if ispositive(supersize[node])
-            # principal: negate to get positive ordering
-            # and use `supersize` as `mergelastnum`
-            supersize[node] = degnext[node] = -degnext[node]
-        else
-            # merged node: trace to `root` and compress path
-            root = -degnext[node]
+        size[node] = zero(V)
+    end
 
-            while iszero(supersize[root])
+    # count the nodes of each supernode, pointing every merged node at its
+    # principal (path compression)
+    nrank = zero(V)
+
+    @inbounds for node in oneto(neqns)
+        x = -degnext[node]
+
+        if x > neqns
+            size[node] += one(V); nrank = max(nrank, x - neqns)
+        else
+            root = x
+
+            while -degnext[root] <= neqns
                 root = -degnext[root]
             end
 
-            # path compression: point all nodes on path to `root`
-            while node != root
-                next = -degnext[node]
-                degnext[node] = -root
-                node = next
+            j = node
+
+            while j != root
+                k = -degnext[j]; degnext[j] = -root; j = k
             end
+
+            size[root] += one(V)
         end
     end
 
-    # second pass: assign orderings
-    # all merged nodes now point directly to `root`
+    # the first position of each rank
     @inbounds for node in oneto(neqns)
-        if iszero(supersize[node])
-            root = -degnext[node]
-            degnext[node] = supersize[root] += one(V)
+        x = -degnext[node]
+
+        if x > neqns
+            start[x - neqns] = size[node]
+        end
+    end
+
+    pos = one(V)
+
+    @inbounds for r in oneto(nrank)
+        sz = start[r]; start[r] = pos; pos += sz
+    end
+
+    # the principals, then the other nodes in increasing order
+    @inbounds for node in oneto(neqns)
+        x = -degnext[node]
+
+        if x > neqns
+            size[node] = degnext[node] = start[x - neqns]
+        end
+    end
+
+    @inbounds for node in oneto(neqns)
+        x = -degnext[node]
+
+        if ispositive(x)
+            degnext[node] = size[x] += one(V)
         end
     end
 
@@ -2090,7 +2170,6 @@ function mdcheck(
         len::AbstractVector{V},
         elen::AbstractVector{V},
         iw::AbstractVector{V},
-        supersize::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         deghead::AbstractVector{V},
@@ -2116,7 +2195,7 @@ function mdcheck(
         end
     end
 
-    isactive(node) = !isnegative(degnext[node]) && ispositive(supersize[node])
+    isactive(node) = !isnegative(degnext[node]) && ispositive(superwght[node])
     isbypassed(node) = ispositive(dindex[node]) && ispositive(dnode[dindex[node]])
 
     for node in oneto(neqns)
