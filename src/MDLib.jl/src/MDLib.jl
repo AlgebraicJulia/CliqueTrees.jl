@@ -114,9 +114,6 @@ function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::
     heads = FVector{UInt64}(undef, cld(iwlen, 64))
     iwlen = convert(E, iwlen)
 
-    # the lists of a recomputation (see `mdrecompute!`); it grows as needed
-    xw = Vector{V}(undef, n ÷ convert(V, 8))
-
     # select the dense nodes (`dindex` and `dwght` are needed only if there
     # are any)
     ndense = mdndense(n, xadj, dense); dlen = zero(V)
@@ -135,7 +132,7 @@ function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::
 
     md_impl!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, heads, total, n, external, mass,
+        elen, iw, iwlen, heads, total, n, external, mass,
         twin, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
@@ -220,7 +217,6 @@ function md_impl!(
         elen::AbstractVector{V},
         iw::AbstractVector{V},
         iwlen::E,
-        xw::Vector{V},
         heads::AbstractVector{UInt64},
         total::V,
         neqns::V,
@@ -298,7 +294,7 @@ function md_impl!(
 
     mdmain!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, heads, pfree, total, neqns, external, mass, twin,
+        elen, iw, iwlen, heads, pfree, total, neqns, external, mass, twin,
         vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -405,17 +401,13 @@ end
 #     there, and otherwise `degprev[deghead[b]]`, which is restored to `-b`
 #     once the bucket is processed. The hash of a node of the reachable set
 #     is kept in `marker` (see `mdelim!`).
-#   - `extlen`: for an element, the length of its list of nodes outside the
-#     element being recomputed. For a node of the reachable set, `extlen` is
-#     the second term of its bound, and then its upper bound (see
-#     `mdupdate!`).
-#   - `xw`: the lists of nodes outside the element being recomputed (see
-#     `mdrecompute!`); it grows when they do not fit
+#   - `extlen`: for an element, the number of its nodes outside the element
+#     being recomputed, which come first in its list (see `mdrecompute!`).
+#     For a node of the reachable set, `extlen` is the second term of its
+#     bound, and then its upper bound (see `mdupdate!`).
 #   - `marker`: temporary marker vector, used with increasing tags. A node
 #     of the reachable set holds its hash there, as a negative number, until
 #     the indistinguishable nodes are merged
-#   - `elen`: for an element (whose `elen` is not in use), the start in `xw`
-#     of its list of nodes outside the element being recomputed
 #   - `heads`: the first entries of the lists, while `iw` is compressed (see
 #     `mdcompress!`)
 function mdmain!(
@@ -433,7 +425,6 @@ function mdmain!(
         elen::AbstractVector{V},
         iw::AbstractVector{V},
         iwlen::E,
-        xw::Vector{V},
         heads::AbstractVector{UInt64},
         pfree::E,
         total::V,
@@ -621,7 +612,7 @@ function mdmain!(
                 # recompute every node at the minimum key
                 mindeg, tag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
                     degree, deghead, degnext, degprev, marker,
-                    tag, xw, neqns, extlen, dwght, nbypass, external, offset)
+                    tag, neqns, extlen, dwght, nbypass, external, offset)
             end
         end
 
@@ -671,7 +662,7 @@ function mdmain!(
         # are numbered right after the supernode of `mdnode`)
         mindeg, tag, mwght = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
             len, elen, iw, superwght, degree, deghead, degnext,
-            degprev, wext, marker, tag, xw,
+            degprev, wext, marker, tag,
             neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
             mass && iszero(fsze), offset)
 
@@ -1084,7 +1075,7 @@ end
 # raised to its old bound minus `swght + fwght + m` if it was not formed by
 # a merge. It is exact if it equals the upper bound, the same expression
 # with `extlen[u]` added. With external degree, the supernodes whose bound
-# is less than `max(0, delta - swght) + w(u) - 1` are recomputed at once
+# is less than `max(0, delta - m - swght) + w(u) - 1` are recomputed at once
 # (`mdrecompute!`). The supernodes are returned to the degree lists.
 #
 # input parameters:
@@ -1108,7 +1099,6 @@ end
 #   - `mindeg`: new minimum key after degree update
 #   - `ddeg`: the degrees of the dense nodes, which lose the nodes eliminated
 #     with `mdnode`
-#   - `xw`: the lists of the eager pass (see `mdrecompute!`)
 #   - `(superwght, degree)`: supernodes and their bounds
 #   - `(deghead, degnext, degprev)`: degree lists
 #   - `marker`: the hashes of the nodes of the reachable set (see `mdelim!`),
@@ -1134,7 +1124,6 @@ end
         wext::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        xw::Vector{V},
         neqns::V,
         extlen::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -1255,11 +1244,11 @@ end
         end
     end
 
-    # the floor of the eager pass is that of `mdnode`. The other nodes lose
-    # the nodes eliminated with it, and its false twins, as they lose
-    # `mdnode`
-    floor = max(zero(V), delta - swght)
-    delta -= mwght; swght += mwght + fwght
+    # the other nodes lose the nodes eliminated with `mdnode`, and its false
+    # twins, as they lose `mdnode`. The floor of the eager pass is that of
+    # `mdnode`, without the nodes eliminated with it
+    delta -= mwght; floor = max(zero(V), delta - swght)
+    swght += mwght + fwght
     @inbounds degree[mdnode] -= mwght
 
     # for each principal node in the reachable set, assign its bound. With
@@ -1315,7 +1304,7 @@ end
     if ispositive(zhead)
         mindeg, tag = mdrecompute!(zhead, mdnode, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
-            tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset)
+            tag, neqns, extlen, dwght, nbypass, mindeg, external, offset)
     end
 
     # with external degree, return the other nodes to the degree structure
@@ -1356,7 +1345,6 @@ function mdvisit!(
         degprev::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        xw::Vector{V},
         neqns::V,
         extlen::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -1407,7 +1395,7 @@ function mdvisit!(
 
         mindeg, tag = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
-            tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset)
+            tag, neqns, extlen, dwght, nbypass, mindeg, external, offset)
 
         gnode = gnext
     end
@@ -1417,23 +1405,22 @@ end
 
 # This routine recomputes the external degrees of the nodes of the chain that
 # starts at `zhead` and is linked by `degnext`, whose most recent element is
-# `elmnt`. The nodes of `elmnt` are marked, each
-# other element of the nodes is scanned once to list its nodes outside
-# `elmnt`, and the external degree of each node is the weight of `elmnt`, of
-# the union of these lists and of its uneliminated neighbors, and of its
-# dense neighbors, minus its own weight. The nodes become exact and are
+# `elmnt`. The nodes of `elmnt` are marked, the list of each other element of
+# the nodes is scanned once and partitioned in place, its nodes outside
+# `elmnt` first, and the external degree of each node is the weight of
+# `elmnt`, of the union of these nodes and of its uneliminated neighbors, and
+# of its dense neighbors, minus its own weight. The nodes become exact and are
 # inserted into the degree lists. Returns the new minimum key and the tag.
 #
 # The elements in the lists of all the nodes (the core) are united once, as
-# they are scanned, so each node only adds the lists of its other elements.
-# This keeps groups whose nodes share many overlapping elements cheap.
+# they are scanned, so each node only adds its other elements. This keeps
+# groups whose nodes share many overlapping elements cheap.
 #
 # working arrays:
 #
-#   - `(elen, extlen, xw)`: the nodes of each element `f` outside `elmnt`
-#     are listed in `xw[s:s + extlen[f] - 1]`, with `s = elen[f]` (`elen` is
-#     not in use for elements; `s` is at most the number of edges, which `V`
-#     holds). `xw` grows first if it is too short.
+#   - `extlen`: the list of each element `f` is partitioned: its `extlen[f]`
+#     nodes outside `elmnt` come first, in order, then its nodes in `elmnt`.
+#     Merged and eliminated nodes are dropped, so `len[f]` can shrink.
 #   - `marker`: the nodes of `elmnt` are marked `etag`; while the elements
 #     are counted, `marker[f] - base` is the number of nodes that list `f`;
 #     the core and the nodes of its lists are marked `ctag`, the other
@@ -1452,7 +1439,6 @@ end
         degprev::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
-        xw::Vector{V},
         neqns::V,
         extlen::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -1482,10 +1468,9 @@ end
     end
 
     # mark the other elements of the nodes with the number of nodes that list
-    # them, `marker[f] - base`, and count their entries (elements and nodes
-    # are marked in the same vector: an element is never an uneliminated
-    # node)
-    tag += one(I); base = tag; tag += convert(I, gsize); need = zero(E)
+    # them, `marker[f] - base` (elements and nodes are marked in the same
+    # vector: an element is never an uneliminated node)
+    tag += one(I); base = tag; tag += convert(I, gsize)
 
     znode = zhead
 
@@ -1499,7 +1484,7 @@ end
 
             if f != elmnt
                 if marker[f] <= base
-                    marker[f] = base + one(I); need += convert(E, len[f])
+                    marker[f] = base + one(I)
                 else
                     marker[f] += one(I)
                 end
@@ -1509,16 +1494,11 @@ end
         znode = znext
     end
 
-    # the lists of nodes outside `elmnt` go into `xw` (grow it if necessary)
-    if need > length(xw)
-        resize!(xw, max(convert(Int, need), 2 * length(xw)))
-    end
-
-    # scan each other element of the nodes once, and list its nodes outside
-    # `elmnt`. The elements listed by every node of the group (the core) are
-    # marked `ctag`, and the union of their lists, also marked `ctag`, is
-    # taken once here: its weight is `cwght`
-    tag += one(I); stag = tag; tag += one(I); ctag = tag; pos = one(E)
+    # scan each other element of the nodes once, and partition its list. The
+    # elements listed by every node of the group (the core) are marked
+    # `ctag`, and the union of their nodes outside `elmnt`, also marked
+    # `ctag`, is taken once here: its weight is `cwght`
+    tag += one(I); stag = tag; tag += one(I); ctag = tag
     full = base + convert(I, gsize); cwght = zero(V)
 
     znode = zhead
@@ -1540,31 +1520,40 @@ end
                     marker[f] = stag
                 end
 
-                elen[f] = convert(V, pos); fstart = pos
+                # the nodes outside `elmnt` go to the front of the list
+                # (`pout` is the next position for them, and `pin` for the
+                # nodes in `elmnt`), and merged and eliminated nodes are
+                # dropped
                 jstart = pe[f]
                 jstop = jstart + convert(E, len[f]) - one(E)
+                pout = pin = jstart
 
                 for j in jstart:jstop
-                    node = iw[j]
+                    node = iw[j]; wght = superwght[node]
 
-                    if ispositive(superwght[node]) && marker[node] != etag
-                        xw[pos] = node; pos += one(E)
+                    if ispositive(wght)
+                        if marker[node] != etag
+                            iw[pin] = iw[pout]; iw[pout] = node
+                            pout += one(E); pin += one(E)
 
-                        if core && marker[node] != ctag
-                            marker[node] = ctag; cwght += superwght[node]
+                            if core && marker[node] != ctag
+                                marker[node] = ctag; cwght += wght
+                            end
+                        else
+                            iw[pin] = node; pin += one(E)
                         end
                     end
                 end
 
-                extlen[f] = convert(V, pos - fstart)
+                len[f] = convert(V, pin - jstart); extlen[f] = convert(V, pout - jstart)
             end
         end
 
         znode = znext
     end
 
-    # for each node, take the union of the lists and of its uneliminated
-    # neighbors
+    # for each node, take the union of the nodes outside `elmnt` of its
+    # elements, and of its uneliminated neighbors
     @inbounds ewght = degree[elmnt]
 
     znode = zhead
@@ -1580,11 +1569,11 @@ end
             f = iw[p]
 
             if f != elmnt && marker[f] != ctag
-                qstart = convert(E, elen[f])
+                qstart = pe[f]
                 qstop = qstart + convert(E, extlen[f]) - one(E)
 
                 for q in qstart:qstop
-                    node = xw[q]
+                    node = iw[q]
 
                     if marker[node] != utag && marker[node] != ctag
                         marker[node] = utag; deg += superwght[node]
