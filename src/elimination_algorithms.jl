@@ -285,7 +285,7 @@ end
 """
     MD <: EliminationAlgorithm
 
-    MD(; external=false, dense=10.0, mass=false, twin=false)
+    MD(; external=true, dense=10.0, mass=true, twin=true)
 
 The exact [minimum degree algorithm](https://en.wikipedia.org/wiki/Minimum_degree_algorithm).
 Every eliminated node has minimum degree (or minimum external degree) in the
@@ -313,10 +313,10 @@ for the nodes of minimum bound.
   - Cummings, Robert, Matthew Fahrbach, and Animesh Fatehpuria. "A fast minimum degree algorithm and matching lower bound." *Proceedings of the 2021 ACM-SIAM Symposium on Discrete Algorithms (SODA)*. 2021.
 """
 @kwdef struct MD <: EliminationAlgorithm
-    external::Bool = false
+    external::Bool = true
     dense::Float64 = 10.0
-    mass::Bool = false
-    twin::Bool = false
+    mass::Bool = true
+    twin::Bool = true
 end
 
 """

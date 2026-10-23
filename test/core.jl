@@ -492,7 +492,7 @@ end
             MF(4),
             MMD(),
             MD(),
-            MD(; external = true),
+            MD(; external = false),
             METIS(),
             ND{1}(MMD(), METISND(); width = 5),
             ND{2}(MMD(), KaHyParND(); width = 5),
@@ -593,7 +593,7 @@ end
             MF(4),
             MMD(),
             MD(),
-            MD(; external = true),
+            MD(; external = false),
             # METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
             NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
@@ -680,7 +680,7 @@ end
             MF(4),
             MMD(),
             MD(),
-            MD(; external = true),
+            MD(; external = false),
             METIS(),
             NDS{1}(MMD(), METISND(); width = 5),
             NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5),
@@ -1054,7 +1054,7 @@ end
                         MF(4),
                         MMD(),
                         MD(),
-                        MD(; external = true),
+                        MD(; external = false),
                         METIS(),
                         NDS{1}(MMD(), METISND(); width = 5),
                         SimplicialRule(NDS{2}(MMD(), METIS_OR_KAHYPAR(); width = 5)),
@@ -1642,17 +1642,16 @@ end
 
         for graph in graphs
             # `dense = 0` makes every node with more than 16 neighbors dense;
-            # `mass` keeps the ordering exact with degree, but not with
-            # external degree
-            for external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true)
-                # `debug` checks every bound after every elimination
+            # `mass` and `twin` keep the ordering exact with degree, but not
+            # with external degree
+            for external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true), twin in (false, true)
                 for weights in (ones(Int, n), rand(rng, 1:3, n))
-                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, debug = true)
+                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, twin)
                     @test sort(index) == 1:n
 
                     if !external
                         @test isminimumdegree(graph, weights, invperm(index))
-                    elseif dense < 0 && all(isone, weights) && !mass
+                    elseif dense < 0 && all(isone, weights) && !mass && !twin
                         @test isminimumexternaldegree(graph, invperm(index))
                     end
                 end
@@ -1666,10 +1665,10 @@ end
         graph = addtwins!(erdos_renyi(400, 0.3; rng), rng)
         xadj, adjncy = adjacency(graph); weights = ones(Int, 400)
 
-        for external in (false, true), mass in (false, true)
-            index = CliqueTrees.MDLib.md(Int64, 400, 400, weights, xadj, adjncy; external, mass)
-            @test index == CliqueTrees.MDLib.md(Int16, 400, 400, weights, xadj, adjncy; external, mass)
-            @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external, mass)
+        for external in (false, true), mass in (false, true), twin in (false, true)
+            index = CliqueTrees.MDLib.md(Int64, 400, 400, weights, xadj, adjncy; external, mass, twin)
+            @test index == CliqueTrees.MDLib.md(Int16, 400, 400, weights, xadj, adjncy; external, mass, twin)
+            @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external, mass, twin)
         end
     end
 end
