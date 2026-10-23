@@ -109,7 +109,6 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     deghead = FVector{V}(undef, 2 * (total + 1))
     degnext = FVector{V}(undef, n)
     degprev = FVector{V}(undef, n)
-    rchset = FVector{V}(undef, n)
     wext = FVector{V}(undef, n)
     extlen = FVector{V}(undef, n)
     pe = FVector{E}(undef, n)
@@ -131,7 +130,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
 
     md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        rchset, wext, dwght, extlen, pe, len,
+        wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, convert(V, total), n, external, mass,
         twin, debug, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
@@ -209,7 +208,6 @@ function md_impl!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        rchset::AbstractVector{V},
         wext::AbstractVector{V},
         dwght::AbstractVector{V},
         extlen::AbstractVector{V},
@@ -295,7 +293,7 @@ function md_impl!(
     end
 
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        rchset, wext, dwght, extlen, pe, len,
+        wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
         debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
@@ -304,7 +302,7 @@ end
 
 """
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        rchset, wext, dwght, extlen, pe, len,
+        wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
         debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
@@ -392,8 +390,6 @@ working arrays:
     there, and otherwise `degprev[deghead[b]]`, which is restored to `-b`
     once the bucket is processed. The hash of a node of the reachable set
     is kept in `marker` (see `mdelim!`).
-  - `rchset`: the reachable set of the current pivot; during a visit, the
-    elements with a group
   - `extlen`: for an element, the length of its list of nodes outside the
     element being recomputed. For a node of the reachable set, `extlen` is
     the second term of its bound, and then its upper bound (see
@@ -414,7 +410,6 @@ function md!_impl!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        rchset::AbstractVector{V},
         wext::AbstractVector{V},
         dwght::AbstractVector{V},
         extlen::AbstractVector{V},
@@ -446,7 +441,6 @@ function md!_impl!(
     @assert twice(total + one(V)) <= length(deghead)
     @assert neqns <= length(degnext)
     @assert neqns <= length(degprev)
-    @assert neqns <= length(rchset)
     @assert neqns <= length(wext)
     @assert iszero(ndense) || neqns <= length(dwght)
     @assert neqns <= length(extlen)
@@ -575,7 +569,7 @@ function md!_impl!(
             nmissing -= 2 * (convert(Int, nbypass) - 1 - mdcount(dmask, nwords, mdnode))
             nbypass -= one(V)
             pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree,
-                superwght, nwords, dindex, dnode, dmask, rchset)
+                superwght, nwords, dindex, dnode, dmask, wext)
             degree[mdnode] = ddeg[dj]
 
             # its neighbors now reach it through their lists
@@ -595,7 +589,7 @@ function md!_impl!(
         else
             # recompute every node at the minimum key
             mindeg, tag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
-                degree, deghead, degnext, degprev, rchset, marker,
+                degree, deghead, degnext, degprev, marker,
                 tag, xw, neqns, extlen, dwght, nbypass, external, offset,
                 debug)
 
@@ -626,7 +620,7 @@ function md!_impl!(
         rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght = mdelim!(mdnode,
             pe, len, elen, iw, iwlen, pfree, neqns, supersize, superwght, degree,
             deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
-            rchset, dS, offset, external, twin, num + supersize[mdnode],
+            dS, offset, external, twin, num + supersize[mdnode],
             nbypass, nwords, dmask, ddeg)
 
         debug && @assert delta == degS
@@ -634,7 +628,7 @@ function md!_impl!(
         # the nodes in the reachable set, and the dense neighbors of
         # `mdnode`, become adjacent to the dense neighbors of `mdnode`
         if ispositive(nbypass)
-            nmissing = mddense!(mdnode, rchsze, rchset, dwght, superwght,
+            nmissing = mddense!(mdnode, pe[mdnode], rchsze, iw, dwght, superwght,
                 nwords, dnode, ddeg, dmask, nmissing)
         end
 
@@ -648,7 +642,7 @@ function md!_impl!(
         # are numbered right after the supernode of `mdnode`)
         mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
             len, elen, iw, supersize, superwght, degree, deghead, degnext,
-            degprev, rchset, wext, marker, tag, xw,
+            degprev, wext, marker, tag, xw,
             neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
             mass && iszero(fsze), offset, debug)
 
@@ -671,7 +665,7 @@ end
 """
     mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, supersize,
         superwght, degree, deghead, degnext, degprev, marker, wext, extlen,
-        wflg, lemax, rchset, dS, offset, external, twin, fnum, nbypass,
+        wflg, lemax, dS, offset, external, twin, fnum, nbypass,
         nwords, dmask, ddeg)
 
 This routine eliminates the node `mdnode` of minimum degree from the
@@ -698,6 +692,15 @@ degree and dense neighbors (and, with degree, its weight) are those of
 leaves the quotient graph, numbered right after the supernode of
 `mdnode`: its weight is set to 0 before the lists are purged, so it drops
 out of them.
+
+The reachable set is written to `iw` as it is formed, and becomes the list of
+the new element. If `mdnode` is adjacent to no element, its list of
+uneliminated neighbors holds the reachable set, which is formed there, in
+place. Otherwise it is formed at `pfree`, after a compression if the tail of
+`iw` is too short: it holds at most `degree[mdnode] - dS` nodes (each node
+weighs at least 1). That fits after a compression: outside a rejoin, the
+lists take at most `nnz` entries, and `iw` has at least `nnz + 2 neqns`
+(see `md`); a rejoining dense node has no element.
 
 input parameters:
 
@@ -734,8 +737,8 @@ updated parameters:
 
 output parameters:
 
-  - `rchsze`: size of the reachable set
-  - `rchset`: the reachable set
+  - `rchsze`: size of the reachable set, which is the list of the new
+    element `mdnode`
   - `(wext, extlen)`: for each node of the reachable set, the terms of its
     bound
   - `delta`: the weight of the reachable set, with the dense neighbors of
@@ -764,7 +767,6 @@ function mdelim!(
         extlen::AbstractVector{V},
         wflg::V,
         lemax::V,
-        rchset::AbstractVector{V},
         dS::V,
         offset::V,
         external::Bool,
@@ -777,6 +779,22 @@ function mdelim!(
     ) where {I, V, E}
     # the pivot leaves the quotient graph
     @inbounds swght = superwght[mdnode]; superwght[mdnode] = -swght
+
+    # the reachable set is written to `iw[rstart:rstop]` as it is formed:
+    # in place if `mdnode` is adjacent to no element, and otherwise at the
+    # end of `iw` (compress it first if the tail is too short)
+    inplace = @inbounds iszero(elen[mdnode])
+
+    if !inplace
+        @inbounds need = convert(E, degree[mdnode] - dS)
+
+        if pfree + need - one(E) > iwlen
+            pfree = mdcompress!(neqns, pe, len, iw, pfree)
+            @assert pfree + need - one(E) <= iwlen
+        end
+    end
+
+    @inbounds rstart = inplace ? pe[mdnode] : pfree
 
     # - `iw[estart:estop]` is the list of elements adjacent to `mdnode`
     # - `iw[nstart:nstop]` is the list of its uneliminated neighbors
@@ -801,7 +819,7 @@ function mdelim!(
 
             if ispositive(wght)
                 superwght[node] = -wght
-                rchsze += one(V); rchset[rchsze] = node
+                iw[rstart + convert(E, rchsze)] = node; rchsze += one(V)
                 mdremove!(node, deghead, degnext, degprev, offset)
 
                 if twin
@@ -822,8 +840,9 @@ function mdelim!(
         node = iw[i]; wght = superwght[node]
 
         if ispositive(wght)
+            # (in place, the write trails the read)
             superwght[node] = -wght
-            rchsze += one(V); rchset[rchsze] = node
+            iw[rstart + convert(E, rchsze)] = node; rchsze += one(V)
             mdremove!(node, deghead, degnext, degprev, offset)
 
             if twin
@@ -875,7 +894,9 @@ function mdelim!(
         end
     end
 
-    # the list of `mdnode` is released (its elements were absorbed above)
+    # the list of `mdnode` is released (its elements were absorbed above):
+    # the reachable set takes its place
+    rstop = rstart + convert(E, rchsze) - one(E)
     @inbounds len[mdnode] = zero(V); elen[mdnode] = zero(V)
 
     # advance the flag of `wext` by more than the weight of any element
@@ -895,8 +916,8 @@ function mdelim!(
     # for each element adjacent to a node in the reachable set, compute
     # `wext[elmnt] - wflg`, the weight of the nodes of `elmnt` outside the
     # reachable set
-    @inbounds for k in oneto(rchsze)
-        rnode = rchset[k]; rwght = -superwght[rnode]
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]; rwght = -superwght[rnode]
         jstart = pe[rnode]
         jstop = jstart + convert(E, elen[rnode]) - one(E)
 
@@ -916,8 +937,8 @@ function mdelim!(
     # for each node in the reachable set, do the following...
     hashmask = min(nextpow(2, max(twice(rchsze), one(V))), prevpow(2, length(deghead))) - 1
 
-    @inbounds for k in oneto(rchsze)
-        rnode = rchset[k]
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]
 
         # purge inactive quotient neighbors of `rnode`: absorbed elements,
         # and eliminated nodes, merged nodes, and nodes in the reachable set
@@ -989,29 +1010,24 @@ function mdelim!(
         end
     end
 
-    # store the reachable set as the list of the new element `mdnode`
-    # (compress `iw` if necessary), and make its nodes active again. It
-    # fits: it is no longer than the lists released above, and no other list
-    # grew
-    if pfree + convert(E, rchsze) - one(E) > iwlen
-        pfree = mdcompress!(neqns, pe, len, iw, pfree)
-        @assert pfree + convert(E, rchsze) - one(E) <= iwlen
+    # the reachable set is the list of the new element `mdnode`: make its
+    # nodes active again
+    ewght = zero(V)
+
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]; rwght = -superwght[rnode]; superwght[rnode] = rwght
+        ewght += rwght
     end
 
-    @inbounds pe[mdnode] = pfree; ewght = zero(V)
-
-    @inbounds for k in oneto(rchsze)
-        rnode = rchset[k]; rwght = -superwght[rnode]; superwght[rnode] = rwght
-        iw[pfree] = rnode; pfree += one(E); ewght += rwght
-    end
-
-    @inbounds len[mdnode] = rchsze; degree[mdnode] = ewght; wext[mdnode] = one(V)
+    inplace || (pfree = rstop + one(E))
+    @inbounds pe[mdnode] = rstart; len[mdnode] = rchsze
+    @inbounds degree[mdnode] = ewght; wext[mdnode] = one(V)
     return rchsze, pfree, ewght + dS, swght, wflg, max(lemax, ewght), fsze, fwght
 end
 
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe, len, elen, iw,
-        supersize, superwght, degree, deghead, degnext, degprev, rchset, wext, marker, tag, xw, neqns, extlen, dwght,
+        supersize, superwght, degree, deghead, degnext, degprev, wext, marker, tag, xw, neqns, extlen, dwght,
         nwords, dmask, ddeg, nbypass, mindeg, external, mass, offset, debug)
 
 This routine updates the degree structure after the elimination of
@@ -1033,7 +1049,7 @@ is less than `max(0, delta - swght) + w(u) - 1` are recomputed at once
 input parameters:
 
   - `mdnode`: the eliminated node
-  - `(rchset, rchsze)`: the reachable set of `mdnode`
+  - `rchsze`: the size of the reachable set of `mdnode`, which is its list
   - `delta`: the weight of the reachable set, with the dense neighbors of
     `mdnode`
   - `dS`: the weight of the dense neighbors of `mdnode`
@@ -1076,7 +1092,6 @@ updated parameters:
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        rchset::AbstractVector{V},
         wext::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
@@ -1097,9 +1112,12 @@ updated parameters:
     # the supernodes formed by a merge are marked with `mtag`
     tag += one(I); mtag = tag
 
+    # the reachable set is `iw[rstart:rstop]`
+    @inbounds rstart = pe[mdnode]; rstop = rstart + convert(E, rchsze) - one(E)
+
     # for each hash bucket of the reachable set, do the following...
-    @inbounds for k in oneto(rchsze)
-        hash = degprev[rchset[k]]
+    @inbounds for r in rstart:rstop
+        hash = degprev[iw[r]]
         head = deghead[hash]
 
         # take the first node of the bucket, and empty it
@@ -1187,8 +1205,8 @@ updated parameters:
     mwght = zero(V)
 
     if mass
-        @inbounds for k in oneto(rchsze)
-            rnode = rchset[k]; rwght = superwght[rnode]
+        @inbounds for r in rstart:rstop
+            rnode = iw[r]; rwght = superwght[rnode]
 
             if ispositive(rwght) && isone(len[rnode]) && (!ispositive(nbypass) || dwght[rnode] == dS)
                 ispositive(nbypass) && mdlose!(ddeg, dmask, nwords, rnode, rwght)
@@ -1209,11 +1227,11 @@ updated parameters:
     # for each principal node in the reachable set, assign its bound. With
     # degree, return it to the degree structure at once; with external
     # degree, chain the nodes for the eager pass through `degnext`, in order,
-    # and keep the others in `rchset`
-    nrch = zero(V); zhead = ztail = zero(V)
+    # and the others in a second chain
+    zhead = ztail = ohead = otail = zero(V)
 
-    @inbounds for k in oneto(rchsze)
-        rnode = rchset[k]; rwght = superwght[rnode]
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]; rwght = superwght[rnode]
         ispositive(rwght) || continue
         degprev[rnode] = degnext[rnode] = zero(V)
         lo = delta - rwght + wext[rnode]
@@ -1243,7 +1261,13 @@ updated parameters:
 
             ztail = rnode
         else
-            nrch += one(V); rchset[nrch] = rnode
+            if iszero(otail)
+                ohead = rnode
+            else
+                degnext[otail] = rnode
+            end
+
+            otail = rnode
         end
     end
 
@@ -1256,10 +1280,14 @@ updated parameters:
     end
 
     # with external degree, return the other nodes to the degree structure
-    @inbounds for k in oneto(nrch)
-        rnode = rchset[k]
+    # (the eager pass leaves their links alone: they are in no list)
+    rnode = ohead
+
+    @inbounds while ispositive(rnode)
+        rnext = degnext[rnode]
         key = mdkey(degree[rnode], superwght[rnode], external)
         mindeg = mdinsert!(key, mindeg, rnode, degree[rnode] == extlen[rnode], deghead, degnext, degprev, offset)
+        rnode = rnext
     end
 
     return mindeg, tag
@@ -1267,7 +1295,7 @@ end
 
 """
     mdvisit!(key, pe, len, elen, iw, superwght, degree, deghead, degnext,
-        degprev, rchset, marker, tag, xw, neqns, extlen, dwght,
+        degprev, marker, tag, xw, neqns, extlen, dwght,
         nbypass, external, offset, debug)
 
 This routine recomputes every node with key `key` that is not exact. The
@@ -1277,10 +1305,10 @@ tag.
 
 working arrays:
 
-  - `degprev`: for an element, the first node of its group
+  - `degprev`: for an element, the first node of its group; for the node
+    of a group taken first from the list, the corresponding node of the
+    next group (the groups are chained in order)
   - `degnext`: for a node taken from the list, the next node in its group
-  - `rchset`: the elements with a group (the reachable set is not in use
-    between eliminations)
 """
 function mdvisit!(
         key::V,
@@ -1293,7 +1321,6 @@ function mdvisit!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        rchset::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
         xw::Vector{V},
@@ -1305,8 +1332,10 @@ function mdvisit!(
         offset::V,
         debug::Bool,
     ) where {I, V, E}
-    # take the whole list, and group it by most recent element
-    tag += one(I); gtag = tag; esze = zero(V); mindeg = key
+    # take the whole list, and group it by most recent element. The
+    # groups are chained, in order, from `ghead` through `degprev` of the
+    # node of each group taken first
+    tag += one(I); gtag = tag; mindeg = key; ghead = gtail = zero(V)
     @inbounds node = deghead[key + offset]; deghead[key + offset] = zero(V)
 
     @inbounds while ispositive(node)
@@ -1316,21 +1345,34 @@ function mdvisit!(
 
         if marker[elmnt] != gtag
             marker[elmnt] = gtag; degprev[elmnt] = zero(V)
-            esze += one(V); rchset[esze] = elmnt
+
+            if iszero(gtail)
+                ghead = node
+            else
+                degprev[gtail] = node
+            end
+
+            gtail = node
         end
 
         degnext[node] = degprev[elmnt]; degprev[elmnt] = node
         node = nxnode
     end
 
-    # recompute each group
-    @inbounds for k in oneto(esze)
-        elmnt = rchset[k]
+    # recompute each group (read the link first: the recomputation
+    # inserts the node into a degree list)
+    gnode = ghead
+
+    @inbounds while ispositive(gnode)
+        gnext = degprev[gnode]
+        elmnt = iw[pe[gnode] + convert(E, elen[gnode]) - one(E)]
 
         mindeg, tag = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
             tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
+
+        gnode = gnext
     end
 
     return mindeg, tag
@@ -1735,20 +1777,22 @@ function mdlose!(ddeg::AbstractVector{V}, dmask::AbstractVector{UInt64}, nwords:
 end
 
 """
-    mddense!(mdnode, rchsze, rchset, dwght, superwght, nwords, dnode, ddeg,
-        dmask, nmissing)
+    mddense!(mdnode, rstart, rchsze, iw, dwght, superwght, nwords, dnode,
+        ddeg, dmask, nmissing)
 
 This routine updates the adjacency to the dense nodes after the elimination
 of `mdnode`: its neighbors become a clique, so every node in the reachable
 set, and every dense neighbor of `mdnode`, becomes adjacent to every dense
-neighbor of `mdnode`. Each new adjacency is added to the dense weight
+neighbor of `mdnode`. The reachable set is `iw[rstart:rstart + rchsze - 1]`.
+Each new adjacency is added to the dense weight
 `dwght` of the node, or to the degree `ddeg` of the dense node. Returns the
 updated number `nmissing` of ordered pairs of nonadjacent dense nodes.
 """
 function mddense!(
         mdnode::V,
+        rstart::E,
         rchsze::V,
-        rchset::AbstractVector{V},
+        iw::AbstractVector{V},
         dwght::AbstractVector{V},
         superwght::AbstractVector{V},
         nwords::Int,
@@ -1756,7 +1800,7 @@ function mddense!(
         ddeg::AbstractVector{V},
         dmask::AbstractVector{UInt64},
         nmissing::Int,
-    ) where {V}
+    ) where {V, E}
     moff = mdoffset(nwords, mdnode)
 
     # skip if `mdnode` has no dense neighbors
@@ -1771,8 +1815,8 @@ function mddense!(
 
     empty && return nmissing
 
-    @inbounds for k in oneto(rchsze)
-        rnode = rchset[k]
+    @inbounds for r in rstart:(rstart + convert(E, rchsze) - one(E))
+        rnode = iw[r]
         roff = mdoffset(nwords, rnode); rdeg = zero(V); rwght = superwght[rnode]
 
         for w in 1:nwords
@@ -1830,7 +1874,7 @@ end
 
 """
     mdreinsert!(j, neqns, pe, len, elen, iw, iwlen, pfree, superwght,
-        nwords, dindex, dnode, dmask, nbrs)
+        nwords, dindex, dnode, dmask, wext)
 
 This routine returns the dense node with index `j` to the quotient graph.
 Its neighbors are the uneliminated principal nodes, other than dense nodes,
@@ -1846,7 +1890,8 @@ list is copied, the entries appended so far and that list.
 
 working arrays:
 
-  - `nbrs`: the neighbors of the dense node
+  - `wext`: chains the neighbors of the dense node, in order (it is not in
+    use for uneliminated nodes between eliminations)
 """
 function mdreinsert!(
         j::V,
@@ -1862,12 +1907,12 @@ function mdreinsert!(
         dindex::AbstractVector{V},
         dnode::AbstractVector{V},
         dmask::AbstractVector{UInt64},
-        nbrs::AbstractVector{V},
+        wext::AbstractVector{V},
     ) where {V, E}
     @inbounds dnd = dnode[j]; dnode[j] = -dnd
     w = ((convert(Int, j) - 1) >> 6) + 1
     bit = one(UInt64) << ((convert(Int, j) - 1) & 63)
-    cnt = zero(V)
+    cnt = zero(V); head = tail = zero(V)
 
     @inbounds for node in oneto(neqns)
         i = mdoffset(nwords, node) + w
@@ -1893,7 +1938,15 @@ function mdreinsert!(
 
                 iw[pfree] = dnd; pfree += one(E)
                 len[node] = nlen + one(V)
-                cnt += one(V); nbrs[cnt] = node
+                cnt += one(V)
+
+                if iszero(tail)
+                    head = node
+                else
+                    wext[tail] = node
+                end
+
+                tail = node
             end
         end
     end
@@ -1905,8 +1958,10 @@ function mdreinsert!(
 
     @inbounds pe[dnd] = pfree
 
+    node = head
+
     @inbounds for k in oneto(cnt)
-        iw[pfree] = nbrs[k]; pfree += one(E)
+        iw[pfree] = node; pfree += one(E); node = wext[node]
     end
 
     @inbounds len[dnd] = cnt; elen[dnd] = zero(V)
