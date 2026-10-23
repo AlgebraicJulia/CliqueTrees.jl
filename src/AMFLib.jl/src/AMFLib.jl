@@ -62,7 +62,7 @@ end
 #
 # If `exact` is true, then the initial score of each variable is computed from
 # its exact fill-in, as for every later score, rather than from its degree.
-function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; exact::Bool = false) where {V, E}
+function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; exact::Bool = false, twin::Bool = true) where {V, E}
     @assert n <= length(vwght)
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
@@ -87,7 +87,7 @@ function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::Abstr
 
     perm, invp = amf_impl!(n, nfine, nbbuck, iwlen, pe,
         len, iw, nv, elen, last, degree, wf, next, w, head,
-        wt, wunit, vwght, xadj, adjncy, exact)
+        wt, wunit, vwght, xadj, adjncy, exact, twin)
 
     return convert(Vector{V}, perm), convert(Vector{V}, invp)
 end
@@ -182,6 +182,7 @@ function amf_impl!(
         xadj::AbstractVector{E},
         adjncy::AbstractVector{V},
         exact::Bool,
+        twin::Bool = false,
     ) where {V, E, F}
     @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
 
@@ -208,7 +209,7 @@ function amf_impl!(
     end
 
     ncmpa = hamf_impl!(n, n, nbelts, nfine, nbbuck, iwlen, pe,
-        pfree, len, iw, nv, elen, last, degree, wf, next, w, head, wt, wunit, vfill)
+        pfree, len, iw, nv, elen, last, degree, wf, next, w, head, wt, wunit, vfill, twin)
 
     @inbounds for j in oneto(n)
         head[j] = zero(V)
@@ -232,6 +233,8 @@ function amf_impl!(
 
     return elen, last
 end
+
+amf_sameweight(a::F, b::F) where {F} = abs(a - b) <= sqrt(eps(F)) * max(abs(a), abs(b))
 
 # round a score to a whole number of units, as an integer-valued float
 function amf_round(rmf::F, n::Integer) where {F}
@@ -353,6 +356,10 @@ end
 #     (r - wt(i))^2 - (W(Lme) - wt(i))^2. Scores are rounded to multiples
 #     of wunit, the smallest weight. The initial score is the weighted
 #     degree, or 2 F(i) / wt(i) for the exact fill-in F(i).
+#
+#     (CliqueTrees) False twins. The variables outside Lme whose
+#     neighbors are exactly Lme are simplicial once the pivot is
+#     eliminated; they are eliminated with it (see `twin`).
 #
 #     Comments relative to 64/32 bits integer representation:
 #     This is [based on] a restrictive integer 64 bit variant:
@@ -731,6 +738,7 @@ function hamf_impl!(
         wt::AbstractVector{F},     # weight of a supervariable; weight of Le \ Lme for an element
         wunit::F,                  # scores are rounded to multiples of `wunit`
         vfill::Union{Nothing, AbstractVector}, # exact initial fill-in (optional)
+        twin::Bool = false,        # eliminate the false twins of each pivot with it
     ) where {I, V, E, F}
     @assert nbelts <= n
     @assert pfree <= iwlen <= length(iw)
@@ -1135,6 +1143,76 @@ function hamf_impl!(
         pe[me] = pme1
         len[me] = convert(V, pme2 - pme1 + one(E))
 
+        # false twins of `me`: the variables `v` outside Lme whose neighbors are
+        # exactly Lme. Once `me` is eliminated Lme is a clique, so each `v` is
+        # simplicial: it creates no fill. It lies in every variable list of
+        # Lme, so only the shortest is scanned. `v` qualifies if it has never
+        # been adjacent to an element (its list is then all of its
+        # neighbors, and `degree[v]` is its exact weighted degree), and every
+        # principal variable in its list is in Lme, all `nme` of them. It is
+        # eliminated with `me`, like a mass-eliminated variable. Mass
+        # elimination is then skipped: a variable of Lme adjacent to two of
+        # them must follow both, but variables eliminated with `me` are
+        # numbered in index order
+        ntwin = zero(V)
+
+        if twin && pme1 <= pme2
+            rbest = iw[pme1]
+
+            for pme in (pme1 + one(E)):pme2
+                i = iw[pme]
+
+                if len[i] - elen[i] < len[rbest] - elen[rbest]
+                    rbest = i
+                end
+            end
+
+            nme = convert(V, pme2 - pme1 + one(E))
+
+            for p in (pe[rbest] + convert(E, elen[rbest])):(pe[rbest] + convert(E, len[rbest]) - one(E))
+                v = iw[p]
+                nvv = nv[v]
+
+                if ispositive(nvv) && iszero(elen[v]) && amf_sameweight(degree[v], wdegme)
+                    same = true; count = zero(V)
+
+                    for q in pe[v]:(pe[v] + convert(E, len[v]) - one(E))
+                        nvj = nv[iw[q]]
+
+                        if ispositive(nvj)    # a neighbor outside Lme
+                            same = false
+                            break
+                        elseif isnegative(nvj)
+                            count += one(V)
+                        end
+                    end
+
+                    if same && count == nme
+                        ilast = last[v]       # remove `v` from its degree list
+                        inext = next[v]
+
+                        if !iszero(inext)
+                            last[inext] = ilast
+                        end
+
+                        if !iszero(ilast)
+                            next[ilast] = inext
+                        else
+                            head[amf_bucket(wf[v], nfine, pas, nbbuck) + one(V)] = inext
+                        end
+
+                        pe[v] = convert(E, -me)
+                        nvpiv += nvv
+                        nel += nvv
+                        wnel += wt[v]
+                        nv[v] = zero(V)
+                        elen[v] = zero(V)
+                        ntwin += one(V)
+                    end
+                end
+            end
+        end
+
         if wflg > maxint_n                    # make sure that `wflg` is not too large; `wflg + n` must not cause integer overflow
             for x in oneto(n)
                 if !iszero(w[x])
@@ -1224,7 +1302,7 @@ function hamf_impl!(
                 end
             end
 
-            if iszero(deg)                    # mass elimination
+            if iszero(deg) && iszero(ntwin)   # mass elimination
                 pe[i] = convert(E, -me)
                 nvi = -nv[i]
                 degme -= nvi

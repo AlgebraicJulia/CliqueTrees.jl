@@ -3202,7 +3202,7 @@ end
     end
 end
 
-@testset "MF false twins" begin
+@testset "false twins" begin
     # every pivot of MF (strategies 0 and 1) must minimize the score in the
     # uncompressed elimination graph, also when false twins of a pivot are
     # absorbed into its block
@@ -3271,8 +3271,8 @@ end
     end
 
     # a star needs no fill; degree-two vertices on one pair need one edge
-    for (graph, fill) in ((star_graph(2000), 0), (complete_bipartite_graph(2, 2000), 1))
-        order, index = permutation(graph; alg = MF())
+    for (graph, fill) in ((star_graph(2000), 0), (complete_bipartite_graph(2, 2000), 1)), alg in (MF(), AMF(), AMF(; exact = true))
+        order, index = permutation(graph; alg)
         @test isperm(order)
         @test treefill(graph, (order, index)) == ne(graph) + fill
     end
