@@ -80,19 +80,26 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     # suffice, whatever the type of `xadj`
     iwlen = nnz + max(nnz ÷ 5, convert(Int, neqns)) + convert(Int, neqns)
 
-    if iwlen < typemax(Int32)
-        E = Int32
+    # 32-bit positions (`E`) when they suffice, and 32-bit tags (`I`) when
+    # they leave room for many steps between resets
+    if iwlen < typemax(Int32) && n < typemax(Int32) ÷ 64
+        index = md(V, Int32, Int32, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
+    elseif iwlen < typemax(Int32)
+        index = md(V, Int32, Int64, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
+    elseif n < typemax(Int32) ÷ 64
+        index = md(V, Int64, Int32, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
     else
-        E = Int64
+        index = md(V, Int64, Int64, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
     end
 
-    # 32-bit tags when they leave room for many steps between resets
-    if n < typemax(Int32) ÷ 64
-        marker = FVector{Int32}(undef, n)
-    else
-        marker = FVector{Int}(undef, n)
-    end
+    return index
+end
 
+# This routine allocates the working arrays, with vertices, weights and
+# degrees of type `V`, positions in `iw` of type `E`, and tags of type `I`,
+# and computes the ordering.
+function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector, external::Bool, dense::Real, mass::Bool, twin::Bool) where {V, E, I}
+    marker = FVector{I}(undef, n)
     superwght = FVector{V}(undef, n)
     degree = FVector{V}(undef, n)
     deghead = FVector{V}(undef, 2 * (total + 1))
@@ -104,6 +111,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     len = FVector{V}(undef, n)
     elen = FVector{V}(undef, n)
     iw = FVector{V}(undef, iwlen)
+    heads = FVector{UInt64}(undef, cld(iwlen, 64))
     iwlen = convert(E, iwlen)
 
     # the lists of a recomputation (see `mdrecompute!`); it grows as needed
@@ -127,7 +135,7 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
 
     md_impl!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, convert(V, total), n, external, mass,
+        elen, iw, iwlen, xw, heads, total, n, external, mass,
         twin, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
@@ -155,9 +163,10 @@ end
 # This routine selects the dense nodes: the nodes with more than
 # `max(16, dense * sqrt(neqns))` neighbors. To keep the space linear, the
 # masks may use at most `nnz / 2` words, so if there are too many dense
-# nodes, only those of highest degree are selected. `ndense` is the number
-# of candidates (see `mdndense`). Returns the number of dense nodes and sets
-# `dindex` (empty if there are no candidates).
+# nodes, only those of highest degree are selected (the lowest-numbered
+# among nodes of equal degree). `ndense` is the number of candidates (see
+# `mdndense`). Returns the number of dense nodes and sets `dindex` (empty if
+# there are no candidates).
 function mdselect!(dindex::AbstractVector{V}, neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector, dense::Real, ndense::V) where {V, E}
     maxdense = ndense
 
@@ -182,7 +191,7 @@ function mdselect!(dindex::AbstractVector{V}, neqns::V, xadj::AbstractVector{E},
         end
 
         if maxdense < ndense
-            partialsort!(cand, 1:maxdense; by = node -> xadj[node + one(V)] - xadj[node], rev = true)
+            sort!(cand; by = node -> (xadj[node] - xadj[node + one(V)], node))
             resize!(cand, maxdense); sort!(cand)
         end
 
@@ -194,6 +203,8 @@ function mdselect!(dindex::AbstractVector{V}, neqns::V, xadj::AbstractVector{E},
     return maxdense
 end
 
+# This routine copies the adjacency structure into `iw`, and computes the
+# ordering (`mdmain!`).
 function md_impl!(
         marker::AbstractVector{I},
         superwght::AbstractVector{V},
@@ -210,6 +221,7 @@ function md_impl!(
         iw::AbstractVector{V},
         iwlen::E,
         xw::Vector{V},
+        heads::AbstractVector{UInt64},
         total::V,
         neqns::V,
         external::Bool,
@@ -284,9 +296,9 @@ function md_impl!(
         end
     end
 
-    md!_impl!(marker, superwght, degree, deghead, degnext, degprev,
+    mdmain!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
+        elen, iw, iwlen, xw, heads, pfree, total, neqns, external, mass, twin,
         vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -404,7 +416,9 @@ end
 #     the indistinguishable nodes are merged
 #   - `elen`: for an element (whose `elen` is not in use), the start in `xw`
 #     of its list of nodes outside the element being recomputed
-function md!_impl!(
+#   - `heads`: the first entries of the lists, while `iw` is compressed (see
+#     `mdcompress!`)
+function mdmain!(
         marker::AbstractVector{I},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
@@ -420,6 +434,7 @@ function md!_impl!(
         iw::AbstractVector{V},
         iwlen::E,
         xw::Vector{V},
+        heads::AbstractVector{UInt64},
         pfree::E,
         total::V,
         neqns::V,
@@ -573,7 +588,7 @@ function md!_impl!(
                 mdnode = dnode[dj]
                 nmissing -= 2 * (convert(Int, nbypass) - 1 - mdcount(dmask, nwords, mdnode))
                 nbypass -= one(V)
-                pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree,
+                pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree, heads,
                     superwght, nwords, dindex, dnode, dmask, wext)
                 degree[mdnode] = ddeg[dj]
 
@@ -634,7 +649,7 @@ function md!_impl!(
         # eliminate `mdnode` and perform quotient graph
         # transformation
         rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght = mdelim!(mdnode,
-            pe, len, elen, iw, iwlen, pfree, neqns, superwght, degree,
+            pe, len, elen, iw, iwlen, pfree, heads, neqns, superwght, degree,
             deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
             dS, offset, external, twin, rank + one(V),
             nbypass, nwords, dmask, ddeg)
@@ -723,6 +738,7 @@ end
 #
 #   - `(pe, len, elen, iw)`: quotient graph
 #   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
+#   - `heads`: working array of `mdcompress!`
 #   - `ddeg`: the degrees of the dense nodes, which lose the false twins
 #   - `superwght`: weight of the supernodes; on output, negative for
 #     `mdnode`
@@ -756,6 +772,7 @@ function mdelim!(
         iw::AbstractVector{V},
         iwlen::E,
         pfree::E,
+        heads::AbstractVector{UInt64},
         neqns::V,
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
@@ -791,7 +808,7 @@ function mdelim!(
         @inbounds need = convert(E, degree[mdnode] - dS)
 
         if pfree + need - one(E) > iwlen
-            pfree = mdcompress!(neqns, pe, len, iw, pfree)
+            pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
             @assert pfree + need - one(E) <= iwlen
         end
 
@@ -1925,6 +1942,7 @@ end
 #
 #   - `wext`: chains the neighbors of the dense node, in order (it is not in
 #     use for uneliminated nodes between eliminations)
+#   - `heads`: working array of `mdcompress!`
 function mdreinsert!(
         j::V,
         neqns::V,
@@ -1934,6 +1952,7 @@ function mdreinsert!(
         iw::AbstractVector{V},
         iwlen::E,
         pfree::E,
+        heads::AbstractVector{UInt64},
         superwght::AbstractVector{V},
         nwords::Int,
         dindex::AbstractVector{V},
@@ -1958,7 +1977,7 @@ function mdreinsert!(
                 nlen = len[node]
 
                 if pfree + convert(E, nlen) > iwlen
-                    pfree = mdcompress!(neqns, pe, len, iw, pfree)
+                    pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
                     @assert pfree + convert(E, nlen) <= iwlen
                 end
 
@@ -1984,7 +2003,7 @@ function mdreinsert!(
     end
 
     if pfree + convert(E, cnt) - one(E) > iwlen
-        pfree = mdcompress!(neqns, pe, len, iw, pfree)
+        pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
         @assert pfree + convert(E, cnt) - one(E) <= iwlen
     end
 
@@ -2014,16 +2033,26 @@ end
 #
 #   - `(pe, iw)`: quotient graph storage
 #   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
+#
+# working arrays:
+#
+#   - `heads`: the bitmap, of at least `cld(pfree - 1, 64)` words
 function mdcompress!(
         neqns::V,
         pe::AbstractVector{E},
         len::AbstractVector{V},
         iw::AbstractVector{V},
         pfree::E,
+        heads::AbstractVector{UInt64},
     ) where {V, E}
+    nheads = cld(convert(Int, pfree) - 1, 64)
+
+    @inbounds for w in 1:nheads
+        heads[w] = zero(UInt64)
+    end
+
     # store `-node` in the first entry of the list of each node, saving the
     # entry in `pe[node]`, and mark the entry in `heads`
-    heads = zeros(UInt64, cld(convert(Int, pfree) - 1, 64))
 
     @inbounds for node in oneto(neqns)
         if ispositive(len[node])
@@ -2038,7 +2067,7 @@ function mdcompress!(
     # move the lists to the front of `iw`, in order
     pdst = one(E)
 
-    @inbounds for w in eachindex(heads)
+    @inbounds for w in 1:nheads
         bits = heads[w]
 
         while !iszero(bits)
