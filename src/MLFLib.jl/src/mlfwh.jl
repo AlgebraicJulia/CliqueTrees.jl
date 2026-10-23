@@ -32,6 +32,9 @@
 #                     TO THE ADJACENCY STRUCTURE.
 #       ADJNCY(*)   - ARRAY OF LENGTH ADJLEN, CONTAINING THE
 #                     ADJACENCY STRUCTURE.
+#       TWIN        - (KEYWORD) ABSORB THE FALSE TWINS OF EACH ELIMINATED
+#                     NODE.  IGNORED FOR MININCDEG.  DEFAULTS TO TRUE;
+#                     FALSE IS FOR TESTING.
 #
 #     MODIFIED PARAMETERS:
 #       XADJ(*)     - DESTROYED ON OUTPUT.
@@ -64,11 +67,11 @@
 #
 #**********************************************************************
 #
-function mlf!(n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E, W}
-    return mlf!(MinFill, n, vwght, xadj, adjncy)
+function mlf!(n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; kwargs...) where {V, E, W}
+    return mlf!(MinFill, n, vwght, xadj, adjncy; kwargs...)
 end
 
-function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E, W}
+function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; twin::Bool = true) where {V, E, W}
     nnz = xadj[n + one(V)] - one(E)
     adjlen = convert(E, length(adjncy))
 
@@ -139,6 +142,7 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
         degree, heap, heapinv, ecliq,
         xadj2, len2, work1, work2,
         umask, gq, gucnt, gpq, gacc,
+        twin && score != MinIncDeg,
     )
 
     return perm, invp

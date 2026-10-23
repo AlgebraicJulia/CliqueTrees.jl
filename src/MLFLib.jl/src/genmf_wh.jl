@@ -187,9 +187,19 @@
 #                     INITIALIZATION; IT IS ZEROED BEFORE THE MAIN LOOP.
 #       GQ(*), GUCNT(*), GPQ(*), GACC(*)
 #                   - ARRAYS OF LENGTH 64, WORK VECTORS FOR MFUPD_DEF.
+#       TWIN        - IF TRUE, THE FALSE TWINS OF EACH ELIMINATED NODE
+#                     (UNTOUCHED NODES WITH THE SAME OPEN NEIGHBORHOOD)
+#                     ARE ABSORBED INTO IT AND NUMBERED IN ITS BLOCK.
+#                     THEY ARE SIMPLICIAL ONCE IT IS ELIMINATED, SO THE
+#                     ORDERING REMAINS A GREEDY ONE FOR EVERY SCORE WHOSE
+#                     VALUE AT A SIMPLICIAL NODE IS ITS MINIMUM (ALL BUT
+#                     MININCDEG).
 #
 #**********************************************************************
 #
+samewght(a::Integer, b::Integer) = a == b
+samewght(a, b) = isapprox(a, b)
+
 function genmf_wh(
         score::MLFScore,
         neqns::V,
@@ -223,6 +233,7 @@ function genmf_wh(
         gucnt::AbstractVector{W},
         gpq::AbstractVector{W},
         gacc::AbstractVector{W},
+        twin::Bool,
     ) where {V, E, I, W, S}
 
     #       ****************
@@ -366,6 +377,72 @@ function genmf_wh(
             enode, neqns, adjlen, xadj, adjncy,
             nvtxs, work, qsize, changed, ecliq
         )
+
+        #           -----------------------------------------------------------
+        #           ABSORB THE FALSE TWINS OF ENODE: THE UNTOUCHED NODES VNODE
+        #           OUTSIDE ENODE'S ELIMINATION CLIQUE R WITH N(VNODE) = R.
+        #           ONCE ENODE IS ELIMINATED, R IS A CLIQUE AND EACH VNODE IS
+        #           SIMPLICIAL (SCORE 0), SO VNODE IS NUMBERED IN ENODE'S
+        #           BLOCK.  EVERY VNODE IS IN EVERY VERTEX LIST OF R, SO
+        #           SCANNING THE SHORTEST ONE FINDS THEM ALL.
+        #             QFT:  TOTAL WEIGHT OF THE ABSORBED NODES.
+        #             MUFT: WEIGHTED NUMBER OF PAIRS AMONG THEM (ALL MISSING).
+        #           -----------------------------------------------------------
+        qft = zero(W)
+        muft = zero(W)
+
+        if twin && ispositive(nnodes)
+            rnode = ecliq[1]
+
+            for j in 2:nnodes
+                if nvtxs[ecliq[j]] < nvtxs[rnode]
+                    rnode = ecliq[j]
+                end
+            end
+
+            istart = xadj[rnode]
+            istop = istart + convert(E, nvtxs[rnode]) - one(E)
+
+            for i in istart:istop
+                vnode = adjncy[i]
+                qv = qsize[vnode]
+
+                #               VNODE IS ACTIVE, OUTSIDE R AND ENODE, UNTOUCHED,
+                #               AND W(N(VNODE)) = W(R)
+                if ispositive(qv) && iszero(work[vnode]) && samewght(degree[vnode] - qv, clqsiz)
+                    #               ... AND EVERY ACTIVE NODE IN ITS LIST IS IN R,
+                    #               AND IT HAS NNODES OF THEM: N(VNODE) = R.
+                    istwin = true
+                    count = zero(V)
+                    kstart = xadj[vnode]
+                    kstop = kstart + convert(E, nvtxs[vnode]) - one(E)
+
+                    for k in kstart:kstop
+                        knode = adjncy[k]
+
+                        if marker[knode] < maxint(I)
+                            if !isnegative(qsize[knode])
+                                istwin = false
+                                break
+                            end
+
+                            count += one(V)
+                        end
+                    end
+
+                    if istwin && count == nnodes
+                        heapsize = del_heap(heap, heapsize, heapinv, vnode)
+                        muft += qft * qv
+                        qft += qv
+                        work[vnode] = -enode
+                        marker[vnode] = maxint(I)
+                        qnmbr[enode] += qnmbr[vnode]
+                        qsize[vnode] = zero(W)
+                        qnmbr[vnode] = zero(V)
+                    end
+                end
+            end
+        end
     
         #           ----------------------------------------------------------
         #           INITIALLY NO NNODES EXTERNAL TO ENODE'S ELIMINATION CLIQUE
@@ -405,7 +482,7 @@ function genmf_wh(
             ecliq, invp, tag, xadj, adjncy,
             nvtxs, work, qsize, qnmbr, marker, echead,
             ectail, ecforw, nxtloc, gbgcnt, clqsiz,
-            perm, len2, heapinv
+            perm, len2, heapinv, ispositive(qft)
         )
     
         #           -------------------------------------------------------
@@ -423,6 +500,20 @@ function genmf_wh(
             unode = adjncy[j]
             du = degree[unode]
             defncy[unode] = defncy[unode] - (du - de) * qe
+        end
+
+        #           ---------------------------------------------------------
+        #           ... AND THE PAIRS JOINING AN ABSORBED FALSE TWIN TO A NODE
+        #           OUTSIDE R AND ENODE'S SUPERNODE, OR TO ANOTHER FALSE TWIN.
+        #           (PAIRS JOINING IT TO ENODE'S SUPERNODE ARE COUNTED ABOVE.)
+        #           ---------------------------------------------------------
+        if ispositive(qft)
+            for j in jstart:jstop
+                unode = adjncy[j]
+                du = degree[unode]
+                defncy[unode] = defncy[unode] - (du - de - qft) * qft - muft
+                degree[unode] = degree[unode] - qft
+            end
         end
 
         #           -----------------------------------------------

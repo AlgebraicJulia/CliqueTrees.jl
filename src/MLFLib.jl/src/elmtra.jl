@@ -110,6 +110,11 @@
 #                     (SHARES STORAGE WITH HEAPINV(*), WHICH IS NOT
 #                     USED FOR ELIMINATED NODES.)
 #
+#       NOMASS      - IF TRUE, NO MASS ELIMINATION IS PERFORMED.  (SET
+#                     WHEN FALSE TWINS OF ENODE HAVE BEEN ABSORBED: A
+#                     CLIQUE MEMBER ADJACENT TO TWO OF THEM IS NOT
+#                     SIMPLICIAL UNTIL BOTH ARE GONE, BUT ABSORBED NODES
+#                     ARE NUMBERED IN INDEX ORDER WITHIN THE BLOCK.)
 #     WORKING PARAMETERS:
 #       HHEADS      - ARRAY OF SIZE NEQNS.  HEADS OF THE LISTS
 #                     USED FOR HASHING.
@@ -144,6 +149,7 @@ function elmtra(
         hheads::AbstractVector{V},
         hlink::AbstractVector{V},
         ecount::AbstractVector{V},
+        nomass::Bool = false,
     ) where {V, E, I, W}
 
     #       -------------------
@@ -330,7 +336,7 @@ function elmtra(
         #           ------------------------------------------------
         #           IF ENODE IS THE ONLY NEIGHBOR OF JNODE, THEN ...
         #           ------------------------------------------------
-        if isone(work[jnode]) && iszero(nvtxs[jnode])
+        if !nomass && isone(work[jnode]) && iszero(nvtxs[jnode])
             #               -------------------------------------------
             #               ... PERFORM MASS ELIMINATION OF JNODE ALONG
             #               WITH ENODE.

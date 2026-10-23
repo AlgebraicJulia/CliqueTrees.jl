@@ -1641,16 +1641,18 @@ end
             addtwins!(erdos_renyi(n, 4 / n; rng), rng), addtwins!(erdos_renyi(n, 0.6; rng), rng))
 
         for graph in graphs
-            # `dense = 0` makes every node with more than 16 neighbors dense
-            for external in (false, true), dense in (10.0, 0.0, -1.0)
+            # `dense = 0` makes every node with more than 16 neighbors dense;
+            # `mass` keeps the ordering exact with degree, but not with
+            # external degree
+            for external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true)
                 # `debug` checks every bound after every elimination
                 for weights in (ones(Int, n), rand(rng, 1:3, n))
-                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, debug = true)
+                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, debug = true)
                     @test sort(index) == 1:n
 
                     if !external
                         @test isminimumdegree(graph, weights, invperm(index))
-                    elseif dense < 0 && all(isone, weights)
+                    elseif dense < 0 && all(isone, weights) && !mass
                         @test isminimumexternaldegree(graph, invperm(index))
                     end
                 end
@@ -1664,10 +1666,10 @@ end
         graph = addtwins!(erdos_renyi(400, 0.3; rng), rng)
         xadj, adjncy = adjacency(graph); weights = ones(Int, 400)
 
-        for external in (false, true)
-            index = CliqueTrees.MDLib.md(Int64, 400, 400, weights, xadj, adjncy; external)
-            @test index == CliqueTrees.MDLib.md(Int16, 400, 400, weights, xadj, adjncy; external)
-            @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external)
+        for external in (false, true), mass in (false, true)
+            index = CliqueTrees.MDLib.md(Int64, 400, 400, weights, xadj, adjncy; external, mass)
+            @test index == CliqueTrees.MDLib.md(Int16, 400, 400, weights, xadj, adjncy; external, mass)
+            @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external, mass)
         end
     end
 end
@@ -3197,5 +3199,81 @@ end
         @assert M \ P ≈ M \ Matrix(P)
         @assert P / M ≈ Matrix(P) / M
         @assert M / P ≈ M / Matrix(P)
+    end
+end
+
+@testset "MF false twins" begin
+    # every pivot of MF (strategies 0 and 1) must minimize the score in the
+    # uncompressed elimination graph, also when false twins of a pivot are
+    # absorbed into its block
+    function mfkey(adj, w, v, strategy)
+        nb = collect(adj[v]); d = 0
+
+        for i in eachindex(nb), j in (i + 1):length(nb)
+            nb[j] in adj[nb[i]] || (d += w[nb[i]] * w[nb[j]])
+        end
+
+        return iszero(strategy) ? float(d) : d / (w[v] + sum(w[u] for u in nb; init = 0))
+    end
+
+    function isgreedy(graph, w, order, strategy)
+        n = nv(graph); adj = [Set(neighbors(graph, v)) for v in 1:n]; alive = trues(n)
+
+        for v in order
+            kmin = minimum(mfkey(adj, w, u, strategy) for u in 1:n if alive[u])
+            mfkey(adj, w, v, strategy) <= kmin + 1.0e-9 * max(1, kmin) || return false
+
+            for a in adj[v], b in adj[v]
+                a != b && push!(adj[a], b)
+            end
+
+            for a in adj[v]
+                delete!(adj[a], v)
+            end
+
+            alive[v] = false; empty!(adj[v])
+        end
+
+        return true
+    end
+
+    rng = MersenneTwister(42)
+
+    for _ in 1:300
+        graph = erdos_renyi(rand(rng, 4:20), rand(rng, (0.1, 0.25, 0.4)); rng)
+
+        # plant false twins (copies of a vertex's open neighborhood),
+        # leaves on a hub, and degree-two vertices on a pair
+        for _ in 1:rand(rng, 1:4)
+            v = rand(rng, 1:nv(graph)); nbrs = copy(neighbors(graph, v))
+
+            for _ in 1:rand(rng, 1:4)
+                add_vertex!(graph)
+                foreach(x -> add_edge!(graph, nv(graph), x), nbrs)
+            end
+        end
+
+        for _ in 1:rand(rng, 0:2)
+            a, b = rand(rng, 1:nv(graph)), rand(rng, 1:nv(graph))
+
+            for _ in 1:rand(rng, 2:5)
+                add_vertex!(graph); add_edge!(graph, nv(graph), a); add_edge!(graph, nv(graph), b)
+            end
+        end
+
+        weights = rand(rng, Bool) ? rand(rng, 1:3, nv(graph)) : ones(Int, nv(graph))
+
+        for strategy in (0, 1)
+            order, index = permutation(weights, graph; alg = MF(; strategy))
+            @test isperm(order) && index == invperm(order)
+            @test isgreedy(graph, weights, order, strategy)
+        end
+    end
+
+    # a star needs no fill; degree-two vertices on one pair need one edge
+    for (graph, fill) in ((star_graph(2000), 0), (complete_bipartite_graph(2, 2000), 1))
+        order, index = permutation(graph; alg = MF())
+        @test isperm(order)
+        @test treefill(graph, (order, index)) == ne(graph) + fill
     end
 end
