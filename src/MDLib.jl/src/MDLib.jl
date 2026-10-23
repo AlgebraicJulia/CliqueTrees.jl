@@ -76,7 +76,9 @@ function md(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abstr
     end
 
     # the working arrays use 32-bit integers when they suffice
-    if neqns < typemax(Int32) ÷ 8 && total < typemax(Int32) ÷ 4
+    @inbounds nnz = convert(Int, xadj[neqns + 1]) - 1
+
+    if neqns < typemax(Int32) ÷ 8 && total < typemax(Int32) ÷ 4 && nnz < typemax(Int32)
         index = md(Int32, neqns, total, vwght, xadj, adjncy; kwargs...)
     else
         index = md(Int64, neqns, total, vwght, xadj, adjncy; kwargs...)
@@ -85,17 +87,19 @@ function md(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::Abstr
     return convert(Vector{V}, index)
 end
 
-function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector; external::Bool = false, dense::Real = 10.0, mass::Bool = false, twin::Bool = false, debug::Bool = false) where {V, E}
+function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector; external::Bool = false, dense::Real = 10.0, mass::Bool = false, twin::Bool = false, debug::Bool = false) where {V}
     @assert neqns < length(xadj)
     n = convert(V, neqns)
     iszero(n) && return FVector{V}(undef, 0)
-    @inbounds nnz = xadj[neqns + 1] - one(E)
+    @inbounds nnz = convert(Int, xadj[neqns + 1]) - 1
 
     # the lists never take more than `nnz` entries of `iw`, except while a
     # dense node rejoins, which adds fewer than `2 neqns` (see `mdreinsert!`).
     # The extra `max(nnz ÷ 5, neqns) + neqns` covers that, and leaves room
-    # between compressions
-    iwlen = nnz + max(nnz ÷ convert(E, 5), convert(E, neqns)) + convert(E, neqns)
+    # between compressions. Positions in `iw` are 32-bit integers when they
+    # suffice, whatever the type of `xadj`
+    iwlen = nnz + max(nnz ÷ 5, convert(Int, neqns)) + convert(Int, neqns)
+    E = iwlen < typemax(Int32) ? Int32 : Int64
 
     # 32-bit tags when they leave room for many steps between resets
     marker = n < typemax(Int32) ÷ 64 ? FVector{Int32}(undef, n) : FVector{Int}(undef, n)
@@ -105,7 +109,6 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     deghead = FVector{V}(undef, 2 * (total + 1))
     degnext = FVector{V}(undef, n)
     degprev = FVector{V}(undef, n)
-    hashval = FVector{UInt64}(undef, n)
     rchset = FVector{V}(undef, n)
     wext = FVector{V}(undef, n)
     extlen = FVector{V}(undef, n)
@@ -113,12 +116,13 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     len = FVector{V}(undef, n)
     elen = FVector{V}(undef, n)
     iw = FVector{V}(undef, iwlen)
+    iwlen = convert(E, iwlen)
 
     # the lists of a recomputation (see `mdrecompute!`); it grows as needed
     xw = Vector{V}(undef, n ÷ convert(V, 8))
 
-    # select the dense nodes
-    dindex = FVector{V}(undef, n)
+    # select the dense nodes (`dindex` is needed only if there are any)
+    dindex = FVector{V}(undef, ispositive(mdndense(n, xadj, dense)) ? n : zero(V))
     ndense = mdselect!(dindex, n, xadj, adjncy, dense)
     nwords = cld(convert(Int, ndense), 64)
     dwght = FVector{V}(undef, ispositive(ndense) ? n : zero(V))
@@ -127,12 +131,32 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
 
     md_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        hashval, rchset, wext, dwght, extlen, pe, len,
+        rchset, wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, convert(V, total), n, external, mass,
         twin, debug, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
+end
+
+"""
+    mdndense(neqns, xadj, dense)
+
+This routine counts the nodes with more than `max(16, dense * sqrt(neqns))`
+neighbors: the candidates of `mdselect!` (0 if `dense` is negative).
+"""
+function mdndense(neqns::V, xadj::AbstractVector, dense::Real) where {V}
+    isnegative(dense) && return zero(V)
+    thresh = max(16.0, dense * sqrt(convert(Float64, neqns)))
+    ndense = zero(V)
+
+    @inbounds for node in oneto(neqns)
+        if convert(Float64, xadj[node + one(V)] - xadj[node]) > thresh
+            ndense += one(V)
+        end
+    end
+
+    return ndense
 end
 
 """
@@ -145,21 +169,13 @@ nodes, only those of highest degree are selected. Returns the number of
 dense nodes and sets `dindex`.
 """
 function mdselect!(dindex::AbstractVector{V}, neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector, dense::Real) where {V, E}
+    ndense = mdndense(neqns, xadj, dense)
+    iszero(ndense) && return ndense
+    thresh = max(16.0, dense * sqrt(convert(Float64, neqns)))
+
     @inbounds for node in oneto(neqns)
         dindex[node] = zero(V)
     end
-
-    isnegative(dense) && return zero(V)
-    thresh = max(16.0, dense * sqrt(convert(Float64, neqns)))
-    ndense = zero(V)
-
-    @inbounds for node in oneto(neqns)
-        if convert(Float64, xadj[node + one(V)] - xadj[node]) > thresh
-            ndense += one(V)
-        end
-    end
-
-    iszero(ndense) && return ndense
 
     # at most `64 * maxwords` dense nodes, where `maxwords * neqns <= nnz / 2`
     @inbounds nnz = convert(Int, xadj[neqns + one(V)] - one(E))
@@ -193,7 +209,6 @@ function md_impl!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        hashval::AbstractVector{UInt64},
         rchset::AbstractVector{V},
         wext::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -280,7 +295,7 @@ function md_impl!(
     end
 
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        hashval, rchset, wext, dwght, extlen, pe, len,
+        rchset, wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
         debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
@@ -289,7 +304,7 @@ end
 
 """
     md!_impl!(marker, supersize, superwght, degree, deghead, degnext, degprev,
-        hashval, rchset, wext, dwght, extlen, pe, len,
+        rchset, wext, dwght, extlen, pe, len,
         elen, iw, iwlen, xw, pfree, total, neqns, external, mass, twin,
         debug, vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
@@ -370,14 +385,13 @@ working arrays:
     the reachable set, the first term of its bound (see `mdelim!`).
   - `dwght`: the weight of the dense neighbors of each node (empty if there
     are no dense nodes)
-  - `hashval`: hash values, used to detect indistinguishable nodes. The
-    hash buckets share `deghead` with the degree lists. They use
-    its last entries, whose lists (not exact, with keys near `total`) are
-    almost always empty: the first node of the bucket at `deghead[b]` is
-    `-deghead[b]` if no degree list starts there, and otherwise
-    `degprev[deghead[b]]`, which is restored to `-b` once the bucket is
-    processed. For an element, `hashval` is the start in
-    `xw` of its list of nodes outside the element being recomputed.
+  - hash buckets, used to detect indistinguishable nodes, share `deghead`
+    with the degree lists. They use its last entries, whose lists (not
+    exact, with keys near `total`) are almost always empty: the first node
+    of the bucket at `deghead[b]` is `-deghead[b]` if no degree list starts
+    there, and otherwise `degprev[deghead[b]]`, which is restored to `-b`
+    once the bucket is processed. The hash of a node of the reachable set
+    is kept in `marker` (see `mdelim!`).
   - `rchset`: the reachable set of the current pivot; during a visit, the
     elements with a group
   - `extlen`: for an element, the length of its list of nodes outside the
@@ -386,7 +400,11 @@ working arrays:
     `mdupdate!`).
   - `xw`: the lists of nodes outside the element being recomputed (see
     `mdrecompute!`); it grows when they do not fit
-  - `marker`: temporary marker vector, used with increasing tags
+  - `marker`: temporary marker vector, used with increasing tags. A node
+    of the reachable set holds its hash there, as a negative number, until
+    the indistinguishable nodes are merged
+  - `elen`: for an element (whose `elen` is not in use), the start in `xw`
+    of its list of nodes outside the element being recomputed
 """
 function md!_impl!(
         marker::AbstractVector{I},
@@ -396,7 +414,6 @@ function md!_impl!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        hashval::AbstractVector{UInt64},
         rchset::AbstractVector{V},
         wext::AbstractVector{V},
         dwght::AbstractVector{V},
@@ -429,7 +446,6 @@ function md!_impl!(
     @assert twice(total + one(V)) <= length(deghead)
     @assert neqns <= length(degnext)
     @assert neqns <= length(degprev)
-    @assert neqns <= length(hashval)
     @assert neqns <= length(rchset)
     @assert neqns <= length(wext)
     @assert iszero(ndense) || neqns <= length(dwght)
@@ -441,7 +457,7 @@ function md!_impl!(
     @assert pfree <= iwlen + one(E) <= length(iw) + one(E)
     @assert ndense <= length(dnode)
     @assert ndense <= length(ddeg)
-    @assert neqns <= length(dindex)
+    @assert iszero(ndense) || neqns <= length(dindex)
     @assert nwords * neqns <= length(dmask)
 
     # initialization for the minimum degree algorithm.
@@ -579,7 +595,7 @@ function md!_impl!(
         else
             # recompute every node at the minimum key
             mindeg, tag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
-                degree, deghead, degnext, degprev, hashval, rchset, marker,
+                degree, deghead, degnext, degprev, rchset, marker,
                 tag, xw, neqns, extlen, dwght, nbypass, external, offset,
                 debug)
 
@@ -609,7 +625,7 @@ function md!_impl!(
 
         rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght = mdelim!(mdnode,
             pe, len, elen, iw, iwlen, pfree, neqns, supersize, superwght, degree,
-            deghead, degnext, degprev, hashval, wext, extlen, wflg, lemax,
+            deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
             rchset, dS, offset, external, twin, num + supersize[mdnode],
             nbypass, nwords, dmask, ddeg)
 
@@ -632,7 +648,7 @@ function md!_impl!(
         # are numbered right after the supernode of `mdnode`)
         mindeg, tag = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
             len, elen, iw, supersize, superwght, degree, deghead, degnext,
-            degprev, hashval, rchset, wext, marker, tag, xw,
+            degprev, rchset, wext, marker, tag, xw,
             neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
             mass && iszero(fsze), offset, debug)
 
@@ -654,7 +670,7 @@ end
 
 """
     mdelim!(mdnode, pe, len, elen, iw, iwlen, pfree, neqns, supersize,
-        superwght, degree, deghead, degnext, degprev, hashval, wext, extlen,
+        superwght, degree, deghead, degnext, degprev, marker, wext, extlen,
         wflg, lemax, rchset, dS, offset, external, twin, fnum, nbypass,
         nwords, dmask, ddeg)
 
@@ -710,9 +726,10 @@ updated parameters:
   - `(deghead, degnext, degprev)`: degree lists; on output, the
     nodes in the reachable set are removed from them, and the false twins
     are numbered in `degnext`
-  - `hashval`: on output, the nodes in the reachable set are placed in hash
+  - `marker`: on output, the nodes in the reachable set are placed in hash
     buckets, which share `deghead` with the degree lists (`degprev` and
-    `degnext` hold their buckets and links)
+    `degnext` hold their buckets and links), and each holds its hash in
+    `marker`, as a negative number, so that it is never taken for a tag
   - `(wext, wflg, lemax)`: external parts of the elements
 
 output parameters:
@@ -742,7 +759,7 @@ function mdelim!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        hashval::AbstractVector{UInt64},
+        marker::AbstractVector{I},
         wext::AbstractVector{V},
         extlen::AbstractVector{V},
         wflg::V,
@@ -757,7 +774,7 @@ function mdelim!(
         nwords::Int,
         dmask::AbstractVector{UInt64},
         ddeg::AbstractVector{V},
-    ) where {V, E}
+    ) where {I, V, E}
     # the pivot leaves the quotient graph
     @inbounds swght = superwght[mdnode]; superwght[mdnode] = -swght
 
@@ -955,7 +972,7 @@ function mdelim!(
 
         # and place `rnode` in a hash bucket to detect indistinguishable
         # nodes
-        hashval[rnode] = hash
+        marker[rnode] = -convert(I, hash & convert(UInt64, typemax(I))) - one(I)
         bucket = convert(V, length(deghead)) - convert(V, (hash >>> 32) & hashmask)
         degprev[rnode] = bucket
         head = deghead[bucket]
@@ -994,7 +1011,7 @@ end
 
 """
     mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe, len, elen, iw,
-        supersize, superwght, degree, deghead, degnext, degprev, hashval, rchset, wext, marker, tag, xw, neqns, extlen, dwght,
+        supersize, superwght, degree, deghead, degnext, degprev, rchset, wext, marker, tag, xw, neqns, extlen, dwght,
         nwords, dmask, ddeg, nbypass, mindeg, external, mass, offset, debug)
 
 This routine updates the degree structure after the elimination of
@@ -1037,8 +1054,9 @@ updated parameters:
   - `xw`: the lists of the eager pass (see `mdrecompute!`)
   - `(supersize, superwght, degree)`: supernodes and their bounds
   - `(deghead, degnext, degprev)`: degree lists
-  - `hashval`: the hash buckets, which share `deghead` with the degree
-    lists (empty on output)
+  - `marker`: the hashes of the nodes of the reachable set (see `mdelim!`),
+    then tags; the hash buckets share `deghead` with the degree lists
+    (empty on output)
   - `(marker, tag)`: marker vector
 """
 @inline function mdupdate!(
@@ -1058,7 +1076,6 @@ updated parameters:
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        hashval::AbstractVector{UInt64},
         rchset::AbstractVector{V},
         wext::AbstractVector{V},
         marker::AbstractVector{I},
@@ -1099,9 +1116,10 @@ updated parameters:
             # find the first node `jnode` after `inode` whose hash value and
             # list lengths match, with `jlast` before it: only then are the
             # lists compared
-            jlast = inode; jnode = degnext[inode]
+            # (the hash of `inode` is read once: a merge overwrites it)
+            jlast = inode; jnode = degnext[inode]; ihash = marker[inode]
 
-            while !iszero(jnode) && !(hashval[jnode] == hashval[inode] && len[jnode] == len[inode] && elen[jnode] == elen[inode])
+            while !iszero(jnode) && !(marker[jnode] == ihash && len[jnode] == len[inode] && elen[jnode] == elen[inode])
                 jlast = jnode; jnode = degnext[jnode]
             end
 
@@ -1124,7 +1142,7 @@ updated parameters:
 
             while !iszero(jnode)
                 jnext = degnext[jnode]
-                same = hashval[jnode] == hashval[inode] && len[jnode] == len[inode] && elen[jnode] == elen[inode]
+                same = marker[jnode] == ihash && len[jnode] == len[inode] && elen[jnode] == elen[inode]
 
                 if same
                     qstart = pe[jnode]
@@ -1232,7 +1250,7 @@ updated parameters:
     # the eager pass
     if ispositive(zhead)
         mindeg, tag = mdrecompute!(zhead, mdnode, pe, len, elen, iw,
-            superwght, degree, deghead, degnext, degprev, hashval, marker,
+            superwght, degree, deghead, degnext, degprev, marker,
             tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
     end
@@ -1249,7 +1267,7 @@ end
 
 """
     mdvisit!(key, pe, len, elen, iw, superwght, degree, deghead, degnext,
-        degprev, hashval, rchset, marker, tag, xw, neqns, extlen, dwght,
+        degprev, rchset, marker, tag, xw, neqns, extlen, dwght,
         nbypass, external, offset, debug)
 
 This routine recomputes every node with key `key` that is not exact. The
@@ -1275,7 +1293,6 @@ function mdvisit!(
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        hashval::AbstractVector{UInt64},
         rchset::AbstractVector{V},
         marker::AbstractVector{I},
         tag::I,
@@ -1311,7 +1328,7 @@ function mdvisit!(
         elmnt = rchset[k]
 
         mindeg, tag = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
-            superwght, degree, deghead, degnext, degprev, hashval, marker,
+            superwght, degree, deghead, degnext, degprev, marker,
             tag, xw, neqns, extlen, dwght, nbypass, mindeg, external, offset,
             debug)
     end
@@ -1321,7 +1338,7 @@ end
 
 """
     mdrecompute!(zhead, elmnt, pe, len, elen, iw, superwght, degree,
-        deghead, degnext, degprev, hashval, marker, tag, xw, neqns, extlen,
+        deghead, degnext, degprev, marker, tag, xw, neqns, extlen,
         dwght, nbypass, mindeg, external, offset, debug)
 
 This routine recomputes the external degrees of the nodes of the chain that
@@ -1339,10 +1356,10 @@ This keeps groups whose nodes share many overlapping elements cheap.
 
 working arrays:
 
-  - `(hashval, extlen, xw)`: the nodes of each element `f` outside `elmnt`
-    are listed in `xw[s:s + extlen[f] - 1]`, with `s = hashval[f]` (the
-    hash values of elements are not in use). `xw` grows first if it is too
-    short.
+  - `(elen, extlen, xw)`: the nodes of each element `f` outside `elmnt`
+    are listed in `xw[s:s + extlen[f] - 1]`, with `s = elen[f]` (`elen` is
+    not in use for elements; `s` is at most the number of edges, which `V`
+    holds). `xw` grows first if it is too short.
   - `marker`: the nodes of `elmnt` are marked `etag`; while the elements
     are counted, `marker[f] - base` is the number of nodes that list `f`;
     the core and the nodes of its lists are marked `ctag`, the other
@@ -1360,7 +1377,6 @@ working arrays:
         deghead::AbstractVector{V},
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
-        hashval::AbstractVector{UInt64},
         marker::AbstractVector{I},
         tag::I,
         xw::Vector{V},
@@ -1445,7 +1461,7 @@ working arrays:
 
             if f != elmnt && base < marker[f] <= full
                 core = marker[f] == full
-                marker[f] = core ? ctag : stag; hashval[f] = pos % UInt64; fstart = pos
+                marker[f] = core ? ctag : stag; elen[f] = convert(V, pos); fstart = pos
                 jstart = pe[f]
                 jstop = jstart + convert(E, len[f]) - one(E)
 
@@ -1485,7 +1501,7 @@ working arrays:
             f = iw[p]
 
             if f != elmnt && marker[f] != ctag
-                qstart = hashval[f] % E
+                qstart = convert(E, elen[f])
                 qstop = qstart + convert(E, extlen[f]) - one(E)
 
                 for q in qstart:qstop
