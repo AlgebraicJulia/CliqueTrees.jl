@@ -974,13 +974,13 @@ function mdelim!(
         # `rnode` are `iw[p1:p2]` and its neighbors are `iw[p3:p4]`; `pn` is
         # the next free position, and `pv` the position of the first
         # neighbor after the purging. Along the way, `elmax` is the largest
-        # external part, `elsum` their sum, and `nwght` the weight of the
-        # neighbors.
+        # external part, `elsum` their sum, `nwght` the weight of the
+        # neighbors, and `hash` the sum of the entries kept.
         p1 = pe[rnode]
         p2 = p1 + convert(E, elen[rnode]) - one(E)
         p3 = p2 + one(E)
         p4 = p1 + convert(E, len[rnode]) - one(E)
-        pn = p1; hash = mdmix(mdnode)
+        pn = p1; hash = zero(UInt64)
         elmax = elsum = nwght = zero(V)
 
         for p in p1:p2
@@ -993,7 +993,7 @@ function mdelim!(
                     # aggressive absorption: `elmnt` lies in the reachable set
                     len[elmnt] = zero(V); wext[elmnt] = zero(V)
                 else
-                    iw[pn] = elmnt; pn += one(E); hash += mdmix(elmnt)
+                    iw[pn] = elmnt; pn += one(E); hash += elmnt % UInt64
                     elmax = max(elmax, dext); elsum += dext
                 end
             end
@@ -1005,7 +1005,7 @@ function mdelim!(
             node = iw[p]; wght = superwght[node]
 
             if ispositive(wght)
-                iw[pn] = node; pn += one(E); hash += mdmix(node)
+                iw[pn] = node; pn += one(E); hash += node % UInt64
                 nwght += wght
             end
         end
@@ -1019,8 +1019,9 @@ function mdelim!(
         elen[rnode] = convert(V, pv - p1) + one(V)
         len[rnode] = convert(V, pn - p1) + one(V)
 
-        # and place `rnode` in a hash bucket to detect indistinguishable
-        # nodes
+        # and place `rnode` in a hash bucket, by the mixed sum of its list, to
+        # detect indistinguishable nodes
+        hash = mdmix(hash)
         marker[rnode] = -convert(I, hash & convert(UInt64, typemax(I))) - one(I)
         bucket = convert(V, length(deghead)) - convert(V, (hash >>> 32) & hashmask)
         degprev[rnode] = bucket
@@ -1700,8 +1701,8 @@ end
     return key
 end
 
-# a list is hashed as the sum of a mix of its entries, so that lists with
-# the same sum of entries rarely collide
+# the sum of the entries of a list is mixed, so that the hash buckets are
+# used evenly (lists with the same sum share a bucket, and are compared)
 @inline function mdmix(x::Integer)
     z = (x % UInt64) * 0x9e3779b97f4a7c15
     return z ⊻ (z >>> 29)
