@@ -22,7 +22,7 @@ using ..Utilities
 export md
 
 """
-    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true)
+    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true, compress=true)
 
 Compute a minimum degree permutation of a graph with n vertices and m edges in
 O(mn) time and O(m + n) space. Returns the inverse permutation `invp`.
@@ -37,6 +37,7 @@ O(mn) time and O(m + n) space. Returns the inverse permutation `invp`.
     are handled as dense (a negative value disables this)
   - `mass`: mass elimination
   - `twin`: false-twin detection
+  - `compress`: merge the vertices with the same closed neighborhood first
 """
 function md(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
     vwght = Ones{V}(neqns)
@@ -68,7 +69,7 @@ end
 # This routine computes the ordering with working arrays of integer type `V`;
 # `total` is the sum of the vertex weights. The other parameters are those of
 # `md`.
-function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector; external::Bool = true, dense::Real = 10.0, mass::Bool = true, twin::Bool = true) where {V}
+function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector; external::Bool = true, dense::Real = 10.0, mass::Bool = true, twin::Bool = true, compress::Bool = true) where {V}
     @assert neqns < length(xadj)
     n = convert(V, neqns)
     @inbounds nnz = convert(Int, xadj[neqns + 1]) - 1
@@ -83,13 +84,13 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     # 32-bit positions (`E`) when they suffice, and 32-bit tags (`I`) when
     # they leave room for many steps between resets
     if iwlen < typemax(Int32) && n < typemax(Int32) ÷ 64
-        index = md(V, Int32, Int32, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
+        index = md(V, Int32, Int32, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin, compress)
     elseif iwlen < typemax(Int32)
-        index = md(V, Int32, Int64, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
+        index = md(V, Int32, Int64, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin, compress)
     elseif n < typemax(Int32) ÷ 64
-        index = md(V, Int64, Int32, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
+        index = md(V, Int64, Int32, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin, compress)
     else
-        index = md(V, Int64, Int64, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin)
+        index = md(V, Int64, Int64, n, convert(V, total), iwlen, vwght, xadj, adjncy, external, dense, mass, twin, compress)
     end
 
     return index
@@ -98,7 +99,7 @@ end
 # This routine allocates the working arrays, with vertices, weights and
 # degrees of type `V`, positions in `iw` of type `E`, and tags of type `I`,
 # and computes the ordering.
-function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector, external::Bool, dense::Real, mass::Bool, twin::Bool) where {V, E, I}
+function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector, external::Bool, dense::Real, mass::Bool, twin::Bool, compress::Bool) where {V, E, I}
     marker = FVector{I}(undef, n)
     superwght = FVector{V}(undef, n)
     degree = FVector{V}(undef, n)
@@ -133,7 +134,7 @@ function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::
     md_impl!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
         elen, iw, iwlen, heads, total, n, external, mass,
-        twin, vwght, xadj,
+        twin, compress, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
@@ -223,6 +224,7 @@ function md_impl!(
         external::Bool,
         mass::Bool,
         twin::Bool,
+        compress::Bool,
         vwght::AbstractVector,
         xadj::AbstractVector,
         adjncy::AbstractVector,
@@ -235,12 +237,14 @@ function md_impl!(
     ) where {I, V, E}
     @assert iwlen <= length(iw)
 
-    # copy the adjacency structure into `iw`, dropping self loops
-    pfree = one(E)
+    # copy the adjacency structure into `iw`, dropping self loops, and keep
+    # the sum of the closed neighborhood of each node in `wext` (-1 for a
+    # dense node)
+    pfree = one(E); nmerge = zero(V)
 
     if iszero(ndense)
         @inbounds for node in oneto(neqns)
-            pe[node] = pfree; deg = zero(V)
+            pe[node] = pfree; deg = zero(V); hash = convert(UInt64, node)
             istart = xadj[node]
             istop = xadj[node + one(V)] - one(istart)
 
@@ -250,10 +254,12 @@ function md_impl!(
                 if neighbor != node
                     iw[pfree] = neighbor; pfree += one(E)
                     deg += trunc(V, vwght[neighbor])
+                    hash += convert(UInt64, neighbor)
                 end
             end
 
             len[node] = convert(V, pfree - pe[node]); degree[node] = deg
+            wext[node] = convert(V, hash & convert(UInt64, typemax(V)))
         end
     else
         # the dense nodes are left out of `iw`: the adjacency between any
@@ -269,7 +275,7 @@ function md_impl!(
                 dnode[j] = node
             end
 
-            pe[node] = pfree; deg = zero(V)
+            pe[node] = pfree; deg = zero(V); hash = convert(UInt64, node)
             istart = xadj[node]
             istop = xadj[node + one(V)] - one(istart)
 
@@ -284,20 +290,179 @@ function md_impl!(
                     elseif !ispositive(j)
                         iw[pfree] = neighbor; pfree += one(E)
                         deg += trunc(V, vwght[neighbor])
+                        hash += convert(UInt64, neighbor)
                     end
                 end
             end
 
             len[node] = convert(V, pfree - pe[node]); degree[node] = deg
+
+            # dense nodes are not merged
+            if ispositive(j)
+                wext[node] = -one(V)
+            else
+                wext[node] = convert(V, hash & convert(UInt64, typemax(V)))
+            end
         end
+    end
+
+    # with `compress`, find the classes of nodes with the same closed
+    # neighborhood: `extlen[node]` is the first node of the class of `node`,
+    # or 0 if `node` is first. They are merged before the minimum degree
+    # algorithm starts (`mdmain!`)
+    if compress
+        nmerge = mdclasses!(neqns, pe, len, iw, wext, extlen, marker, deghead,
+            degprev, nwords, dmask)
+    end
+
+    # the lists of the first nodes of the classes keep only the first nodes
+    # of the classes (the other nodes of a class adjacent to `node` are
+    # adjacent to the first one, which `node`'s list holds too), and are
+    # packed at the front of `iw` (the writes trail the reads)
+    if ispositive(nmerge)
+        p = one(E)
+
+        @inbounds for node in oneto(neqns)
+            if iszero(extlen[node])
+                pstart = pe[node]; pstop = pstart + convert(E, len[node]) - one(E)
+                pe[node] = p
+
+                # branch-free: every entry is written, and the next one
+                # overwrites it unless it is kept
+                for q in pstart:pstop
+                    neighbor = iw[q]
+                    iw[p] = neighbor; p += convert(E, iszero(extlen[neighbor]))
+                end
+
+                len[node] = convert(V, p - pe[node])
+            end
+        end
+
+        pfree = p
     end
 
     mdmain!(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
         elen, iw, iwlen, heads, pfree, total, neqns, external, mass, twin,
-        vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
+        ispositive(nmerge), vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
 
     return degnext
+end
+
+# This routine finds the classes of nodes with the same closed
+# neighborhood. Such nodes are indistinguishable: with degree, merging them
+# keeps the ordering exact. `wext[node]` holds the sum of the closed
+# neighborhood of `node` (-1 for a dense node, which is not merged). The
+# first node of each class is kept in a hash table (buckets in `deghead`,
+# chains in `degprev`). A node is compared with the first nodes in its bucket
+# that have the same sum and length, by marking the closed neighborhood of
+# the first node `r` with `r` (kept marked while `cur == r`): it joins `r` if
+# it is marked and every other neighbor is marked (the lengths are equal),
+# and, with dense nodes, the masks are equal. Sets `extlen[node]` to the
+# first node of its class, or 0. Returns the number of nodes merged.
+#
+# input parameters:
+#
+#   - `neqns`: number of equations
+#   - `(pe, len, iw)`: the adjacency structure
+#   - `wext`: the sums of the closed neighborhoods
+#   - `(nwords, dmask)`: the masks of the dense neighbors (see `mdselect!`)
+#
+# output parameters:
+#
+#   - `extlen`: the first node of the class of each node, or 0
+#
+# working arrays:
+#
+#   - `marker`: marks of the closed neighborhoods
+#   - `deghead`: buckets of the hash table
+#   - `degprev`: chains of the hash table
+function mdclasses!(
+        neqns::V,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        iw::AbstractVector{V},
+        wext::AbstractVector{V},
+        extlen::AbstractVector{V},
+        marker::AbstractVector{I},
+        deghead::AbstractVector{V},
+        degprev::AbstractVector{V},
+        nwords::Int,
+        dmask::AbstractVector{UInt64},
+    ) where {I, V, E}
+    nmerge = zero(V); cur = zero(V)
+
+    # buckets: a power of two between `neqns` and `2 neqns`
+    nb = 1
+
+    while nb < convert(Int, neqns)
+        nb <<= 1
+    end
+
+    bmask = convert(UInt64, nb - 1)
+
+    @inbounds for b in oneto(nb)
+        deghead[b] = zero(V)
+    end
+
+    @inbounds for node in oneto(neqns)
+        marker[node] = zero(I)
+    end
+
+    @inbounds for node in oneto(neqns)
+        h = wext[node]; extlen[node] = zero(V)
+
+        if !isnegative(h)
+            nlen = len[node]; pstart = pe[node]; pstop = pstart + convert(E, nlen) - one(E)
+            b = convert(Int, mdmix(h) & bmask) + 1
+            r = deghead[b]; found = false
+
+            while ispositive(r)
+                if wext[r] == h && len[r] == nlen
+                    tag = convert(I, r)
+
+                    if cur != r
+                        cur = r; marker[r] = tag
+                        rstart = pe[r]; rstop = rstart + convert(E, nlen) - one(E)
+
+                        for q in rstart:rstop
+                            marker[iw[q]] = tag
+                        end
+                    end
+
+                    same = marker[node] == tag
+
+                    if same
+                        for q in pstart:pstop
+                            u = iw[q]
+
+                            if u != r && marker[u] != tag
+                                same = false
+                                break
+                            end
+                        end
+                    end
+
+                    if same && ispositive(nwords)
+                        same = mdsame(dmask, nwords, node, r)
+                    end
+
+                    if same
+                        extlen[node] = r; nmerge += one(V); found = true
+                        break
+                    end
+                end
+
+                r = degprev[r]
+            end
+
+            if !found
+                degprev[node] = deghead[b]; deghead[b] = node
+            end
+        end
+    end
+
+    return nmerge
 end
 
 # This routine implements the exact minimum degree algorithm. It makes use
@@ -341,6 +506,9 @@ end
 #     pivot's supernode. With degree it is then simplicial and of minimum
 #     degree, so the ordering remains exact. With `external` it need not be,
 #     and the ordering is no longer exact (see `mdelim!`).
+#   - `merged`: merge the classes in `extlen` first. On input, `extlen[node]`
+#     is the first node of the class of `node` (nodes with the same closed
+#     neighborhood), or 0 if `node` is first (see `mdclasses!`)
 #   - `iwlen`: length of `iw`
 #   - `(ndense, nwords, dindex, dnode, ddeg, dmask)`: the dense nodes (see
 #     `mdselect!`). Their lists are empty: their adjacency, and every
@@ -352,8 +520,9 @@ end
 # updated parameters:
 #
 #   - `(pe, len, elen, iw)`: quotient graph. On input, `(pe, len, iw)` holds
-#     the adjacency structure, and `degree` the weight of the neighbors in
-#     each list. For an uneliminated node, the list
+#     the adjacency structure (with `merged`, the lists of the first nodes of
+#     the classes, which hold only first nodes), and `degree` the weight of
+#     the neighbors of each node. For an uneliminated node, the list
 #     `iw[pe[node]:pe[node] + len[node] - 1]` holds `elen[node]` elements,
 #     sorted by elimination order, followed by its uneliminated neighbors;
 #     for an eliminated node (element), it holds the nodes in the element.
@@ -432,6 +601,7 @@ function mdmain!(
         external::Bool,
         mass::Bool,
         twin::Bool,
+        merged::Bool,
         vwght::AbstractVector,
         ndense::V,
         nwords::Int,
@@ -473,6 +643,29 @@ function mdmain!(
         deghead[key] = zero(V)
     end
 
+    # merge the classes of nodes with the same closed neighborhood
+    # (`extlen`): each node joins the first node of its class. The degree of
+    # the first node counted the other nodes of its class, which are not
+    # external to the supernode
+    if merged
+        @inbounds for node in oneto(neqns)
+            r = extlen[node]
+
+            if ispositive(r)
+                superwght[r] += superwght[node]; superwght[node] = zero(V)
+                degnext[node] = -r; len[node] = zero(V)
+            end
+        end
+
+        @inbounds for node in oneto(neqns)
+            if iszero(extlen[node])
+                degree[node] -= superwght[node] - trunc(V, vwght[node])
+            end
+
+            extlen[node] = zero(V)
+        end
+    end
+
     # - `mindeg` is the current minimum key
     # - `rank` counts the eliminated supernodes plus 1, and `wleft` is the
     #   weight of the uneliminated nodes
@@ -501,11 +694,11 @@ function mdmain!(
         end
     end
 
-    # `degree` holds the weight of the neighbors in each list (summed while
-    # the adjacency was copied)
+    # `degree` holds the weight of the neighbors of each node outside its
+    # supernode (summed while the adjacency was copied)
     @inbounds for node in oneto(neqns)
-        # dense nodes stay out of the degree lists
-        if iszero(ndense) || !ispositive(dindex[node])
+        # dense nodes and merged nodes stay out of the degree lists
+        if ispositive(superwght[node]) && (iszero(ndense) || !ispositive(dindex[node]))
             deg = degree[node]
 
             if ispositive(ndense)

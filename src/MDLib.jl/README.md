@@ -36,7 +36,7 @@ julia> invp = md(8, graph.colptr, graph.rowval)
 
 ## Parameters
 
-    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true)
+    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true, compress=true)
 
   - `neqns`: the number of vertices
   - `vwght`: vertex weights, positive integers; a vertex of weight w stands
@@ -48,3 +48,4 @@ julia> invp = md(8, graph.colptr, graph.rowval)
     are handled as dense (a negative value disables this)
   - `mass`: mass elimination
   - `twin`: false-twin detection
+  - `compress`: merge the vertices with the same closed neighborhood first
