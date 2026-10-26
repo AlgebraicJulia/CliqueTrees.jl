@@ -1610,6 +1610,23 @@ end
         return graph
     end
 
+    # replace each vertex by a clique of 1 to 4 copies, adjacent to every
+    # copy of its neighbors, and scatter the copies: classes of true twins
+    function blowup(graph, rng)
+        n = nv(graph); c = rand(rng, 1:4, n); off = cumsum([0; c]); perm = randperm(rng, off[end])
+        twins = SimpleGraph(off[end])
+
+        for v in 1:n, a in 1:c[v], b in (a + 1):c[v]
+            add_edge!(twins, perm[off[v] + a], perm[off[v] + b])
+        end
+
+        for e in edges(graph), a in 1:c[src(e)], b in 1:c[dst(e)]
+            add_edge!(twins, perm[off[src(e)] + a], perm[off[dst(e)] + b])
+        end
+
+        return twins
+    end
+
     function adjacency(graph)
         xadj = [1]; adjncy = Int[]
 
@@ -1638,20 +1655,23 @@ end
         end
 
         graphs = (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng), hub, hubs,
-            addtwins!(erdos_renyi(n, 4 / n; rng), rng), addtwins!(erdos_renyi(n, 0.6; rng), rng))
+            addtwins!(erdos_renyi(n, 4 / n; rng), rng), addtwins!(erdos_renyi(n, 0.6; rng), rng),
+            blowup(erdos_renyi(cld(n, 2), 4 / n; rng), rng))
 
         for graph in graphs
             # `dense = 0` makes every node with more than 16 neighbors dense;
-            # `mass` and `twin` keep the ordering exact with degree, but not
-            # with external degree
-            for external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true), twin in (false, true)
-                for weights in (ones(Int, n), rand(rng, 1:3, n))
-                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, twin)
-                    @test sort(index) == 1:n
+            # `mass`, `twin` and `compress` keep the ordering exact with
+            # degree, but not with external degree
+            m = nv(graph)
+
+            for external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true), twin in (false, true), compress in (false, true)
+                for weights in (ones(Int, m), rand(rng, 1:3, m))
+                    index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, twin, compress)
+                    @test sort(index) == 1:m
 
                     if !external
                         @test isminimumdegree(graph, weights, invperm(index))
-                    elseif dense < 0 && all(isone, weights) && !mass && !twin
+                    elseif dense < 0 && all(isone, weights) && !mass && !twin && !compress
                         @test isminimumexternaldegree(graph, invperm(index))
                     end
                 end
