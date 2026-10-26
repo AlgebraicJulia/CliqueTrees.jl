@@ -312,7 +312,7 @@ function md_impl!(
     # algorithm starts (`mdmain!`)
     if compress
         nmerge = mdclasses!(neqns, pe, len, iw, wext, extlen, marker, deghead,
-            degprev, nwords, dmask)
+            degprev, elen, superwght, degnext, nwords, dmask)
     end
 
     # the lists of the first nodes of the classes keep only the first nodes
@@ -352,14 +352,19 @@ end
 # This routine finds the classes of nodes with the same closed
 # neighborhood. Such nodes are indistinguishable: with degree, merging them
 # keeps the ordering exact. `wext[node]` holds the sum of the closed
-# neighborhood of `node` (-1 for a dense node, which is not merged). The
-# first node of each class is kept in a hash table (buckets in `deghead`,
-# chains in `degprev`). A node is compared with the first nodes in its bucket
-# that have the same sum and length, by marking the closed neighborhood of
-# the first node `r` with `r` (kept marked while `cur == r`): it joins `r` if
-# it is marked and every other neighbor is marked (the lengths are equal),
-# and, with dense nodes, the masks are equal. Sets `extlen[node]` to the
-# first node of its class, or 0. Returns the number of nodes merged.
+# neighborhood of `node` (-1 for a dense node, which is not merged).
+#
+# First each node joins, unchecked, the first node with the same sum and
+# length, found in a hash table of first nodes (buckets in `deghead`, chains
+# in `degprev`); the members of each first node are listed in order. Then
+# each first node `r` with members marks its closed neighborhood with `r`,
+# once, and each member is checked against the marks: it is in the class of
+# `r` if it is marked and every other neighbor is marked (the lengths are
+# equal), and, with dense nodes, the masks are equal. The members that fail
+# are checked in turn against the first of them, and so on. Checking the
+# members of a node together reads its marks while they are in cache. Sets
+# `extlen[node]` to the first node of its class, or 0. Returns the number of
+# nodes merged.
 #
 # input parameters:
 #
@@ -377,6 +382,8 @@ end
 #   - `marker`: marks of the closed neighborhoods
 #   - `deghead`: buckets of the hash table
 #   - `degprev`: chains of the hash table
+#   - `(elen, superwght, degnext)`: the list of members of each first node
+#     (its first and last member, and the next member of each member)
 function mdclasses!(
         neqns::V,
         pe::AbstractVector{E},
@@ -387,10 +394,13 @@ function mdclasses!(
         marker::AbstractVector{I},
         deghead::AbstractVector{V},
         degprev::AbstractVector{V},
+        elen::AbstractVector{V},
+        superwght::AbstractVector{V},
+        degnext::AbstractVector{V},
         nwords::Int,
         dmask::AbstractVector{UInt64},
     ) where {I, V, E}
-    nmerge = zero(V); cur = zero(V)
+    nmerge = zero(V)
 
     # buckets: a power of two between `neqns` and `2 neqns`
     nb = 1
@@ -409,34 +419,62 @@ function mdclasses!(
         marker[node] = zero(I)
     end
 
+    # each node joins the first node with the same sum and length, unchecked
     @inbounds for node in oneto(neqns)
-        h = wext[node]; extlen[node] = zero(V)
+        h = wext[node]; extlen[node] = zero(V); elen[node] = zero(V)
 
         if !isnegative(h)
-            nlen = len[node]; pstart = pe[node]; pstop = pstart + convert(E, nlen) - one(E)
-            b = convert(Int, mdmix(h) & bmask) + 1
-            r = deghead[b]; found = false
+            nlen = len[node]; b = convert(Int, mdmix(h) & bmask) + 1
+            r = deghead[b]
 
-            while ispositive(r)
-                if wext[r] == h && len[r] == nlen
-                    tag = convert(I, r)
+            while ispositive(r) && !(wext[r] == h && len[r] == nlen)
+                r = degprev[r]
+            end
 
-                    if cur != r
-                        cur = r; marker[r] = tag
-                        rstart = pe[r]; rstop = rstart + convert(E, nlen) - one(E)
+            if ispositive(r)
+                extlen[node] = r; degnext[node] = zero(V)
 
-                        for q in rstart:rstop
-                            marker[iw[q]] = tag
-                        end
-                    end
+                if iszero(elen[r])
+                    elen[r] = node
+                else
+                    degnext[superwght[r]] = node
+                end
 
-                    same = marker[node] == tag
+                superwght[r] = node
+            else
+                degprev[node] = deghead[b]; deghead[b] = node
+            end
+        end
+    end
+
+    # check the members of each first node against its marks
+    @inbounds for node in oneto(neqns)
+        if iszero(extlen[node]) && ispositive(elen[node])
+            head = node; member = elen[node]
+
+            while ispositive(member)
+                # mark the closed neighborhood of `head`
+                tag = convert(I, head); marker[head] = tag
+                rstart = pe[head]; rstop = rstart + convert(E, len[head]) - one(E)
+
+                for q in rstart:rstop
+                    marker[iw[q]] = tag
+                end
+
+                # the members that fail are listed, in order, for the next
+                # round
+                fhead = ftail = zero(V)
+
+                while ispositive(member)
+                    next = degnext[member]
+                    pstart = pe[member]; pstop = pstart + convert(E, len[member]) - one(E)
+                    same = marker[member] == tag
 
                     if same
                         for q in pstart:pstop
                             u = iw[q]
 
-                            if u != r && marker[u] != tag
+                            if u != head && marker[u] != tag
                                 same = false
                                 break
                             end
@@ -444,20 +482,33 @@ function mdclasses!(
                     end
 
                     if same && ispositive(nwords)
-                        same = mdsame(dmask, nwords, node, r)
+                        same = mdsame(dmask, nwords, member, head)
                     end
 
                     if same
-                        extlen[node] = r; nmerge += one(V); found = true
-                        break
+                        extlen[member] = head; nmerge += one(V)
+                    else
+                        degnext[member] = zero(V)
+
+                        if iszero(ftail)
+                            fhead = member
+                        else
+                            degnext[ftail] = member
+                        end
+
+                        ftail = member
                     end
+
+                    member = next
                 end
 
-                r = degprev[r]
-            end
+                # the first member that failed is the first node of a new
+                # class, which the others are checked against
+                head = fhead; member = zero(V)
 
-            if !found
-                degprev[node] = deghead[b]; deghead[b] = node
+                if ispositive(head)
+                    extlen[head] = zero(V); member = degnext[head]
+                end
             end
         end
     end
