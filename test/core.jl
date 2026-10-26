@@ -484,7 +484,7 @@ end
             AMD(),
             SymAMD(),
             AMF(),
-            AMF(; exact = true),
+            AMF(; discount = false),
             MF(),
             MF(1),
             MF(2),
@@ -585,7 +585,7 @@ end
             AMD(),
             SymAMD(),
             AMF(),
-            AMF(; exact = true),
+            AMF(; discount = false),
             MF(),
             MF(1),
             MF(2),
@@ -672,7 +672,7 @@ end
             AMD(),
             SymAMD(),
             AMF(),
-            AMF(; exact = true),
+            AMF(; discount = false),
             MF(),
             MF(1),
             MF(2),
@@ -853,7 +853,7 @@ end
                 @inferred CliqueTrees.mcsm(graph)
                 @inferred CliqueTrees.mcsm(graph, V[1, 3])
                 @inferred CliqueTrees.amf(weights, graph)
-                @inferred CliqueTrees.amf(weights, graph; exact = true)
+                @inferred CliqueTrees.amf(weights, graph; discount = false)
                 @inferred CliqueTrees.mlf(weights, graph)
                 @inferred CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @inferred CliqueTrees.mmd(weights, graph)
@@ -895,7 +895,7 @@ end
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mcsm(graph, V[1, 3])
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph)
-                @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph; exact = true)
+                @test_call target_modules = (CliqueTrees,) CliqueTrees.amf(weights, graph; discount = false)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mlf(CliqueTrees.MinAvgFill, weights, graph)
                 @test_call target_modules = (CliqueTrees,) CliqueTrees.mmd(weights, graph)
@@ -1046,7 +1046,7 @@ end
                         AMD(),
                         SymAMD(),
                         AMF(),
-                        AMF(; exact = true),
+                        AMF(; discount = false),
                         MF(),
                         MF(1),
                         MF(2),
@@ -3226,34 +3226,52 @@ end
     # uncompressed elimination graph, also when false twins of a pivot are
     # absorbed into its block
     function mfkey(adj, w, v, strategy)
-        nb = collect(adj[v]); d = 0
+        nbrs = collect(adj[v])
+        d = 0
 
-        for i in eachindex(nb), j in (i + 1):length(nb)
-            nb[j] in adj[nb[i]] || (d += w[nb[i]] * w[nb[j]])
+        for i in eachindex(nbrs), j in (i + 1):length(nbrs)
+            if !(nbrs[j] in adj[nbrs[i]])
+                d += w[nbrs[i]] * w[nbrs[j]]
+            end
         end
 
-        return iszero(strategy) ? float(d) : d / (w[v] + sum(w[u] for u in nb; init = 0))
+        if iszero(strategy)
+            key = float(d)
+        else
+            key = d / (w[v] + sum(w[u] for u in nbrs; init = 0))
+        end
+
+        return key
     end
 
     function isgreedy(graph, w, order, strategy)
-        n = nv(graph); adj = [Set(neighbors(graph, v)) for v in 1:n]; alive = trues(n)
+        n = nv(graph)
+        adj = [Set(neighbors(graph, v)) for v in 1:n]
+        alive = trues(n)
+        greedy = true
 
         for v in order
             kmin = minimum(mfkey(adj, w, u, strategy) for u in 1:n if alive[u])
-            mfkey(adj, w, v, strategy) <= kmin + 1.0e-9 * max(1, kmin) || return false
+
+            if mfkey(adj, w, v, strategy) > kmin + 1.0e-9 * max(1, kmin)
+                greedy = false
+            end
 
             for a in adj[v], b in adj[v]
-                a != b && push!(adj[a], b)
+                if a != b
+                    push!(adj[a], b)
+                end
             end
 
             for a in adj[v]
                 delete!(adj[a], v)
             end
 
-            alive[v] = false; empty!(adj[v])
+            alive[v] = false
+            empty!(adj[v])
         end
 
-        return true
+        return greedy
     end
 
     rng = MersenneTwister(42)
@@ -3264,35 +3282,126 @@ end
         # plant false twins (copies of a vertex's open neighborhood),
         # leaves on a hub, and degree-two vertices on a pair
         for _ in 1:rand(rng, 1:4)
-            v = rand(rng, 1:nv(graph)); nbrs = copy(neighbors(graph, v))
+            v = rand(rng, 1:nv(graph))
+            nbrs = copy(neighbors(graph, v))
 
             for _ in 1:rand(rng, 1:4)
                 add_vertex!(graph)
-                foreach(x -> add_edge!(graph, nv(graph), x), nbrs)
+
+                for x in nbrs
+                    add_edge!(graph, nv(graph), x)
+                end
             end
         end
 
         for _ in 1:rand(rng, 0:2)
-            a, b = rand(rng, 1:nv(graph)), rand(rng, 1:nv(graph))
+            a = rand(rng, 1:nv(graph))
+            b = rand(rng, 1:nv(graph))
 
             for _ in 1:rand(rng, 2:5)
-                add_vertex!(graph); add_edge!(graph, nv(graph), a); add_edge!(graph, nv(graph), b)
+                add_vertex!(graph)
+                add_edge!(graph, nv(graph), a)
+                add_edge!(graph, nv(graph), b)
             end
         end
 
-        weights = rand(rng, Bool) ? rand(rng, 1:3, nv(graph)) : ones(Int, nv(graph))
+        if rand(rng, Bool)
+            weights = rand(rng, 1:3, nv(graph))
+        else
+            weights = ones(Int, nv(graph))
+        end
 
         for strategy in (0, 1)
             order, index = permutation(weights, graph; alg = MF(; strategy))
             @test isperm(order) && index == invperm(order)
             @test isgreedy(graph, weights, order, strategy)
+
+            # the same, with every update in matrix form (mfupd_mat)
+            order, index = convert.(Vector, CliqueTrees.mlf(strategy, weights, graph; matmin = 1))
+            @test isperm(order) && index == invperm(order)
+            @test isgreedy(graph, weights, order, strategy)
+
+            # floating-point weights: a few distinct values (weight
+            # classes), or all distinct
+            for fweights in (rand(rng, [1.0, 1.5, 2.25], nv(graph)), 0.5 .+ rand(rng, nv(graph)))
+                order, index = convert.(Vector, CliqueTrees.mlf(strategy, fweights, graph; matmin = 1))
+                @test isperm(order) && index == invperm(order)
+                @test isgreedy(graph, fweights, order, strategy)
+            end
         end
     end
 
     # a star needs no fill; degree-two vertices on one pair need one edge
-    for (graph, fill) in ((star_graph(2000), 0), (complete_bipartite_graph(2, 2000), 1)), alg in (MF(), AMF(), AMF(; exact = true))
+    for (graph, fill) in ((star_graph(2000), 0), (complete_bipartite_graph(2, 2000), 1)), alg in (MF(), AMF(), AMF(; discount = false))
         order, index = permutation(graph; alg)
         @test isperm(order)
         @test treefill(graph, (order, index)) == ne(graph) + fill
+    end
+end
+
+@testset "MF matrix update" begin
+    # cliques of more than 64 supernodes take several words; check that every
+    # pivot has the minimum score in the elimination graph, kept as a BitMatrix
+    function bitkey(A, v, strategy)
+        nbrs = findall(view(A, :, v))
+        d = 0
+
+        for a in nbrs
+            d += count(view(A, :, v) .& .!view(A, :, a)) - 1
+        end
+
+        if iszero(strategy)
+            key = d / 2
+        else
+            key = d / 2 / (length(nbrs) + 1)
+        end
+
+        return key
+    end
+
+    function isgreedybits(graph, order, strategy)
+        n = nv(graph)
+        A = falses(n, n)
+        alive = trues(n)
+        greedy = true
+
+        for e in edges(graph)
+            A[src(e), dst(e)] = true
+            A[dst(e), src(e)] = true
+        end
+
+        for v in order
+            kmin = minimum(bitkey(A, u, strategy) for u in 1:n if alive[u])
+
+            if bitkey(A, v, strategy) > kmin + 1.0e-9 * max(1, kmin)
+                greedy = false
+            end
+
+            nbrs = findall(view(A, :, v))
+            A[nbrs, nbrs] .= true
+
+            for a in nbrs
+                A[a, a] = false
+            end
+
+            A[v, :] .= false
+            A[:, v] .= false
+            alive[v] = false
+        end
+
+        return greedy
+    end
+
+    rng = MersenneTwister(7)
+
+    for (n, p) in ((150, 0.08), (250, 0.04), (300, 0.03))
+        graph = erdos_renyi(n, p; rng)
+        weights = ones(Int, n)
+
+        for strategy in (0, 1)
+            order, index = convert.(Vector, CliqueTrees.mlf(strategy, weights, graph; matmin = 1))
+            @test isperm(order) && index == invperm(order)
+            @test isgreedybits(graph, order, strategy)
+        end
     end
 end

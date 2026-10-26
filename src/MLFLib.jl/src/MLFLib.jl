@@ -31,6 +31,7 @@ include("elmclq.jl")
 include("elmtra.jl")
 include("garbg2.jl")
 include("mfupd_def.jl")
+include("mfupd_mat.jl")
 include("mfnumn.jl")
 
 end

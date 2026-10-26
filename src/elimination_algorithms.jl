@@ -215,24 +215,40 @@ struct MCSM <: MinimalAlgorithm end
 """
     AMF <: EliminationAlgorithm
 
-    AMF(; exact=false)
+    AMF(; discount=true)
 
-The approximate minimum fill algorithm.
+The approximate minimum fill algorithm. It is the minimum external degree
+algorithm ([`MD`](@ref)) with the degree replaced by an estimate of the fill.
+The key of a supernode of weight `w` and external degree `d` is
 
-The vertex weights may be any finite positive numbers. A vertex of weight `w` stands for a class
-of true twins of total weight `w`, and the ordering does not depend on the unit in which the weights
-are measured: multiplying every weight by the same constant leaves it unchanged, up to rounding.
+    (d² - l² - c) / (w + 1),
+
+where `l` is the weight of its newest clique outside it (the clique formed when
+it was last next to an eliminated node) and `c` is a discount (see below). The
+pairs in the newest clique are already adjacent, so the numerator bounds twice
+the fill from above. This is the approximate minimum mean local fill of
+Rothberg and Eisenstat, with `w + 1` in place of `w`. Degrees are kept as lower
+bounds and computed exactly only for the nodes of minimum key.
+
+The vertex weights may be any finite positive numbers. A vertex of weight `w`
+stands for a class of true twins of total weight `w`, and the ordering does not
+depend on the unit in which the weights are measured: the weights are rounded
+to sixteenths of the smallest one, unless they are all multiples of it.
 
 ### Parameters
 
-  - `exact`: compute the initial score of each vertex from its exact fill-in, rather than its degree
+  - `discount`: discounted keys. An elimination makes some pairs of neighbors
+    of the nodes next to the new clique adjacent. Each such node loses the pairs
+    between its parts in the clique (its newest clique and its other
+    neighbors), and the keys remain upper bounds.
 
 ### References
 
-  - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." SIAM Journal on Matrix Analysis and Applications 19.3 (1998): 682-695.
+  - Rothberg, Edward, and Stanley C. Eisenstat. "Node selection strategies for bottom-up sparse matrix ordering." *SIAM Journal on Matrix Analysis and Applications* 19.3 (1998): 682-695.
+  - Cummings, Robert, Matthew Fahrbach, and Animesh Fatehpuria. "A fast minimum degree algorithm and matching lower bound." *Proceedings of the 2021 ACM-SIAM Symposium on Discrete Algorithms (SODA)*. 2021.
 """
 @kwdef struct AMF <: EliminationAlgorithm
-    exact::Bool = false
+    discount::Bool = true
 end
 
 """
@@ -248,7 +264,7 @@ The greedy minimum fill algorithm.
     and `d` for its external degree, the scores are
       - `0`: `F` (minimum fill)
       - `1`: `F / (d + |K|)` (minimum average fill)
-      - `2`: `F / |K|` (minimum mean fill, MMF)
+      - `2`: `F / (|K| + 1)` (minimum mean fill, MMF; with weights, `1` is the smallest vertex weight)
       - `3`: `F - d|K|` (minimum increase in neighbor degree, MIND)
       - `4`: `F / sqrt(|K|)`
 
@@ -1205,7 +1221,7 @@ function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MCSM; v
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::AMF; verbose::Bool = false)
-    return amf(weights, graph; exact = alg.exact)
+    return amf(weights, graph; discount = alg.discount)
 end
 
 function permutation(weights::AbstractVector, graph::AbstractGraph, alg::MF; verbose::Bool = false)
@@ -2720,7 +2736,7 @@ end
 function Base.show(io::IO, ::MIME"text/plain", alg::AMF)
     indent = get(io, :indent, 0)
     println(io, " "^indent * "AMF:")
-    println(io, " "^indent * "    exact: $(alg.exact)")
+    println(io, " "^indent * "    discount: $(alg.discount)")
     return
 end
 

@@ -110,6 +110,18 @@
 #**********************************************************************
 #
 
+# tolerance of the check that an eliminated node has no deficiency left. With
+# integer weights it is exact. With floating-point weights the deficiency is
+# kept by many incremental updates, each bounded by the square of the
+# (weighted) degree, so the rounding error is relative to that square.
+function deftol(d::Integer)
+    return 1e-5
+end
+
+function deftol(d)
+    return max(1e-5, sqrt(eps(float(d))) * float(d)^2)
+end
+
 # sum of the (negative) supernode sizes gq(g) of the group members g in mask m;
 # heavy marks the members whose size is not one
 @inline function grp_sum(m::GMASK, heavy::GMASK, gq::AbstractVector{W}) where {W <: Integer}
@@ -407,9 +419,10 @@ function mfupd_def(
 
     #       ------------------------------------------------------
     #       CHECK IF THE DEFICIENCY OF THE ELIMINATED NODE ENODE
-    #       IS ZERO.  STOP IF IT IS NOT. 
+    #       IS ZERO.  STOP IF IT IS NOT. (WITH FLOATING-POINT WEIGHTS,
+    #       UP TO ROUNDING: SEE DEFTOL.)
     #       ------------------------------------------------------
-    @inbounds if abs(defncy[enode]) > 1e-5
+    @inbounds if abs(defncy[enode]) > deftol(degree[enode])
         error("ELIMINATED NODE HAS NONZERO DEFICIENCY: $enode => $(defncy[enode])")
     end
 

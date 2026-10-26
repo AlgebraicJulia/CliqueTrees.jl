@@ -35,6 +35,9 @@
 #       TWIN        - (KEYWORD) ABSORB THE FALSE TWINS OF EACH ELIMINATED
 #                     NODE.  IGNORED FOR MININCDEG.  DEFAULTS TO TRUE;
 #                     FALSE IS FOR TESTING.
+#       MATMIN      - (KEYWORD) UPDATE THE DEFICIENCIES IN MATRIX FORM
+#                     (MFUPD_MAT) WHEN THE ELIMINATION CLIQUE HAS AT LEAST
+#                     MATMIN SUPERNODES.  0 DISABLES IT.  DEFAULTS TO 64.
 #
 #     MODIFIED PARAMETERS:
 #       XADJ(*)     - DESTROYED ON OUTPUT.
@@ -71,7 +74,7 @@ function mlf!(n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::A
     return mlf!(MinFill, n, vwght, xadj, adjncy; kwargs...)
 end
 
-function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; twin::Bool = true) where {V, E, W}
+function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; twin::Bool = true, matmin::Integer = 64) where {V, E, W}
     nnz = xadj[n + one(V)] - one(E)
     adjlen = convert(E, length(adjncy))
 
@@ -143,6 +146,7 @@ function mlf!(score::MLFScore, n::V, vwght::AbstractVector{W}, xadj::AbstractVec
         xadj2, len2, work1, work2,
         umask, gq, gucnt, gpq, gacc,
         twin && score != MinIncDeg,
+        convert(Int, matmin),
     )
 
     return perm, invp

@@ -37,6 +37,7 @@
 #                     DEFICIENCY OF EACH REPRESENTATIVE NODE IN
 #                     THE INITIAL COMPRESSED GRAPH (IF COMPRESSION
 #                     WAS DONE).
+#       QMIN        - SMALLEST POSITIVE VERTEX WEIGHT (SEE MLFSCORE).
 #
 #     OUTPUT PARAMETERS:
 #       HEAP(*)     - ARRAY OF LENGTH 2*NEQNS, CONTAINING THE 
@@ -77,6 +78,7 @@ function mfinit_heap(
         degree::AbstractVector{W},
         qsize::AbstractVector{W},
         defncy::AbstractVector{W},
+        qmin::W,
         heap::AbstractVector{S},
         heapinv::AbstractVector{V},
         marker::AbstractVector{I},
@@ -126,7 +128,7 @@ function mfinit_heap(
             #               -------------------------------
             #               COMPUTE DEFICIENCY-BASED SCORE.
             #               -------------------------------
-            key = mlfscore(score, defncy, degree, qsize, jnode)
+            key = mlfscore(score, defncy, degree, qsize, qmin, jnode)
         
             #               ---------------------------------------------
             #               INSERT JNODE AND ITS DEFICIENCY-BASED SCORE

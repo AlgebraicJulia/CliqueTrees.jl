@@ -1,1517 +1,2028 @@
-# This file is part of the Scotch distribution.
-# It does not include the standard Scotch header because it is an
-# adaptation of the MUMPS_HAMF4 routine which was released under
-# the BSD3 license.
-# Consequently, this file is distributed according to the terms of
-# the BSD3 licence, see copyright notice below.
-#
-# Copyright 2004,2007,2010,2012,2018-2020,2023,2024 IPB, Universite de Bordeaux, INRIA & CNRS & others
-#
-#============================================================#
-#
-#     NAME       : hall_order_hf.c
-#
-#     AUTHOR     : Patrick AMESTOY & al.
-#                  Francois PELLEGRINI
-#
-#     FUNCTION   : This module orders a halo graph or mesh
-#                  structure using the block-oriented Halo
-#                  Approximate (Multiple) Minimum Fill
-#                  algorithm, with super-variable
-#                  accounting HAMF4 (v20190828).
-#
-#     DATES      : # Version 3.4  : from : 15 may 2001
-#                                   to   : 23 nov 2001
-#                  # Version 4.0  : from : 10 jan 2003
-#                                   to   : 29 aug 2007
-#                  # Version 5.1  : from : 08 dec 2010
-#                                   to   : 08 dec 2010
-#                  # Version 6.0  : from : 08 mar 2012
-#                                   to   : 30 apr 2018
-#                  # Version 6.1  : from : 29 oct 2019
-#                                   to   : 10 feb 2020
-#                  # Version 7.0  : from : 19 jan 2023
-#                                   to   : 06 aug 2024
-#
-#     NOTES      : # This module contains pieces of code
-#                    that belong to other people; see
-#                    below.
-#
-#============================================================#
+#= A collection of routines to find an approximate minimum fill ordering.
+   The algorithm is the exact minimum external degree algorithm of MDLib,
+   with the degree replaced by an estimate of the fill. Everything else is
+   kept: the quotient graph, element absorption, the detection of
+   indistinguishable nodes, mass elimination, false twins, the dense nodes,
+   and the degrees kept as lower bounds and made exact only for the nodes of
+   minimum key, in batches that share their most recent element.
+   The key of a supernode of weight w and external degree d is
+       (d^2 - l^2 - disc) / (w + 1),
+   where l is the weight of its newest clique outside it: the element formed
+   when it was last in a reachable set, with the dense neighbors of that
+   pivot. Its elimination makes the neighborhood a clique, and the pairs in
+   the newest clique are already adjacent, so d^2 - l^2 bounds twice the
+   fill from above. This is the approximate minimum mean local fill of
+   Rothberg and Eisenstat, with w + 1 in place of w. The key grows with d,
+   so a key computed from a lower bound on the degree is a lower bound on
+   the key, and the degrees are made exact only as in MD.
+   The nodes outside a reachable set keep their keys, but the elimination
+   makes some pairs of their neighbors adjacent. With `discount`, each such
+   node loses those pairs (`disc`): the pairs between its parts in the
+   reachable set, which are the part of its newest element and each of its
+   uneliminated neighbors there. It keeps the largest such discount since it
+   was last in a reachable set, so its key remains an upper bound.
+   For information on the minimum degree algorithm see the articles:
+   The evolution of the minimum degree algorithm by Alan George and
+   Joseph Liu, SIAM Rev. 31 pp. 1 - 19, 1989
+   A fast minimum degree algorithm and matching lower bound by Robert
+   Cummings, Matthew Fahrbach, and Animesh Fatehpuria, SODA 2021
+   For information on the approximate minimum fill algorithm see the article:
+   Node selection strategies for bottom-up sparse matrix ordering by Edward
+   Rothberg and Stanley Eisenstat, SIAM J. Matrix Anal. Appl. 19 pp. 682 -
+   695, 1998
+=#
 
 module AMFLib
 
 using Base: oneto
 using FillArrays
 using ..Utilities
-using ..CliqueTrees
+using ..MDLib: mdndense, mdselect!, mdclasses!, mdremove!, mdinsert!, mdprefetch,
+    mdmix, mdsetbit!, mdcount, mdweight, mdsame, mddenseinit!, mdlose!, mddense!, mdreinsert!,
+    mdcompress!, mdnumber!
 
 export amf
 
-const FLOAT = Float64
-const AMF_SCOREMAX = 2.0^52   # largest rounded score; integers up to here are exact in a `FLOAT`
+"""
+    amf(neqns[, vwght], xadj, adjncy; discount=true, dense=10.0, mass=true, twin=true, compress=true)
 
-function amf(n::V, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; kwargs...) where {V, E}
-    vwght = Ones{V}(n)
-    return amf(n, vwght, xadj, adjncy; kwargs...)
+Compute an approximate minimum fill permutation of a graph with n vertices.
+Returns the permutation `perm` and the inverse permutation `invp`.
+
+  - `neqns`: the number of vertices
+  - `vwght`: vertex weights, finite and positive; a vertex of weight w stands
+    for indistinguishable vertices of total weight w (default 1). The
+    ordering does not depend on the unit in which they are measured.
+  - `xadj`, `adjncy`: the graph; the neighbors of `v` are
+    `adjncy[xadj[v]:xadj[v + 1] - 1]`, and self loops are ignored
+  - `discount`: lower the keys of the nodes next to each new element by the
+    fill that it removes
+  - `dense`: vertices with more than `max(16, dense * sqrt(neqns))` neighbors
+    are handled as dense (a negative value disables this)
+  - `mass`: mass elimination
+  - `twin`: false-twin detection
+  - `compress`: merge the vertices with the same closed neighborhood first
+"""
+function amf(neqns::V, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
+    vwght = Ones{V}(neqns)
+    return amf(neqns, vwght, xadj, adjncy; kwargs...)
 end
 
-# The vertex weights may be any finite positive numbers. A vertex of weight `w`
-# stands for a class of true twins of total weight `w`, and the ordering does
-# not depend on the unit in which the weights are measured.
-#
-# If `exact` is true, then the initial score of each variable is computed from
-# its exact fill-in, as for every later score, rather than from its degree.
-function amf(n::V, vwght::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}; exact::Bool = false, twin::Bool = true) where {V, E}
-    @assert n <= length(vwght)
-    @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
+function amf(neqns::V, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector{V}; kwargs...) where {V}
+    @assert neqns <= length(vwght)
 
-    wt = FVector{FLOAT}(undef, n)
-    wsum = amf_weights!(wt, vwght, n)
-    wunit = one(FLOAT)
-    nfine = amf_nfine(wsum, n)
-    nbbuck = twice(nfine)
-    iwlen = twice(m) + convert(E, 4n) + one(E)
+    # the weights as integers, `res` of them to the smallest weight (see
+    # `amfweights`)
+    wght, res = amfweights(neqns, vwght)
+    total = 0
 
-    len = FVector{V}(undef, n)
-    pe = FVector{E}(undef, nn)
-    iw = FVector{V}(undef, iwlen)
-    nv = FVector{V}(undef, n)
-    elen = FVector{V}(undef, n)
-    last = FVector{V}(undef, n)
-    degree = FVector{FLOAT}(undef, n)
-    wf = FVector{FLOAT}(undef, n)
-    next = FVector{V}(undef, n)
-    w = FVector{Int}(undef, n)
-    head = FVector{V}(undef, nbbuck + two(V))
-
-    perm, invp = amf_impl!(n, nfine, nbbuck, iwlen, pe,
-        len, iw, nv, elen, last, degree, wf, next, w, head,
-        wt, wunit, vwght, xadj, adjncy, exact, twin)
-
-    return convert(Vector{V}, perm), convert(Vector{V}, invp)
-end
-
-# Check that the weights `vwght[1:n]` are finite and positive, and store them in
-# `wt[1:n]` in units of the smallest one. The ordering does not depend on the
-# unit of the weights, and in these units the squared areas neither underflow
-# nor overflow unless the weights span more than about 150 decades. Scores are
-# then rounded to whole units. Returns the total weight.
-function amf_weights!(wt::AbstractVector{F}, vwght::AbstractVector, n::Integer) where {F}
-    wmin = convert(F, Inf); wsum = zero(F)
-
-    @inbounds for i in oneto(n)
-        wi = convert(F, vwght[i])
-
-        if !(isfinite(wi) && wi > zero(F))
-            throw(ArgumentError("vertex weights must be finite and positive, but weight $i is $(vwght[i])"))
-        end
-
-        wmin = min(wmin, wi)
+    @inbounds for node in oneto(neqns)
+        total += convert(Int, wght[node])
     end
 
-    @inbounds for i in oneto(n)
-        wt[i] = convert(F, vwght[i]) / wmin
-        wsum += wt[i]
-    end
+    # the working arrays use 32-bit integers when they suffice
+    @inbounds nnz = convert(Int, xadj[neqns + 1]) - 1
 
-    return wsum
-end
-
-# Each of the first `nfine` rounded scores gets its own bucket, and larger
-# scores share buckets; `nfine` only affects speed.
-function amf_nfine(wsum::F, n::V) where {F, V}
-    if iszero(n)
-        return zero(V)
+    if neqns < typemax(Int32) ÷ 8 && total < typemax(Int32) ÷ 4 && nnz < typemax(Int32)
+        index = amf(Int32, neqns, total, res, wght, xadj, adjncy; kwargs...)
     else
-        return convert(V, round(Int, clamp(wsum, convert(F, n), convert(F, max(16 * Int(n), 1 << 16)))))
-    end
-end
-
-# The weighted fill-in of each variable: the sum of `weights[a] * weights[b]`
-# over the missing edges {`a`, `b`} in its neighborhood. Computed with
-# Wing-Huang updates in O(m√m) time.
-function amf_fillin(n::V, weights::AbstractVector, xadj::AbstractVector{E}, adjncy::AbstractVector{V}) where {V, E}
-    @inbounds m = xadj[n + one(V)] - one(E)
-    vfill = FVector{FLOAT}(undef, n)
-    wdegree = FVector{FLOAT}(undef, n)
-    marker = FVector{V}(undef, n)
-    order = FVector{V}(undef, n)
-    tail = FVector{E}(undef, n)
-    adjtgt = FVector{V}(undef, m)
-    number = FVector{V}(undef, n)
-
-    @inbounds for v in oneto(n)
-        number[v] = convert(V, xadj[v + one(V)] - xadj[v])
+        index = amf(Int64, neqns, total, res, wght, xadj, adjncy; kwargs...)
     end
 
-    begptr = view(xadj, oneto(n))
-    endptr = view(xadj, (one(V) + one(V)):(n + one(V)))
-    CliqueTrees.fillin!(vfill, weights, wdegree, marker, order, tail, adjtgt, number, adjncy, begptr, endptr, n)
-    return vfill
+    invp = Vector{V}(undef, neqns)
+    perm = Vector{V}(undef, neqns)
+
+    @inbounds for node in oneto(neqns)
+        invp[node] = convert(V, index[node])
+        perm[invp[node]] = node
+    end
+
+    return perm, invp
 end
 
-# unit weights stay a `Ones`, which `fillin!` handles without the weight lookups
-function amf_fillweights(vwght::Ones, wt::AbstractVector, n::V) where {V}
-    return Ones{FLOAT}(n)
+# This routine computes the ordering with working arrays of integer type `V`;
+# `total` is the sum of the integer weights `vwght`, and `res` the number of
+# them to the smallest weight. The other parameters are those of `amf`.
+function amf(::Type{V}, neqns::Integer, total::Integer, res::Float64, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector; discount::Bool = true, dense::Real = 10.0, mass::Bool = true, twin::Bool = true, compress::Bool = true) where {V}
+    @assert neqns < length(xadj)
+    n = convert(V, neqns)
+    @inbounds nnz = convert(Int, xadj[neqns + 1]) - 1
+
+    # the lists never take more than `nnz` entries of `iw`, except while a
+    # dense node rejoins, which adds fewer than `2 neqns` (see `mdreinsert!`).
+    # The extra `max(nnz ÷ 5, neqns) + neqns` covers that, and leaves room
+    # between compressions. Positions in `iw` are 32-bit integers when they
+    # suffice, whatever the type of `xadj`
+    iwlen = nnz + max(nnz ÷ 5, convert(Int, neqns)) + convert(Int, neqns)
+
+    # 32-bit positions (`E`) when they suffice, and 32-bit tags (`I`) when
+    # they leave room for many steps between resets
+    if iwlen < typemax(Int32) && n < typemax(Int32) ÷ 64
+        index = amf(V, Int32, Int32, n, convert(V, total), res, iwlen, vwght, xadj, adjncy, discount, dense, mass, twin, compress)
+    elseif iwlen < typemax(Int32)
+        index = amf(V, Int32, Int64, n, convert(V, total), res, iwlen, vwght, xadj, adjncy, discount, dense, mass, twin, compress)
+    elseif n < typemax(Int32) ÷ 64
+        index = amf(V, Int64, Int32, n, convert(V, total), res, iwlen, vwght, xadj, adjncy, discount, dense, mass, twin, compress)
+    else
+        index = amf(V, Int64, Int64, n, convert(V, total), res, iwlen, vwght, xadj, adjncy, discount, dense, mass, twin, compress)
+    end
+
+    return index
 end
 
-function amf_fillweights(vwght::AbstractVector, wt::AbstractVector, n::V) where {V}
-    return view(wt, oneto(n))
+# This routine allocates the working arrays, with vertices, weights and
+# degrees of type `V`, positions in `iw` of type `E`, and tags of type `I`,
+# and computes the ordering.
+#
+# The keys are kept in the degree lists of MD, by bucket. There are `nbuck`
+# buckets: a key `k` below `nfine` (in units of the smallest weight squared)
+# goes to bucket `floor(k) + 1`, and a larger one to a bucket evenly spaced
+# in `sqrt(k)`, `scale` buckets per unit of `sqrt(k)` from `sfine = sqrt(nfine)`
+# up to the largest key.
+function amf(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, res::Float64, iwlen::Int, vwght::AbstractVector, xadj::AbstractVector, adjncy::AbstractVector, discount::Bool, dense::Real, mass::Bool, twin::Bool, compress::Bool) where {V, E, I}
+    nbuck = max(n, one(V))
+    nfine = convert(Float64, max(nbuck ÷ convert(V, 2), one(V)))
+    sfine = sqrt(nfine)
+
+    # the square root of a key is at most the total weight, in units of the
+    # smallest weight
+    smax = convert(Float64, total) / res
+
+    if smax > sfine
+        scale = (convert(Float64, nbuck) - nfine - 1.0) / (smax - sfine)
+    else
+        scale = 0.0
+    end
+
+    marker = FVector{I}(undef, n)
+    superwght = FVector{V}(undef, n)
+    degree = FVector{V}(undef, n)
+    deghead = FVector{V}(undef, 2 * (nbuck + 1))
+    degnext = FVector{V}(undef, n)
+    degprev = FVector{V}(undef, n)
+    wext = FVector{V}(undef, n)
+    extlen = FVector{V}(undef, n)
+    pe = FVector{E}(undef, n)
+    len = FVector{V}(undef, n)
+    elen = FVector{V}(undef, n)
+    iw = FVector{V}(undef, iwlen)
+    heads = FVector{UInt64}(undef, cld(iwlen, 64))
+    iwlen = convert(E, iwlen)
+
+    # the keys
+    fkey = FVector{Float64}(undef, n)
+    lpw = FVector{V}(undef, n)
+    disc = FVector{Float64}(undef, n)
+    dexact = FVector{Bool}(undef, n)
+
+    # the discounts (`rv`, `rs`, `rstamp` and `vlist` are needed only with
+    # `discount`)
+    if discount
+        dlen = n
+    else
+        dlen = zero(V)
+    end
+
+    rv = FVector{Float64}(undef, dlen)
+    rs = FVector{Float64}(undef, dlen)
+    rstamp = FVector{V}(undef, dlen)
+    vlist = FVector{V}(undef, dlen)
+
+    @inbounds for node in oneto(dlen)
+        rstamp[node] = zero(V)
+    end
+
+    # select the dense nodes (`dindex` and `dwght` are needed only if there
+    # are any)
+    ndense = mdndense(n, xadj, dense); slen = zero(V)
+
+    if ispositive(ndense)
+        slen = n
+    end
+
+    dindex = FVector{V}(undef, slen)
+    ndense = mdselect!(dindex, n, xadj, adjncy, dense, ndense)
+    nwords = cld(convert(Int, ndense), 64)
+    dwght = FVector{V}(undef, slen)
+    dnode = FVector{V}(undef, ndense)
+    ddeg = FVector{V}(undef, ndense)
+    dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
+
+    amf_impl!(marker, superwght, degree, deghead, degnext, degprev,
+        wext, dwght, extlen, pe, len,
+        elen, iw, iwlen, heads, total, n, mass,
+        twin, compress, vwght, xadj,
+        adjncy, ndense, nwords, dindex, dnode, ddeg, dmask,
+        fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res,
+        discount, rv, rs, rstamp, vlist)
+
+    return degnext
 end
 
+# This routine copies the adjacency structure into `iw`, and computes the
+# ordering (`amfmain!`).
 function amf_impl!(
-        n::V,
-        nfine::V,
-        nbbuck::V,
-        iwlen::E,
+        marker::AbstractVector{I},
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        wext::AbstractVector{V},
+        dwght::AbstractVector{V},
+        extlen::AbstractVector{V},
         pe::AbstractVector{E},
         len::AbstractVector{V},
-        iw::AbstractVector{V},
-        nv::AbstractVector{V},
         elen::AbstractVector{V},
-        last::AbstractVector{V},
-        degree::AbstractVector{F},
-        wf::AbstractVector{F},
-        next::AbstractVector{V},
-        w::AbstractVector,
-        head::AbstractVector{V},
-        wt::AbstractVector{F},
-        wunit::F,
+        iw::AbstractVector{V},
+        iwlen::E,
+        heads::AbstractVector{UInt64},
+        total::V,
+        neqns::V,
+        mass::Bool,
+        twin::Bool,
+        compress::Bool,
         vwght::AbstractVector,
-        xadj::AbstractVector{E},
-        adjncy::AbstractVector{V},
-        exact::Bool,
-        twin::Bool = false,
-    ) where {V, E, F}
-    @inbounds nn = n + one(V); mm = xadj[nn]; m = mm - one(E)
+        xadj::AbstractVector,
+        adjncy::AbstractVector,
+        ndense::V,
+        nwords::Int,
+        dindex::AbstractVector{V},
+        dnode::AbstractVector{V},
+        ddeg::AbstractVector{V},
+        dmask::AbstractVector{UInt64},
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+        discount::Bool,
+        rv::AbstractVector{Float64},
+        rs::AbstractVector{Float64},
+        rstamp::AbstractVector{V},
+        vlist::AbstractVector{V},
+    ) where {I, V, E}
+    @assert iwlen <= length(iw)
 
-    nbelts = zero(V)
-    pfree = mm
+    # copy the adjacency structure into `iw`, dropping self loops, and keep
+    # the sum of the closed neighborhood of each node in `wext` (-1 for a
+    # dense node)
+    pfree = one(E); nmerge = zero(V)
 
-    @inbounds for p in oneto(m)
-        iw[p] = adjncy[p]
-    end
+    if iszero(ndense)
+        @inbounds for node in oneto(neqns)
+            pe[node] = pfree; deg = zero(V); hash = convert(UInt64, node)
+            istart = xadj[node]
+            istop = xadj[node + one(V)] - one(istart)
 
-    @inbounds p = pe[begin] = xadj[begin]
+            for i in istart:istop
+                neighbor = convert(V, adjncy[i])
 
-    @inbounds for i in oneto(n)
-        pp = pe[i + one(E)] = xadj[i + one(E)]
-        nv[i] = one(V)
-        len[i] = convert(V, pp - p)
-        p = pp
-    end
-
-    if exact
-        vfill = amf_fillin(n, amf_fillweights(vwght, wt, n), xadj, adjncy)
-    else
-        vfill = nothing
-    end
-
-    ncmpa = hamf_impl!(n, n, nbelts, nfine, nbbuck, iwlen, pe,
-        pfree, len, iw, nv, elen, last, degree, wf, next, w, head, wt, wunit, vfill, twin)
-
-    @inbounds for j in oneto(n)
-        head[j] = zero(V)
-    end
-
-    @inbounds for i in oneto(n)
-        j = abs(elen[i])
-        head[j] = i
-    end
-
-    k = zero(V)
-
-    @inbounds for j in oneto(n)
-        i = head[j]
-
-        if ispositive(i)
-            last[i] = k += one(V)
-            elen[k] = i
-        end
-    end
-
-    return elen, last
-end
-
-amf_sameweight(a::F, b::F) where {F} = abs(a - b) <= sqrt(eps(F)) * max(abs(a), abs(b))
-
-# round a score to a whole number of units, as an integer-valued float
-function amf_round(rmf::F, n::Integer) where {F}
-    if rmf < AMF_SCOREMAX
-        q = floor(rmf + convert(F, 0.5))
-    elseif rmf / convert(F, n) < AMF_SCOREMAX
-        q = floor(rmf / convert(F, n) + convert(F, 0.5))
-    else
-        q = convert(F, AMF_SCOREMAX)
-    end
-
-    return max(q, one(F))
-end
-
-# the bucket of a rounded score: one bucket for each of the first `nfine`
-# scores, then one for each `pas` scores, up to `nbbuck`. Only the buckets
-# above `nfine` hold more than one score, and they are searched for the best
-# one, so which variable is selected does not depend on `nfine`. (In HAMF4,
-# the scores just above `nfine` shared bucket `nfine`, which was not searched.)
-function amf_bucket(q::F, nfine::V, pas::V, nbbuck::V) where {F, V}
-    if q > convert(F, nfine)
-        return convert(V, min(div(convert(Int, q) - Int(nfine) - 1, Int(pas)) + Int(nfine) + 1, Int(nbbuck)))
-    else
-        return convert(V, q)
-    end
-end
-
-#  -- translated by f2c (version 19970219).
-#  -- hand-made adaptation (as of HAMF 20191101).
-#  -- hand-made adaptation (as of HAMF 20200111).
-
-#------------------------------------------------------------------------#
-#   Version generated on October 29th 2019
-#
-#   This file includes various modifications of an original
-#   LGPL/ CeCILL-C compatible
-#   code implementing the AMD (Approximate Minimum Degree) ordering
-#     Patrick Amestoy, Timothy A. Davis, and Iain S. Duff,
-#      "An approximate minimum degree ordering algorithm,"
-#      SIAM J. Matrix Analysis  vol 17, pages=886--905 (1996)
-#      MUMPS_ANA_H is based on the original AMD code:
-#
-#      AMD, Copyright (c), 1996-2016, Timothy A. Davis,
-#      Patrick R. Amestoy, and Iain S. Duff.  All Rights Reserved.
-#      Used in MUMPS under the BSD 3-clause license.
-#      THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
-#      CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
-#      INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
-#      MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-#      DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE
-#      FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-#      CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-#      PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
-#      OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-#      THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
-#      TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
-#      OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
-#      OF SUCH DAMAGE.
-#
-#     MUMPS_HAMF4 is a major modification of AMD
-#     since the metric used to select pivots in not anymore the
-#     degree but an approximation of the fill-in.
-#     In this approximation
-#     all cliques of elements adjacent to the variable are deducted.
-#     Written by Patrick Amestoy between 1999 and 2019.
-#     and used by F. Pellegrini in SCOTCH since 2000.
-#
-#     Unique version to order both graph of variables and
-#     graphs with both elements and variables.
-#
-#     Notations used:
-#     Let us refer to as
-#       Gv a graph with only variables
-#       Ge a graph with both variables and elements
-#
-#     Let V be the set of nodes in the graph
-#         V = Ve + V0
-#             V0 = Set of variable nodes
-#             Ve = Set of element nodes |Ve|=nbelts
-#
-#     The two sets are disjoint, and Ve can be empty.
-#     If nbelts>0 then a bipartite graph between
-#        V0 and Ve is provided on entry.
-#
-#     A graph of elements and variables is a bipartite
-#     graph between the set of variables and the set of elements.
-#     Thus variables are only adjacent to elements and
-#     in the element list we only have variables.
-#     Elements are "considered" as already eliminated and
-#     are provided here only to describe the adjacency between
-#     variables. Only variables in V0 need to be eliminated.
-#
-#     (CliqueTrees) A variable may also be adjacent to variables:
-#     its list holds its elements first, and then its variables, as
-#     it would during execution.
-#
-#     (CliqueTrees) The HAMF4 halo (the set V1 of variables that are
-#     never ordered) has been removed.
-#
-#     (CliqueTrees) Weights. Each variable carries a weight wt(i), any
-#     finite positive number; a variable of weight w stands for a class
-#     of true twins of total weight w. The structural bookkeeping (nv,
-#     the counts in w, positions in the ordering) counts vertices, and
-#     a separate weight layer (wt, degree, wf) computes the scores. All
-#     areas are squares of weights, so that the score does not depend
-#     on a unit. After pivot me is eliminated, each variable i in Lme
-#     gets the score
-#
-#       ( d (d + 2 W(Lme)) - sum_e x_e (2 W(Le) - x_e)
-#                          - 2 wt(i) a - sum_j wt(j)^2 ) / wt(i)
-#
-#     where x_e = W(Le \ Lme) for each element e adjacent to i,
-#     j runs over the variables adjacent to i outside Lme, a = sum_j wt(j),
-#     and d = sum_e x_e + a bounds W(N(i) \ Lme). The numerator estimates
-#     twice the weighted fill of eliminating i, counted as squares of
-#     weights: all of N[i], minus the cliques Lme, Le and {j} it is
-#     covered by. If d + W(Lme) exceeds the remaining weight r, the
-#     numerator is the minimum of the above and
-#     (r - wt(i))^2 - (W(Lme) - wt(i))^2. Scores are rounded to multiples
-#     of wunit, the smallest weight. The initial score is the weighted
-#     degree, or 2 F(i) / wt(i) for the exact fill-in F(i).
-#
-#     (CliqueTrees) False twins. The variables outside Lme whose
-#     neighbors are exactly Lme are simplicial once the pivot is
-#     eliminated; they are eliminated with it (see `twin`).
-#
-#     Comments relative to 64/32 bits integer representation:
-#     This is [based on] a restrictive integer 64 bit variant:
-#     It is assumed that IW array size can exceed 32-bit integer and
-#     thus IWLEN is INTEGER(8) and PE is an INTEGER(8) array.
-#     Graph size n must be smaller than 2x10^9 but number of
-#     edges is a 64-bit integer.
-#
-#   Parameters
-#      Input only, not modified on output :
-#        N : number of nodes, N = size of V0 U Ve
-#        NFINE : each of the first NFINE rounded scores has its own
-#                bucket; larger scores share buckets
-#        NBBUCK : number of buckets, at least NFINE
-#                 advised value is 2*NFINE
-#        IWLEN : Should be uint64_t # Patch FP: used Gnum as well #
-#        WUNIT : scores are rounded to multiples of WUNIT
-#      Input, undefined on output:
-#        LEN(1..N)
-#        IW(1..IWLEN)
-#        WT(N) : vertex weights
-#      Output only :
-#        NCMPA
-#        not ELEN(N)  # Patch FP: always initialized before call #
-#        LAST(N)
-#      Input/output
-#        ELEN(N)  # Patch PA+FP #
-#        PFREE
-#        PE(N) : Should be uint64_t # Patch FP: used Gnum as well #
-#        NV(N)
-#        DEGREE(N) : input only in element mode (nbelts>0)
-#      Internal workspace only
-#        Min fill approximation one extra array of size NBBUCK+2
-#         is also needed
-#        NEXT(N)
-#        W(N)
-#        HEAD(0:NBBUCK+1)
-#        WF(N)
-#
-#    Comments on the OUTPUT :
-#    ------------------------
-#    Let V0 be the variables of the initial graph (|V0|=n).
-#    The assembly tree corresponds to the tree
-#      of the supernodes (or supervariables). Each node of the
-#      assembly tree is then composed of one principal variable
-#      and a list of secondary variables. The list of
-#      variable of a node (principal + secondary variables) then
-#      describes the structure of the diagonal bloc of the supernode.
-#    The elimination tree denotes the tree of all the variables(=node)
-#      and is therefore of order n.
-#
-#    The arrays NV(N) and PE(N) give a description of the assembly tree.
-#
-#     1/ Description of array nv(N) (on OUTPUT)
-#      nv(i)=0 i is a secondary variable
-#      nv(i) >0 i is a principal variable, nv(i) holds the number of
-#        vertices in its element, not counting its own block
-#
-#     2/ Description of array PE(N) (on OUTPUT)
-#         Note that on
-#         pe(i) = -(father of variable/node i) in the elimination tree:
-#         If nv (i) .gt. 0, then i represents a node in the assembly
-#         tree, and the parent of i is -pe (i), or zero if i is a root.
-#         If nv (i) = 0, then (i,-pe (i)) represents an edge in a
-#         subtree, the root of which is a node in the assembly tree.
-#
-#     3/ Example:
-#        Let If be a root node father of Is in the assembly tree.
-#        If is the principal variable of the node If and let If1, If2,
-#        If3 be the secondary variables of node If.
-#        Is is the principal variable of the node Is and let Is1, Is2 be
-#        the secondary variables of node Is.
-#
-#        THEN:
-#          NV(If1) = NV(If2) = NV(If3) = 0  (secondary variables)
-#          NV(Is1) = NV(Is2) = 0  (secondary variables)
-#          NV(If) > 0  (principal variable)
-#          NV(Is) > 0  (principal variable)
-#          PE(If) = 0 (root node)
-#          PE(Is) = -If (If is the father of Is in the assembly tree)
-#          PE(If1)=PE(If2)=PE(If3)= -If  ( If is the principal variable)
-#          PE(Is1)=PE(Is2)= -Is  ( Is is the principal variable)
-#
-#
-#     Given a representation of the nonzero pattern of a symmetric
-#         matrix A, (excluding the diagonal) perform an approximate
-#         minimum fill-in heuristic. Aggresive absorption is
-#         used to tighten the bound on the degree.  This can result an
-#         significant improvement in the quality of the ordering for
-#         some matrices.
-#  ---------------------------------------------------------------------
-#   INPUT ARGUMENTS (unaltered):
-#  ---------------------------------------------------------------------
-#   n:    number of nodes in the graph
-#         n = size of V0 U Ve
-#
-#   norig   number of positions in the ordering: the variables,
-#           plus the elements of Ve, which are numbered first
-#
-#   nbelts number of elements (size of Ve)
-#              =0 if Gv (graph of variables)
-#              >0 if Ge
-#           nbelts > 0 extends/changes the meaning of
-#                     len/elen/degree on entry (see below)
-#
-#   wt:   the weight of each variable (finite and positive); the
-#         entries of elements are unused on input. During execution,
-#         wt (i) is the weight of the principal supervariable i, and
-#         for an element e, wt (e) is the weight of Le \ Lme.
-#
-#   wunit: scores are rounded to multiples of wunit.
-#
-#   nfine, nbbuck: the rounded score q of a variable selects bucket q
-#         if q .le. nfine, and nfine + (q - nfine) / pas, at most
-#         nbbuck, otherwise, where pas = max(nfine / 8, 1). The
-#         buckets above nfine are searched for their best score. These
-#         parameters only affect the running time.
-#
-#   iwlen:        The length of iw (1..iwlen).  On input, the matrix is
-#         stored in iw (1..pfree-1).  However, iw (1..iwlen) should be
-#         slightly larger than what is required to hold the matrix, at
-#         least iwlen .ge. pfree + n is recommended.  Otherwise,
-#         excessive compressions will take place.
-#         *** We do not recommend running this algorithm with ***
-#         ***      iwlen .lt. pfree + n.                      ***
-#         *** Better performance will be obtained if          ***
-#         ***      iwlen .ge. pfree + n                       ***
-#         *** or better yet                                   ***
-#         ***      iwlen .gt. 1.2 * pfree                     ***
-#         *** (where pfree is its value on input).            ***
-#         The algorithm will not run at all if iwlen .lt. pfree-1.
-#
-#         Restriction: iwlen .ge. pfree-1
-#  ---------------------------------------------------------------------
-#   INPUT/OUPUT ARGUMENTS:
-#  ---------------------------------------------------------------------
-#   pe:   On input, pe (i) is the index in iw of the start of row i, or
-#         zero if row i has no off-diagonal non-zeros.
-#
-#         During execution, it is used for both supervariables and
-#         elements:
-#
-#         * Principal supervariable i:  index into iw of the
-#                 description of supervariable i.  A supervariable
-#                 represents one or more rows of the matrix
-#                 with identical nonzero pattern.
-#         * Non-principal supervariable i:  if i has been absorbed
-#                 into another supervariable j, then pe (i) = -j.
-#                 That is, j has the same pattern as i.
-#                 Note that j might later be absorbed into another
-#                 supervariable j2, in which case pe (i) is still -j,
-#                 and pe (j) = -j2.
-#         * Unabsorbed element e:  the index into iw of the description
-#                 of element e, if e has not yet been absorbed by a
-#                 subsequent element.  Element e is created when
-#                 the supervariable of the same name is selected as
-#                 the pivot.
-#         * Absorbed element e:  if element e is absorbed into element
-#                 e2, then pe (e) = -e2.  This occurs when the pattern
-#                 of e (that is, Le) is found to be a subset of the
-#                 pattern of e2 (that is, Le2).  If element e is "null"
-#                 (it has no nonzeros outside its pivot block), then
-#                 pe (e) = 0.
-#
-#         On output, pe holds the assembly tree/forest, which implicitly
-#         represents a pivot order with identical fill-in as the actual
-#         order (via a depth-first search of the tree).
-#
-#         On output:
-#         If nv (i) .gt. 0, then i represents a node in the assembly
-#         tree, and the parent of i is -pe (i), or zero if i is a root.
-#         If nv (i) = 0, then (i,-pe (i)) represents an edge in a
-#         subtree, the root of which is a node in the assembly tree.
-#
-#   pfree:        On input, the matrix is stored in iw (1..pfree-1) and
-#         the rest of the array iw is free.
-#         During execution, additional data is placed in iw, and pfree
-#         is modified so that components  of iw from pfree are free.
-#         On output, pfree is set equal to the size of iw that
-#         would have been needed for no compressions to occur.  If
-#         ncmpa is zero, then pfree (on output) is less than or equal
-#         to iwlen, and the space iw (pfree+1 ... iwlen) was not used.
-#         Otherwise, pfree (on output) is greater than iwlen, and all
-#         the memory in iw was used.
-#
-#   nv:   On input, nv (i) = 1 for every variable i; for an element e,
-#         nv (e) is its number of positions in the ordering.
-#         During execution, abs (nv (i)) is equal to the number of
-#         vertices that are represented by the principal supervariable i.
-#         If i is a nonprincipal variable, then nv (i) = 0.  nv (i) .lt. 0
-#         signifies that i is a principal variable in the pattern Lme of
-#         the current pivot element me.  For an element e, nv (e) = |Le|,
-#         the number of vertices in Le when e was created.
-#  ---------------------------------------------------------------------
-#   INPUT/MODIFIED (undefined on output):
-#  ---------------------------------------------------------------------
-#   len:  On input, len (i)
-#                     if (nbelts==0) then (graph of variables)
-#                       len(i) holds the number of entries in row i of
-#                       the matrix, excluding the diagonal.
-#                     else (graph of elements+variables)
-#                       if i ∈ V0 then len(i) = nb of elements adjacent
-#                           to i, plus nb of variables adjacent to i
-#                       if i ∈ Ve then len(i) = nb of variables
-#                           adjacent to i
-#                     endif
-#         The content of len (1..n) is undefined on output.
-#
-#   elen: defined on input only if nbelts>0
-#         if e ∈ Ve then elen (e) = -N-1
-#         if v ∈ V0 then elen (v) = nb of elements adjacent to v,
-#                                  which come first in its list
-#
-#   degree: defined on input only if nbelts>0
-#         if v ∈ V0 then degree (v) = weighted external degree of v,
-#                                    the sum of wt (j) over the variables
-#                                    adjacent to v or in its elements
-#
-#   iw:   On input, iw (1..pfree-1) holds the description of each row i
-#         in the matrix.  The matrix must be symmetric, and both upper
-#         and lower triangular parts must be present.  The diagonal must
-#         not be present.  Row i is held as follows:
-#
-#                 len (i):  the length of the row i data structure
-#                 iw (pe (i) ... pe (i) + len (i) - 1):
-#                         the list of column indices for nonzeros
-#                         in row i (simple supervariables), excluding
-#                         the diagonal.  All supervariables start with
-#                         one row/column each (supervariable i is just
-#                         row i).
-#                 if len (i) is zero on input, then pe (i) is ignored
-#                 on input.
-#
-#                 Note that the rows need not be in any particular
-#                 order, and there may be empty space between the rows.
-#
-#         During execution, the supervariable i experiences fill-in.
-#         This is represented by placing in i a list of the elements
-#         that cause fill-in in supervariable i:
-#
-#                 len (i):  the length of supervariable i
-#                 iw (pe (i) ... pe (i) + elen (i) - 1):
-#                         the list of elements that contain i.  This
-#                         list is kept short by removing absorbed
-#                         elements.
-#                 iw (pe (i) + elen (i) ... pe (i) + len (i) - 1):
-#                         the list of supervariables in i.  This list
-#                         is kept short by removing nonprincipal
-#                         variables, and any entry j that is also
-#                         contained in at least one of the elements
-#                         (j in Le) in the list for i (e in row i).
-#
-#         When supervariable i is selected as pivot, we create an
-#         element e of the same name (e=i):
-#
-#                 len (e):  the length of element e
-#                 iw (pe (e) ... pe (e) + len (e) - 1):
-#                         the list of supervariables in element e.
-#
-#         An element represents the fill-in that occurs when
-#         supervariable i is selected as pivot (which represents the
-#         selection of row i and all non-principal variables whose
-#         principal variable is i). We use the term Le to denote the
-#         set of all supervariables in element e. Absorbed
-#         supervariables and elements are pruned from these lists when
-#         computationally convenient.
-#
-#         CAUTION:  THE INPUT MATRIX IS OVERWRITTEN DURING COMPUTATION.
-#         The contents of iw are undefined on output.
-#
-#  ---------------------------------------------------------------------
-#   OUTPUT (need not be set on input):
-#  ---------------------------------------------------------------------
-#   elen: See the description of iw above.  At the start of execution,
-#         elen (i) is set to zero.  During execution, elen (i) is the
-#         number of elements in the list for supervariable i.  When e
-#         becomes an element, elen (e) = -nel is set, where nel is the
-#         current step of factorization.  elen (i) = 0 is done when i
-#         becomes nonprincipal.
-#
-#         For variables, elen (i) .ge. 0 holds
-#         For elements, elen (e) .lt. 0 holds.
-#
-#   last: In a degree list, last (i) is the supervariable preceding i,
-#         or zero if i is the head of the list.  In a hash bucket,
-#         last (i) is the hash key for i.  last (head (hash)) is also
-#         used as the head of a hash bucket if head (hash) contains a
-#         degree list (see head, below).
-#
-#   ncmpa:        The number of times iw was compressed.  If this is
-#         excessive, then the execution took longer than what could
-#         have been. To reduce ncmpa, try increasing iwlen to be 10%
-#         or 20% larger than the value of pfree on input (or at least
-#         iwlen .ge. pfree + n).  The fastest performance will be
-#         obtained when ncmpa is returned as zero.  If iwlen is set to
-#         the value returned by pfree on *output*, then no compressions
-#         will occur.
-#
-#  ---------------------------------------------------------------------
-#   LOCAL (not input or output - used only during execution):
-#  ---------------------------------------------------------------------
-#   degree:       If i is a supervariable, then degree (i) holds the
-#         current approximation of the weighted external degree of row i
-#         (an upper bound): the weight of the neighbours of i, not
-#         counting i itself.  The bound is equal to the external degree
-#         if elen (i) is less than or equal to two.
-#         We also use the term "external degree" for elements e to refer
-#         to |Le \ Lme|.  If e is an element, then degree (e) holds
-#         the weight of Le (not including the diagonal part).
-#
-#   head: head is used for degree lists.  head (b) is the first
-#         supervariable in the list of bucket b (see nfine above).  If
-#         the list b is empty then head (b) = 0.
-#
-#         During supervariable detection head (hash) also serves as a
-#         pointer to a hash bucket.
-#         If head (hash) .gt. 0, there is a degree list of degree hash.
-#                 The hash bucket head pointer is last (head (hash)).
-#         If head (hash) = 0, then the degree list and hash bucket are
-#                 both empty.
-#         If head (hash) .lt. 0, then the degree list is empty, and
-#                 -head (hash) is the head of the hash bucket.
-#         After supervariable detection is complete, all hash buckets
-#         are empty, and the (last (head (hash)) = 0) condition is
-#         restored for the non-empty degree lists.
-#   next: next (i) is the supervariable following i in a link list, or
-#         zero if i is the last in the list.  Used for two kinds of
-#         lists:  degree lists and hash buckets (a supervariable can be
-#         in only one kind of list at a time).
-#   w:    The flag array w determines the status of elements and
-#         variables, and the external degree of elements.
-#
-#         for elements:
-#            if w (e) = 0, then the element e is absorbed
-#            if w (e) .ge. wflg, then w (e) - wflg is the size of
-#                 the set |Le \ Lme|, in terms of vertices (the
-#                 sum of abs (nv (i)) for each principal variable i that
-#                 is both in the pattern of element e and NOT in the
-#                 pattern of the current pivot element, me), and
-#                 wt (e) is its weight.
-#            if wflg .gt. w (e) .gt. 0, then e is not absorbed and has
-#                 not yet been seen in the scan of the element lists in
-#                 the computation of |Le\Lme| in loop 150 below.
-#
-#         for variables:
-#            during supervariable detection, if w (j) .ne. wflg then j
-#            is not in the pattern of variable i
-#
-#         The w array is initialized by setting w (i) = 1 for all i,
-#         and by setting wflg = 2.  It is reinitialized if wflg becomes
-#         too large (to ensure that wflg+n does not cause integer
-#         overflow).
-#
-#   wf :  for a variable i, its rounded score; while i is in Lme, the
-#         area to subtract in its next score. For an element e, the area
-#         x_e (2 W(Le) - x_e) of its part outside Lme.
-function hamf_impl!(
-        norig::V,                  # number of positions: the variables, plus the elements of Ve
-        n::V,                      # number of nodes (variables and elements)
-        nbelts::V,                 # number of elements
-        nfine::V,                  # each of the first `nfine` rounded scores has its own bucket
-        nbbuck::V,                 # number of buckets
-        iwlen::E,                  # length of array `iw`
-        pe::AbstractVector{E},     # array of indices in `iw` of start of row `i`
-        pfree::E,                  # useful size in `iw`
-        len::AbstractVector{V},    # array of lengths of adjacency lists
-        iw::AbstractVector{V},     # adjacency list array
-        nv::AbstractVector{V},     # supervariable sizes (vertex counts); |Le| for an element
-        elen::AbstractVector{V},   # array that holds the inverse permutation
-        last::AbstractVector{V},   # array that holds the permutation
-        degree::AbstractVector{F}, # weighted degree bound of a variable; weight of Le for an element
-        wf::AbstractVector{F},     # score of a variable; area of an element
-        next::AbstractVector{V},   # linked list structure
-        w::AbstractVector{I},      # flag array
-        head::AbstractVector{V},   # linked list structure
-        wt::AbstractVector{F},     # weight of a supervariable; weight of Le \ Lme for an element
-        wunit::F,                  # scores are rounded to multiples of `wunit`
-        vfill::Union{Nothing, AbstractVector}, # exact initial fill-in (optional)
-        twin::Bool = false,        # eliminate the false twins of each pivot with it
-    ) where {I, V, E, F}
-    @assert nbelts <= n
-    @assert pfree <= iwlen <= length(iw)
-    @assert nfine <= nbbuck
-    @assert n < length(pe)
-    @assert n <= length(len)
-    @assert n <= length(nv)
-    @assert n <= length(elen)
-    @assert n <= length(last)
-    @assert n <= length(degree)
-    @assert n <= length(wf)
-    @assert n <= length(next)
-    @assert n <= length(w)
-    @assert n <= length(wt)
-    @assert nbbuck + two(V) <= length(head)
-
-    @inbounds for i in oneto(n)
-        if iszero(nbelts)                     # `elen` is input if the graph has elements
-            elen[i] = zero(V)
-        end
-
-        last[i] = zero(V)
-        wf[i] = zero(F)
-        next[i] = zero(V)
-        w[i] = zero(I)
-
-        if iszero(nbelts)                     # in element mode, `degree` holds the external degrees of the variables on input
-            degree[i] = zero(F)
-        end
-    end
-
-    @inbounds for i in oneto(nbbuck + two(V))
-        head[i] = zero(V)
-    end
-
-    #=====================================================================#
-    #
-    # deg :       the degree of a variable or element
-    # degme :     size, |Lme|, of the current element, me
-    # wdegme :    weight of Lme
-    # dext :      external degree, |Le \ Lme|, of some element e
-    # dmax :      largest |Le| seen so far
-    # e :         an element
-    # elenme :    the length, elen (me), of element list of pivotal var.
-    # eln :       the length, elen (...), of an element list
-    # hash :      the computed value of the hash function
-    # hmod :      the hash function is computed modulo hmod = max (1,n-1)
-    # i :         a supervariable
-    # ilast :     the entry in a link list preceding i
-    # inext :     the entry in a link list following i
-    # j :         a supervariable
-    # jlast :     the entry in a link list preceding j
-    # jnext :     the entry in a link list, or path, following j
-    # k :         the pivot order of an element or variable
-    # knt1 :      loop counter used during element construction
-    # knt2 :      loop counter used during element construction
-    # knt3 :      loop counter used during compression
-    # lenj :      len (j)
-    # ln :        length of a supervariable list
-    # maxint_n :  large integer to test risk of overflow on wflg
-    # maxmem :    amount of memory needed for no compressions
-    # me :        current supervariable being eliminated, and the
-    #                     current element created by eliminating that
-    #                     supervariable
-    # mem :       memory in use assuming no compressions have occurred
-    # mindeg :    current minimum bucket
-    # nel :       number of pivots selected so far
-    # newmem :    amount of new memory needed for current pivot element
-    # wleft :     weight of the nonpivotal variables
-    # nvi :       the number of variables in a supervariable i (= nv (i))
-    # nvj :       the number of variables in a supervariable j (= nv (j))
-    # nvpiv :     number of pivots in current element
-    # slenme :    number of variables in variable list of pivotal variable
-    # we :        w (e)
-    # wflg :      used for flagging the w array.  See description of iw.
-    # wnvi :      wflg - nv (i)
-    # x :         either a supervariable or an element
-    # wf3 :       weight of the variable neighbours outside Lme
-    # wf4 :       areas of the elements outside Lme
-    # wf5 :       areas of the variable neighbours outside Lme
-    #
-    #=====================================================================#
-
-    #=====================================================================#
-    #
-    #             Any parameter (pe (...) or pfree) or local variable
-    #             starting with "p" (for Pointer) is an index into iw,
-    #             and all indices into iw use variables starting with
-    #             "p."  The only exception to this rule is the iwlen
-    #             input argument.
-    # p :         pointer into lots of things
-    # p1 :        pe (i) for some variable i (start of element list)
-    # p2 :        pe (i) + elen (i) -  1 for some var. i (end of el. list)
-    # p3 :        index of first supervariable in clean list
-    # pdst :      destination pointer, for compression
-    # pend :      end of memory to compress
-    # pj :        pointer into an element or variable
-    # pme :       pointer into the current element (pme1...pme2)
-    # pme1 :      the current element, me, is stored in iw (pme1...pme2)
-    # pme2 :      the end of the current element
-    # pn :        pointer into a "clean" variable, also used to compress
-    # psrc :      source pointer, for compression
-    #
-    #=====================================================================#
-
-    pas = max(div(nfine, eight(V)), one(V)) # width of the buckets above `nfine`
-    wflg = two(I)
-    maxint_n = typemax(I) - convert(I, norig)
-    ncmpa = zero(I)
-    nel = zero(V)
-    totel = zero(V)
-    wnel = zero(F)
-    wtotel = zero(F)
-    hmod = max(one(E), convert(E, nbbuck) - one(E))
-    dmax = zero(V)
-    mem = pfree - one(E)
-    maxmem = mem
-    mindeg = zero(V)
-
-    if iszero(nbelts)                         # if graph has no elements and only variables
-        @inbounds for i in oneto(n)
-            w[i] = one(I)
-            totel += nv[i]
-            wtotel += wt[i]
-            deg = zero(F)
-
-            for p in pe[i]:(pe[i] + convert(E, len[i]) - one(E))
-                deg += wt[iw[p]]
-            end
-
-            degree[i] = deg
-        end
-    else                                      # graph has elements
-        @inbounds for i in oneto(n)
-            w[i] = one(I)
-
-            if isnegative(elen[i])            # if `i` ∈ Ve
-                nel += nv[i]
-                totel += nv[i]                # elements are numbered first, so they count toward `totel`
-                elen[i] = -nel
-                deg = zero(F)
-
-                for p in pe[i]:(pe[i] + convert(E, len[i]) - one(E))
-                    deg += wt[iw[p]]
+                if neighbor != node
+                    iw[pfree] = neighbor; pfree += one(E)
+                    deg += trunc(V, vwght[neighbor])
+                    hash += convert(UInt64, neighbor)
                 end
+            end
 
-                degree[i] = deg               # the weight of Le
-                nv[i] = len[i]                # from now on, `nv[i]` is |Le|
+            len[node] = convert(V, pfree - pe[node]); degree[node] = deg
+            wext[node] = convert(V, hash & convert(UInt64, typemax(V)))
+        end
+    else
+        # the dense nodes are left out of `iw`: the adjacency between any
+        # node and a dense node is stored in the masks
+        @inbounds for i in eachindex(dmask)
+            dmask[i] = zero(UInt64)
+        end
 
-                if len[i] > dmax
-                    dmax = len[i]
+        @inbounds for node in oneto(neqns)
+            j = dindex[node]
+
+            if ispositive(j)
+                dnode[j] = node
+            end
+
+            pe[node] = pfree; deg = zero(V); hash = convert(UInt64, node)
+            istart = xadj[node]
+            istop = xadj[node + one(V)] - one(istart)
+
+            for i in istart:istop
+                neighbor = convert(V, adjncy[i])
+
+                if neighbor != node
+                    k = dindex[neighbor]
+
+                    if ispositive(k)
+                        mdsetbit!(dmask, nwords, node, k)
+                    elseif !ispositive(j)
+                        iw[pfree] = neighbor; pfree += one(E)
+                        deg += trunc(V, vwght[neighbor])
+                        hash += convert(UInt64, neighbor)
+                    end
                 end
-            else                              # `i` ∈ V0; `degree[i]` holds its weighted external degree, and its
-                totel += nv[i]                # list holds its `elen[i]` elements, then its variables
-                wtotel += wt[i]
-            end
-        end
-    end
-
-    @inbounds for i in oneto(n)               # initialize degree lists and eliminate rows with no off-diag. nz.
-        if isnegative(elen[i])                # skip element vertices (Ve)
-            continue
-        end
-
-        deg = degree[i]
-
-        if ispositive(deg)
-            if isnothing(vfill)               # the initial score is the weighted degree
-                q = amf_round(deg / wunit, n)
-            else                              # score from the exact fill-in, as in the score update below
-                q = amf_round(twice(convert(F, vfill[i])) / wt[i] / wunit, n)
             end
 
-            wf[i] = q
-            b = amf_bucket(q, nfine, pas, nbbuck)
-            inext = head[b + one(V)]
+            len[node] = convert(V, pfree - pe[node]); degree[node] = deg
 
-            if !iszero(inext)
-                last[inext] = i
-            end
-
-            next[i] = inext
-            head[b + one(V)] = i
-        else                                  # variable can be eliminated at once because no off-diagonal non-zero in its row
-            nel += nv[i]
-            wnel += wt[i]
-            elen[i] = -nel
-            pe[i] = zero(E)
-            w[i] = zero(I)
-        end
-    end
-
-    @inbounds while nel < totel
-        deg = mindeg - one(V); me = zero(V)
-
-        while deg < nbbuck && !ispositive(me)
-            deg += one(V); me = head[deg + one(V)]
-        end
-
-        mindeg = deg
-
-        if !ispositive(me)
-            error()
-        end
-
-        if deg > nfine                        # linear search to find variable with best score in the list
-            j = next[me]
-            k = wf[me]
-
-            while ispositive(j)               # L55: CONTINUE
-                if wf[j] < k
-                    me = j
-                    k = wf[me]
-                end
-
-                j = next[j]
-            end
-
-            ilast = last[me]
-            inext = next[me]
-
-            if !iszero(inext)
-                last[inext] = ilast
-            end
-
-            if !iszero(ilast)
-                next[ilast] = inext
+            # dense nodes are not merged
+            if ispositive(j)
+                wext[node] = -one(V)
             else
-                head[deg + one(V)] = inext    # `me` is at the head of the degree list
+                wext[node] = convert(V, hash & convert(UInt64, typemax(V)))
             end
-        else                                  # remove chosen variable from link list
-            inext = next[me]
+        end
+    end
 
-            if !iszero(inext)
-                last[inext] = zero(V)
+    # with `compress`, find the classes of nodes with the same closed
+    # neighborhood: `extlen[node]` is the first node of the class of `node`,
+    # or 0 if `node` is first. They are merged before the first elimination
+    # (`amfmain!`)
+    if compress
+        nmerge = mdclasses!(neqns, pe, len, iw, wext, extlen, marker, deghead,
+            degprev, elen, superwght, degnext, nwords, dmask)
+    end
+
+    # the lists of the first nodes of the classes keep only the first nodes
+    # of the classes (the other nodes of a class adjacent to `node` are
+    # adjacent to the first one, which `node`'s list holds too), and are
+    # packed at the front of `iw` (the writes trail the reads)
+    if ispositive(nmerge)
+        p = one(E)
+
+        @inbounds for node in oneto(neqns)
+            if iszero(extlen[node])
+                pstart = pe[node]; pstop = pstart + convert(E, len[node]) - one(E)
+                pe[node] = p
+
+                # branch-free: every entry is written, and the next one
+                # overwrites it unless it is kept
+                for q in pstart:pstop
+                    neighbor = iw[q]
+                    iw[p] = neighbor; p += convert(E, iszero(extlen[neighbor]))
+                end
+
+                len[node] = convert(V, p - pe[node])
             end
-
-            head[deg + one(V)] = inext
         end
 
-        elenme = elen[me]                     # `me` represents the elimination of pivots `nel + 1` to `nel + nv[me]`
-        elen[me] = -one(V) - nel              # place `me` itself as the first in this set. it will be moved
-        nvpiv = nv[me]                        # to the `nel + nv[me]` position when the permutation vectors are
-        nel += nvpiv                          # computed
-        wnel += wt[me]
-        nv[me] = -nvpiv                       # at this point, `me` is the pivotal supervariable
-        degme = zero(V)                       # it will be converted into the current element
-        wdegme = zero(F)
+        pfree = p
+    end
 
-        if iszero(elenme)                     # construct the new element in place
-            pme1 = pe[me]
-            pme2 = pme1 - one(E)
+    amfmain!(marker, superwght, degree, deghead, degnext, degprev,
+        wext, dwght, extlen, pe, len,
+        elen, iw, iwlen, heads, pfree, total, neqns, mass, twin,
+        ispositive(nmerge), vwght, ndense, nwords, dindex, dnode, ddeg, dmask,
+        fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res,
+        discount, rv, rs, rstamp, vlist)
 
-            for p in pme1:(pme1 + convert(E, len[me]) - one(E)) # scan list of the pivotal supervariable `me`
-                i = iw[p]
-                nvi = nv[i]
+    return degnext
+end
 
-                if ispositive(nvi)            # `i` is a principal variable not yet placed in Lme
-                    degme += nvi              # store `i` in new list
-                    wdegme += wt[i]
-                    nv[i] = -nvi              # flag `i` as being in Lme by negating `nv[i]`
-                    pme2 += one(E)
-                    iw[pme2] = i
-                    ilast = last[i]           # remove variable `i` from degree list
-                    inext = next[i]
+# This routine implements the approximate minimum fill algorithm on the
+# minimum external degree algorithm of MDLib. It makes use of the implicit
+# representation of elimination graphs by quotient graphs, and the notion of
+# indistinguishable nodes.
+#
+# The external degree of a node is kept as a lower bound, which is exact for
+# some nodes. The key of a node is an upper bound on twice its fill over its
+# weight plus 1 (see `amfkey`), computed from its bound, and it grows with
+# the bound: it is a lower bound on the key of the node unless the node is
+# exact. The keys are kept in buckets (see `amfbucket`). The algorithm
+# repeats the following. In a fine bucket, the keys differ by less than 1;
+# in a coarse one, by more. If the minimum bucket is fine and holds an exact
+# node, or is coarse and its smallest key is that of an exact node, that
+# node is eliminated (`amfelim!`, `amfupdate!`), and the nodes of its
+# reachable set get new bounds and keys. Otherwise every node in the bucket
+# that is not exact is recomputed: they are grouped by most recent element,
+# and each group is recomputed at once (`amfrecompute!`).
+#
+# A node of weight w stands for w indistinguishable nodes, so its external
+# degree is the weight of its neighbors outside its supernode.
+#
+# input parameters:
+#
+#   - `neqns`: number of equations
+#   - `total`: sum of the vertex weights
+#   - `vwght`: vertex weights (integers)
+#   - `mass`: mass elimination. Each node of the reachable set whose only
+#     neighbors are those of the new element (it lies in no other element,
+#     has no other neighbors, and has the same dense neighbors as the pivot)
+#     is eliminated with the pivot.
+#   - `twin`: false-twin elimination. Each node outside the reachable set
+#     whose neighbors are exactly the reachable set of the pivot, which has
+#     never been in a reachable set, and whose dense neighbors are those of
+#     the pivot, is eliminated right after the pivot's supernode (see
+#     `amfelim!`).
+#   - `merged`: merge the classes in `extlen` first. On input, `extlen[node]`
+#     is the first node of the class of `node` (nodes with the same closed
+#     neighborhood), or 0 if `node` is first (see `mdclasses!`)
+#   - `iwlen`: length of `iw`
+#   - `(ndense, nwords, dindex, dnode, ddeg, dmask)`: the dense nodes (see
+#     `mdselect!`). Their lists are empty: their adjacency, and every
+#     adjacency to them, is stored in the masks. They are kept out of the
+#     quotient graph until one of them has the minimum key, with
+#     indistinguishable nodes required to have the same dense neighbors.
+#   - `(nbuck, nfine, sfine, scale)`: the buckets (see `amf`)
+#   - `res`: the number of integer weights to the smallest weight
+#   - `discount`: discount the keys of the nodes adjacent to each reachable
+#     set (see `amfdiscount!`)
+#
+# updated parameters:
+#
+#   - `(pe, len, elen, iw)`: quotient graph. On input, `(pe, len, iw)` holds
+#     the adjacency structure (with `merged`, the lists of the first nodes of
+#     the classes, which hold only first nodes), and `degree` the weight of
+#     the neighbors of each node. For an uneliminated node, the list
+#     `iw[pe[node]:pe[node] + len[node] - 1]` holds `elen[node]` elements,
+#     sorted by elimination order, followed by its uneliminated neighbors;
+#     for an eliminated node (element), it holds the nodes in the element.
+#     An element is absorbed, and the list of a merged node released, by
+#     setting its length to 0. Destroyed on output.
+#   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
+#
+# output parameters:
+#
+#   - `degnext`: the approximate minimum fill ordering (repurposed from
+#     degree list links)
+#
+# working arrays:
+#
+#   - `deghead`: `deghead[bucket]` points to the first exact node in a
+#     bucket, and `deghead[bucket + nbuck + 1]` to the first node that is not
+#     exact, or 0 if there are no such nodes
+#   - `degnext`: during algorithm, points to the next node in the degree list
+#     (or hash bucket) associated with node, or stores negative values for
+#     eliminated/merged nodes (`-(neqns + rank)` for an eliminated principal
+#     node, the `rank`-th supernode eliminated, and -parent for a merged
+#     node). During a visit, the next node in a group. After algorithm,
+#     stores the final ordering.
+#   - `degprev`: points to the previous node in a degree list associated with
+#     node, or the negative of the index in `deghead` of its list (if node
+#     was the first in it), or 0 if the node is not in the degree lists.
+#     While indistinguishable nodes are detected, the hash bucket of node.
+#     During a visit, the first node of the group of an element.
+#   - `degree`: the bound on the external degree of each uneliminated
+#     supernode; for an element, the weight of the nodes in it
+#   - `superwght`: the weight of the supernodes. It is positive exactly for
+#     the uneliminated supernodes outside the reachable set being formed: it
+#     is negated for the nodes of that set and for the pivot, and 0 for
+#     merged and eliminated nodes.
+#   - `wext`: for an element, 0 if it is absorbed; otherwise less than `wflg`
+#     if it has not been met at the current elimination, and `wflg` plus the
+#     weight of its nodes outside the reachable set if it has. For a node of
+#     the reachable set, the first term of its bound (see `amfelim!`).
+#   - `dwght`: the weight of the dense neighbors of each node (empty if there
+#     are no dense nodes)
+#   - hash buckets, used to detect indistinguishable nodes, share `deghead`
+#     with the degree lists. They use its last entries, whose lists (not
+#     exact, with the largest keys) are almost always empty: the first node
+#     of the bucket at `deghead[b]` is `-deghead[b]` if no degree list starts
+#     there, and otherwise `degprev[deghead[b]]`, which is restored to `-b`
+#     once the bucket is processed. The hash of a node of the reachable set
+#     is kept in `marker` (see `amfelim!`).
+#   - `extlen`: for an element, the number of its nodes outside the element
+#     being recomputed, which come first in its list (see `amfrecompute!`).
+#     For a node of the reachable set, `extlen` is the second term of its
+#     bound, and then its upper bound (see `amfupdate!`).
+#   - `marker`: temporary marker vector, used with increasing tags. A node
+#     of the reachable set holds its hash there, as a negative number, until
+#     the indistinguishable nodes are merged
+#   - `heads`: the first entries of the lists, while `iw` is compressed (see
+#     `mdcompress!`)
+#   - `fkey`: the key of each node in the degree lists
+#   - `lpw`: the weight of the newest clique of each node outside it (the
+#     new element and the dense neighbors of the pivot, when the node was
+#     last in a reachable set), or 0
+#   - `disc`: the discount of each node (see `amfdiscount!`)
+#   - `dexact`: whether the bound of each node is its external degree
+#   - `(rv, rs, rstamp, vlist)`: with `discount`, the nodes adjacent to the
+#     reachable set, and their neighbors in it (see `amfelim!`)
+function amfmain!(
+        marker::AbstractVector{I},
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        wext::AbstractVector{V},
+        dwght::AbstractVector{V},
+        extlen::AbstractVector{V},
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        elen::AbstractVector{V},
+        iw::AbstractVector{V},
+        iwlen::E,
+        heads::AbstractVector{UInt64},
+        pfree::E,
+        total::V,
+        neqns::V,
+        mass::Bool,
+        twin::Bool,
+        merged::Bool,
+        vwght::AbstractVector,
+        ndense::V,
+        nwords::Int,
+        dindex::AbstractVector{V},
+        dnode::AbstractVector{V},
+        ddeg::AbstractVector{V},
+        dmask::AbstractVector{UInt64},
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+        discount::Bool,
+        rv::AbstractVector{Float64},
+        rs::AbstractVector{Float64},
+        rstamp::AbstractVector{V},
+        vlist::AbstractVector{V},
+    ) where {I, V, E}
+    @assert neqns <= length(marker)
+    @assert neqns <= length(superwght)
+    @assert neqns <= length(degree)
+    @assert twice(nbuck + one(V)) <= length(deghead)
+    @assert neqns <= length(degnext)
+    @assert neqns <= length(degprev)
+    @assert neqns <= length(wext)
+    @assert iszero(ndense) || neqns <= length(dwght)
+    @assert neqns <= length(extlen)
+    @assert neqns <= length(pe)
+    @assert neqns <= length(len)
+    @assert neqns <= length(elen)
+    @assert neqns <= length(vwght)
+    @assert pfree <= iwlen + one(E) <= length(iw) + one(E)
+    @assert ndense <= length(dnode)
+    @assert ndense <= length(ddeg)
+    @assert iszero(ndense) || neqns <= length(dindex)
+    @assert nwords * neqns <= length(dmask)
+    @assert neqns <= length(fkey)
+    @assert neqns <= length(lpw)
+    @assert neqns <= length(disc)
+    @assert neqns <= length(dexact)
+    @assert !discount || neqns <= length(rv)
+    @assert !discount || neqns <= length(rs)
+    @assert !discount || neqns <= length(rstamp)
+    @assert !discount || neqns <= length(vlist)
 
-                    if !iszero(inext)
-                        last[inext] = ilast
-                    end
+    # initialization for the approximate minimum fill algorithm.
+    @inbounds for node in oneto(neqns)
+        marker[node] = zero(I)
+        superwght[node] = trunc(V, vwght[node])
+        elen[node] = zero(V)
+        degnext[node] = zero(V)
+        degprev[node] = zero(V)
+        wext[node] = one(V)
+    end
 
-                    if !iszero(ilast)
-                        next[ilast] = inext
-                    else
-                        head[amf_bucket(wf[i], nfine, pas, nbbuck) + one(V)] = inext
-                    end
-                end
-            end                               # L60:
+    @inbounds for bucket in oneto(twice(nbuck + one(V)))
+        deghead[bucket] = zero(V)
+    end
 
-            newmem = zero(E)
-        else                                  # construct the new element in empty space, `iw[pfree...]`
-            p = pe[me]
-            pme1 = pfree
-            slenme = len[me] - elenme
-            knt1_updated = zero(V)
+    # merge the classes of nodes with the same closed neighborhood
+    # (`extlen`): each node joins the first node of its class. The degree of
+    # the first node counted the other nodes of its class, which are not
+    # external to the supernode
+    if merged
+        @inbounds for node in oneto(neqns)
+            r = extlen[node]
 
-            for knt1 in oneto(elenme + one(V))
-                knt1_updated += one(V)
-
-                if knt1 > elenme              # search the supervariables in `me`
-                    e = me
-                    pj = p
-                    ln = slenme
-                else                          # search the elements in `me`
-                    e = iw[p]; p += one(E)
-                    pj = pe[e]
-                    ln = len[e]
-                end
-
-                knt2_updated = zero(V)
-
-                for knt2 in oneto(ln)              # search for different supervariables and add to new list
-                    knt2_updated += one(V)
-                    i = iw[pj]; pj += one(E)
-                    nvi = nv[i]
-
-                    if ispositive(nvi)
-                        if pfree > iwlen      # compress `iw` if necessary
-                            pe[me] = p        # prepare for compressing iw by adjusting pointers and lengths so that the lists
-                            len[me] -= knt1_updated  # being searched in the inner and outer loops contain only the remaining entries
-                            knt1_updated = zero(V)   # reset `knt1_updated` in case of recompress at same iteration of the loop 120
-
-                            if iszero(len[me])       # check if anything left in supervariable `me`
-                                pe[me] = zero(E)
-                            end
-
-                            pe[e] = pj
-                            len[e] = ln - knt2_updated
-                            knt2_updated = zero(V)   # reset `knt2_updated` in case of recompress at same iteration of the loop 110
-
-                            if iszero(len[e])
-                                pe[e] = zero(E)
-                            end
-
-                            ncmpa += one(I)
-
-                            for j in oneto(n) # store first item in `pe`; set first entry to `-item`
-                                pn = pe[j]
-
-                                if ispositive(pn)
-                                    pe[j] = convert(E, iw[pn])
-                                    iw[pn] = -j
-                                end
-                            end               # L70
-
-                            pdst = one(E)
-                            psrc = one(E)
-                            pend = pme1 - one(E)
-
-                            while psrc <= pend # L80
-                                j = -iw[psrc]
-                                psrc += one(E)
-
-                                if ispositive(j)
-                                    iw[pdst] = convert(V, pe[j])
-                                    pe[j] = pdst; pdst += one(E)
-                                    lenj = len[j]
-
-                                    for knt3 in zero(V):(lenj - two(V)) # L90
-                                        iw[pdst + convert(E, knt3)] = iw[psrc + convert(E, knt3)]
-                                    end
-
-                                    pdst += convert(E, lenj - one(V))
-                                    psrc += convert(E, lenj - one(V))
-                                end
-                            end
-
-                            p1 = pdst         # move the new partially-constructed element
-
-                            for psrc in pme1:pfree - one(E) # L100
-                                iw[pdst] = iw[psrc]
-                                pdst += one(E)
-                            end
-
-                            pme1 = p1
-                            pfree = pdst
-                            pj = pe[e]
-                            p = pe[me]
-                        end
-
-                        degme += nvi          # `i` is a principal variable not yet placed in Lme; store `i` in new list
-                        wdegme += wt[i]
-                        nv[i] = -nvi
-                        iw[pfree] = i; pfree += one(E)
-                        ilast = last[i]       # remove variable `i` from degree link list
-                        inext = next[i]
-
-                        if !iszero(inext)
-                            last[inext] = ilast
-                        end
-
-                        if !iszero(ilast)
-                            next[ilast] = inext
-                        else
-                            head[amf_bucket(wf[i], nfine, pas, nbbuck) + one(V)] = inext
-                        end
-                    end
-                end                           # L110:
-
-                if e != me                    # set tree pointer and flag to indicate element `e` is absorbed into new element `me` (the parent of `e` is `me`)
-                    pe[e] = convert(E, -me)
-                    w[e] = zero(I)
-                end
-            end                               # L120:
-
-            pme2 = pfree - one(E)
-            newmem = pfree - pme1             # this element takes `newmem` new memory in `iw` (possibly zero)
-            mem += newmem
-            maxmem = max(maxmem, mem)
+            if ispositive(r)
+                superwght[r] += superwght[node]; superwght[node] = zero(V)
+                degnext[node] = -r; len[node] = zero(V)
+            end
         end
 
-        degree[me] = wdegme                   # `me` has now been converted into an element in `iw[pme1...pme2]`
-        pe[me] = pme1
-        len[me] = convert(V, pme2 - pme1 + one(E))
+        @inbounds for node in oneto(neqns)
+            if iszero(extlen[node])
+                degree[node] -= superwght[node] - trunc(V, vwght[node])
+            end
 
-        # false twins of `me`: the variables `v` outside Lme whose neighbors are
-        # exactly Lme. Once `me` is eliminated Lme is a clique, so each `v` is
-        # simplicial: it creates no fill. It lies in every variable list of
-        # Lme, so only the shortest is scanned. `v` qualifies if it has never
-        # been adjacent to an element (its list is then all of its
-        # neighbors, and `degree[v]` is its exact weighted degree), and every
-        # principal variable in its list is in Lme, all `nme` of them. It is
-        # eliminated with `me`, like a mass-eliminated variable. Mass
-        # elimination is then skipped: a variable of Lme adjacent to two of
-        # them must follow both, but variables eliminated with `me` are
-        # numbered in index order
-        ntwin = zero(V)
+            extlen[node] = zero(V)
+        end
+    end
 
-        if twin && pme1 <= pme2
-            rbest = iw[pme1]
+    # - `mindeg` is the current minimum bucket
+    # - `rank` counts the eliminated supernodes plus 1, and `wleft` is the
+    #   weight of the uneliminated nodes
+    # - `tag` is used to facilitate marking nodes; the tags are reset
+    #   before they overflow
+    # - `wflg` is the flag of `wext`, and `lemax` the largest weight of an
+    #   element
+    # - `offset` separates the buckets of the lists that are not exact
+    mindeg = nbuck + one(V); rank = one(V); wleft = total; tag = zero(I)
+    wflg = one(V); lemax = zero(V); offset = nbuck + one(V)
 
-            for pme in (pme1 + one(E)):pme2
-                i = iw[pme]
+    # - `nbypass` is the number of dense nodes outside the quotient graph
+    # - `nmissing` is the number of ordered pairs of such nodes that are
+    #   not adjacent
+    # - `dmin` is a lower bound on the buckets of the dense nodes, and
+    #   `dwmax` their largest weight (dense nodes are never merged)
+    nbypass = ndense; nmissing = 0; dmin = zero(V); dwmax = zero(V)
 
-                if len[i] - elen[i] < len[rbest] - elen[rbest]
-                    rbest = i
+    if ispositive(ndense)
+        @inbounds for node in oneto(neqns)
+            dwght[node] = zero(V)
+        end
+
+        mddenseinit!(ddeg, dmask, nwords, ndense, dnode, neqns, superwght)
+
+        @inbounds for j in oneto(ndense)
+            nmissing += convert(Int, ndense) - 1 - mdcount(dmask, nwords, dnode[j])
+            dwmax = max(dwmax, superwght[dnode[j]])
+        end
+    end
+
+    # `degree` holds the weight of the neighbors of each node outside its
+    # supernode (summed while the adjacency was copied)
+    @inbounds for node in oneto(neqns)
+        # dense nodes and merged nodes stay out of the degree lists
+        if ispositive(superwght[node]) && (iszero(ndense) || !ispositive(dindex[node]))
+            deg = degree[node]
+
+            if ispositive(ndense)
+                dwght[node] = mdweight(dmask, nwords, dnode, node, superwght)
+                deg += dwght[node]
+            end
+
+            degree[node] = deg
+
+            # the node has no newest clique yet: its key is deg^2 / (w + 1)
+            lpw[node] = zero(V); disc[node] = 0.0; dexact[node] = true
+
+            if ispositive(deg)
+                mindeg = amfinsert!(node, superwght[node], deg, mindeg, fkey, lpw, disc, dexact,
+                    deghead, degnext, degprev, offset, nbuck, nfine, sfine, scale, res)
+            else
+                # eliminate node of degree 0
+                degnext[node] = -(neqns + rank); rank += one(V); wleft -= superwght[node]
+            end
+        end
+    end
+
+    # each step uses fewer than `8 neqns + 64` tags: reset them before they
+    # overflow
+    tagmax = typemax(I) - convert(I, 8) * convert(I, neqns) - convert(I, 64)
+
+    @inbounds while ispositive(wleft)
+        # find the pivot `mdnode`. If no node of the minimum bucket can be
+        # taken, the nodes there that are not exact are recomputed, and the
+        # search starts over
+        mdnode = zero(V)
+
+        while iszero(mdnode)
+            if tag > tagmax
+                for node in oneto(neqns)
+                    marker[node] = zero(I)
+                end
+
+                tag = zero(I)
+            end
+
+            while mindeg <= nbuck && !ispositive(deghead[mindeg]) && !ispositive(deghead[mindeg + offset])
+                mindeg += one(V)
+            end
+
+            # if a dense node has a smaller key than every node in the
+            # buckets, it rejoins the quotient graph and is eliminated.
+            # `dmin` is a lower bound on the buckets of the dense nodes:
+            # they are scanned only if it is below the minimum bucket
+            dj = zero(V)
+
+            if ispositive(nbypass) && !(mindeg <= nbuck && mindeg <= dmin)
+                dkey = Inf
+
+                for j in oneto(ndense)
+                    dnd = dnode[j]
+
+                    if ispositive(dnd)
+                        key = amfkey(ddeg[j], superwght[dnd], zero(V), 0.0, res)
+
+                        if key < dkey
+                            dkey = key; dj = j
+                        end
+                    end
+                end
+
+                dmin = amfbucket(dkey, nfine, sfine, scale, nbuck)
+
+                if mindeg <= nbuck && mindeg <= dmin
+                    dj = zero(V)
                 end
             end
 
-            nme = convert(V, pme2 - pme1 + one(E))
+            if ispositive(dj)
+                mdnode = dnode[dj]
+                nmissing -= 2 * (convert(Int, nbypass) - 1 - mdcount(dmask, nwords, mdnode))
+                nbypass -= one(V)
+                pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree, heads,
+                    superwght, nwords, dindex, dnode, dmask, wext)
+                degree[mdnode] = ddeg[dj]
 
-            for p in (pe[rbest] + convert(E, elen[rbest])):(pe[rbest] + convert(E, len[rbest]) - one(E))
-                v = iw[p]
-                nvv = nv[v]
+                # its neighbors now reach it through their lists
+                dwgt = superwght[mdnode]
+                pstart = pe[mdnode]
+                pstop = pstart + convert(E, len[mdnode]) - one(E)
 
-                if ispositive(nvv) && iszero(elen[v]) && amf_sameweight(degree[v], wdegme)
-                    same = true; count = zero(V)
+                for p in pstart:pstop
+                    dwght[iw[p]] -= dwgt
+                end
+            else
+                # the bucket `mindeg`. In a fine bucket the keys differ by
+                # less than 1, and its first exact node is taken, as in MD.
+                # In a coarse bucket the exact node of smallest key is
+                # taken, unless a node that is not exact has a smaller key.
+                # If no node is taken, the nodes of the bucket that are not
+                # exact are recomputed, and the search starts over
+                bucket = mindeg; cand = zero(V)
 
-                    for q in pe[v]:(pe[v] + convert(E, len[v]) - one(E))
-                        nvj = nv[iw[q]]
+                if convert(Float64, bucket) <= nfine
+                    cand = deghead[bucket]
+                else
+                    kmin = Inf; node = deghead[bucket]
 
-                        if ispositive(nvj)    # a neighbor outside Lme
-                            same = false
+                    while ispositive(node)
+                        if fkey[node] < kmin
+                            kmin = fkey[node]; cand = node
+                        end
+
+                        node = degnext[node]
+                    end
+
+                    node = deghead[bucket + offset]
+
+                    while ispositive(node)
+                        if fkey[node] < kmin
+                            cand = zero(V)
                             break
-                        elseif isnegative(nvj)
-                            count += one(V)
-                        end
-                    end
-
-                    if same && count == nme
-                        ilast = last[v]       # remove `v` from its degree list
-                        inext = next[v]
-
-                        if !iszero(inext)
-                            last[inext] = ilast
                         end
 
-                        if !iszero(ilast)
-                            next[ilast] = inext
-                        else
-                            head[amf_bucket(wf[v], nfine, pas, nbbuck) + one(V)] = inext
-                        end
-
-                        pe[v] = convert(E, -me)
-                        nvpiv += nvv
-                        nel += nvv
-                        wnel += wt[v]
-                        nv[v] = zero(V)
-                        elen[v] = zero(V)
-                        ntwin += one(V)
+                        node = degnext[node]
                     end
                 end
-            end
-        end
 
-        if wflg > maxint_n                    # make sure that `wflg` is not too large; `wflg + n` must not cause integer overflow
-            for x in oneto(n)
-                if !iszero(w[x])
-                    w[x] = one(I)
-                end
-            end
+                if ispositive(cand)
+                    mdnode = cand
+                    mdremove!(mdnode, deghead, degnext, degprev, offset)
 
-            wflg = two(I)                     # L130:
-        end
+                    # the new head of the list is likely the next pivot:
+                    # ask for its fields and its list while `mdnode` is
+                    # eliminated
+                    nxnode = deghead[bucket]
 
-        for pme in pme1:pme2                  # compute `w[e] - wflg` = |Le\Lme| and `wt[e]` = its weight for all elements
-            i = iw[pme]
-            eln = elen[i]
-
-            if ispositive(eln)                # note that `nv[i]` has been negated to denote `i` in Lme
-                nvi = -nv[i]
-                wnvi = wflg - convert(I, nvi)
-                wi = wt[i]
-
-                # L140:
-                for p in pe[i]:(pe[i] + convert(E, eln) - one(E))
-                    e = iw[p]
-                    we = w[e]
-
-                    if we >= wflg             # unabsorbed element `e` has been seen in this loop
-                        we -= convert(I, nvi)
-                        wt[e] -= wi
-                    elseif !iszero(we)        # `e` is an unabsorbed element; this is the first time we have seen `e` in all of scan 1
-                        we = convert(I, nv[e]) + wnvi
-                        wt[e] = degree[e] - wi
-                        wf[e] = zero(F)
+                    if ispositive(nxnode)
+                        mdprefetch(superwght, nxnode)
+                        mdprefetch(degree, nxnode); mdprefetch(len, nxnode)
+                        mdprefetch(elen, nxnode); mdprefetch(iw, pe[nxnode])
                     end
-
-                    w[e] = we
-                end                           # L140:
-            end
-        end                                   # L150:
-
-        for pme in pme1:pme2                  # degree update and element absorption
-            i = iw[pme]
-            p1 = pe[i]
-            p2 = p1 + convert(E, elen[i]) - one(E)
-            pn = p1
-            hash = zero(E)
-            deg = zero(V)
-            wdeg = zero(F)
-            wf3 = zero(F)
-            wf4 = zero(F)
-            wf5 = zero(F)
-
-            for p in p1:p2                    # scan the element list associated with supervariable `i`
-                e = iw[p]
-                dext = convert(V, w[e] - wflg) # `dext` = |Le\Lme|
-
-                if ispositive(dext)
-                    if iszero(wf[e])          # first time we meet `e`: compute `wf[e]`, the area of `e` outside Lme
-                        xw = wt[e]
-                        wf[e] = xw * (twice(degree[e]) - xw)
-                    end
-
-                    wf4 += wf[e]
-                    deg += dext
-                    wdeg += wt[e]
-                    iw[pn] = e; pn += one(E)
-                    hash += convert(E, e)
-                elseif iszero(dext)           # aggressive absorption: `e` is not adjacent to `me`, but |Le\Lme| is 0, so absorb it into `me`
-                    pe[e] = convert(E, -me)
-                    w[e] = zero(I)
-                end
-            end                               # L160:
-
-            elen[i] = convert(V, pn - p1) + one(V) # count the number of elements in `i` (including `me`)
-            p3 = pn
-
-            for p in (p2 + one(E)):(p1 + convert(E, len[i]) - one(E)) # scan the supervariables in the list associated with `i`
-                j = iw[p]
-                nvj = nv[j]
-
-                if ispositive(nvj)            # `j` is unabsorbed, and not in Lme; add to degree and add to new list
-                    wj = wt[j]
-                    deg += nvj
-                    wdeg += wj
-                    wf3 += wj
-                    wf5 += wj * wj
-                    iw[pn] = j; pn += one(E)
-                    hash += convert(E, j)
-                end
-            end
-
-            if iszero(deg) && iszero(ntwin)   # mass elimination
-                pe[i] = convert(E, -me)
-                nvi = -nv[i]
-                degme -= nvi
-                wdegme -= wt[i]
-                nvpiv += nvi
-                nel += nvi
-                wnel += wt[i]
-                nv[i] = zero(V)
-                elen[i] = zero(V)
-            else                              # update the upper-bound degree of `i`
-                if degree[i] < wdeg           # our approx degree is loose; we cannot subtract the areas
-                    wf3 = zero(F)
-                    wf4 = zero(F)
-                    wf5 = zero(F)
                 else
-                    degree[i] = wdeg
-                end
-
-                wf[i] = wf4 + twice(wt[i]) * wf3 + wf5
-                iw[pn] = iw[p3]               # add `me` to the list for `i`
-                iw[p3] = iw[p1]
-                iw[p1] = me                   # add new element to front of list
-                len[i] = convert(V, pn - p1) + one(V) # store the new length of the list in `len[i]`
-                hash = (hash % hmod) + one(E) # place in hash bucket; save hash key of `i` in `last[i]`
-                j = head[hash + one(E)]
-
-                if !ispositive(j)             # the degree list is empty; hash head is `-j`
-                    next[i] = -j
-                    head[hash + one(E)] = -i
-                else                          # degree list is not empty; use `last[head[hash + 1]]` as hash head
-                    next[i] = last[j]
-                    last[j] = i
-                end
-
-                last[i] = hash
-            end
-        end                                  # L180:
-
-        degree[me] = wdegme
-
-        if degme > dmax                      # clear the counter array `w` by incrementing `wflg`
-            dmax = degme
-        end
-
-        wflg += convert(I, dmax)
-
-        if wflg > maxint_n                   # make sure that `wflg + n` does not cause integer overflow
-            for x in oneto(n)
-                if !iszero(w[x])
-                    w[x] = one(I)
+                    # recompute every node of the bucket that is not exact
+                    mindeg, tag = amfvisit!(bucket, pe, len, elen, iw, superwght,
+                        degree, deghead, degnext, degprev, marker,
+                        tag, neqns, extlen, dwght, nbypass, offset,
+                        fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res)
                 end
             end
-
-            wflg = two(I)
         end
 
-        for pme in pme1:pme2                 # supervariable detection
-            i = iw[pme]
+        degprev[mdnode] = zero(V)
+        degnext[mdnode] = -(neqns + rank)
 
-            if isnegative(nv[i])             # `i` is a principal variable in Lme
-                hash = last[i]
-                j = head[hash + one(E)]
+        # `mdnode` is the last supernode
+        if superwght[mdnode] >= wleft
+            break
+        end
 
-                if iszero(j)
-                    continue                 # goto L250:
+        # the dense neighbors of `mdnode` lose it
+        if ispositive(nbypass)
+            # the key of a dense node of degree `d` is at least that of a
+            # node of weight `dwmax` and degree `d`
+            dlow = mdlose!(ddeg, dmask, nwords, mdnode, superwght[mdnode])
+            dS = mdweight(dmask, nwords, dnode, mdnode, superwght)
+
+            if dlow < typemax(V)
+                dkey = amfkey(dlow, dwmax, zero(V), 0.0, res)
+                dmin = min(dmin, amfbucket(dkey, nfine, sfine, scale, nbuck))
+            end
+        else
+            dS = zero(V)
+        end
+
+        # eliminate `mdnode` and perform quotient graph
+        # transformation
+        rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght, nvlist = amfelim!(mdnode,
+            pe, len, elen, iw, iwlen, pfree, heads, neqns, superwght, degree,
+            deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
+            dS, offset, twin, rank + one(V),
+            nbypass, nwords, dmask, ddeg, discount, rv, rs, rstamp, vlist)
+
+        # the nodes in the reachable set, and the dense neighbors of
+        # `mdnode`, become adjacent to the dense neighbors of `mdnode`
+        if ispositive(nbypass)
+            nmissing = mddense!(mdnode, pe[mdnode], rchsze, iw, dwght, superwght,
+                nwords, dnode, ddeg, dmask, nmissing)
+        end
+
+        # merge the indistinguishable nodes of the reachable set, eliminate
+        # some of them with `mdnode` (mass elimination), assign the bounds
+        # of the others, and return them to the degree structure. The
+        # reachable set also loses the false twins of `mdnode`. Mass
+        # elimination is skipped when there are any: a node of the reachable
+        # set adjacent only to the new element and to them is not
+        # indistinguishable from `mdnode`, and it must follow them (they
+        # are numbered right after the supernode of `mdnode`)
+        mindeg, tag, mwght = amfupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
+            len, elen, iw, superwght, degree, deghead, degnext,
+            degprev, wext, marker, tag,
+            neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg,
+            mass && iszero(fsze), offset, fkey, lpw, disc, dexact, nbuck,
+            nfine, sfine, scale, res, discount, rs, rstamp, rank + one(V))
+
+        # with `discount`, the nodes adjacent to the new element lose the
+        # pairs of their neighbors that it made adjacent
+        if discount
+            mindeg = amfdiscount!(nvlist, vlist, rv, rs, pe, elen, iw, superwght,
+                degree, wext, wflg, mindeg, deghead, degnext, degprev, offset,
+                fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res)
+        end
+
+        rank += one(V) + fsze; wleft -= swght + fwght + mwght
+        superwght[mdnode] = zero(V)
+
+        if ispositive(dS) && (ispositive(fsze) || mass)
+            dmin = zero(V)
+        end
+    end
+
+    mdnumber!(neqns, degnext, degprev, degree)
+    return degnext
+end
+
+# This routine eliminates the node `mdnode` of minimum key from the
+# adjacency structure, which is stored in the quotient graph format. It
+# forms the reachable set of `mdnode`, absorbs the elements adjacent to
+# `mdnode`, and computes, for every other element adjacent to the reachable
+# set, the weight of its nodes outside the reachable set. The elements with
+# none are absorbed (aggressive absorption). The lists of the nodes in the
+# reachable set are purged, and the terms of their bounds are gathered:
+# `wext[u]` is the weight of their uneliminated neighbors plus their largest
+# external part, and `extlen[u]` the sum of their other external parts (these
+# slots are unused for uneliminated nodes). The nodes are placed in hash
+# buckets, and the reachable set becomes the new element `mdnode`.
+#
+# With `discount`, the purge also lists the nodes outside the reachable set
+# that lie in the lists of its nodes (`vlist`), and sums, for each, the
+# weights of its neighbors in the reachable set (`rv`) and their squares
+# (`rs`), node by node (see `amfdiscount!`). A node is listed once: it is
+# stamped with `fnum` in `rstamp`.
+#
+# With `twin`, the false twins of `mdnode` are found first: the nodes
+# outside the reachable set whose neighbors are exactly the reachable set.
+# Each lies in every list of the reachable set, so only the shortest is
+# scanned. A node of it qualifies if it has never been in a reachable set
+# (its adjacency is then all in its list, and its degree is exact), its
+# degree and dense neighbors are those of `mdnode`, and its list holds no
+# node outside the reachable set. Once `mdnode` is eliminated, it is
+# simplicial, so it creates no fill. It leaves the quotient graph, numbered
+# right after the supernode of
+# `mdnode`: its weight is set to 0 before the lists are purged, so it drops
+# out of them.
+#
+# The reachable set is written to `iw` as it is formed, and becomes the list of
+# the new element. If `mdnode` is adjacent to no element, its list of
+# uneliminated neighbors holds the reachable set, which is formed there, in
+# place. Otherwise it is formed at `pfree`, after a compression if the tail of
+# `iw` is too short: it holds at most `degree[mdnode] - dS` nodes (each node
+# weighs at least 1). That fits after a compression: outside a rejoin, the
+# lists take at most `nnz` entries, and `iw` has at least `nnz + 2 neqns`
+# (see `amf`); a rejoining dense node has no element.
+#
+# input parameters:
+#
+#   - `mdnode`: node of minimum key
+#   - `neqns`: number of equations
+#   - `iwlen`: length of `iw`
+#   - `dS`: the weight of the dense neighbors of `mdnode`
+#   - `offset`: separates the buckets of the lists that are not exact
+#   - `twin`: find the false twins of `mdnode`
+#   - `fnum`: the rank of the first false twin (the rank after that of
+#     `mdnode`), which no other step has
+#   - `(nbypass, nwords, dmask)`: the dense nodes
+#   - `discount`: list the nodes adjacent to the reachable set
+#
+# updated parameters:
+#
+#   - `(pe, len, elen, iw)`: quotient graph
+#   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
+#   - `heads`: working array of `mdcompress!`
+#   - `ddeg`: the degrees of the dense nodes, which lose the false twins
+#   - `superwght`: weight of the supernodes; on output, negative for
+#     `mdnode`
+#   - `degree`: on output, `degree[mdnode]` is the weight of the nodes in the
+#     new element
+#   - `(deghead, degnext, degprev)`: degree lists; on output, the
+#     nodes in the reachable set are removed from them, and the false twins
+#     are numbered in `degnext`
+#   - `marker`: on output, the nodes in the reachable set are placed in hash
+#     buckets, which share `deghead` with the degree lists (`degprev` and
+#     `degnext` hold their buckets and links), and each holds its hash in
+#     `marker`, as a negative number, so that it is never taken for a tag
+#   - `(wext, wflg, lemax)`: external parts of the elements
+#
+# output parameters:
+#
+#   - `rchsze`: size of the reachable set, which is the list of the new
+#     element `mdnode`
+#   - `(wext, extlen)`: for each node of the reachable set, the terms of its
+#     bound
+#   - `delta`: the weight of the reachable set, with the dense neighbors of
+#     `mdnode`
+#   - `swght`: the weight of `mdnode`
+#   - `fsze`: the number of false twins of `mdnode` (supernodes)
+#   - `fwght`: their weight
+#   - `nvlist`: with `discount`, the number of nodes in `vlist`
+#   - `(vlist, rv, rs, rstamp)`: with `discount`, the nodes adjacent to the
+#     reachable set, and their neighbors in it
+function amfelim!(
+        mdnode::V,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        elen::AbstractVector{V},
+        iw::AbstractVector{V},
+        iwlen::E,
+        pfree::E,
+        heads::AbstractVector{UInt64},
+        neqns::V,
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        marker::AbstractVector{I},
+        wext::AbstractVector{V},
+        extlen::AbstractVector{V},
+        wflg::V,
+        lemax::V,
+        dS::V,
+        offset::V,
+        twin::Bool,
+        fnum::V,
+        nbypass::V,
+        nwords::Int,
+        dmask::AbstractVector{UInt64},
+        ddeg::AbstractVector{V},
+        discount::Bool,
+        rv::AbstractVector{Float64},
+        rs::AbstractVector{Float64},
+        rstamp::AbstractVector{V},
+        vlist::AbstractVector{V},
+    ) where {I, V, E}
+    # the pivot leaves the quotient graph
+    @inbounds swght = superwght[mdnode]; superwght[mdnode] = -swght
+
+    # the reachable set is written to `iw[rstart:rstop]` as it is formed:
+    # in place if `mdnode` is adjacent to no element, and otherwise at the
+    # end of `iw` (compress it first if the tail is too short)
+    inplace = @inbounds iszero(elen[mdnode])
+
+    if inplace
+        @inbounds rstart = pe[mdnode]
+    else
+        @inbounds need = convert(E, degree[mdnode] - dS)
+
+        if pfree + need - one(E) > iwlen
+            pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
+            @assert pfree + need - one(E) <= iwlen
+        end
+
+        rstart = pfree
+    end
+
+    # - `iw[estart:estop]` is the list of elements adjacent to `mdnode`
+    # - `iw[nstart:nstop]` is the list of its uneliminated neighbors
+    @inbounds estart = pe[mdnode]
+    @inbounds estop = estart + convert(E, elen[mdnode]) - one(E)
+    @inbounds nstart = estop + one(E)
+    @inbounds nstop = estart + convert(E, len[mdnode]) - one(E)
+
+    # form the reachable set: the weight of its nodes is negated, and they
+    # are removed from the degree structure. With `twin`, `rsum` is the
+    # weight of the set, and `rbest` its node with the fewest neighbors in
+    # its list (`lbest`)
+    rchsze = zero(V); rsum = zero(V); rbest = zero(V); lbest = typemax(V)
+
+    @inbounds for i in estart:estop
+        elmnt = iw[i]
+
+        # ask for the length and the list of the next element
+        nxelmnt = iw[min(i + one(E), estop)]
+        mdprefetch(len, nxelmnt); mdprefetch(iw, pe[nxelmnt])
+
+        jstart = pe[elmnt]
+        jstop = jstart + convert(E, len[elmnt]) - one(E)
+
+        for j in jstart:jstop
+            node = iw[j]; wght = superwght[node]
+
+            if ispositive(wght)
+                superwght[node] = -wght
+                iw[rstart + convert(E, rchsze)] = node; rchsze += one(V)
+                mdremove!(node, deghead, degnext, degprev, offset)
+
+                # the fields and the list of `node` are read only after
+                # the reachable set is formed: ask for them now
+                mdprefetch(len, node); mdprefetch(pe, node); mdprefetch(elen, node)
+                mdprefetch(degree, node); mdprefetch(iw, pe[node])
+
+                if twin
+                    rsum += wght; nlen = len[node] - elen[node]
+
+                    if nlen < lbest
+                        lbest = nlen; rbest = node
+                    end
+                end
+            end
+        end
+
+        # element absorption: `elmnt` is absorbed into the new element
+        len[elmnt] = zero(V); wext[elmnt] = zero(V)
+    end
+
+    @inbounds for i in nstart:nstop
+        node = iw[i]; wght = superwght[node]
+
+        if ispositive(wght)
+            # (in place, the write trails the read)
+            superwght[node] = -wght
+            iw[rstart + convert(E, rchsze)] = node; rchsze += one(V)
+            mdremove!(node, deghead, degnext, degprev, offset)
+            mdprefetch(len, node); mdprefetch(pe, node); mdprefetch(elen, node)
+            mdprefetch(degree, node); mdprefetch(iw, pe[node])
+
+            if twin
+                rsum += wght; nlen = len[node] - elen[node]
+
+                if nlen < lbest
+                    lbest = nlen; rbest = node
+                end
+            end
+        end
+    end
+
+    # false twins of `mdnode`: they lie in the list of `rbest`. Each is
+    # numbered (from `fnum`), leaves the degree lists and its dense
+    # neighbors, and gets weight 0 so that the purge below drops it
+    fsze = fwght = zero(V)
+
+    if twin && lbest < typemax(V)
+        tdeg = rsum + dS
+        @inbounds pstart = pe[rbest] + convert(E, elen[rbest])
+        @inbounds pstop = pe[rbest] + convert(E, len[rbest]) - one(E)
+
+        @inbounds for p in pstart:pstop
+            node = iw[p]; wght = superwght[node]
+
+            # cheapest tests first: the weight is in hand
+            if ispositive(wght) && degree[node] == tdeg && iszero(elen[node]) &&
+                    (!ispositive(nbypass) || mdsame(dmask, nwords, node, mdnode))
+                # every neighbor of `node` must lie in the reachable set
+                same = true
+                qstart = pe[node]
+                qstop = qstart + convert(E, len[node]) - one(E)
+
+                for q in qstart:qstop
+                    if ispositive(superwght[iw[q]])
+                        same = false
+                        break
+                    end
                 end
 
-                if isnegative(j)             # degree list is empty
-                    i = -j
-                    head[hash + one(E)] = zero(V)
-                else                         # degree list is not empty: restore `last` of head
-                    i = last[j]
-                    last[j] = zero(V)
-                end
+                if same
+                    mdremove!(node, deghead, degnext, degprev, offset)
 
-                while !iszero(i) && !iszero(next[i]) # while loop L200:
-                    ln = len[i]
-                    eln = elen[i]
-
-                    for p in (pe[i] + one(E)):(pe[i] + ln - one(E))
-                        w[iw[p]] = wflg
+                    if ispositive(nbypass)
+                        mdlose!(ddeg, dmask, nwords, node, wght)
                     end
 
-                    jlast = i
-                    j = next[i]
+                    degnext[node] = -(neqns + fnum + fsze); fsze += one(V)
+                    superwght[node] = zero(V); len[node] = zero(V); fwght += wght
+                end
+            end
+        end
+    end
 
-                    while !iszero(j)         # while loop L220:
-                        L240 = false
-                        L240 = L240 || len[j] != ln   # jump if `i` and `j` do not have same size data structure
-                        L240 = L240 || elen[j] != eln # jump if `i` and `j` do not have same number adj elts
+    # the list of `mdnode` is released (its elements were absorbed above):
+    # the reachable set takes its place
+    rstop = rstart + convert(E, rchsze) - one(E)
+    @inbounds len[mdnode] = zero(V); elen[mdnode] = zero(V)
 
-                        if !L240
-                            for p in (pe[j] + one(E)):(pe[j] + convert(E, ln) - one(E))
-                                L240 && break
-                                L240 = w[iw[p]] != wflg # jump if an entry `w[iw[p]]` is in `j` but not in `i`
+    # advance the flag of `wext` by more than the weight of any element
+    # (reset it before it overflows)
+    if convert(Int, wflg) + 2 * (convert(Int, lemax) + 1) >= convert(Int, typemax(V))
+        @inbounds for node in oneto(neqns)
+            if !iszero(wext[node])
+                wext[node] = one(V)
+            end
+        end
+
+        wflg = one(V)
+    end
+
+    wflg += lemax + one(V)
+
+    # for each element adjacent to a node in the reachable set, compute
+    # `wext[elmnt] - wflg`, the weight of the nodes of `elmnt` outside the
+    # reachable set
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]; rwght = -superwght[rnode]
+        jstart = pe[rnode]
+        jstop = jstart + convert(E, elen[rnode]) - one(E)
+
+        for j in jstart:jstop
+            elmnt = iw[j]; we = wext[elmnt]
+
+            if !iszero(we)
+                if we < wflg
+                    we = wflg + degree[elmnt]
+                end
+
+                wext[elmnt] = we - rwght
+            end
+        end
+    end
+
+    # with `discount`, `nvlist` is the number of nodes in `vlist`
+    nvlist = 0
+
+    # for each node in the reachable set, do the following... The hash
+    # buckets are many (32 to 64 per node), so that a node is seldom in a
+    # bucket with another
+    hashmask = min(nextpow(2, max(32 * convert(Int, rchsze), 1)), prevpow(2, length(deghead))) - 1
+
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]
+
+        # purge inactive quotient neighbors of `rnode`: absorbed elements,
+        # and eliminated nodes, merged nodes, and nodes in the reachable set
+        # (they are now reachable through the new element). The elements of
+        # `rnode` are `iw[p1:p2]` and its neighbors are `iw[p3:p4]`; `pn` is
+        # the next free position, and `pv` the position of the first
+        # neighbor after the purging. Along the way, `elmax` is the largest
+        # external part, `elsum` their sum, `nwght` the weight of the
+        # neighbors, and `hash` the sum of the entries kept.
+        p1 = pe[rnode]
+        p2 = p1 + convert(E, elen[rnode]) - one(E)
+        p3 = p2 + one(E)
+        p4 = p1 + convert(E, len[rnode]) - one(E)
+        pn = p1; hash = zero(UInt64)
+        elmax = elsum = nwght = zero(V)
+
+        for p in p1:p2
+            elmnt = iw[p]; we = wext[elmnt]
+
+            if !iszero(we)
+                dext = we - wflg
+
+                if iszero(dext)
+                    # aggressive absorption: `elmnt` lies in the reachable set
+                    len[elmnt] = zero(V); wext[elmnt] = zero(V)
+                else
+                    iw[pn] = elmnt; pn += one(E); hash += elmnt % UInt64
+                    elmax = max(elmax, dext); elsum += dext
+                end
+            end
+        end
+
+        pv = pn
+
+        for p in p3:p4
+            node = iw[p]; wght = superwght[node]
+
+            if ispositive(wght)
+                iw[pn] = node; pn += one(E); hash += node % UInt64
+                nwght += wght
+
+                # with `discount`, `node` lies outside the reachable set,
+                # next to `rnode`: sum the weights of its neighbors there,
+                # and their squares
+                if discount
+                    if rstamp[node] != fnum
+                        rstamp[node] = fnum; rv[node] = 0.0; rs[node] = 0.0
+                        nvlist += 1; vlist[nvlist] = node
+                    end
+
+                    rw = convert(Float64, -superwght[rnode])
+                    rv[node] += rw; rs[node] += rw * rw
+                end
+            end
+        end
+
+        wext[rnode] = nwght + elmax; extlen[rnode] = elsum - elmax
+
+        # append the new element `mdnode` to the element list, which stays
+        # sorted by elimination order: move the first neighbor to the end
+        # (`rnode` lost at least one entry, so there is room)
+        iw[pn] = iw[pv]; iw[pv] = mdnode
+        elen[rnode] = convert(V, pv - p1) + one(V)
+        len[rnode] = convert(V, pn - p1) + one(V)
+
+        # and place `rnode` in a hash bucket, by the mixed sum of its list, to
+        # detect indistinguishable nodes
+        hash = mdmix(hash)
+        marker[rnode] = -convert(I, hash & convert(UInt64, typemax(I))) - one(I)
+        bucket = convert(V, length(deghead)) - convert(V, (hash >>> 32) & hashmask)
+        degprev[rnode] = bucket
+        head = deghead[bucket]
+
+        if ispositive(head)
+            # a degree list starts at `deghead[bucket]`: its first node
+            # holds the bucket
+            bnode = degprev[head]
+
+            if ispositive(bnode)
+                degnext[rnode] = bnode
+            else
+                degnext[rnode] = zero(V)
+            end
+
+            degprev[head] = rnode
+        else
+            degnext[rnode] = -head
+            deghead[bucket] = -rnode
+        end
+    end
+
+    # the reachable set is the list of the new element `mdnode`: make its
+    # nodes active again
+    ewght = zero(V)
+
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]; rwght = -superwght[rnode]; superwght[rnode] = rwght
+        ewght += rwght
+    end
+
+    if !inplace
+        pfree = rstop + one(E)
+    end
+
+    @inbounds pe[mdnode] = rstart; len[mdnode] = rchsze
+    @inbounds degree[mdnode] = ewght; wext[mdnode] = one(V)
+    return rchsze, pfree, ewght + dS, swght, wflg, max(lemax, ewght), fsze, fwght, nvlist
+end
+
+# This routine updates the degree structure after the elimination of
+# `mdnode`. Indistinguishable nodes in the reachable set are detected by
+# hashing their quotient neighbors, and merged into supernodes. With mass
+# elimination, each supernode whose list holds only `mdnode`, and whose
+# dense neighbors are those of `mdnode`, is eliminated with `mdnode`; let
+# `m` be their weight (0 otherwise). Each other supernode of the reachable
+# set gets the bound
+#
+#     delta - m - w(u) + wext[u] + (weight of its dense neighbors not adjacent to `mdnode`),
+#
+# raised to its old bound minus `swght + fwght + m` if it was not formed by
+# a merge. It is exact if it equals the upper bound, the same expression
+# with `extlen[u]` added. Its newest clique is now the new element with the
+# dense neighbors of `mdnode`, of weight `delta - m`, and its discount is 0.
+# The supernodes are returned to the degree lists by their keys.
+#
+# With `discount`, the nodes adjacent to the reachable set counted the
+# weights of `inode` and `jnode` apart (see `amfelim!`) when `jnode` is
+# merged into `inode`: their pairs are adjacent, so `rs` takes them in.
+#
+# input parameters:
+#
+#   - `mdnode`: the eliminated node
+#   - `rchsze`: the size of the reachable set of `mdnode`, which is its list
+#   - `delta`: the weight of the reachable set, with the dense neighbors of
+#     `mdnode`
+#   - `dS`: the weight of the dense neighbors of `mdnode`
+#   - `swght`: the weight of `mdnode`
+#   - `fwght`: the weight of the false twins of `mdnode` (see `amfelim!`)
+#   - `(pe, len, elen, iw)`: quotient graph
+#   - `(wext, extlen)`: the terms of the bounds (see `amfelim!`); on output,
+#     `extlen[u]` is the upper bound of each node `u` of the reachable set
+#   - `mass`: mass elimination
+#   - `offset`: separates the buckets of the lists that are not exact
+#   - `(nbuck, nfine, sfine, scale, res)`: the buckets and the weights (see
+#     `amf`)
+#   - `(discount, rstamp, fnum)`: with `discount`, the nodes adjacent to the
+#     reachable set are those stamped `fnum`
+#
+# updated parameters:
+#
+#   - `mindeg`: new minimum bucket after degree update
+#   - `ddeg`: the degrees of the dense nodes, which lose the nodes eliminated
+#     with `mdnode`
+#   - `(superwght, degree)`: supernodes and their bounds
+#   - `(fkey, lpw, disc, dexact)`: the keys, newest cliques, discounts and
+#     exact bounds
+#   - `rs`: with `discount`, see `amfelim!`
+#   - `(deghead, degnext, degprev)`: degree lists
+#   - `marker`: the hashes of the nodes of the reachable set (see `amfelim!`),
+#     then tags; the hash buckets share `deghead` with the degree lists
+#     (empty on output)
+#   - `(marker, tag)`: marker vector
+@inline function amfupdate!(
+        mdnode::V,
+        rchsze::V,
+        delta::V,
+        dS::V,
+        swght::V,
+        fwght::V,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        elen::AbstractVector{V},
+        iw::AbstractVector{V},
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        wext::AbstractVector{V},
+        marker::AbstractVector{I},
+        tag::I,
+        neqns::V,
+        extlen::AbstractVector{V},
+        dwght::AbstractVector{V},
+        nwords::Int,
+        dmask::AbstractVector{UInt64},
+        ddeg::AbstractVector{V},
+        nbypass::V,
+        mindeg::V,
+        mass::Bool,
+        offset::V,
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+        discount::Bool,
+        rs::AbstractVector{Float64},
+        rstamp::AbstractVector{V},
+        fnum::V,
+    ) where {I, V, E}
+    # the supernodes formed by a merge are marked with `mtag`
+    tag += one(I); mtag = tag
+
+    # the reachable set is `iw[rstart:rstop]`
+    @inbounds rstart = pe[mdnode]; rstop = rstart + convert(E, rchsze) - one(E)
+
+    # for each hash bucket of the reachable set, do the following...
+    @inbounds for r in rstart:rstop
+        hash = degprev[iw[r]]
+        head = deghead[hash]
+
+        # take the first node of the bucket, and empty it (`inode` stays 0
+        # if it is empty, or was taken before)
+        inode = zero(V)
+
+        if isnegative(head)
+            inode = -head; deghead[hash] = zero(V)
+        elseif ispositive(head) && ispositive(degprev[head])
+            inode = degprev[head]; degprev[head] = -hash
+        end
+
+        # for each node `inode` in the bucket, do the following...
+        while !iszero(inode) && !iszero(degnext[inode])
+            # find the first node `jnode` after `inode` whose hash value and
+            # list lengths match, with `jlast` before it: only then are the
+            # lists compared
+            # (the hash of `inode` is read once: a merge overwrites it)
+            jlast = inode; jnode = degnext[inode]; ihash = marker[inode]
+
+            while !iszero(jnode) && !(marker[jnode] == ihash && len[jnode] == len[inode] && elen[jnode] == elen[inode])
+                jlast = jnode; jnode = degnext[jnode]
+            end
+
+            if !iszero(jnode)
+                # mark the quotient neighbors of `inode`
+                tag += one(I)
+                pstart = pe[inode]
+                pstop = pstart + convert(E, len[inode]) - one(E)
+
+                for p in pstart:pstop
+                    marker[iw[p]] = tag
+                end
+
+                # for each node `jnode` from there on in the bucket, do the
+                # following...
+
+                while !iszero(jnode)
+                    jnext = degnext[jnode]
+                    same = marker[jnode] == ihash && len[jnode] == len[inode] && elen[jnode] == elen[inode]
+
+                    if same
+                        qstart = pe[jnode]
+                        qstop = qstart + convert(E, len[jnode]) - one(E)
+
+                        for q in qstart:qstop
+                            if marker[iw[q]] != tag
+                                same = false
+                                break
+                            end
+                        end
+                    end
+
+                    if same && ispositive(nbypass)
+                        same = mdsame(dmask, nwords, inode, jnode)
+                    end
+
+                    if same
+                        # with `discount`, the neighbors of `inode` outside
+                        # the reachable set, which are those of `jnode`,
+                        # counted them as two of their parts: they become
+                        # one
+                        if discount
+                            wi = convert(Float64, superwght[inode])
+                            wj = convert(Float64, superwght[jnode])
+
+                            for p in (pstart + convert(E, elen[inode])):pstop
+                                node = iw[p]
+
+                                if ispositive(superwght[node]) && rstamp[node] == fnum
+                                    rs[node] += 2.0 * wi * wj
+                                end
                             end
                         end
 
-                        if L240
-                            jlast = j        # `j` cannot be absorbed into `i`
-                            j = next[j]
-                        else
-                            pe[j] = convert(E, -i) # found it! `j` can be absorbed into `i`
-
-                            if wf[j] > wf[i]
-                                wf[i] = wf[j]
-                            end
-
-                            nv[i] += nv[j]   # both `nv[i]` and `nv[j]` are negated since they are in Lme
-                            wt[i] += wt[j]
-                            nv[j] = zero(V)
-                            elen[j] = zero(V)
-                            j = next[j]      # delete `j` from hash bucket
-                            next[jlast] = j
-                        end
+                        # `jnode` is indistinguishable from `inode`: merge
+                        # them into a new supernode, and remove `jnode` from
+                        # the bucket
+                        superwght[inode] += superwght[jnode]; superwght[jnode] = zero(V)
+                        degnext[jnode] = -inode
+                        len[jnode] = zero(V); elen[jnode] = zero(V)
+                        degnext[jlast] = jnext
+                        marker[inode] = mtag
+                    else
+                        jlast = jnode
                     end
 
-                    wflg += one(I)
-                    i = next[i]
+                    jnode = jnext
                 end
             end
+
+            inode = degnext[inode]
+        end
+    end
+
+    # keep the principal nodes of the reachable set. With mass elimination,
+    # a node whose list holds only `mdnode`, and whose dense neighbors are
+    # those of `mdnode`, is eliminated with `mdnode` instead: with degree, it
+    # is indistinguishable from `mdnode`. Its dense neighbors lose it
+    mwght = zero(V)
+
+    if mass
+        @inbounds for r in rstart:rstop
+            rnode = iw[r]; rwght = superwght[rnode]
+
+            if ispositive(rwght) && isone(len[rnode]) && (!ispositive(nbypass) || dwght[rnode] == dS)
+                if ispositive(nbypass)
+                    mdlose!(ddeg, dmask, nwords, rnode, rwght)
+                end
+
+                superwght[rnode] = zero(V); degprev[rnode] = zero(V); degnext[rnode] = -mdnode
+                len[rnode] = elen[rnode] = zero(V); mwght += rwght
+            end
+        end
+    end
+
+    # the other nodes lose the nodes eliminated with `mdnode`, and its false
+    # twins, as they lose `mdnode`
+    delta -= mwght; swght += mwght + fwght
+    @inbounds degree[mdnode] -= mwght
+
+    # for each principal node in the reachable set, assign its bound and its
+    # key, and return it to the degree structure. Its newest clique is the
+    # new element with the dense neighbors of `mdnode`, of weight `delta`
+    @inbounds for r in rstart:rstop
+        rnode = iw[r]; rwght = superwght[rnode]
+
+        if ispositive(rwght)
+            degprev[rnode] = degnext[rnode] = zero(V)
+            lo = delta - rwght + wext[rnode]
+
+            if ispositive(nbypass)
+                lo += dwght[rnode] - dS
+            end
+
+            hi = lo + extlen[rnode]
+
+            # a supernode not formed by a merge lost at most `swght` neighbors
+            if marker[rnode] != mtag
+                lo = max(lo, degree[rnode] - swght)
+            end
+
+            degree[rnode] = lo; extlen[rnode] = hi
+            lpw[rnode] = delta - rwght; disc[rnode] = 0.0; dexact[rnode] = lo == hi
+            mindeg = amfinsert!(rnode, rwght, lo, mindeg, fkey, lpw, disc, dexact,
+                deghead, degnext, degprev, offset, nbuck, nfine, sfine, scale, res)
+        end
+    end
+
+    return mindeg, tag, mwght
+end
+
+# This routine recomputes every node of bucket `bucket` that is not exact. The
+# nodes are grouped by their most recent element, and each group is
+# recomputed at once (`amfrecompute!`). Returns the new minimum bucket and
+# the tag.
+#
+# working arrays:
+#
+#   - `degprev`: for an element, the first node of its group; for the node
+#     of a group taken first from the list, the corresponding node of the
+#     next group (the groups are chained in order)
+#   - `degnext`: for a node taken from the list, the next node in its group
+function amfvisit!(
+        bucket::V,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        elen::AbstractVector{V},
+        iw::AbstractVector{V},
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        marker::AbstractVector{I},
+        tag::I,
+        neqns::V,
+        extlen::AbstractVector{V},
+        dwght::AbstractVector{V},
+        nbypass::V,
+        offset::V,
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+    ) where {I, V, E}
+    # take the whole list, and group it by most recent element. The
+    # groups are chained, in order, from `ghead` through `degprev` of the
+    # node of each group taken first
+    tag += one(I); gtag = tag; mindeg = bucket; ghead = gtail = zero(V)
+    @inbounds node = deghead[bucket + offset]; deghead[bucket + offset] = zero(V)
+
+    @inbounds while ispositive(node)
+        nxnode = degnext[node]
+
+        # ask for what the next node needs here, and for what this one
+        # needs in its recomputation
+        mdprefetch(pe, nxnode); mdprefetch(elen, nxnode)
+        mdprefetch(len, node); mdprefetch(degree, node)
+
+        degnext[node] = degprev[node] = zero(V)
+        elmnt = iw[pe[node] + convert(E, elen[node]) - one(E)]
+
+        if marker[elmnt] != gtag
+            marker[elmnt] = gtag; degprev[elmnt] = zero(V)
+
+            if iszero(gtail)
+                ghead = node
+            else
+                degprev[gtail] = node
+            end
+
+            gtail = node
         end
 
-        p = pme1                             # restore degree lists and remove nonprincipal supervariable from element
-        wleft = wtotel - wnel
+        degnext[node] = degprev[elmnt]; degprev[elmnt] = node
+        node = nxnode
+    end
 
-        for pme in pme1:pme2
-            i = iw[pme]
-            nvi = -nv[i]
+    # recompute each group (read the link first: the recomputation
+    # inserts the node into a degree list)
+    gnode = ghead
 
-            if ispositive(nvi)               # `i` is a principal variable in Lme; restore `nv[i]` to signify that `i` is principal
-                nv[i] = nvi
-                wi = wt[i]                   # compute the external degree (add size of current elem)
-                dg = degree[i]
+    @inbounds while ispositive(gnode)
+        gnext = degprev[gnode]
+        elmnt = iw[pe[gnode] + convert(E, elen[gnode]) - one(E)]
 
-                if dg + wdegme > wleft
-                    rmf1 = dg * (dg + twice(wdegme)) - wf[i]
-                    degree[i] = wleft - wi
-                    dg = degree[i]
-                    rmf = dg * dg - (wdegme - wi) * (wdegme - wi)
-                    rmf = min(rmf, rmf1)
+        mindeg, tag = amfrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
+            superwght, degree, deghead, degnext, degprev, marker,
+            tag, neqns, extlen, dwght, nbypass, mindeg, offset,
+            fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res)
+
+        gnode = gnext
+    end
+
+    return mindeg, tag
+end
+
+# This routine recomputes the external degrees of the nodes of the chain that
+# starts at `zhead` and is linked by `degnext`, whose most recent element is
+# `elmnt`. The nodes of `elmnt` are marked, the list of each other element of
+# the nodes is scanned once and partitioned in place, its nodes outside
+# `elmnt` first, and the external degree of each node is the weight of
+# `elmnt`, of the union of these nodes and of its uneliminated neighbors, and
+# of its dense neighbors, minus its own weight. The nodes become exact and are
+# inserted into the degree lists by their new keys. Returns the new minimum
+# bucket and the tag.
+#
+# The elements in the lists of all the nodes (the core) are united once, as
+# they are scanned, so each node only adds its other elements. This keeps
+# groups whose nodes share many overlapping elements cheap.
+#
+# working arrays:
+#
+#   - `extlen`: the list of each element `f` is partitioned: its `extlen[f]`
+#     nodes outside `elmnt` come first, in order, then its nodes in `elmnt`.
+#     Merged and eliminated nodes are dropped, so `len[f]` can shrink.
+#   - `marker`: the nodes of `elmnt` are marked `etag`; while the elements
+#     are counted, `marker[f] - base` is the number of nodes that list `f`;
+#     the core and the nodes of its lists are marked `ctag`, the other
+#     elements `stag`, and the union of each node `utag`.
+@inline function amfrecompute!(
+        zhead::V,
+        elmnt::V,
+        pe::AbstractVector{E},
+        len::AbstractVector{V},
+        elen::AbstractVector{V},
+        iw::AbstractVector{V},
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        marker::AbstractVector{I},
+        tag::I,
+        neqns::V,
+        extlen::AbstractVector{V},
+        dwght::AbstractVector{V},
+        nbypass::V,
+        mindeg::V,
+        offset::V,
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+    ) where {I, V, E}
+    # mark the nodes of `elmnt`
+    tag += one(I); etag = tag
+    @inbounds estart = pe[elmnt]
+    @inbounds estop = estart + convert(E, len[elmnt]) - one(E)
+
+    @inbounds for j in estart:estop
+        node = iw[j]
+
+        if ispositive(superwght[node])
+            marker[node] = etag
+        end
+    end
+
+    # count the nodes of the group
+    gsize = 0; znode = zhead
+
+    @inbounds while ispositive(znode)
+        gsize += 1; znode = degnext[znode]
+    end
+
+    # mark the other elements of the nodes with the number of nodes that list
+    # them, `marker[f] - base` (elements and nodes are marked in the same
+    # vector: an element is never an uneliminated node)
+    tag += one(I); base = tag; tag += convert(I, gsize)
+
+    znode = zhead
+
+    @inbounds while ispositive(znode)
+        znext = degnext[znode]
+        p1 = pe[znode]
+        p2 = p1 + convert(E, elen[znode]) - one(E)
+
+        for p in p1:p2
+            f = iw[p]
+
+            if f != elmnt
+                if marker[f] <= base
+                    marker[f] = base + one(I)
                 else
-                    degree[i] += wdegme - wi
-                    rmf = dg * (dg + twice(wdegme)) - wf[i]
+                    marker[f] += one(I)
                 end
-
-                q = amf_round(rmf / wi / wunit, n)
-                wf[i] = q
-                b = amf_bucket(q, nfine, pas, nbbuck)
-                inext = head[b + one(V)]
-
-                if !iszero(inext)
-                    last[inext] = i
-                end
-
-                next[i] = inext
-                last[i] = zero(V)
-                head[b + one(V)] = i
-
-                if mindeg > b                # save the new score, and find the minimum bucket
-                    mindeg = b
-                end
-
-                iw[p] = i; p += one(E)       # place the supervariable in the element pattern
             end
-        end # L260:
-
-        nv[me] = degme                       # finalize the new element: from now on, `nv[me]` is |Le|
-        len[me] = convert(V, p - pme1)
-
-        if iszero(len[me])                   # there is nothing left of the current pivot element
-            pe[me] = zero(E)
-            w[me] = zero(I)
         end
 
-        if !iszero(newmem)                   # element was not constructed in place: deallocate part of it
-            pfree = p
-            mem = mem - newmem + len[me]
-        end
-    end                                      # end while (selecting pivots)
+        znode = znext
+    end
 
-    @inbounds for i in oneto(n)
-        if iszero(elen[i])
-            j = convert(V, -pe[i])
+    # scan each other element of the nodes once, and partition its list. The
+    # elements listed by every node of the group (the core) are marked
+    # `ctag`, and the union of their nodes outside `elmnt`, also marked
+    # `ctag`, is taken once here: its weight is `cwght`
+    tag += one(I); stag = tag; tag += one(I); ctag = tag
+    full = base + convert(I, gsize); cwght = zero(V)
 
-            while !isnegative(elen[j])      # L270:
-                j = convert(V, -pe[j])
-            end
+    znode = zhead
 
-            e = j
-            k = -elen[e]                    # get the current pivot ordering of `e`
-            j = i
+    @inbounds while ispositive(znode)
+        znext = degnext[znode]
+        p1 = pe[znode]
+        p2 = p1 + convert(E, elen[znode]) - one(E)
 
-            while !isnegative(elen[j])      # L280:
-                jnext = convert(V, -pe[j])
-                pe[j] = convert(E, -e)
+        for p in p1:p2
+            f = iw[p]
 
-                if iszero(elen[j])
-                    elen[j] = k; k += one(V)
+            if f != elmnt && base < marker[f] <= full
+                core = marker[f] == full
+
+                if core
+                    marker[f] = ctag
+                else
+                    marker[f] = stag
                 end
 
-                j = jnext
+                # the nodes outside `elmnt` go to the front of the list
+                # (`pout` is the next position for them, and `pin` for the
+                # nodes in `elmnt`), and merged and eliminated nodes are
+                # dropped
+                jstart = pe[f]
+                jstop = jstart + convert(E, len[f]) - one(E)
+                pout = pin = jstart
+
+                for j in jstart:jstop
+                    node = iw[j]; wght = superwght[node]
+
+                    if ispositive(wght)
+                        if marker[node] != etag
+                            iw[pin] = iw[pout]; iw[pout] = node
+                            pout += one(E); pin += one(E)
+
+                            if core && marker[node] != ctag
+                                marker[node] = ctag; cwght += wght
+                            end
+                        else
+                            iw[pin] = node; pin += one(E)
+                        end
+                    end
+                end
+
+                len[f] = convert(V, pin - jstart); extlen[f] = convert(V, pout - jstart)
+            end
+        end
+
+        znode = znext
+    end
+
+    # for each node, take the union of the nodes outside `elmnt` of its
+    # elements, and of its uneliminated neighbors
+    @inbounds ewght = degree[elmnt]
+
+    znode = zhead
+
+    @inbounds while ispositive(znode)
+        znext = degnext[znode]
+        tag += one(I); utag = tag; deg = cwght
+        p1 = pe[znode]
+        p2 = p1 + convert(E, elen[znode]) - one(E)
+        p4 = p1 + convert(E, len[znode]) - one(E)
+
+        for p in p1:p2
+            f = iw[p]
+
+            if f != elmnt && marker[f] != ctag
+                qstart = pe[f]
+                qstop = qstart + convert(E, extlen[f]) - one(E)
+
+                for q in qstart:qstop
+                    node = iw[q]
+
+                    if marker[node] != utag && marker[node] != ctag
+                        marker[node] = utag; deg += superwght[node]
+                    end
+                end
+            end
+        end
+
+        for p in (p2 + one(E)):p4
+            node = iw[p]; wght = superwght[node]
+
+            if ispositive(wght) && marker[node] != etag && marker[node] != utag && marker[node] != ctag
+                marker[node] = utag; deg += wght
+            end
+        end
+
+        deg += ewght - superwght[znode]
+
+        if ispositive(nbypass)
+            deg += dwght[znode]
+        end
+
+        degree[znode] = deg; dexact[znode] = true
+        mindeg = amfinsert!(znode, superwght[znode], deg, mindeg, fkey, lpw, disc, dexact,
+            deghead, degnext, degprev, offset, nbuck, nfine, sfine, scale, res)
+        znode = znext
+    end
+
+    return mindeg, tag
+end
+
+# This routine discounts the keys of the nodes outside the reachable set of
+# the pivot that are adjacent to it. The reachable set is now a clique, so the
+# pairs of their neighbors in it are adjacent. A node `node` counted the
+# pairs between its parts in the reachable set: the part `y` of its newest
+# element `elmnt` (the pairs inside it were never counted), and each of its
+# uneliminated neighbors there, of total weight `rv[node]` and squared
+# weight `rs[node]` (summed in `amfelim!`, by supernode). It loses
+#
+#     2 y rv[node] + rv[node]^2 - rs[node]
+#
+# if that is more than its discount. Every node with such pairs lies in the
+# list of a node of the reachable set: otherwise its neighbors there lie in
+# its newest element. The part of `elmnt` in the reachable set is its weight
+# minus `wext[elmnt] - wflg` if `elmnt` was met at this step (`wext[elmnt]`
+# at least `wflg`, see `amfelim!`), and 0 otherwise. Returns the new minimum
+# bucket.
+#
+# input parameters:
+#
+#   - `nvlist`: the number of nodes in `vlist`
+#   - `vlist`: the nodes outside the reachable set adjacent to it
+#   - `(rv, rs)`: the weight of the neighbors of each in the reachable set,
+#     and its square, by supernode
+#   - `(pe, elen, iw)`: quotient graph
+#   - `superwght`: weight of the supernodes
+#   - `degree`: the bounds of the nodes; for an element, its weight
+#   - `(wext, wflg)`: external parts of the elements
+#
+# updated parameters:
+#
+#   - `mindeg`: the minimum bucket
+#   - `(fkey, disc)`: the keys and discounts
+#   - `(deghead, degnext, degprev)`: degree lists
+function amfdiscount!(
+        nvlist::Int,
+        vlist::AbstractVector{V},
+        rv::AbstractVector{Float64},
+        rs::AbstractVector{Float64},
+        pe::AbstractVector{E},
+        elen::AbstractVector{V},
+        iw::AbstractVector{V},
+        superwght::AbstractVector{V},
+        degree::AbstractVector{V},
+        wext::AbstractVector{V},
+        wflg::V,
+        mindeg::V,
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        offset::V,
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+    ) where {V, E}
+    @inbounds for k in oneto(nvlist)
+        node = vlist[k]; wght = superwght[node]
+
+        if ispositive(wght)
+            # the part of the newest element of `node` in the reachable set
+            y = 0.0
+
+            if ispositive(elen[node])
+                elmnt = iw[pe[node] + convert(E, elen[node]) - one(E)]; we = wext[elmnt]
+
+                if we >= wflg
+                    y = max(convert(Float64, degree[elmnt] - (we - wflg)), 0.0)
+                end
             end
 
-            elen[e] = -k
-        end
-    end                                     # L290:
+            # the pairs between its parts in the reachable set
+            d = 2.0 * y * rv[node] + rv[node] * rv[node] - rs[node]
 
-    return ncmpa
+            if d > disc[node]
+                disc[node] = d
+                mdremove!(node, deghead, degnext, degprev, offset)
+                mindeg = amfinsert!(node, wght, degree[node], mindeg, fkey, lpw, disc, dexact,
+                    deghead, degnext, degprev, offset, nbuck, nfine, sfine, scale, res)
+            end
+        end
+    end
+
+    return mindeg
+end
+
+# This routine inserts `node`, which is in no list, into the degree lists:
+# into the bucket of its key, computed from its weight `wght` and its degree
+# (or lower bound) `deg`, in the exact list if `dexact[node]`. Returns the new
+# minimum bucket.
+@inline function amfinsert!(
+        node::V,
+        wght::V,
+        deg::V,
+        mindeg::V,
+        fkey::AbstractVector{Float64},
+        lpw::AbstractVector{V},
+        disc::AbstractVector{Float64},
+        dexact::AbstractVector{Bool},
+        deghead::AbstractVector{V},
+        degnext::AbstractVector{V},
+        degprev::AbstractVector{V},
+        offset::V,
+        nbuck::V,
+        nfine::Float64,
+        sfine::Float64,
+        scale::Float64,
+        res::Float64,
+    ) where {V}
+    @inbounds key = amfkey(deg, wght, lpw[node], disc[node], res)
+    @inbounds fkey[node] = key
+    bucket = amfbucket(key, nfine, sfine, scale, nbuck)
+    @inbounds isexact = dexact[node]
+    return mdinsert!(bucket, mindeg, node, isexact, deghead, degnext, degprev, offset)
+end
+
+# the key of a supernode of weight `wght` and degree `deg`, whose newest
+# clique weighs `lpw` outside it, with the discount `disc`: an upper bound on
+# twice its fill, over its weight plus 1, in units of the smallest weight
+# (`res` integer weights to it)
+@inline function amfkey(deg::V, wght::V, lpw::V, disc::Float64, res::Float64) where {V}
+    d = convert(Float64, deg); l = convert(Float64, lpw)
+    return max(d * d - l * l - disc, 0.0) / ((convert(Float64, wght) + res) * res)
+end
+
+# the bucket of key `key` (see `amf`)
+@inline function amfbucket(key::Float64, nfine::Float64, sfine::Float64, scale::Float64, nbuck::V) where {V}
+    if key < nfine
+        bucket = floor(key) + 1.0
+    else
+        bucket = nfine + 1.0 + floor((sqrt(key) - sfine) * scale)
+    end
+
+    return convert(V, min(bucket, convert(Float64, nbuck)))
+end
+
+# This routine converts the vertex weights to integers: a weight `w` becomes
+# `round(res * w / wmin)`, at least 1, where `wmin` is the smallest weight.
+# The resolution `res` is 1 if every weight is a multiple of `wmin`, and 16
+# otherwise, less if the total would not fit in 60 bits. So the ordering does
+# not depend on the unit of the weights. Returns the weights and `res`.
+function amfweights(neqns::V, vwght::Ones) where {V}
+    return Ones{Int}(neqns), 1.0
+end
+
+function amfweights(neqns::V, vwght::AbstractVector) where {V}
+    wmin = Inf; wsum = 0.0; whole = true
+
+    @inbounds for node in oneto(neqns)
+        w = convert(Float64, vwght[node])
+
+        if !(isfinite(w) && ispositive(w))
+            throw(ArgumentError("vertex weights must be finite and positive, but weight $node is $(vwght[node])"))
+        end
+
+        wmin = min(wmin, w); wsum += w
+    end
+
+    @inbounds for node in oneto(neqns)
+        r = convert(Float64, vwght[node]) / wmin
+
+        if abs(r - round(r)) > 1.0e-9 * r
+            whole = false
+        end
+    end
+
+    if whole
+        res = 1.0
+    else
+        res = 16.0
+    end
+
+    if res * wsum / wmin > 2.0^60
+        res = 2.0^60 * wmin / wsum
+    end
+
+    wght = FVector{Int}(undef, neqns)
+
+    @inbounds for node in oneto(neqns)
+        wght[node] = max(1, round(Int, res * convert(Float64, vwght[node]) / wmin))
+    end
+
+    return wght, res
 end
 
 end

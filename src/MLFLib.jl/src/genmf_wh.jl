@@ -187,6 +187,8 @@
 #                     INITIALIZATION; IT IS ZEROED BEFORE THE MAIN LOOP.
 #       GQ(*), GUCNT(*), GPQ(*), GACC(*)
 #                   - ARRAYS OF LENGTH 64, WORK VECTORS FOR MFUPD_DEF.
+#       MATMIN      - CLIQUES OF AT LEAST MATMIN SUPERNODES ARE UPDATED
+#                     BY MFUPD_MAT INSTEAD OF MFUPD_DEF (0 DISABLES THIS).
 #       TWIN        - IF TRUE, THE FALSE TWINS OF EACH ELIMINATED NODE
 #                     (UNTOUCHED NODES WITH THE SAME OPEN NEIGHBORHOOD)
 #                     ARE ABSORBED INTO IT AND NUMBERED IN ITS BLOCK.
@@ -234,6 +236,7 @@ function genmf_wh(
         gpq::AbstractVector{W},
         gacc::AbstractVector{W},
         twin::Bool,
+        matmin::Int,
     ) where {V, E, I, W, S}
 
     #       ****************
@@ -293,10 +296,24 @@ function genmf_wh(
     
     end
 
+    #       ---------------------------------------------------
+    #       QMIN IS THE SMALLEST POSITIVE VERTEX WEIGHT. IT IS
+    #       ADDED TO THE SUPERNODE SIZE IN THE MINMEANFILL SCORE.
+    #       ---------------------------------------------------
+    qmin = zero(W)
+
+    @inbounds for i in oneto(neqns)
+        if ispositive(vwght[i])
+            if iszero(qmin) || vwght[i] < qmin
+                qmin = vwght[i]
+            end
+        end
+    end
+
     #       ----------------------------------------------------------
     #       INITIALIZE VARIOUS VECTORS AND MAKE THE INITIAL HEAP BASED
     #       ON INITIAL DEFICIENCY-BASED SCORES.
-    #         INPUT:  NEQNS, XADJ, DEGREE, QSIZE, DEFNCY
+    #         INPUT:  NEQNS, XADJ, DEGREE, QSIZE, DEFNCY, QMIN
     #         OUTPUT: HEAP, HEAPSIZE, HEAPINV, MARKER, NVTXS, WORK,
     #                 ECFORW, CHANGED, INVP
     #       ----------------------------------------------------------
@@ -305,10 +322,13 @@ function genmf_wh(
     end
 
     heapsize = mfinit_heap(
-        score, neqns, xadj, degree, qsize, defncy,
+        score, neqns, xadj, degree, qsize, defncy, qmin,
         heap, heapinv, marker, nvtxs,
         work, ecforw, changed, invp
     )
+
+    #       WORKSPACE OF MFUPD_MAT
+    ws = MatWork{W}()
 
     #       ------------------------------------------------------
     #       NOFNZ:  NUMBER OF NONZEROS IN FACTOR IS INITIALLY ZERO.
@@ -459,13 +479,21 @@ function genmf_wh(
         #                       CHANGED
         #             WORK:     WORK2, UMASK, LEN2, GQ, GUCNT, GPQ, GACC
         #           ---------------------------------------------------------
-        tag, nnodes2 = mfupd_def(
-            enode, neqns, adjlen, xadj,
-            adjncy, nvtxs, work, qsize, nnodes,
-            fnode, ecliq, degree, defncy,
-            tag, marker, changed, work2,
-            umask, len2, gq, gucnt, gpq, gacc
-        )
+        if ispositive(matmin) && nnodes >= matmin
+            nnodes2 = mfupd_mat!(
+                ws, neqns, enode, nnodes, ecliq, xadj,
+                adjncy, nvtxs, work, qsize, marker,
+                changed, degree, defncy, qft
+            )
+        else
+            tag, nnodes2 = mfupd_def(
+                enode, neqns, adjlen, xadj,
+                adjncy, nvtxs, work, qsize, nnodes,
+                fnode, ecliq, degree, defncy,
+                tag, marker, changed, work2,
+                umask, len2, gq, gucnt, gpq, gacc
+            )
+        end
     
         #           -------------------------------------------------------
         #           PERFORM THE ELIMINATION GRAPH TRANSFORMATION DUE TO THE
@@ -564,7 +592,7 @@ function genmf_wh(
                 #                   -------------------------------
                 #                   COMPUTE DEFICIENCY-BASED SCORE.
                 #                   -------------------------------
-                key = mlfscore(score, defncy, degree, qsize, jnode)
+                key = mlfscore(score, defncy, degree, qsize, qmin, jnode)
             
                 #                   -------------------
                 #                   RESTORE HEAP ORDER.
