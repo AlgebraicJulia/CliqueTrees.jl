@@ -1724,6 +1724,24 @@ end
             end
         end
     end
+
+    # AMF bounds the reachable set in the same way; its weights are scaled
+    # by 16 when they are not multiples of the smallest
+    for n in (10, 30, 60), trial in 1:3
+        graphs = (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng),
+            blowup(erdos_renyi(cld(n, 2), 4 / n; rng), rng))
+
+        for graph in graphs
+            m = nv(graph)
+
+            for discount in (false, true), dense in (10.0, 0.0), mass in (false, true), twin in (false, true), compress in (false, true)
+                weights = rand(rng, 1:1000, m)
+                perm, invp = CliqueTrees.amf(weights, graph; discount, dense, mass, twin, compress)
+                @test sort(perm) == 1:m
+                @test invp == invperm(perm)
+            end
+        end
+    end
 end
 
 @testset "exact treewidth" begin

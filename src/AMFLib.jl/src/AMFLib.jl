@@ -175,7 +175,7 @@ function amf(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, res::Float64, iwle
     disc = FVector{Float64}(undef, n)
     dexact = FVector{Bool}(undef, n)
 
-    # the discounts (`rv`, `rs`, `rstamp` and `vlist` are needed only with
+    # the discounts (`vsum`, `enew` and `vlist` are needed only with
     # `discount`)
     if discount
         dlen = n
@@ -183,13 +183,16 @@ function amf(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, res::Float64, iwle
         dlen = zero(V)
     end
 
-    rv = FVector{Float64}(undef, dlen)
-    rs = FVector{Float64}(undef, dlen)
-    rstamp = FVector{V}(undef, dlen)
+    vsum = FVector{Float64}(undef, twice(convert(Int, dlen)))
+    enew = FVector{V}(undef, dlen)
     vlist = FVector{V}(undef, dlen)
 
+    @inbounds for i in eachindex(vsum)
+        vsum[i] = 0.0
+    end
+
     @inbounds for node in oneto(dlen)
-        rstamp[node] = zero(V)
+        enew[node] = zero(V)
     end
 
     # select the dense nodes (`dindex` and `dwght` are needed only if there
@@ -214,7 +217,7 @@ function amf(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, res::Float64, iwle
         twin, compress, vwght, xadj,
         adjncy, ndense, nwords, dindex, dnode, ddeg, dmask,
         fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res,
-        discount, rv, rs, rstamp, vlist)
+        discount, vsum, enew, vlist)
 
     return degnext
 end
@@ -261,9 +264,8 @@ function amf_impl!(
         scale::Float64,
         res::Float64,
         discount::Bool,
-        rv::AbstractVector{Float64},
-        rs::AbstractVector{Float64},
-        rstamp::AbstractVector{V},
+        vsum::AbstractVector{Float64},
+        enew::AbstractVector{V},
         vlist::AbstractVector{V},
     ) where {I, V, E}
     @assert iwlen <= length(iw)
@@ -377,7 +379,7 @@ function amf_impl!(
         elen, iw, iwlen, heads, pfree, total, neqns, mass, twin,
         ispositive(nmerge), vwght, ndense, nwords, dindex, dnode, ddeg, dmask,
         fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res,
-        discount, rv, rs, rstamp, vlist)
+        discount, vsum, enew, vlist)
 
     return degnext
 end
@@ -499,8 +501,9 @@ end
 #     last in a reachable set), or 0
 #   - `disc`: the discount of each node (see `amfdiscount!`)
 #   - `dexact`: whether the bound of each node is its external degree
-#   - `(rv, rs, rstamp, vlist)`: with `discount`, the nodes adjacent to the
-#     reachable set, and their neighbors in it (see `amfelim!`)
+#   - `(vsum, vlist)`: with `discount`, the nodes adjacent to the reachable
+#     set, and their neighbors in it (see `amfelim!`)
+#   - `enew`: with `discount`, the newest element of each node, or 0
 function amfmain!(
         marker::AbstractVector{I},
         superwght::AbstractVector{V},
@@ -540,9 +543,8 @@ function amfmain!(
         scale::Float64,
         res::Float64,
         discount::Bool,
-        rv::AbstractVector{Float64},
-        rs::AbstractVector{Float64},
-        rstamp::AbstractVector{V},
+        vsum::AbstractVector{Float64},
+        enew::AbstractVector{V},
         vlist::AbstractVector{V},
     ) where {I, V, E}
     @assert neqns <= length(marker)
@@ -567,9 +569,8 @@ function amfmain!(
     @assert neqns <= length(lpw)
     @assert neqns <= length(disc)
     @assert neqns <= length(dexact)
-    @assert !discount || neqns <= length(rv)
-    @assert !discount || neqns <= length(rs)
-    @assert !discount || neqns <= length(rstamp)
+    @assert !discount || twice(convert(Int, neqns)) <= length(vsum)
+    @assert !discount || neqns <= length(enew)
     @assert !discount || neqns <= length(vlist)
 
     # initialization for the approximate minimum fill algorithm.
@@ -821,7 +822,7 @@ function amfmain!(
             pe, len, elen, iw, iwlen, pfree, heads, neqns, superwght, degree,
             deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
             dS, offset, twin, rank + one(V),
-            nbypass, nwords, dmask, ddeg, discount, rv, rs, rstamp, vlist)
+            nbypass, nwords, dmask, ddeg, discount, vsum, vlist)
 
         # the nodes in the reachable set, and the dense neighbors of
         # `mdnode`, become adjacent to the dense neighbors of `mdnode`
@@ -843,12 +844,12 @@ function amfmain!(
             degprev, wext, marker, tag,
             neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg,
             mass && iszero(fsze), offset, fkey, lpw, disc, dexact, nbuck,
-            nfine, sfine, scale, res, discount, rs, rstamp, rank + one(V))
+            nfine, sfine, scale, res, discount, vsum, enew)
 
         # with `discount`, the nodes adjacent to the new element lose the
         # pairs of their neighbors that it made adjacent
         if discount
-            mindeg = amfdiscount!(nvlist, vlist, rv, rs, pe, elen, iw, superwght,
+            mindeg = amfdiscount!(nvlist, vlist, vsum, enew, superwght,
                 degree, wext, wflg, mindeg, deghead, degnext, degprev, offset,
                 fkey, lpw, disc, dexact, nbuck, nfine, sfine, scale, res)
         end
@@ -879,9 +880,9 @@ end
 #
 # With `discount`, the purge also lists the nodes outside the reachable set
 # that lie in the lists of its nodes (`vlist`), and sums, for each, the
-# weights of its neighbors in the reachable set (`rv`) and their squares
-# (`rs`), node by node (see `amfdiscount!`). A node is listed once: it is
-# stamped with `fnum` in `rstamp`.
+# weights of its neighbors in the reachable set and their squares, node by
+# node: `vsum[2 node - 1]` and `vsum[2 node]` (see `amfdiscount!`). The sums
+# are 0 outside the step, so a node is listed when its first sum leaves 0.
 #
 # With `twin`, the false twins of `mdnode` are found first: the nodes
 # outside the reachable set whose neighbors are exactly the reachable set.
@@ -899,10 +900,11 @@ end
 # the new element. If `mdnode` is adjacent to no element, its list of
 # uneliminated neighbors holds the reachable set, which is formed there, in
 # place. Otherwise it is formed at `pfree`, after a compression if the tail of
-# `iw` is too short: it holds at most `degree[mdnode] - dS` nodes (each node
-# weighs at least 1). That fits after a compression: outside a rejoin, the
-# lists take at most `nnz` entries, and `iw` has at least `nnz + 2 neqns`
-# (see `amf`); a rejoining dense node has no element.
+# `iw` is too short: it holds fewer than `neqns` nodes, and at most
+# `degree[mdnode] - dS` (each node weighs at least 1). That fits after a
+# compression: outside a rejoin, the lists take at most `nnz` entries, and
+# `iw` has at least `nnz + 2 neqns` (see `amf`); a rejoining dense node has no
+# element.
 #
 # input parameters:
 #
@@ -913,7 +915,7 @@ end
 #   - `offset`: separates the buckets of the lists that are not exact
 #   - `twin`: find the false twins of `mdnode`
 #   - `fnum`: the rank of the first false twin (the rank after that of
-#     `mdnode`), which no other step has
+#     `mdnode`)
 #   - `(nbypass, nwords, dmask)`: the dense nodes
 #   - `discount`: list the nodes adjacent to the reachable set
 #
@@ -948,8 +950,8 @@ end
 #   - `fsze`: the number of false twins of `mdnode` (supernodes)
 #   - `fwght`: their weight
 #   - `nvlist`: with `discount`, the number of nodes in `vlist`
-#   - `(vlist, rv, rs, rstamp)`: with `discount`, the nodes adjacent to the
-#     reachable set, and their neighbors in it
+#   - `(vlist, vsum)`: with `discount`, the nodes adjacent to the reachable
+#     set, and their neighbors in it
 function amfelim!(
         mdnode::V,
         pe::AbstractVector{E},
@@ -979,9 +981,7 @@ function amfelim!(
         dmask::AbstractVector{UInt64},
         ddeg::AbstractVector{V},
         discount::Bool,
-        rv::AbstractVector{Float64},
-        rs::AbstractVector{Float64},
-        rstamp::AbstractVector{V},
+        vsum::AbstractVector{Float64},
         vlist::AbstractVector{V},
     ) where {I, V, E}
     # the pivot leaves the quotient graph
@@ -995,7 +995,7 @@ function amfelim!(
     if inplace
         @inbounds rstart = pe[mdnode]
     else
-        @inbounds need = convert(E, degree[mdnode] - dS)
+        @inbounds need = convert(E, min(degree[mdnode] - dS, neqns))
 
         if pfree + need - one(E) > iwlen
             pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
@@ -1202,24 +1202,33 @@ function amfelim!(
 
         pv = pn
 
-        for p in p3:p4
-            node = iw[p]; wght = superwght[node]
+        if discount
+            # each `node` lies outside the reachable set, next to `rnode`:
+            # add the weight of `rnode` to its sums, and its square
+            rw = convert(Float64, -superwght[rnode]); rw2 = rw * rw
 
-            if ispositive(wght)
-                iw[pn] = node; pn += one(E); hash += node % UInt64
-                nwght += wght
+            for p in p3:p4
+                node = iw[p]; wght = superwght[node]
 
-                # with `discount`, `node` lies outside the reachable set,
-                # next to `rnode`: sum the weights of its neighbors there,
-                # and their squares
-                if discount
-                    if rstamp[node] != fnum
-                        rstamp[node] = fnum; rv[node] = 0.0; rs[node] = 0.0
+                if ispositive(wght)
+                    iw[pn] = node; pn += one(E); hash += node % UInt64
+                    nwght += wght
+                    q = twice(convert(Int, node)); rv = vsum[q - 1]
+
+                    if iszero(rv)
                         nvlist += 1; vlist[nvlist] = node
                     end
 
-                    rw = convert(Float64, -superwght[rnode])
-                    rv[node] += rw; rs[node] += rw * rw
+                    vsum[q - 1] = rv + rw; vsum[q] += rw2
+                end
+            end
+        else
+            for p in p3:p4
+                node = iw[p]; wght = superwght[node]
+
+                if ispositive(wght)
+                    iw[pn] = node; pn += one(E); hash += node % UInt64
+                    nwght += wght
                 end
             end
         end
@@ -1295,7 +1304,8 @@ end
 #
 # With `discount`, the nodes adjacent to the reachable set counted the
 # weights of `inode` and `jnode` apart (see `amfelim!`) when `jnode` is
-# merged into `inode`: their pairs are adjacent, so `rs` takes them in.
+# merged into `inode`: their pairs are adjacent, so the sums of the squares
+# take them in. And the newest element of each supernode is `mdnode`.
 #
 # input parameters:
 #
@@ -1313,8 +1323,8 @@ end
 #   - `offset`: separates the buckets of the lists that are not exact
 #   - `(nbuck, nfine, sfine, scale, res)`: the buckets and the weights (see
 #     `amf`)
-#   - `(discount, rstamp, fnum)`: with `discount`, the nodes adjacent to the
-#     reachable set are those stamped `fnum`
+#   - `discount`: keep the sums of the nodes adjacent to the reachable set,
+#     and the newest elements
 #
 # updated parameters:
 #
@@ -1324,7 +1334,7 @@ end
 #   - `(superwght, degree)`: supernodes and their bounds
 #   - `(fkey, lpw, disc, dexact)`: the keys, newest cliques, discounts and
 #     exact bounds
-#   - `rs`: with `discount`, see `amfelim!`
+#   - `(vsum, enew)`: with `discount`, see `amfelim!` and `amfmain!`
 #   - `(deghead, degnext, degprev)`: degree lists
 #   - `marker`: the hashes of the nodes of the reachable set (see `amfelim!`),
 #     then tags; the hash buckets share `deghead` with the degree lists
@@ -1369,9 +1379,8 @@ end
         scale::Float64,
         res::Float64,
         discount::Bool,
-        rs::AbstractVector{Float64},
-        rstamp::AbstractVector{V},
-        fnum::V,
+        vsum::AbstractVector{Float64},
+        enew::AbstractVector{V},
     ) where {I, V, E}
     # the supernodes formed by a merge are marked with `mtag`
     tag += one(I); mtag = tag
@@ -1449,11 +1458,7 @@ end
                             wj = convert(Float64, superwght[jnode])
 
                             for p in (pstart + convert(E, elen[inode])):pstop
-                                node = iw[p]
-
-                                if ispositive(superwght[node]) && rstamp[node] == fnum
-                                    rs[node] += 2.0 * wi * wj
-                                end
+                                vsum[twice(convert(Int, iw[p]))] += 2.0 * wi * wj
                             end
                         end
 
@@ -1526,6 +1531,11 @@ end
 
             degree[rnode] = lo; extlen[rnode] = hi
             lpw[rnode] = delta - rwght; disc[rnode] = 0.0; dexact[rnode] = lo == hi
+
+            if discount
+                enew[rnode] = mdnode
+            end
+
             mindeg = amfinsert!(rnode, rwght, lo, mindeg, fkey, lpw, disc, dexact,
                 deghead, degnext, degprev, offset, nbuck, nfine, sfine, scale, res)
         end
@@ -1841,42 +1851,39 @@ end
 # pairs of their neighbors in it are adjacent. A node `node` counted the
 # pairs between its parts in the reachable set: the part `y` of its newest
 # element `elmnt` (the pairs inside it were never counted), and each of its
-# uneliminated neighbors there, of total weight `rv[node]` and squared
-# weight `rs[node]` (summed in `amfelim!`, by supernode). It loses
+# uneliminated neighbors there, of total weight `rv` and squared weight `rs`
+# (summed in `amfelim!`, by supernode). It loses
 #
-#     2 y rv[node] + rv[node]^2 - rs[node]
+#     2 y rv + rv^2 - rs
 #
 # if that is more than its discount. Every node with such pairs lies in the
 # list of a node of the reachable set: otherwise its neighbors there lie in
 # its newest element. The part of `elmnt` in the reachable set is its weight
 # minus `wext[elmnt] - wflg` if `elmnt` was met at this step (`wext[elmnt]`
-# at least `wflg`, see `amfelim!`), and 0 otherwise. Returns the new minimum
-# bucket.
+# at least `wflg`, see `amfelim!`), and 0 otherwise. The sums are reset to 0.
+# Returns the new minimum bucket.
 #
 # input parameters:
 #
 #   - `nvlist`: the number of nodes in `vlist`
 #   - `vlist`: the nodes outside the reachable set adjacent to it
-#   - `(rv, rs)`: the weight of the neighbors of each in the reachable set,
-#     and its square, by supernode
-#   - `(pe, elen, iw)`: quotient graph
+#   - `enew`: the newest element of each node, or 0
 #   - `superwght`: weight of the supernodes
 #   - `degree`: the bounds of the nodes; for an element, its weight
 #   - `(wext, wflg)`: external parts of the elements
 #
 # updated parameters:
 #
+#   - `vsum`: the weight of the neighbors of each node in the reachable set,
+#     and its square, by supernode (`vsum[2 node - 1]` and `vsum[2 node]`)
 #   - `mindeg`: the minimum bucket
 #   - `(fkey, disc)`: the keys and discounts
 #   - `(deghead, degnext, degprev)`: degree lists
 function amfdiscount!(
         nvlist::Int,
         vlist::AbstractVector{V},
-        rv::AbstractVector{Float64},
-        rs::AbstractVector{Float64},
-        pe::AbstractVector{E},
-        elen::AbstractVector{V},
-        iw::AbstractVector{V},
+        vsum::AbstractVector{Float64},
+        enew::AbstractVector{V},
         superwght::AbstractVector{V},
         degree::AbstractVector{V},
         wext::AbstractVector{V},
@@ -1895,16 +1902,18 @@ function amfdiscount!(
         sfine::Float64,
         scale::Float64,
         res::Float64,
-    ) where {V, E}
+    ) where {V}
     @inbounds for k in oneto(nvlist)
         node = vlist[k]; wght = superwght[node]
+        q = twice(convert(Int, node)); rv = vsum[q - 1]; rs = vsum[q]
+        vsum[q - 1] = 0.0; vsum[q] = 0.0
 
         if ispositive(wght)
             # the part of the newest element of `node` in the reachable set
-            y = 0.0
+            y = 0.0; elmnt = enew[node]
 
-            if ispositive(elen[node])
-                elmnt = iw[pe[node] + convert(E, elen[node]) - one(E)]; we = wext[elmnt]
+            if ispositive(elmnt)
+                we = wext[elmnt]
 
                 if we >= wflg
                     y = max(convert(Float64, degree[elmnt] - (we - wflg)), 0.0)
@@ -1912,7 +1921,7 @@ function amfdiscount!(
             end
 
             # the pairs between its parts in the reachable set
-            d = 2.0 * y * rv[node] + rv[node] * rv[node] - rs[node]
+            d = 2.0 * y * rv + rv * rv - rs
 
             if d > disc[node]
                 disc[node] = d
