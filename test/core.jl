@@ -1691,6 +1691,39 @@ end
             @test index == CliqueTrees.MDLib.md(Int32, 400, 400, weights, xadj, adjncy; external, mass, twin)
         end
     end
+
+    # heavy weights: the space for a reachable set is bounded by its number
+    # of nodes, not by its weight
+    for graph in (path_graph(6), cycle_graph(6), wheel_graph(6)), external in (false, true), compress in (false, true)
+        weights = fill(100, 6)
+        index = CliqueTrees.MDLib.md(weights, graph; external, compress)
+        @test sort(index) == 1:6
+
+        if !external
+            @test isminimumdegree(graph, weights, invperm(index))
+        end
+    end
+
+    rng = MersenneTwister(1)
+
+    for n in (10, 30, 60), trial in 1:3
+        graphs = (erdos_renyi(n, 3 / n; rng), barabasi_albert(n, 2; rng),
+            blowup(erdos_renyi(cld(n, 2), 4 / n; rng), rng))
+
+        for graph in graphs
+            m = nv(graph)
+
+            for external in (false, true), dense in (10.0, 0.0), mass in (false, true), twin in (false, true), compress in (false, true)
+                weights = rand(rng, 1:1000, m)
+                index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, twin, compress)
+                @test sort(index) == 1:m
+
+                if !external
+                    @test isminimumdegree(graph, weights, invperm(index))
+                end
+            end
+        end
+    end
 end
 
 @testset "exact treewidth" begin
