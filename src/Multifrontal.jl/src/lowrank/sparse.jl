@@ -436,7 +436,8 @@ function lowrank_sparse_impl!(
             # save the factor at node j, so that a
             # failed downdate can be undone
             #
-            u = lowrank_sparse_save!(Uval, Dptr, Dval, Lptr, Lval, u, j)
+            t0 = lowrank_sparse_first(Aptr, res, rel, col, chd, path, p)
+            u = lowrank_sparse_save!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, j, t0, uplo)
         end
 
         ns, localinfo = lowrank_sparse_loop!(
@@ -455,7 +456,8 @@ function lowrank_sparse_impl!(
                 u = zero(I)
 
                 for q in oneto(p)
-                    u = lowrank_sparse_restore!(Uval, Dptr, Dval, Lptr, Lval, u, path[q])
+                    t0 = lowrank_sparse_first(Aptr, res, rel, col, chd, path, q)
+                    u = lowrank_sparse_restore!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, path[q], t0, uplo)
                 end
 
                 return info
@@ -466,25 +468,50 @@ function lowrank_sparse_impl!(
     return info
 end
 
+#
+# t0 is the first column of res(path[p]) touched by
+# the update: the least row of the new columns at p
+#
+function lowrank_sparse_first(
+        Aptr::AbstractVector{I},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        col::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        path::AbstractVector{I},
+        p::I,
+    ) where {I <: Integer}
+    t0 = eltypedegree(res, path[p])
+
+    for c in Aptr[p]:Aptr[p + one(I)] - one(I)
+        t0 = min(t0, targets(col)[pointers(col)[c]])
+    end
+
+    for q in neighbors(chd, p)
+        t0 = min(t0, targets(rel)[pointers(rel)[path[q]]])
+    end
+
+    return t0
+end
+
+#
+# save (or restore) the part of the factor at node j
+# that an update with first column t0 can change
+#
 function lowrank_sparse_save!(
         Uval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
         u::I,
         j::I,
-    ) where {T, I <: Integer}
-
-    @inbounds for p in Dptr[j]:Dptr[j + one(I)] - one(I)
-        u += one(I); Uval[u] = Dval[p]
-    end
-
-    @inbounds for p in Lptr[j]:Lptr[j + one(I)] - one(I)
-        u += one(I); Uval[u] = Lval[p]
-    end
-
-    return u
+        t0::I,
+        uplo::Val{UPLO},
+    ) where {T, I <: Integer, UPLO}
+    return lowrank_sparse_copy!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, j, t0, uplo, Val(true))
 end
 
 function lowrank_sparse_restore!(
@@ -493,16 +520,68 @@ function lowrank_sparse_restore!(
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
         Lval::AbstractVector{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
         u::I,
         j::I,
-    ) where {T, I <: Integer}
+        t0::I,
+        uplo::Val{UPLO},
+    ) where {T, I <: Integer, UPLO}
+    return lowrank_sparse_copy!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, j, t0, uplo, Val(false))
+end
 
-    @inbounds for p in Dptr[j]:Dptr[j + one(I)] - one(I)
-        u += one(I); Dval[p] = Uval[u]
-    end
+function lowrank_sparse_copy!(
+        Uval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        u::I,
+        j::I,
+        t0::I,
+        ::Val{UPLO},
+        ::Val{SAVE},
+    ) where {T, I <: Integer, UPLO, SAVE}
+    nn = eltypedegree(res, j)
+    na = eltypedegree(sep, j)
+    Dp = Dptr[j]
+    Lp = Lptr[j]
 
-    @inbounds for p in Lptr[j]:Lptr[j + one(I)] - one(I)
-        u += one(I); Lval[p] = Uval[u]
+    if UPLO === :L
+        #
+        # columns t0, …, nn of D₁₁ and L₂₁
+        #
+        Drng = Dp + (t0 - one(I)) * nn:Dp + nn * nn - one(I)
+        Lrng = Lp + (t0 - one(I)) * na:Lp + nn * na - one(I)
+
+        @inbounds for p in Drng
+            u += one(I)
+            SAVE ? (Uval[u] = Dval[p]) : (Dval[p] = Uval[u])
+        end
+
+        @inbounds for p in Lrng
+            u += one(I)
+            SAVE ? (Uval[u] = Lval[p]) : (Lval[p] = Uval[u])
+        end
+    else
+        #
+        # rows t0, …, nn of D₁₁ and L₂₁
+        #
+        @inbounds for c in oneto(nn)
+            for r in t0:nn
+                p = Dp + (c - one(I)) * nn + r - one(I); u += one(I)
+                SAVE ? (Uval[u] = Dval[p]) : (Dval[p] = Uval[u])
+            end
+        end
+
+        @inbounds for c in oneto(na)
+            for r in t0:nn
+                p = Lp + (c - one(I)) * nn + r - one(I); u += one(I)
+                SAVE ? (Uval[u] = Lval[p]) : (Lval[p] = Uval[u])
+            end
+        end
     end
 
     return u
