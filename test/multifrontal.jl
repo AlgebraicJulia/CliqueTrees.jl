@@ -148,6 +148,15 @@ end
         @test Matrix(F) ≈ M
     end
 
+    # update by subnormal vectors
+    for UPLO in (:L, :U)
+        T = spdiagm(1 => fill(-1.0, 29), -1 => fill(-1.0, 29))
+        M = kron(sparse(I, 30, 30), T) + kron(T, sparse(I, 30, 30)) + 4.1I
+        B = sparse([100, 100, 130, 130], [1, 2, 1, 2], [1e-312, 1e-312, -1e-312, -1e-312], 900, 2)
+        F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankupdate!(F, B)
+        @test Matrix(F) ≈ M
+    end
+
     # a failed downdate leaves the factor unchanged
     for UPLO in (:L, :U)
         T = spdiagm(1 => fill(-1.0, 19), -1 => fill(-1.0, 19))

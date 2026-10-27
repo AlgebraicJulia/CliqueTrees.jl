@@ -1150,7 +1150,12 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, w::AbstractVector{T}, r::In
             σ = max(σ, abs(F[r, c]))
         end
 
-        if !iszero(σ)
+        #
+        # skip subnormal rows: otherwise the factor
+        # δ ~ 1 / σ overflows (these rows appear when
+        # an update vector decays along the path)
+        #
+        if σ >= floatmin(real(T))
             Frr = @inbounds F[r, r]
 
             if sqrt(floatmin(real(T))) <= σ <= sqrt(floatmax(real(T)) / (t - r + 1)) / 2
@@ -1241,7 +1246,12 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, c::Int, t::Int, n::Int, ::V
             σ = max(σ, abs(F[r, c]))
         end
 
-        if !iszero(σ)
+        #
+        # skip subnormal rows: otherwise the factor
+        # δ ~ 1 / σ overflows (these rows appear when
+        # an update vector decays along the path)
+        #
+        if σ >= floatmin(real(T))
             Fcc = @inbounds F[c, c]
 
             if sqrt(floatmin(real(T))) <= σ <= sqrt(floatmax(real(T)) / (t - c + 1)) / 2
