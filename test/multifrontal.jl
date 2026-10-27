@@ -139,6 +139,15 @@ end
         end
     end
 
+    # downdate by a vector whose norm is near underflow
+    for UPLO in (:L, :U)
+        X = rand(20, 20); M = sparse(X * X' + 4I)
+        v = zeros(20); v[7] = 1e-160
+        F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankdowndate!(F, sparse(reshape(v, :, 1)))
+        @test issuccess(F)
+        @test Matrix(F) ≈ M
+    end
+
     A = SparseMatrixCSC{BigFloat}(sprand(40, 15, 0.1)); A[:, 1] .= rand(BigFloat, 40)
     M = sparse(A * A' + I)
     F = cholesky!(ChordalCholesky{:L}(M)); v = Vector(A[:, 1])
