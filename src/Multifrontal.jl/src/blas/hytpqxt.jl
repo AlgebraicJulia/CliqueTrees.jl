@@ -212,7 +212,14 @@ function hytpqxt2!(A11::AbstractMatrix, A12::AbstractMatrix, W::AbstractMatrix, 
             β² = α^2 + ν
         end
 
-        if iszero(ν)
+        #
+        # skip the rotation if [ α cᵀ ] is already
+        # reduced to working precision. otherwise
+        # the factor δ ~ α / ν overflows when cᵀ
+        # is tiny (e.g. a downdate vector that has
+        # decayed along the path to the root).
+        #
+        if ν <= abs2(eps(real(T)) * α)
             for i in 1:j
                 W[i, j] = 0
             end
@@ -304,7 +311,14 @@ function hytpqxt2!(A11::AbstractMatrix, A12::AbstractMatrix, W::AbstractMatrix, 
             β² = α^2 + ν
         end
 
-        if iszero(ν)
+        #
+        # skip the rotation if the column [ α; c ] is already
+        # reduced to working precision. otherwise
+        # the factor δ ~ α / ν overflows when c
+        # is tiny (e.g. a downdate vector that has
+        # decayed along the path to the root).
+        #
+        if ν <= abs2(eps(real(T)) * α)
             for i in 1:j
                 W[i, j] = 0
             end

@@ -139,6 +139,57 @@ end
         end
     end
 
+    # downdate by a vector whose norm is near underflow
+    for UPLO in (:L, :U)
+        X = rand(20, 20); M = sparse(X * X' + 4I)
+        v = zeros(20); v[7] = 1e-160
+        F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankdowndate!(F, sparse(reshape(v, :, 1)))
+        @test issuccess(F)
+        @test Matrix(F) ≈ M
+    end
+
+    # update by subnormal vectors
+    for UPLO in (:L, :U)
+        T = spdiagm(1 => fill(-1.0, 29), -1 => fill(-1.0, 29))
+        M = kron(sparse(I, 30, 30), T) + kron(T, sparse(I, 30, 30)) + 4.1I
+        B = sparse([100, 100, 130, 130], [1, 2, 1, 2], [1e-312, 1e-312, -1e-312, -1e-312], 900, 2)
+        F = cholesky!(ChordalCholesky{UPLO}(M)); lowrankupdate!(F, B)
+        @test Matrix(F) ≈ M
+    end
+
+    # a failed downdate leaves the factor unchanged
+    for UPLO in (:L, :U)
+        T = spdiagm(1 => fill(-1.0, 19), -1 => fill(-1.0, 19))
+        M = kron(sparse(I, 20, 20), T) + kron(T, sparse(I, 20, 20)) + 4.1I
+
+        for k in (1, 150, 400)
+            F = cholesky!(ChordalCholesky{UPLO}(M)); D = copy(F.Dval); L = copy(F.Lval)
+            v = sparse([k], [1], [3.0], 400, 1)
+            @test_throws PosDefException lowrankdowndate!(F, v)
+            lowrankdowndate!(F, v; check=false)
+            @test !issuccess(F)
+            @test F.Dval == D && F.Lval == L
+            B = sparse([k, k], [1, 2], [1.0, 1.0], 400, 2)
+            lowrankdowndate!(F, B)
+            @test issuccess(F)
+            @test Matrix(F) ≈ M - B * B'
+        end
+    end
+
+    # updates of random rank
+    for UPLO in (:L, :U)
+        T = spdiagm(1 => fill(-1.0, 29), -1 => fill(-1.0, 29))
+        M = kron(sparse(I, 30, 30), T) + kron(T, sparse(I, 30, 30)) + 4.1I
+        F = cholesky!(ChordalCholesky{UPLO}(M))
+
+        for k in (1, 8, 64)
+            i = rand(1:870, k); j = [isone(rand(1:2)) && !iszero(r % 30) ? r + 1 : r + 30 for r in i]
+            B = sparse([i; j], [1:k; 1:k], [fill(0.5, k); fill(-0.5, k)], 900, k)
+            lowrankupdate!(F, B);   @test Matrix(F) ≈ M + B * B'
+            lowrankdowndate!(F, B); @test Matrix(F) ≈ M
+        end
+    end
+
     A = SparseMatrixCSC{BigFloat}(sprand(40, 15, 0.1)); A[:, 1] .= rand(BigFloat, 40)
     M = sparse(A * A' + I)
     F = cholesky!(ChordalCholesky{:L}(M)); v = Vector(A[:, 1])
