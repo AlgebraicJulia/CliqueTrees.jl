@@ -526,9 +526,9 @@ end
 # or plus its weight (with degree). The algorithm repeats the following.
 # If an exact node has the minimum key, it is eliminated (`mdelim!`,
 # `mdupdate!`), and the nodes of its reachable set get new bounds.
-# Otherwise every node at the minimum key is recomputed: they are grouped
-# by most recent element, and each group is recomputed at once
-# (`mdrecompute!`).
+# Otherwise the nodes at the minimum key with the most recent element of the
+# first node of their list (a group) are recomputed at once (`mdrecompute!`,
+# from `mdvisit!`), and the search starts over.
 #
 # A node of weight w stands for w indistinguishable nodes, so the degree of
 # a node is the weight of its closed neighborhood minus one, and its external
@@ -775,7 +775,7 @@ function mdmain!(
 
     @inbounds while ispositive(wleft)
         # find the pivot `mdnode`. If no node at the minimum key is exact,
-        # they are all recomputed, and the search starts over
+        # one group of them is recomputed, and the search starts over
         mdnode = zero(V)
 
         while iszero(mdnode)
@@ -1492,8 +1492,10 @@ end
 
     # the other nodes lose the nodes eliminated with `mdnode`, and its false
     # twins, as they lose `mdnode`. The floor of the eager pass is that of
-    # `mdnode`, without the nodes eliminated with it
-    delta -= mwght; floor = max(zero(V), delta - swght)
+    # `mdnode`, without the nodes eliminated with it: the pass takes the
+    # nodes whose key is below `max(delta - swght + 1, 0) + w(u) - 1`, that
+    # is, whose bound is below `efloor + w(u) - 1`
+    delta -= mwght; efloor = max(-one(V), delta - swght)
     swght += mwght + fwght
     @inbounds degree[mdnode] -= mwght
 
@@ -1526,7 +1528,7 @@ end
             if !external
                 key = mdkey(lo, rwght, external)
                 mindeg = mdinsert!(key, mindeg, rnode, lo == hi, deghead, degnext, degprev, offset)
-            elseif lo < hi && lo < floor + rwght - one(V)
+            elseif lo < hi && lo < efloor + rwght - one(V)
                 if iszero(ztail)
                     zhead = rnode
                 else
@@ -1567,17 +1569,13 @@ end
     return mindeg, tag, mwght
 end
 
-# This routine recomputes every node with key `key` that is not exact. The
-# nodes are grouped by their most recent element, and each group is
-# recomputed at once (`mdrecompute!`). Returns the new minimum key and the
-# tag.
-#
-# working arrays:
-#
-#   - `degprev`: for an element, the first node of its group; for the node
-#     of a group taken first from the list, the corresponding node of the
-#     next group (the groups are chained in order)
-#   - `degnext`: for a node taken from the list, the next node in its group
+# This routine recomputes one group of the nodes with key `key` that are not
+# exact: the run of nodes at the head of their list whose most recent element
+# is that of the first (`mdrecompute!`). The run is the whole group, since a
+# list of such nodes is a sequence of whole groups: nodes enter it only at the
+# end of an elimination (`mdupdate!`), at its head, all with the pivot as their
+# most recent element, which no node gains later; and they leave it without
+# separating the others. Returns the new minimum key and the tag.
 function mdvisit!(
         key::V,
         pe::AbstractVector{E},
@@ -1598,53 +1596,40 @@ function mdvisit!(
         external::Bool,
         offset::V,
     ) where {I, V, E}
-    # take the whole list, and group it by most recent element. The
-    # groups are chained, in order, from `ghead` through `degprev` of the
-    # node of each group taken first
-    tag += one(I); gtag = tag; mindeg = key; ghead = gtail = zero(V)
-    @inbounds node = deghead[key + offset]; deghead[key + offset] = zero(V)
+    mindeg = key
 
-    @inbounds while ispositive(node)
+    # take the run at the head of the list: the nodes whose most recent
+    # element is that of the first, and the one node after them, are read.
+    # Their links back are cleared, and the node after the run becomes the
+    # head of the list
+    @inbounds head = deghead[key + offset]
+    @inbounds elmnt = iw[pe[head] + convert(E, elen[head]) - one(E)]
+    @inbounds tail = head; node = degnext[head]; same = true
+    mdprefetch(len, head); mdprefetch(degree, head)
+    @inbounds degprev[head] = zero(V)
+
+    @inbounds while ispositive(node) && same
+        # ask for what the next node needs here
         nxnode = degnext[node]
-
-        # ask for what the next node needs here, and for what this one
-        # needs in its recomputation
         mdprefetch(pe, nxnode); mdprefetch(elen, nxnode)
-        mdprefetch(len, node); mdprefetch(degree, node)
+        same = iw[pe[node] + convert(E, elen[node]) - one(E)] == elmnt
 
-        degnext[node] = degprev[node] = zero(V)
-        elmnt = iw[pe[node] + convert(E, elen[node]) - one(E)]
-
-        if marker[elmnt] != gtag
-            marker[elmnt] = gtag; degprev[elmnt] = zero(V)
-
-            if iszero(gtail)
-                ghead = node
-            else
-                degprev[gtail] = node
-            end
-
-            gtail = node
+        if same
+            # and what this one needs in its recomputation
+            mdprefetch(len, node); mdprefetch(degree, node)
+            degprev[node] = zero(V); tail = node; node = nxnode
         end
-
-        degnext[node] = degprev[elmnt]; degprev[elmnt] = node
-        node = nxnode
     end
 
-    # recompute each group (read the link first: the recomputation
-    # inserts the node into a degree list)
-    gnode = ghead
+    @inbounds degnext[tail] = zero(V); deghead[key + offset] = node
 
-    @inbounds while ispositive(gnode)
-        gnext = degprev[gnode]
-        elmnt = iw[pe[gnode] + convert(E, elen[gnode]) - one(E)]
-
-        mindeg, tag = mdrecompute!(degprev[elmnt], elmnt, pe, len, elen, iw,
-            superwght, degree, deghead, degnext, degprev, marker,
-            tag, neqns, extlen, dwght, nbypass, mindeg, external, offset)
-
-        gnode = gnext
+    if ispositive(node)
+        @inbounds degprev[node] = -(key + offset)
     end
+
+    mindeg, tag = mdrecompute!(head, elmnt, pe, len, elen, iw,
+        superwght, degree, deghead, degnext, degprev, marker,
+        tag, neqns, extlen, dwght, nbypass, mindeg, external, offset)
 
     return mindeg, tag
 end
