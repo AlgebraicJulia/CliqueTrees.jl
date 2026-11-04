@@ -3,23 +3,143 @@ const LOWRANK_LARGE = 4096
 
 struct HyperSymbolic{I}
     col::BipartiteGraph{I, I, FVector{I}, FVector{I}}
+    chd::BipartiteGraph{I, I, FVector{I}, FVector{I}}
+    path::FVector{I}
     Aptr::FVector{I}
     nFval::I
+    nSptr::I
+    nMptr::I
+    nMval::I
+    nUval::I
 end
 
+#
+# The update only touches the nodes on the union of the
+# paths from the first rows of the columns of B to the
+# root. These nodes are stored in increasing (postorder)
+# order in path, and chd is the elimination forest induced
+# on them: the vertices of chd are positions in path.
+#
+# The columns of B must be sorted by their first row.
+#
 function HyperSymbolic(S::ChordalSymbolic{I}, B::SparseMatrixCSC{T}) where {T, I <: Integer}
     res = S.res
     sep = S.sep
-    chd = S.chd
+    pnt = S.pnt
     idx = S.idx
 
     n = convert(I, size(B, 2))
     m = convert(I, nnz(B))
-    t = nv(res)
+    #
+    # count the nodes on the paths from the first
+    # rows of the columns of B to the root
+    #
+    np = zero(I); jprev = zero(I)
 
-    col = FBipartiteGraph{I, I}(S.nFval, n, m)
+    for c in oneto(n)
+        strt = B.colptr[c]
+
+        if strt < B.colptr[c + one(I)]
+            j = idx[rowvals(B)[strt]]
+
+            if j != jprev
+                jprev = j
+
+                while !iszero(j)
+                    np += one(I); j = pnt[j]
+                end
+            end
+        end
+    end
+    #
+    # path ← ⋃ { j, pnt(j), pnt(pnt(j)), … }
+    #
+    work = FVector{I}(undef, np)
+    np = zero(I); jprev = zero(I)
+
+    for c in oneto(n)
+        strt = B.colptr[c]
+
+        if strt < B.colptr[c + one(I)]
+            j = idx[rowvals(B)[strt]]
+
+            if j != jprev
+                jprev = j
+
+                while !iszero(j)
+                    np += one(I); work[np] = j; j = pnt[j]
+                end
+            end
+        end
+    end
+
+    sort!(work)
+    t = zero(I)
+
+    for p in oneto(np)
+        if iszero(t) || work[p] != work[t]
+            t += one(I); work[t] = work[p]
+        end
+    end
+
+    path = FVector{I}(undef, t)
+
+    for p in oneto(t)
+        path[p] = work[p]
+    end
+    #
+    # construct the induced forest chd
+    #
+    #   chd(p) = { q : pnt(path[q]) = path[p] }
+    #
+    nr = zero(I)
+
+    for p in oneto(t)
+        if iszero(pnt[path[p]])
+            nr += one(I)
+        end
+    end
+
+    chd = BipartiteGraph{I, I}(t, t, t - nr)
+
+    for p in oneto(t + one(I))
+        pointers(chd)[p] = zero(I)
+    end
+
+    for q in oneto(t)
+        j = pnt[path[q]]
+
+        if !iszero(j)
+            p = convert(I, searchsortedfirst(path, j))
+            pointers(chd)[p + one(I)] += one(I)
+        end
+    end
+
+    pointers(chd)[one(I)] = e = one(I)
+
+    for p in oneto(t)
+        pointers(chd)[p + one(I)] = e += pointers(chd)[p + one(I)]
+    end
+
+    for q in oneto(t)
+        j = pnt[path[q]]
+
+        if !iszero(j)
+            p = convert(I, searchsortedfirst(path, j))
+            targets(chd)[pointers(chd)[p]] = q
+            pointers(chd)[p] += one(I)
+        end
+    end
+
+    for p in Iterators.reverse(oneto(t))
+        pointers(chd)[p + one(I)] = pointers(chd)[p]
+    end
+
+    pointers(chd)[one(I)] = one(I)
+
+    col = BipartiteGraph{I, I}(S.nFval, n, m)
     Aptr = FVector{I}(undef, t + one(I))
-    Mptr = FVector{I}(undef, S.nMptr)
+    Mptr = FVector{I}(undef, t + one(I))
     #
     # copy the column pointers of B into col
     #
@@ -33,13 +153,13 @@ function HyperSymbolic(S::ChordalSymbolic{I}, B::SparseMatrixCSC{T}) where {T, I
     #
     fill!(Aptr, zero(I))
     #
-    # for each node j, count the number
+    # for each position p, count the number
     # of columns c whose first row is in
-    # the residual at j.
+    # the residual at path[p].
     #
-    #   Aptr[j + 1] ← # columns
+    #   Aptr[p + 1] ← # columns
     #
-    strt = one(I)
+    strt = one(I); p = one(I)
 
     for c in oneto(n)
         stop = B.colptr[c + one(I)]
@@ -47,25 +167,29 @@ function HyperSymbolic(S::ChordalSymbolic{I}, B::SparseMatrixCSC{T}) where {T, I
         if strt < stop
             r = rowvals(B)[strt]
             j = idx[r]
-            Aptr[j + one(I)] += one(I)
+
+            while path[p] < j
+                p += one(I)
+            end
+
+            Aptr[p + one(I)] += one(I)
         end
 
         strt = stop
     end
     #
     # perform a cumulative sum so that
-    # for all nodes j,
+    # for all positions p,
     #
-    #   Aptr[j + 1] - 1
+    #   Aptr[p] ... Aptr[p + 1] - 1
     #
-    # contains the number of columns
-    # with first row in the subtree
-    # at j.
+    # are the columns with first row in
+    # the residual at path[p].
     #
     c = one(I)
 
-    for j in oneto(t)
-        Aptr[j] = c += Aptr[j]
+    for p in oneto(t)
+        Aptr[p] = c += Aptr[p]
     end
 
     Aptr[t + one(I)] += c
@@ -79,9 +203,11 @@ function HyperSymbolic(S::ChordalSymbolic{I}, B::SparseMatrixCSC{T}) where {T, I
     # assign to tgt[p] the *relative* index of r in
     # bag(j).
     #
-    sp = zero(I); nFval = one(I)
+    sp = zero(I); nFval = one(I); nSptr = one(I)
+    jMptr = nMptr = one(I); jMval = nMval = zero(I); nUval = zero(I)
 
-    for j in oneto(t)
+    for p in oneto(t)
+        j = path[p]
         nn = eltypedegree(res, j)
         na = eltypedegree(sep, j)
         nj = nn + na
@@ -89,15 +215,15 @@ function HyperSymbolic(S::ChordalSymbolic{I}, B::SparseMatrixCSC{T}) where {T, I
         jsep = neighbors(sep, j)
         jres = neighbors(res, j)
 
-        strt = Aptr[j]
-        stop = Aptr[j + one(I)]
+        strt = Aptr[p]
+        stop = Aptr[p + one(I)]
 
         @inbounds for c in strt:stop - one(I)
             rloc = one(I)
             s = jres[rloc]
 
-            for p in nzrange(B, c)
-                r = rowvals(B)[p]
+            for e in nzrange(B, c)
+                r = rowvals(B)[e]
 
                 while s < r && rloc < nn
                     rloc += one(I)
@@ -113,26 +239,34 @@ function HyperSymbolic(S::ChordalSymbolic{I}, B::SparseMatrixCSC{T}) where {T, I
                     throw(ArgumentError("index ($r, $c) not in symbolic pattern"))
                 end
 
-                targets(col)[p] = rloc
+                targets(col)[e] = rloc
             end
         end
 
         nb = stop - strt
 
-        for i in neighbors(chd, j)
+        for q in Iterators.reverse(neighbors(chd, p))
             nb += Mptr[sp]
+            jMptr -= one(I)
+            jMval -= Mptr[sp] * eltypedegree(sep, path[q])
             sp -= one(I)
         end
 
         nFval = max(nFval, nj * nb)
+        nSptr = max(nSptr, nj + one(I))
+        nUval += nn * nj
 
         if ispositive(na)
             sp += one(I)
             Mptr[sp] = min(nb, na)
+            jMptr += one(I)
+            jMval += na * Mptr[sp]
+            nMptr = max(nMptr, jMptr)
+            nMval = max(nMval, jMval)
         end
     end
 
-    return HyperSymbolic{I}(col, Aptr, nFval)
+    return HyperSymbolic{I}(col, chd, path, Aptr, nFval, nSptr, nMptr, nMval, nUval)
 end
 
 function HyperSymbolic(L::ChordalTriangular, B::SparseMatrixCSC)
@@ -145,16 +279,18 @@ struct LowrankWorkspace{T, I}
     Sptr::FVector{I}
     Mptr::FVector{I}
     Mval::FVector{T}
+    Uval::FVector{T}
 end
 
 function LowrankWorkspace{T}(S::ChordalSymbolic{I}, H::HyperSymbolic{I}) where {T, I <: Integer}
-    nWval = convert(I, LOWRANK_BLOCK) * S.nFval
+    nWval = convert(I, LOWRANK_BLOCK) * H.nSptr
     Fval = FVector{T}(undef, H.nFval)
     Wval = FVector{T}(undef, nWval + max(H.nFval, nWval))
-    Sptr = FVector{I}(undef, S.nFval + one(I))
-    Mptr = FVector{I}(undef, S.nMptr)
-    Mval = FVector{T}(undef, S.nMval)
-    return LowrankWorkspace{T, I}(Fval, Wval, Sptr, Mptr, Mval)
+    Sptr = FVector{I}(undef, H.nSptr)
+    Mptr = FVector{I}(undef, H.nMptr)
+    Mval = FVector{T}(undef, H.nMval)
+    Uval = FVector{T}(undef, H.nUval)
+    return LowrankWorkspace{T, I}(Fval, Wval, Sptr, Mptr, Mval, Uval)
 end
 
 function LowrankWorkspace(L::ChordalTriangular{DIAG, UPLO, T}, H::HyperSymbolic) where {DIAG, UPLO, T}
@@ -177,13 +313,18 @@ function LinearAlgebra.lowrankdowndate!(F::ChordalCholesky{UPLO, T}, B::SparseMa
     return lowrankupdate!(F, convert(SparseMatrixCSC{T}, B), -true; check)
 end
 
+#
+# If a downdate fails (the result is not positive
+# definite), then F is left unchanged and F.info
+# is set to a positive value.
+#
 function LinearAlgebra.lowrankupdate!(F::ChordalCholesky{UPLO, T}, B::SparseMatrixCSC{T}, w::Real; check::Bool=true) where {UPLO, T}
     @assert isone(abs(w))
 
     L = triangular(F)
 
     rowperm = F.perm
-    B = rowpermute(B, rowperm)
+    B = lowrank_sparse_rowpermute(B, F.invp)
 
     colperm = lowrank_sparse_permutation(B)
     B = colpermute(B, colperm)
@@ -210,97 +351,62 @@ function LinearAlgebra.lowrankupdate!(
         w::Real=true,
     ) where {UPLO, T, I <: Integer}
     return lowrank_sparse_impl!(
-        W.Mptr, W.Mval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, W.Fval, W.Wval, W.Sptr, H.Aptr,
-        Bval, L.S.res, L.S.sep, L.S.rel, H.col, L.S.chd, L.uplo, w,
+        W.Mptr, W.Mval, W.Uval, L.S.Dptr, L.Dval, L.S.Lptr, L.Lval, W.Fval, W.Wval, W.Sptr, H.Aptr,
+        Bval, L.S.res, L.S.sep, L.S.rel, H.col, H.chd, H.path, L.uplo, w,
     )
 end
 
+#
+# permute the rows of B
+#
+#   B ← B[perm, :]
+#
+# where invp is the inverse of perm
+#
+function lowrank_sparse_rowpermute(B::SparseMatrixCSC{T, I}, invp::AbstractVector) where {T, I <: Integer}
+    rowval = Vector{I}(undef, nnz(B))
+    nzval = Vector{T}(undef, nnz(B))
+
+    for c in axes(B, 2)
+        rng = nzrange(B, c)
+        ord = sortperm(view(rowvals(B), rng); by = r -> invp[r])
+
+        for (p, q) in zip(rng, ord)
+            rowval[p] = invp[rowvals(B)[first(rng) + q - 1]]
+            nzval[p] = nonzeros(B)[first(rng) + q - 1]
+        end
+    end
+
+    return SparseMatrixCSC{T, I}(size(B)..., copy(B.colptr), rowval, nzval)
+end
+
+#
+# compute a permutation that sorts the columns
+# of B by their first rows. Empty columns go last.
+#
 function lowrank_sparse_permutation(B::SparseMatrixCSC{T, I}) where {T, I <: Integer}
     m = convert(I, size(B, 1))
     n = convert(I, size(B, 2))
 
-    ptr = FVector{I}(undef, m + one(I))
-    tgt = FVector{I}(undef, n)
-    #
-    # initialize ptr
-    #
-    #   ptr ← 0
-    #
-    for r in oneto(m + one(I))
-        ptr[r] = zero(I)
-    end
-    #
-    # for each row r, count the number
-    # of columns c whose first row is r
-    #
-    #   ptr[r + 1] ← # columns
-    #
-    strt = one(I)
+    key = FVector{I}(undef, n)
 
     for c in oneto(n)
-        stop = B.colptr[c + one(I)]
+        strt = B.colptr[c]
 
-        if strt < stop
-            r = rowvals(B)[strt]
-            ptr[r + one(I)] += one(I)
-        end
-
-        strt = stop
-    end
-    #
-    # perform a cumulative sum so that
-    # for all rows r,
-    #
-    #   ptr[r + 1] - 1
-    #
-    # contains the number of columns
-    # with first row less-than-or-equal-to
-    # r.
-    #
-    c = one(I)
-
-    for r in oneto(m)
-        ptr[r] = c += ptr[r]
-    end
-
-    ptr[m + one(I)] += c
-    #
-    # use a bucket sort to compute
-    # a permutation tgt
-    #
-    # for all rows r, this permutation
-    # assigns the columns with first
-    # row r to the interval
-    #
-    #   ptr[r] ... ptr[r + 1] - 1,
-    #
-    # and it assigns empty columns
-    # to the interval
-    #
-    #   ptr[m + 1] ... n
-    #
-    strt = one(I)
-
-    for c in oneto(n)
-        stop = B.colptr[c + one(I)]
-
-        if strt < stop
-            r = rowvals(B)[strt]
+        if strt < B.colptr[c + one(I)]
+            key[c] = rowvals(B)[strt]
         else
-            r = m + one(I)
+            key[c] = m + one(I)
         end
-
-        tgt[ptr[r]] = c
-        ptr[r] += one(I)
-        strt = stop
     end
 
-    return tgt
+    return sortperm(key; alg = Base.Sort.DEFAULT_STABLE)
 end
 
 function lowrank_sparse_impl!(
         Mptr::AbstractVector{I},
         Mval::AbstractVector{T},
+        Uval::AbstractVector{T},
         Dptr::AbstractVector{I},
         Dval::AbstractVector{T},
         Lptr::AbstractVector{I},
@@ -315,24 +421,170 @@ function lowrank_sparse_impl!(
         rel::AbstractGraph{I},
         col::AbstractGraph{I},
         chd::AbstractGraph{I},
+        path::AbstractVector{I},
         uplo::Val{UPLO},
         w::Real,
     ) where {UPLO, T, I <: Integer}
     ns = zero(I); Mptr[one(I)] = one(I)
-    info = zero(I)
+    info = zero(I); u = zero(I)
 
-    for j in vertices(res)
+    for p in vertices(chd)
+        j = path[p]
+
+        if isnegative(w)
+            #
+            # save the factor at node j, so that a
+            # failed downdate can be undone
+            #
+            t0 = lowrank_sparse_first(Aptr, res, rel, col, chd, path, p)
+            u = lowrank_sparse_save!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, j, t0, uplo)
+        end
+
         ns, localinfo = lowrank_sparse_loop!(
             Mptr, Mval, Dptr, Dval, Lptr, Lval, Fval, Wval, Sptr, Aptr,
-            Bval, res, sep, rel, col, chd, ns, j, uplo, w,
+            Bval, res, sep, rel, col, chd, path, ns, p, uplo, w,
         )
 
         if ispositive(localinfo) && iszero(info)
             info = localinfo + pointers(res)[j] - one(I)
+
+            if isnegative(w)
+                #
+                # the downdate failed: restore the factor
+                # at the nodes path[1], …, path[p]
+                #
+                u = zero(I)
+
+                for q in oneto(p)
+                    t0 = lowrank_sparse_first(Aptr, res, rel, col, chd, path, q)
+                    u = lowrank_sparse_restore!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, path[q], t0, uplo)
+                end
+
+                return info
+            end
         end
     end
 
     return info
+end
+
+#
+# t0 is the first column of res(path[p]) touched by
+# the update: the least row of the new columns at p
+#
+function lowrank_sparse_first(
+        Aptr::AbstractVector{I},
+        res::AbstractGraph{I},
+        rel::AbstractGraph{I},
+        col::AbstractGraph{I},
+        chd::AbstractGraph{I},
+        path::AbstractVector{I},
+        p::I,
+    ) where {I <: Integer}
+    t0 = eltypedegree(res, path[p])
+
+    for c in Aptr[p]:Aptr[p + one(I)] - one(I)
+        t0 = min(t0, targets(col)[pointers(col)[c]])
+    end
+
+    for q in neighbors(chd, p)
+        t0 = min(t0, targets(rel)[pointers(rel)[path[q]]])
+    end
+
+    return t0
+end
+
+#
+# save (or restore) the part of the factor at node j
+# that an update with first column t0 can change
+#
+function lowrank_sparse_save!(
+        Uval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        u::I,
+        j::I,
+        t0::I,
+        uplo::Val{UPLO},
+    ) where {T, I <: Integer, UPLO}
+    return lowrank_sparse_copy!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, j, t0, uplo, Val(true))
+end
+
+function lowrank_sparse_restore!(
+        Uval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        u::I,
+        j::I,
+        t0::I,
+        uplo::Val{UPLO},
+    ) where {T, I <: Integer, UPLO}
+    return lowrank_sparse_copy!(Uval, Dptr, Dval, Lptr, Lval, res, sep, u, j, t0, uplo, Val(false))
+end
+
+function lowrank_sparse_copy!(
+        Uval::AbstractVector{T},
+        Dptr::AbstractVector{I},
+        Dval::AbstractVector{T},
+        Lptr::AbstractVector{I},
+        Lval::AbstractVector{T},
+        res::AbstractGraph{I},
+        sep::AbstractGraph{I},
+        u::I,
+        j::I,
+        t0::I,
+        ::Val{UPLO},
+        ::Val{SAVE},
+    ) where {T, I <: Integer, UPLO, SAVE}
+    nn = eltypedegree(res, j)
+    na = eltypedegree(sep, j)
+    Dp = Dptr[j]
+    Lp = Lptr[j]
+
+    if UPLO === :L
+        #
+        # columns t0, …, nn of D₁₁ and L₂₁
+        #
+        Drng = Dp + (t0 - one(I)) * nn:Dp + nn * nn - one(I)
+        Lrng = Lp + (t0 - one(I)) * na:Lp + nn * na - one(I)
+
+        @inbounds for p in Drng
+            u += one(I)
+            SAVE ? (Uval[u] = Dval[p]) : (Dval[p] = Uval[u])
+        end
+
+        @inbounds for p in Lrng
+            u += one(I)
+            SAVE ? (Uval[u] = Lval[p]) : (Lval[p] = Uval[u])
+        end
+    else
+        #
+        # rows t0, …, nn of D₁₁ and L₂₁
+        #
+        @inbounds for c in oneto(nn)
+            for r in t0:nn
+                p = Dp + (c - one(I)) * nn + r - one(I); u += one(I)
+                SAVE ? (Uval[u] = Dval[p]) : (Dval[p] = Uval[u])
+            end
+        end
+
+        @inbounds for c in oneto(na)
+            for r in t0:nn
+                p = Lp + (c - one(I)) * nn + r - one(I); u += one(I)
+                SAVE ? (Uval[u] = Lval[p]) : (Lval[p] = Uval[u])
+            end
+        end
+    end
+
+    return u
 end
 
 function lowrank_sparse_iszero(D₁₁::AbstractMatrix{T}, L₂₁::AbstractMatrix{T}, ::Val{:L}) where {T}
@@ -388,11 +640,16 @@ function lowrank_sparse_loop!(
         rel::AbstractGraph{I},
         col::AbstractGraph{I},
         chd::AbstractGraph{I},
+        path::AbstractVector{I},
         ns::I,
-        j::I,
+        p::I,
         uplo::Val{UPLO},
         w::Real,
     ) where {UPLO, T, I <: Integer}
+    #
+    # j is the node at position p
+    #
+    j = path[p]
     #
     # nn is the size of the residual at node j
     #
@@ -439,17 +696,17 @@ function lowrank_sparse_loop!(
     # mapping each "new" column to its
     # least vertex
     #
-    ns0 = ns; nb = lowrank_sparse_send_1A!(Sptr, Aptr, col, j)
+    ns0 = ns; nb = lowrank_sparse_send_1A!(Sptr, Aptr, col, p)
 
-    for i in Iterators.reverse(neighbors(chd, j))
-        nb += lowrank_sparse_send_1B!(Sptr, Mptr, rel, ns, i)
+    for q in Iterators.reverse(neighbors(chd, p))
+        nb += lowrank_sparse_send_1B!(Sptr, Mptr, rel, ns, path[q])
         ns -= one(I)
     end
 
-    ns = ns0; p = zero(I)
+    ns = ns0; e = zero(I)
 
     for r in oneto(nj + one(I))
-        p = Sptr[r] += p
+        e = Sptr[r] += e
     end
     #
     # bn is the number of new columns owned by res(j)
@@ -490,9 +747,10 @@ function lowrank_sparse_loop!(
     #
     #     F₂ ← B
     #
-    lowrank_sparse_send_2A!(F₂, Sptr, Aptr, Bval, col, j, uplo)
+    lowrank_sparse_send_2A!(F₂, Sptr, Aptr, Bval, col, p, uplo)
 
-    for i in Iterators.reverse(neighbors(chd, j))
+    for q in Iterators.reverse(neighbors(chd, p))
+        i = path[q]
         #
         # write the update matrix for child i to F
         #
@@ -593,6 +851,10 @@ function lowrank_sparse_loop!(
                 info = convert(I, lowrank_sparse_factor_up_1!(D₁₁, L₂₁, G₁₂, G₂₂, Wval, uplo))
             end
 
+            #
+            # the downdate failed: the caller
+            # stops and restores the factor
+            #
             if ispositive(info)
                 return ns, info
             end
@@ -967,7 +1229,12 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, w::AbstractVector{T}, r::In
             σ = max(σ, abs(F[r, c]))
         end
 
-        if !iszero(σ)
+        #
+        # skip subnormal rows: otherwise the factor
+        # δ ~ 1 / σ overflows (these rows appear when
+        # an update vector decays along the path)
+        #
+        if σ >= floatmin(real(T))
             Frr = @inbounds F[r, r]
 
             if sqrt(floatmin(real(T))) <= σ <= sqrt(floatmax(real(T)) / (t - r + 1)) / 2
@@ -1058,7 +1325,12 @@ function lowrank_sparse_block!(F::AbstractMatrix{T}, c::Int, t::Int, n::Int, ::V
             σ = max(σ, abs(F[r, c]))
         end
 
-        if !iszero(σ)
+        #
+        # skip subnormal rows: otherwise the factor
+        # δ ~ 1 / σ overflows (these rows appear when
+        # an update vector decays along the path)
+        #
+        if σ >= floatmin(real(T))
             Fcc = @inbounds F[c, c]
 
             if sqrt(floatmin(real(T))) <= σ <= sqrt(floatmax(real(T)) / (t - c + 1)) / 2
