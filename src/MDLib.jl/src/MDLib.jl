@@ -1636,9 +1636,10 @@ end
 
 # This routine recomputes the external degrees of the nodes of the chain that
 # starts at `zhead` and is linked by `degnext`, whose most recent element is
-# `elmnt`. The nodes of `elmnt` are marked, the list of each other element of
-# the nodes is scanned once and partitioned in place, its nodes outside
-# `elmnt` first, and the external degree of each node is the weight of
+# `elmnt`. The nodes of `elmnt` are marked (its merged and eliminated nodes
+# leave its list), the list of each other element of the nodes is scanned
+# once and partitioned in place, its nodes outside `elmnt` first, and the
+# external degree of each node is the weight of
 # `elmnt`, of the union of these nodes and of its uneliminated neighbors, and
 # of its dense neighbors, minus its own weight. The nodes become exact and are
 # inserted into the degree lists. Returns the new minimum key and the tag.
@@ -1678,18 +1679,23 @@ end
         external::Bool,
         offset::V,
     ) where {I, V, E}
-    # mark the nodes of `elmnt`
+    # mark the nodes of `elmnt`, and drop its merged and eliminated nodes
+    # from its list, as the other lists are below (the writes trail the
+    # reads)
     tag += one(I); etag = tag
     @inbounds estart = pe[elmnt]
     @inbounds estop = estart + convert(E, len[elmnt]) - one(E)
+    pkeep = estart
 
     @inbounds for j in estart:estop
         node = iw[j]
 
         if ispositive(superwght[node])
-            marker[node] = etag
+            marker[node] = etag; iw[pkeep] = node; pkeep += one(E)
         end
     end
+
+    @inbounds len[elmnt] = convert(V, pkeep - estart)
 
     # count the nodes of the group
     gsize = 0; znode = zhead
