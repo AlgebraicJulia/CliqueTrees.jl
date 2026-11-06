@@ -1665,14 +1665,24 @@ end
             m = nv(graph)
 
             for external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true), twin in (false, true), compress in (false, true)
+                # the dense nodes are removed and numbered last, in order: the
+                # ordering is exact for the graph without them
+                thresh = max(16, dense * sqrt(m))
+                removed = dense < 0 ? Int[] : [v for v in vertices(graph) if degree(graph, v) > thresh]
+                keep = setdiff(vertices(graph), removed); k = length(keep)
+                sub, _ = induced_subgraph(graph, keep)
+                pos = zeros(Int, m); pos[keep] = 1:k
+
                 for weights in (ones(Int, m), rand(rng, 1:3, m))
                     index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, twin, compress)
                     @test sort(index) == 1:m
+                    order = invperm(index)
+                    @test order[(k + 1):m] == removed
 
                     if !external
-                        @test isminimumdegree(graph, weights, invperm(index))
-                    elseif dense < 0 && all(isone, weights) && !mass && !twin && !compress
-                        @test isminimumexternaldegree(graph, invperm(index))
+                        @test isminimumdegree(sub, weights[keep], pos[order[1:k]])
+                    elseif all(isone, weights) && !mass && !twin && !compress
+                        @test isminimumexternaldegree(sub, pos[order[1:k]])
                     end
                 end
             end
@@ -1714,12 +1724,21 @@ end
             m = nv(graph)
 
             for external in (false, true), dense in (10.0, 0.0), mass in (false, true), twin in (false, true), compress in (false, true)
+                # the dense nodes are removed and numbered last
+                thresh = max(16, dense * sqrt(m))
+                removed = [v for v in vertices(graph) if degree(graph, v) > thresh]
+                keep = setdiff(vertices(graph), removed); k = length(keep)
+                sub, _ = induced_subgraph(graph, keep)
+                pos = zeros(Int, m); pos[keep] = 1:k
+
                 weights = rand(rng, 1:1000, m)
                 index = CliqueTrees.MDLib.md(weights, graph; external, dense, mass, twin, compress)
                 @test sort(index) == 1:m
+                order = invperm(index)
+                @test order[(k + 1):m] == removed
 
                 if !external
-                    @test isminimumdegree(graph, weights, invperm(index))
+                    @test isminimumdegree(sub, weights[keep], pos[order[1:k]])
                 end
             end
         end

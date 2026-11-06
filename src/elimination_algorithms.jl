@@ -314,8 +314,9 @@ for the nodes of minimum bound.
     the reachable set of each eliminated node, and the ordering minimizes the
     external degree of these supernodes.
   - `dense`: dense node parameter. Nodes with more than `max(16, dense * sqrt(n))`
-    neighbors are kept out of the quotient graph until one of them has minimum
-    degree; the ordering remains exact. A negative value disables this.
+    neighbors (other than themselves) are removed from the graph and ordered
+    last, as AMD does; the ordering is exact for the graph without them. A
+    negative value disables this.
   - `mass`: mass elimination. Each node whose only neighbors are those of the
     clique formed by an elimination is eliminated with the pivot. The ordering
     remains exact with degree, but not with external degree.
