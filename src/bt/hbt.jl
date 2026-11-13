@@ -2098,6 +2098,15 @@ end
 # is waiting, this task diversifies the solution itself. (The time of a
 # diversification varies a great deal, so workers that waited for each
 # other would mostly wait.) Returns the statistics of the workers.
+#
+# The queue of results holds at most one result per worker. The workers can
+# make results faster than this task adds them, and an unbounded queue grew
+# without limit: on the line graph of a 64 x 64 grid network (8035 vertices),
+# three workers queued 24098 results in 120 s while this task added 938, and
+# the process grew from 1.2 to 15 GiB. A worker whose result does not fit
+# waits, and then passes a result of an older snapshot, as it would have from
+# an unbounded queue. To stop, this task closes the queue, which wakes the
+# waiting workers.
 # ---------------------------------------------------------------------------
 
 function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
@@ -2110,7 +2119,7 @@ function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
 
     # the snapshot copies the decomposition only when it changes
     cur = hbt_cop(st); snap = Ref(merge(cur, (; kstall = st.kstall[])))
-    lck = ReentrantLock(); stop = Threads.Atomic{Bool}(false); results = Channel{Any}(typemax(Int))
+    lck = ReentrantLock(); stop = Threads.Atomic{Bool}(false); results = Channel{Any}(max(1, nt - 1))
     tasks = [Threads.@spawn hbt_wrk(w, snap, lck, stop, results) for w in workers]
 
     try
@@ -2131,7 +2140,7 @@ function hbt_par!(srh::NamedTuple, st::NamedTuple, lb, ub, nt::Integer)
             lock(() -> (snap[] = s), lck)
         end
     finally
-        stop[] = true; foreach(wait, tasks)
+        stop[] = true; close(results); foreach(wait, tasks)
     end
 
     stats = (0, 0, 0, 0)
@@ -2148,8 +2157,16 @@ hbt_cop(st::NamedTuple) = (; bptr = copy(st.bptr), btgt = copy(st.btgt), parent 
 
 function hbt_wrk(w::NamedTuple, snap::Ref, lck::ReentrantLock, stop::Threads.Atomic{Bool}, results::Channel)
     while !stop[] && !hbt_expired(w)
-        s = lock(() -> snap[], lck)
-        put!(results, hbt_div(w, s))
+        s = lock(() -> snap[], lck); result = hbt_div(w, s)
+        stop[] && break
+
+        try
+            put!(results, result)
+        catch e
+            # closed by hbt_par! to stop
+            e isa InvalidStateException && !isopen(results) && break
+            rethrow()
+        end
     end
 
     return
