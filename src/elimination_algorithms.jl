@@ -318,15 +318,12 @@ for the nodes of minimum bound.
     last, as AMD does; the ordering is exact for the graph without them. A
     negative value disables this.
   - `mass`: mass elimination. Each node whose only neighbors are those of the
-    clique formed by an elimination is eliminated with the pivot. The ordering
-    remains exact with degree, but not with external degree.
+    clique formed by an elimination is eliminated with the pivot.
   - `twin`: false-twin elimination. Each node whose neighbors are exactly
     those of the pivot (a false twin of the pivot) is eliminated right after it.
-    The ordering remains exact with degree, but not with external degree.
   - `compress`: graph compression. Nodes with the same closed neighborhood are
-    merged into supernodes before the first elimination. The ordering remains
-    exact with degree; with external degree, these supernodes count from the
-    start.
+    merged into supernodes before the first elimination. With external degree,
+    these supernodes count from the start.
 
 ### References
 
